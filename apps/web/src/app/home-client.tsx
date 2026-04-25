@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
-import { MapPin, Search } from 'lucide-react';
+import { Headphones, MapPin, Search, ShieldCheck, Star, Users } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
@@ -16,6 +16,7 @@ import Navbar from '@/components/navbar';
 import CustomSelect from '@/components/custom-select';
 import { useGeo } from '@/context/geo-context';
 import type { ActivityCardActivity } from '@/components/ui';
+import { AnimatedCounter } from '@/components/animated-counter';
 
 // Below-fold sections (categories / trending / featured / near-you / why /
 // CTA) are split into a separate chunk loaded only when the user scrolls
@@ -359,12 +360,31 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Trust metrics moved out of the hero — now rendered under the
-              Trending section in home-below-fold.tsx. They contain 3
-              AnimatedCounter components (heaviest hydration cost in the
-              page). Moving them off the LCP path is a real perf win
-              with no UX loss — the count-up animation triggers when
-              they scroll into view either way. */}
+          {/* Trust metrics */}
+          <div className="mt-10 flex flex-wrap items-center justify-center gap-6 md:gap-10">
+            <div className="flex items-center gap-2 text-sm text-white/80">
+              <ShieldCheck className="h-4 w-4 text-amber-300/90" />
+              <span>
+                <AnimatedCounter value={50} suffix="+" /> {t('home.verifiedPartners')}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-white/80">
+              <Star className="h-4 w-4 text-amber-300/90" />
+              <span>
+                <AnimatedCounter value={4.8} decimals={1} />/5 {t('home.averageRating')}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-white/80">
+              <Users className="h-4 w-4 text-amber-300/90" />
+              <span>
+                <AnimatedCounter value={2000} suffix="+" /> {t('home.bookings')}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-white/80">
+              <Headphones className="h-4 w-4 text-amber-300/90" />
+              <span>{t('home.qatarSupport')}</span>
+            </div>
+          </div>
         </div>
 
         {/* Waves (light) */}
