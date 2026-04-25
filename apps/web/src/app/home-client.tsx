@@ -3,17 +3,10 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
-import {
-  Headphones,
-  MapPin,
-  Search,
-  ShieldCheck,
-  Star,
-  Users,
-} from 'lucide-react';
+import { MapPin, Search } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion, useScroll, useTransform, useInView, animate } from 'framer-motion';
+import { motion, useScroll, useTransform } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import api from '@/lib/api';
@@ -54,41 +47,9 @@ const HomeBelowFold = dynamic(() => import('./home-below-fold'), {
   ),
 });
 
-/* ─── Animated Counter ───────────────────────────────────── */
-
-function AnimatedCounter({
-  value,
-  decimals = 0,
-  suffix = '',
-  prefix = '',
-}: {
-  value: number;
-  decimals?: number;
-  suffix?: string;
-  prefix?: string;
-}) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const inView = useInView(ref, { once: true, amount: 0.5 });
-  const [display, setDisplay] = useState(decimals > 0 ? '0.0' : '0');
-
-  useEffect(() => {
-    if (!inView) return;
-    const controls = animate(0, value, {
-      duration: 2,
-      ease: 'easeOut',
-      onUpdate: (v) => setDisplay(v.toFixed(decimals)),
-    });
-    return () => controls.stop();
-  }, [inView, value, decimals]);
-
-  return (
-    <span ref={ref}>
-      {prefix}
-      {display}
-      {suffix}
-    </span>
-  );
-}
+/* AnimatedCounter moved to @/components/animated-counter.tsx so it can be
+   used from home-below-fold.tsx without crossing the dynamic-import
+   boundary. The hero no longer renders any counters. */
 
 /* ─── Types ───────────────────────────────────────────────── */
 
@@ -401,31 +362,12 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Trust metrics */}
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-6 md:gap-10">
-            <div className="flex items-center gap-2 text-sm text-white/80">
-              <ShieldCheck className="h-4 w-4 text-amber-300/90" />
-              <span>
-                <AnimatedCounter value={50} suffix="+" /> {t('home.verifiedPartners')}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-white/80">
-              <Star className="h-4 w-4 text-amber-300/90" />
-              <span>
-                <AnimatedCounter value={4.8} decimals={1} />/5 {t('home.averageRating')}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-white/80">
-              <Users className="h-4 w-4 text-amber-300/90" />
-              <span>
-                <AnimatedCounter value={2000} suffix="+" /> {t('home.bookings')}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-white/80">
-              <Headphones className="h-4 w-4 text-amber-300/90" />
-              <span>{t('home.qatarSupport')}</span>
-            </div>
-          </div>
+          {/* Trust metrics moved out of the hero — now rendered under the
+              Trending section in home-below-fold.tsx. They contain 3
+              AnimatedCounter components (heaviest hydration cost in the
+              page). Moving them off the LCP path is a real perf win
+              with no UX loss — the count-up animation triggers when
+              they scroll into view either way. */}
         </motion.div>
 
         {/* Waves (light) */}

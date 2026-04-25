@@ -16,7 +16,7 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Calendar, Gift, MapPin, ShieldCheck, Zap } from 'lucide-react';
+import { Calendar, Gift, Headphones, MapPin, ShieldCheck, Star, Users, Zap } from 'lucide-react';
 
 import api from '@/lib/api';
 import { localized } from '@/lib/localize';
@@ -28,6 +28,7 @@ import {
   PatternDivider,
   SectionHeader,
 } from '@/components/ui';
+import { AnimatedCounter } from '@/components/animated-counter';
 
 interface TrendingEvent {
   id: string;
@@ -206,6 +207,37 @@ export default function HomeBelowFold() {
               {t('home.noTrending', { defaultValue: 'No trending events yet' })}
             </div>
           )}
+
+          {/* Trust metrics — moved out of the hero (was the heaviest hydration
+              cost in / before the LCP). The 3 AnimatedCounter components run
+              their count-up via framer's animate() the moment they enter the
+              viewport (whileInView with once: true), so the visual effect is
+              identical — the user just sees them when they scroll past
+              Trending instead of in the hero. */}
+          <div className="mt-12 flex flex-wrap items-center justify-center gap-6 md:gap-10 border-t border-jadwal-border-subtle pt-8">
+            <div className="flex items-center gap-2 text-sm text-jadwal-text-muted">
+              <ShieldCheck className="h-4 w-4 text-jadwal-accent" aria-hidden="true" />
+              <span>
+                <AnimatedCounter value={50} suffix="+" /> {t('home.verifiedPartners')}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-jadwal-text-muted">
+              <Star className="h-4 w-4 text-jadwal-accent" aria-hidden="true" />
+              <span>
+                <AnimatedCounter value={4.8} decimals={1} />/5 {t('home.averageRating')}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-jadwal-text-muted">
+              <Users className="h-4 w-4 text-jadwal-accent" aria-hidden="true" />
+              <span>
+                <AnimatedCounter value={2000} suffix="+" /> {t('home.bookings')}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-jadwal-text-muted">
+              <Headphones className="h-4 w-4 text-jadwal-accent" aria-hidden="true" />
+              <span>{t('home.qatarSupport')}</span>
+            </div>
+          </div>
         </div>
       </motion.section>
 
