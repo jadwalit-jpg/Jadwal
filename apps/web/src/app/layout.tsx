@@ -3,15 +3,15 @@ import { Inter, Tajawal, Outfit } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 import { AuthProvider } from "@/context/auth-context";
-import { GeoProvider } from "@/context/geo-context";
 import { I18nProvider } from "@/context/i18n-provider";
 import { ThemeProvider } from "next-themes";
 import { QueryProvider } from "@/lib/query-provider";
 import { ToastProvider } from "@/components/toast";
-// LazyPrompts is a client wrapper that dynamic-imports PhonePrompt + PushPrompt
-// with ssr:false. We can't use dynamic({ ssr: false }) directly here because
-// this layout is a Server Component (it calls `headers()` for the CSP nonce).
-import { LazyPrompts } from "@/components/lazy-prompts";
+// CustomerShell conditionally wraps children with GeoProvider + LazyPrompts
+// based on pathname. Staff (admin / vendor) and auth routes skip both —
+// they don't need country detection or "verify your phone" prompts.
+// Verified safe: 0 useGeo calls in admin / vendor source.
+import { CustomerShell } from "@/components/customer-shell";
 import { readLangCookieServer } from "@/lib/lang-cookie.server";
 
 const inter = Inter({
@@ -97,12 +97,9 @@ export default async function RootLayout({
           <I18nProvider initialLang={lang}>
             <ThemeProvider attribute="class" defaultTheme="system" enableSystem nonce={nonce}>
               <AuthProvider>
-                <GeoProvider>
-                  <ToastProvider>
-                    {children}
-                    <LazyPrompts />
-                  </ToastProvider>
-                </GeoProvider>
+                <ToastProvider>
+                  <CustomerShell>{children}</CustomerShell>
+                </ToastProvider>
               </AuthProvider>
             </ThemeProvider>
           </I18nProvider>

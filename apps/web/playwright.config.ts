@@ -26,12 +26,25 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       dependencies: ['setup'],
     },
-    // Safari coverage — runs only when explicitly invoked
-    // (--project=webkit) to avoid doubling local-run time. CI runs
-    // both via the matrix at .github/workflows/.
+    // Safari (desktop) — runs only when explicitly invoked
+    // (--project=webkit) to avoid doubling local-run time.
     {
       name: 'webkit',
       use: { ...devices['Desktop Safari'] },
+      dependencies: ['setup'],
+    },
+    // Mobile coverage — Jadwal is a GCC marketplace where most customer
+    // traffic is on phones. Run with --project=mobile-chrome /
+    // --project=mobile-safari to exercise touch-target sizing, viewport
+    // meta, hamburger nav, and small-screen layouts.
+    {
+      name: 'mobile-chrome',
+      use: { ...devices['Pixel 7'] },
+      dependencies: ['setup'],
+    },
+    {
+      name: 'mobile-safari',
+      use: { ...devices['iPhone 13'] },
       dependencies: ['setup'],
     },
   ],
