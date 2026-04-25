@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Tajawal, Outfit } from "next/font/google";
 import { headers } from "next/headers";
-import dynamic from "next/dynamic";
 import "./globals.css";
 import { AuthProvider } from "@/context/auth-context";
 import { GeoProvider } from "@/context/geo-context";
@@ -9,22 +8,11 @@ import { I18nProvider } from "@/context/i18n-provider";
 import { ThemeProvider } from "next-themes";
 import { QueryProvider } from "@/lib/query-provider";
 import { ToastProvider } from "@/components/toast";
+// LazyPrompts is a client wrapper that dynamic-imports PhonePrompt + PushPrompt
+// with ssr:false. We can't use dynamic({ ssr: false }) directly here because
+// this layout is a Server Component (it calls `headers()` for the CSP nonce).
+import { LazyPrompts } from "@/components/lazy-prompts";
 import { readLangCookieServer } from "@/lib/lang-cookie.server";
-
-// PhonePrompt + PushPrompt are mounted on every route via this layout, but
-// they're below-the-fold UI affordances ("verify your phone" / "enable push").
-// Lazy-load them so their bundle (which includes useGeo + API calls) doesn't
-// land on the LCP path of any route. Same pattern as the / below-fold split.
-// SSR'd as null on first render, then hydrate post-mount — no UI change since
-// they only render content conditionally based on user state anyway.
-const PhonePrompt = dynamic(
-  () => import("@/components/phone-prompt").then((m) => m.PhonePrompt),
-  { ssr: false },
-);
-const PushPrompt = dynamic(
-  () => import("@/components/push-prompt").then((m) => m.PushPrompt),
-  { ssr: false },
-);
 
 const inter = Inter({
   variable: "--font-inter",
@@ -112,8 +100,7 @@ export default async function RootLayout({
                 <GeoProvider>
                   <ToastProvider>
                     {children}
-                    <PhonePrompt />
-                    <PushPrompt />
+                    <LazyPrompts />
                   </ToastProvider>
                 </GeoProvider>
               </AuthProvider>
