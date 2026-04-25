@@ -16,6 +16,7 @@
 /test-results
 /blob-report
 /.lighthouseci
+/e2e/.auth
 
 # next.js
 /.next/

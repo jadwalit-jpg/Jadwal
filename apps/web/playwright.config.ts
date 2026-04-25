@@ -16,7 +16,17 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'setup',
+      testMatch: /auth\.setup\.ts$/,
+    },
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+      dependencies: ['setup'],
+    },
+  ],
   webServer: process.env.CI
     ? undefined
     : {
