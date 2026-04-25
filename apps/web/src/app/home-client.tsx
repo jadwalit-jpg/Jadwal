@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import { MapPin, Search } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion, useScroll, useTransform } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import api from '@/lib/api';
@@ -108,20 +108,11 @@ export default function Home() {
   // Trending / featured / near-you queries used to live here too — moved to
   // home-below-fold.tsx so they don't run during the LCP critical path.
 
+  // heroRef is kept on the section for any future scroll-bound effect or
+  // smooth-scroll target. All hero parallax was removed 2026-04-25 —
+  // sky / sun / moon / glow first, then hero text container + clouds
+  // wrapper. The hero now paints fully static with no scroll subscription.
   const heroRef = useRef<HTMLElement>(null);
-  const { scrollYProgress: heroProgress } = useScroll({
-    target: heroRef,
-    offset: ['start start', 'end start'],
-  });
-  // Sky / sun / moon / glow used to share `heroBgY` (30% parallax). Removed
-  // 2026-04-25 — those elements are decorative far-background; their motion
-  // is subtle and was costing 4 extra motion.div instances on the LCP path.
-  // Keeping clouds (more visible) + hero text (load-bearing fade-on-scroll)
-  // parallax intact.
-  const cloudsY = useTransform(heroProgress, [0, 1], ['0%', '20%']);
-  // contentY removed 2026-04-25 — hero text container is now static.
-  // heroOpacity still drives the clouds-wrapper fade.
-  const heroOpacity = useTransform(heroProgress, [0, 0.8], [1, 0]);
 
   const countryName = country ? localized(country, 'name') : '';
   const eyebrow = isRtl
@@ -233,10 +224,12 @@ export default function Home() {
           className="absolute top-16 left-1/2 -translate-x-1/2 w-[500px] h-[300px] bg-amber-300/20 dark:bg-blue-400/10 rounded-full blur-[100px] pointer-events-none"
         />
 
-        {/* Clouds */}
-        <motion.div
-          style={{ y: cloudsY, opacity: heroOpacity }}
-          className="absolute inset-0 z-5 pointer-events-none overflow-hidden will-change-transform"
+        {/* Clouds. Static (parallax removed 2026-04-25). The 5 cloud images
+            still drift via their `hero-cloud-slow` / `hero-cloud-mid` /
+            `hero-cloud-fast` CSS animations — no more scroll-bound y-offset
+            or fade-on-scroll. */}
+        <div
+          className="absolute inset-0 z-5 pointer-events-none overflow-hidden"
         >
           <div className="hero-cloud-slow absolute top-[10%] left-[3%]">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -288,7 +281,7 @@ export default function Home() {
               className="w-16 sm:w-20 md:w-24 opacity-10 dark:opacity-4 invert"
             />
           </div>
-        </motion.div>
+        </div>
 
         {/* Hero content. Static (parallax removed 2026-04-25 — was the
             heaviest hydration cost in / because it wrapped the entire
