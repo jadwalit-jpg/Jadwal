@@ -65,8 +65,29 @@ export default async function RootLayout({
   const lang = await readLangCookieServer();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
 
+  // Preconnect / DNS-prefetch for the API origin. Saves ~100-200ms on the
+  // first XHR by running TCP + TLS handshakes during HTML parse instead of
+  // waiting for the first JS-driven fetch. NEXT_PUBLIC_API_URL is baked at
+  // build time so this URL is correct for both dev (localhost:4000) and
+  // production (cdn-fronted API host).
+  const apiOrigin = (() => {
+    try {
+      return new URL(process.env.NEXT_PUBLIC_API_URL ?? '').origin;
+    } catch {
+      return null;
+    }
+  })();
+
   return (
     <html lang={lang} dir={dir} suppressHydrationWarning>
+      <head>
+        {apiOrigin ? (
+          <>
+            <link rel="preconnect" href={apiOrigin} crossOrigin="anonymous" />
+            <link rel="dns-prefetch" href={apiOrigin} />
+          </>
+        ) : null}
+      </head>
       <body
         className={`${inter.variable} ${outfit.variable} ${tajawal.variable} antialiased font-outfit`}
       >

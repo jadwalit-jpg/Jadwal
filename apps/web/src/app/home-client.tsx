@@ -170,7 +170,11 @@ export default function Home() {
     target: heroRef,
     offset: ['start start', 'end start'],
   });
-  const heroBgY = useTransform(heroProgress, [0, 1], ['0%', '30%']);
+  // Sky / sun / moon / glow used to share `heroBgY` (30% parallax). Removed
+  // 2026-04-25 — those elements are decorative far-background; their motion
+  // is subtle and was costing 4 extra motion.div instances on the LCP path.
+  // Keeping clouds (more visible) + hero text (load-bearing fade-on-scroll)
+  // parallax intact.
   const cloudsY = useTransform(heroProgress, [0, 1], ['0%', '20%']);
   const contentY = useTransform(heroProgress, [0, 1], ['0%', '15%']);
   const heroOpacity = useTransform(heroProgress, [0, 0.8], [1, 0]);
@@ -195,16 +199,13 @@ export default function Home() {
         ref={heroRef}
         className="relative overflow-hidden min-h-svh flex flex-col"
       >
-        {/* Sky gradient — day/night based on theme */}
-        <motion.div
-          style={{ y: heroBgY }}
-          className="absolute inset-0 bg-linear-to-b from-[#1a3a5c] via-[#2a6496] to-[#4ab0d8] dark:from-[#0a0f1a] dark:via-[#111827] dark:to-[#1e3a5f] will-change-transform"
-        />
+        {/* Sky gradient — day/night based on theme. Static (parallax removed
+            2026-04-25 — was costing motion.div instances on the LCP path). */}
+        <div className="absolute inset-0 bg-linear-to-b from-[#1a3a5c] via-[#2a6496] to-[#4ab0d8] dark:from-[#0a0f1a] dark:via-[#111827] dark:to-[#1e3a5f]" />
 
-        {/* Sun (light mode) */}
-        <motion.div
-          style={{ y: heroBgY }}
-          className="dark:hidden absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none will-change-transform"
+        {/* Sun (light mode). Static. */}
+        <div
+          className="dark:hidden absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none"
         >
           <div className="hero-sun-glow absolute -inset-16 sm:-inset-20 bg-amber-300/30 rounded-full blur-[60px]" />
           <div className="hero-sun-glow absolute -inset-8 sm:-inset-10 bg-yellow-200/40 rounded-full blur-[30px]" />
@@ -249,12 +250,11 @@ export default function Home() {
               </defs>
             </svg>
           </div>
-        </motion.div>
+        </div>
 
-        {/* Moon (dark mode) */}
-        <motion.div
-          style={{ y: heroBgY }}
-          className="hidden dark:block absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none will-change-transform"
+        {/* Moon (dark mode). Static. */}
+        <div
+          className="hidden dark:block absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none"
         >
           <div className="hero-moon-glow absolute -inset-16 sm:-inset-20 bg-blue-300/15 rounded-full blur-[60px]" />
           <div className="hero-moon-glow absolute -inset-8 sm:-inset-10 bg-slate-200/10 rounded-full blur-[30px]" />
@@ -282,11 +282,11 @@ export default function Home() {
               </radialGradient>
             </defs>
           </svg>
-        </motion.div>
+        </div>
 
-        <motion.div
-          style={{ y: heroBgY }}
-          className="absolute top-16 left-1/2 -translate-x-1/2 w-[500px] h-[300px] bg-amber-300/20 dark:bg-blue-400/10 rounded-full blur-[100px] pointer-events-none will-change-transform"
+        {/* Glow blob behind hero text. Static. */}
+        <div
+          className="absolute top-16 left-1/2 -translate-x-1/2 w-[500px] h-[300px] bg-amber-300/20 dark:bg-blue-400/10 rounded-full blur-[100px] pointer-events-none"
         />
 
         {/* Clouds */}
