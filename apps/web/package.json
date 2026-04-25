@@ -36,6 +36,7 @@
     "tailwind-merge": "^3.0.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.2",
     "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.49.0",
     "@tailwindcss/postcss": "^4.0.0",

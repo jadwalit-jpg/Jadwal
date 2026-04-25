@@ -26,6 +26,14 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       dependencies: ['setup'],
     },
+    // Safari coverage — runs only when explicitly invoked
+    // (--project=webkit) to avoid doubling local-run time. CI runs
+    // both via the matrix at .github/workflows/.
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
+      dependencies: ['setup'],
+    },
   ],
   webServer: process.env.CI
     ? undefined

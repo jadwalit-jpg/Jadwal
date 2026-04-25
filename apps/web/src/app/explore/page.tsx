@@ -431,9 +431,12 @@ function ExploreContent() {
         {/* Activity Grid — Skeleton or Cards.
             Skeleton count = 3 (was 6) to minimize the height delta between
             the loading state and the loaded state for typical result counts.
-            A larger skeleton block shrinks visibly when real results land,
-            pulling the footer up = CLS. With small/empty result sets this
-            matters most. */}
+            min-h-[800px] reserves vertical space so the footer can't shift
+            up when the loaded grid is shorter than the skeleton (CLS guard).
+            ~800px holds 1 row on desktop, ~2 rows on mobile, which covers
+            the typical 1-6 activity result range without leaving a visible
+            gap when real cards land. */}
+        <div className="min-h-[800px]">
         {isLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -572,6 +575,7 @@ function ExploreContent() {
             )}
           </div>
         )}
+        </div>
 
         {/* Pagination */}
         {totalPages > 1 && (
