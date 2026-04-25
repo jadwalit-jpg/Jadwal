@@ -1,10 +1,15 @@
 /**
- * Lighthouse CI config — 5 gate pages.
+ * Lighthouse CI config — 5 gate pages, PRODUCTION build.
  *
- * Run locally:
- *   1. npm run build
- *   2. npm start             (in another terminal)
- *   3. npx lhci autorun
+ * Run locally (recommended):
+ *   1. docker compose --profile lighthouse up -d --build web-prod
+ *      (builds the prod bundle in a one-off container on host port 3001;
+ *       leaves the dev server on :3000 untouched)
+ *   2. cd apps/web && npx lhci autorun
+ *   3. docker compose --profile lighthouse stop web-prod   # tear down
+ *
+ * For a quick dev-server pass (perf scores will be unreliable):
+ *   npx lhci autorun --config=lighthouserc.dev.js
  *
  * The thresholds below are the production launch gates. Adjust upward
  * once the app stabilises; do not loosen without a written reason.
@@ -23,12 +28,13 @@ module.exports = {
       // Public, no-auth pages only — every page must work without a session.
       // Activity-detail / vendor-dashboard / booking-flow are gated separately
       // because they require auth bootstrap (see Playwright skill §6).
+      // Port 3001 — the prod web-prod compose service. Dev stays on 3000.
       url: [
-        'http://localhost:3000/',
-        'http://localhost:3000/explore',
-        'http://localhost:3000/login',
-        'http://localhost:3000/register',
-        'http://localhost:3000/about',
+        'http://localhost:3001/',
+        'http://localhost:3001/explore',
+        'http://localhost:3001/login',
+        'http://localhost:3001/register',
+        'http://localhost:3001/about',
       ],
       numberOfRuns: 3,
       settings: {

@@ -156,6 +156,33 @@ services:
     depends_on:
       - api
 
+  # ─── Next.js Web (PRODUCTION build, opt-in via 'lighthouse' profile) ──
+  # Used for accurate Lighthouse / synthetic-perf runs that need a real
+  # production bundle (minified, code-split, no HMR overhead). NOT started
+  # by default — opt in with:
+  #   docker compose --profile lighthouse up -d --build web-prod
+  # Then audit at http://localhost:3001 (NOT 3000 — dev keeps that port).
+  # Tear down with: docker compose --profile lighthouse stop web-prod
+  #
+  # Build cost: ~5-10 min on first build, near-zero on rebuild thanks to
+  # the multi-stage Dockerfile's deps + builder layer caching.
+  web-prod:
+    profiles: ["lighthouse"]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked into the JS bundle at build time — must match the API URL
+        # the browser will hit. Localhost works because Lighthouse runs in
+        # a Chrome instance on the host that can reach 127.0.0.1:4000.
+        NEXT_PUBLIC_API_URL: http://localhost:4000/api
+    container_name: jadwal-web-prod
+    ports:
+      # 3001 → 3000 — keeps dev's :3000 untouched.
+      - "3001:3000"
+    depends_on:
+      - api
+
   # ─── Prisma Studio (visual DB browser at http://localhost:5556) ──
   # Reuses the api image so it has Prisma + socat already installed.
   # Prisma Studio binds to 127.0.0.1 inside the container (Prisma 7
