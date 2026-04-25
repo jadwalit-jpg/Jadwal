@@ -32,10 +32,10 @@ module.exports = {
       ],
       numberOfRuns: 3,
       settings: {
-        // Throttling: simulate a realistic 4G phone — that is the lowest-end
-        // device our GCC customer base browses on. Don't loosen.
-        preset: 'mobile',
-        // Disable the storage-clearing prompt so unattended runs don't hang
+        // Mobile emulation + 4G slow-throttling are the Lighthouse defaults
+        // for mobile audits — that's the lowest-end device our GCC customer
+        // base browses on. No preset needed (the 'mobile' shorthand isn't
+        // a Lighthouse preset; only 'perf', 'experimental', 'desktop' are).
         chromeFlags: ['--no-sandbox', '--disable-dev-shm-usage'],
       },
     },
