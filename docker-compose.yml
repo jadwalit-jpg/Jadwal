@@ -1,0 +1,188 @@
+# ═══════════════════════════════════════════════════════════════
+# Jadwal — Local Development Environment
+# ═══════════════════════════════════════════════════════════════
+# Usage:
+#   1. Create apps/api/.env (copy from DOCUMENTATION.md §4)
+#   2. Create apps/web/.env (copy from DOCUMENTATION.md §4)
+#   3. docker compose up
+#
+# Ports (on your host machine):
+#   3000 → Web (Next.js)            http://localhost:3000
+#   4000 → API (NestJS)             http://localhost:4000/api
+#   5433 → PostgreSQL                postgres://postgres:admin123@localhost:5433/jadwal
+#   6379 → Redis                     redis://localhost:6379
+#   5556 → Prisma Studio             run separately: docker compose exec api npx prisma studio --port 5556 --hostname 0.0.0.0
+#
+# Hot reload: source files are bind-mounted, so edits on your host
+# are picked up by the containers automatically (polling enabled).
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ─── PostgreSQL ────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: jadwal-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB: jadwal
+    ports:
+      - "5433:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── Redis ─────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: jadwal-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── PgBouncer (connection pooler, SESSION mode = Prisma-safe) ─
+  # Opt-in for dev load testing; NOT routed by default — the api service
+  # below still talks direct to `db` via Docker DNS. To route through the
+  # bouncer, override DATABASE_URL in the api service to:
+  #   postgresql://postgres:admin123@pgbouncer:6432/jadwal?schema=public
+  # Host-side port 6433 is exposed so tools (psql, DBeaver) can connect.
+  #
+  # Mode rationale:
+  #   session     → every client connection holds a server connection for its
+  #                 whole lifetime. Prepared statements + advisory locks work
+  #                 unchanged. Use this until prod load shows we need more.
+  #   transaction → server connection is returned after each tx. Higher
+  #                 multiplexing, but Prisma needs ?pgbouncer=true on the
+  #                 DATABASE_URL to disable prepared statements, AND
+  #                 migrations need a separate direct connection URL.
+  pgbouncer:
+    image: edoburu/pgbouncer:1.23.1
+    container_name: jadwal-pgbouncer
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: admin123
+      DB_NAME: jadwal
+      POOL_MODE: session
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 40
+      MIN_POOL_SIZE: 10
+      RESERVE_POOL_SIZE: 10
+      RESERVE_POOL_TIMEOUT: 3
+      SERVER_IDLE_TIMEOUT: 120
+      # Bouncer-level auth — keeps app DATABASE_URL compatible
+      AUTH_TYPE: scram-sha-256
+    ports:
+      - "6433:6432"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── NestJS API (dev mode, hot reload) ────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    container_name: jadwal-api
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    env_file:
+      # Loads all dev env vars from apps/api/.env
+      # (Google OAuth, JWT, PAY2M UAT, VAPID, rate limits, etc.)
+      - ./apps/api/.env
+    environment:
+      # Override ONLY the localhost-based connection strings so
+      # the API container reaches db and redis via Docker DNS.
+      # All other env vars (CORS, FRONTEND_URL, API_URL) stay as
+      # localhost — they're for the browser, not the container.
+      DATABASE_URL: postgresql://postgres:admin123@db:5432/jadwal?schema=public
+      REDIS_URL: redis://redis:6379
+    volumes:
+      # Bind-mount source for hot reload.
+      # This also covers apps/api/uploads/ — uploaded images land on the host
+      # filesystem so they persist across container rebuilds AND so any images
+      # already on disk (from past dev sessions) remain visible inside the container.
+      - ./apps/api:/app/apps/api
+      # Anonymous volumes to prevent host node_modules from leaking into the container
+      # (container was built with its own node_modules layout)
+      - /app/node_modules
+      - /app/apps/api/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─── Next.js Web (dev mode, hot reload) ───────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile.dev
+    container_name: jadwal-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      # Loads NEXT_PUBLIC_API_URL and NEXT_PUBLIC_VAPID_KEY
+      - ./apps/web/.env
+    volumes:
+      # Bind-mount source for hot reload
+      - ./apps/web:/app/apps/web
+      # Anonymous volumes — same pattern as api
+      - /app/node_modules
+      - /app/apps/web/node_modules
+      # Keep Next.js build cache inside the container (not on host)
+      - /app/apps/web/.next
+    depends_on:
+      - api
+
+  # ─── Prisma Studio (visual DB browser at http://localhost:5556) ──
+  # Reuses the api image so it has Prisma + socat already installed.
+  # Prisma Studio binds to 127.0.0.1 inside the container (Prisma 7
+  # removed --hostname), so socat forwards 0.0.0.0:5556 → 127.0.0.1:5555
+  # in the same container. No extra steps for the tester.
+  prisma-studio:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    container_name: jadwal-prisma-studio
+    restart: unless-stopped
+    ports:
+      - "5556:5556"
+    environment:
+      DATABASE_URL: postgresql://postgres:admin123@db:5432/jadwal?schema=public
+    volumes:
+      - ./apps/api:/app/apps/api
+      - /app/node_modules
+      - /app/apps/api/node_modules
+    working_dir: /app/apps/api
+    command: >
+      sh -c "npx prisma studio --port 5555 --browser none &
+             exec socat TCP-LISTEN:5556,fork,reuseaddr TCP:127.0.0.1:5555"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db-data:
+  redis-data:

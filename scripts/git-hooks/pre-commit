@@ -1,0 +1,33 @@
+#!/bin/sh
+# Pre-commit hook — gitleaks scan on staged changes.
+#
+# Blocks the commit if a secret (API key, token, password, etc.) is found
+# in staged hunks. CI also runs gitleaks on every push, but catching locally
+# means the secret never leaves the machine — even a later force-push can't
+# fully scrub it from GitHub caches / forks.
+
+# Resolve gitleaks: PATH first, then winget default install location
+if command -v gitleaks >/dev/null 2>&1; then
+  GITLEAKS="gitleaks"
+elif [ -x "$USERPROFILE/AppData/Local/Microsoft/WinGet/Links/gitleaks.exe" ]; then
+  GITLEAKS="$USERPROFILE/AppData/Local/Microsoft/WinGet/Links/gitleaks.exe"
+else
+  echo "gitleaks not found - skipping pre-commit scan (install via 'winget install gitleaks')"
+  exit 0
+fi
+
+# v8.30+: `git --staged` scans staged diffs (replaces the old `protect` cmd).
+# --redact keeps found secret values out of the terminal output.
+"$GITLEAKS" git --staged --redact
+rc=$?
+
+if [ $rc -ne 0 ]; then
+  echo ""
+  echo "gitleaks found a secret in the staged changes - commit blocked."
+  echo "  Remove the secret, then 'git add' again."
+  echo "  If this is a false positive, add an allowlist rule to .gitleaks.toml."
+  echo "  To bypass (only for genuine FPs): git commit --no-verify"
+  exit 1
+fi
+
+exit 0

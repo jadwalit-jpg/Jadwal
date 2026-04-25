@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "loyalty_config" ALTER COLUMN "pointsPerQar" SET DATA TYPE DECIMAL(10,4),
+ALTER COLUMN "qarPerPoint" SET DATA TYPE DECIMAL(10,4);

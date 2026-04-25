@@ -1,0 +1,92 @@
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
+import { SentryModule } from '@sentry/nestjs/setup';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { PrismaModule } from './prisma/prisma.module';
+import { RedisModule } from './redis/redis.module';
+import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
+import { AuthModule } from './auth/auth.module';
+import { UsersModule } from './users/users.module';
+import { AdminModule } from './admin/admin.module';
+import { CatalogModule } from './catalog/catalog.module';
+import { VendorModule } from './vendor/vendor.module';
+import { BookingsModule } from './bookings/bookings.module';
+import { GeoModule } from './geo/geo.module';
+import { EmailModule } from './email/email.module';
+import { SmsModule } from './sms/sms.module';
+import { PaymentModule } from './payment/payment.module';
+import { CommonModule } from './common/common.module';
+import { RequestLoggerMiddleware } from './common/middleware/request-logger.middleware';
+
+@Module({
+  imports: [
+    // SentryModule must be first so its global filter / interceptor is
+    // registered before any route handlers run. No-op when SENTRY_DSN is unset
+    // (see src/instrument.ts).
+    SentryModule.forRoot(),
+    ConfigModule.forRoot({ isGlobal: true }),
+    RedisModule,
+    CommonModule,
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService, RedisThrottlerStorage],
+      useFactory: (config: ConfigService, redisStorage: RedisThrottlerStorage) => {
+        // Rate limiting is ON by default — must be explicitly disabled via THROTTLE_ENABLED=false
+        const enabled = config.get('THROTTLE_ENABLED', 'true') === 'true';
+
+        if (!enabled) {
+          // In dev: effectively unlimited (100k req/min)
+          return { throttlers: [{ name: 'short', ttl: 60000, limit: 100000 }] };
+        }
+
+        return {
+          storage: redisStorage,
+          throttlers: [
+            {
+              name: 'short',
+              ttl: Number(config.get('THROTTLE_SHORT_TTL', '60000')),
+              limit: Number(config.get('THROTTLE_SHORT_LIMIT', '20')),
+            },
+            {
+              name: 'long',
+              ttl: Number(config.get('THROTTLE_LONG_TTL', '600000')),
+              limit: Number(config.get('THROTTLE_LONG_LIMIT', '100')),
+            },
+            // Public unauthenticated endpoints (availability calendar, etc.)
+            // More generous than auth endpoints — GET only, no write operations
+            {
+              name: 'availability',
+              ttl: Number(config.get('THROTTLE_AVAILABILITY_TTL', '60000')),
+              limit: Number(config.get('THROTTLE_AVAILABILITY_LIMIT', '30')),
+            },
+          ],
+        };
+      },
+    }),
+    PrismaModule,
+    AuthModule,
+    UsersModule,
+    AdminModule,
+    CatalogModule,
+    VendorModule,
+    BookingsModule,
+    GeoModule,
+    EmailModule,
+    SmsModule,
+    PaymentModule,
+  ],
+  controllers: [AppController],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
+})
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Global HTTP logger — runs for every route, including auth and static.
+    // Attaches x-request-id and emits one structured JSON log on finish.
+    consumer.apply(RequestLoggerMiddleware).forRoutes('*');
+  }
+}

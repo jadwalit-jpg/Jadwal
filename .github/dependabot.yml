@@ -1,0 +1,98 @@
+version: 2
+updates:
+  # Root monorepo (turbo, devDependencies)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Asia/Qatar"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "root"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # API (NestJS)
+  - package-ecosystem: "npm"
+    directory: "/apps/api"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Asia/Qatar"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "api"]
+    commit-message:
+      prefix: "chore(api-deps)"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+      # Group security-critical deps separately so humans review them
+      security-critical:
+        patterns:
+          - "bcrypt"
+          - "helmet"
+          - "cookie-parser"
+          - "@nestjs/jwt"
+          - "@nestjs/passport"
+          - "passport*"
+          - "jsonwebtoken"
+          - "@nestjs/throttler"
+          - "class-validator"
+          - "class-transformer"
+          - "sharp"
+          - "file-type"
+          - "@prisma/client"
+          - "prisma"
+          - "@aws-sdk/*"
+
+  # Web (Next.js)
+  - package-ecosystem: "npm"
+    directory: "/apps/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Asia/Qatar"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "web"]
+    commit-message:
+      prefix: "chore(web-deps)"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+      next-react:
+        patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+          - "eslint-config-next"
+          - "@types/react*"
+
+  # GitHub Actions themselves (supply chain!)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "chore(actions)"
+
+  # Docker base images
+  - package-ecosystem: "docker"
+    directory: "/apps/api"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["dependencies", "docker"]
+  - package-ecosystem: "docker"
+    directory: "/apps/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["dependencies", "docker"]

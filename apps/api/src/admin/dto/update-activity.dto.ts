@@ -1,0 +1,128 @@
+import {
+  IsString,
+  IsNotEmpty,
+  IsNumber,
+  IsInt,
+  IsEnum,
+  IsOptional,
+  IsArray,
+  IsBoolean,
+  Min,
+  Max,
+  MaxLength,
+  ValidateNested,
+  ArrayMaxSize,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+
+enum BookingType {
+  HOURLY = 'HOURLY',
+  DAILY = 'DAILY',
+}
+
+enum PricingModel {
+  PER_PERSON = 'PER_PERSON',
+  PER_UNIT = 'PER_UNIT',
+}
+
+enum ActivityStatus {
+  PENDING = 'PENDING',
+  ACTIVE = 'ACTIVE',
+  BLOCKED = 'BLOCKED',
+}
+
+class ExtraServiceItem {
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @IsNumber()
+  @Min(0)
+  price!: number;
+
+  @IsBoolean()
+  perPerson!: boolean;
+}
+
+export class UpdateActivityDto {
+  @IsString() @IsNotEmpty() @MaxLength(200) @IsOptional()
+  titleEn?: string;
+
+  @IsString() @IsNotEmpty() @MaxLength(200) @IsOptional()
+  titleAr?: string;
+
+  @IsString() @IsNotEmpty() @MaxLength(120) @IsOptional()
+  slug?: string;
+
+  @IsString() @IsNotEmpty() @MaxLength(5000) @IsOptional()
+  descriptionEn?: string;
+
+  @IsString() @IsNotEmpty() @MaxLength(5000) @IsOptional()
+  descriptionAr?: string;
+
+  @IsString() @IsNotEmpty() @IsOptional()
+  categoryId?: string;
+
+  @IsString() @IsOptional()
+  subCategoryId?: string;
+
+  @IsNumber() @Min(0) @IsOptional()
+  pricePerPerson?: number;
+
+  @IsEnum(BookingType) @IsOptional()
+  bookingType?: BookingType;
+
+  @IsInt() @Min(1) @IsOptional()
+  durationValue?: number;
+
+  @IsEnum(PricingModel) @IsOptional()
+  pricingModel?: PricingModel;
+
+  @IsString() @IsOptional()
+  checkInTime?: string;
+
+  @IsString() @IsOptional()
+  checkOutTime?: string;
+
+  @IsInt() @Min(1) @Max(10000) @IsOptional()
+  capacity?: number;
+
+  @IsNumber() @IsOptional()
+  locationLat?: number;
+
+  @IsNumber() @IsOptional()
+  locationLng?: number;
+
+  @IsString() @IsNotEmpty() @MaxLength(500) @IsOptional()
+  locationAddress?: string;
+
+  @IsString() @IsNotEmpty() @IsOptional()
+  cityId?: string;
+
+  @IsString() @IsOptional()
+  coverImage?: string;
+
+  @IsArray() @IsString({ each: true }) @IsOptional()
+  gallery?: string[];
+
+  @IsString() @MaxLength(2000) @IsOptional()
+  cancellationPolicy?: string;
+
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => ExtraServiceItem) @ArrayMaxSize(50)
+  extraServices?: ExtraServiceItem[];
+
+  @IsArray() @IsString({ each: true }) @IsOptional()
+  activeDays?: string[];
+
+  @IsBoolean() @IsOptional()
+  hasUnits?: boolean;
+
+  @IsInt() @Min(0) @IsOptional()
+  unitCount?: number;
+
+  @IsInt() @Min(1) @IsOptional()
+  unitCapacity?: number;
+
+  @IsEnum(ActivityStatus) @IsOptional()
+  status?: ActivityStatus;
+}

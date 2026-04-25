@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+.next/
+out/
+build/
+
+# Turbo
+.turbo/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Debug logs
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Test artifacts
+test-results/
+playwright-report/
+
+# Dev uploads — user-generated content lives on the host filesystem (dev)
+# or in S3 (prod). Never store uploaded files in git history.
+apps/api/uploads/
+
+# Agent / AI assistant configs (local only)
+.claude/
+.antigravity/
+
+# Graphify knowledge graph output (tool artifact)
+graphify-out/
+
+# Internal docs folder
+docs/
+
+# All markdown files except DOCUMENTATION.md
+# (keeps the repo clean for handoff — internal notes like CLAUDE.md, BOOKING_LOGIC.md,
+#  README.md, API_STRUCTURE.md, SECURITY.md, etc. stay local)
+*.md
+!/DOCUMENTATION.md

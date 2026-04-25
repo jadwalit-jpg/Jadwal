@@ -1,0 +1,27 @@
+{
+  "name": "jadwal-mono",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "db:migrate": "npm run migrate:dev --workspace api",
+    "db:studio": "npx prisma studio --schema apps/api/prisma/schema.prisma",
+    "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true"
+  },
+  "packageManager": "npm@11.6.2",
+  "devDependencies": {
+    "turbo": "latest"
+  },
+  "overrides": {
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  }
+}

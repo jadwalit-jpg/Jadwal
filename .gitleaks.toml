@@ -1,0 +1,30 @@
+# Gitleaks configuration for the Jadwal monorepo.
+# Inherits the default ruleset; adds an allowlist for known false positives.
+#
+# Reference: https://github.com/gitleaks/gitleaks#configuration
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist for documented false positives (test fixtures, placeholders)"
+
+# Test fixtures inside Jest specs use throwaway VAPID/JWT values that look
+# like real keys but are generated solely for testing. They are not used
+# anywhere except inside the test runtime.
+paths = [
+  '''apps/api/test/unit/web-push-service\.spec\.ts''',
+  '''apps/api/test/unit/auth-strategies-guards\.spec\.ts''',
+]
+
+# Belt-and-braces: also allow specific stopwords that show up in test
+# placeholders so a future test file containing the same literal does not
+# trip the scanner.
+stopwords = [
+  "REPLACE_WITH",
+  "GENERATE_NEW_KEYS",
+  "YOUR_REAL",
+  "YOUR_SECRET_WORD",
+  "your-prod-secret",
+  "STRONG_PASSWORD",
+]

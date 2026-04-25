@@ -1,0 +1,287 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_VERSION: 20
+
+jobs:
+  # ─── Stage 1: Type Check ────────────────────────────────────────
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: apps/api
+        run: npx prisma generate
+
+      - name: Type check API
+        working-directory: apps/api
+        run: npx tsc --noEmit
+
+      - name: Type check Web
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_URL: "https://api.placeholder.com/api"
+        run: npx tsc --noEmit
+
+  # ─── Stage 2: Dependency Audit ────────────────────────────────────
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: npm audit (API)
+        working-directory: apps/api
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: npm audit (Web)
+        working-directory: apps/web
+        run: npm audit --omit=dev --audit-level=high
+
+  # ─── Stage 3: Secret Detection ──────────────────────────────────
+  secrets:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── Stage 4: Prisma Schema Check ──────────────────────────────
+  prisma:
+    name: Prisma Schema Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        working-directory: apps/api
+        run: npx prisma validate
+
+      - name: Check Prisma client generation
+        working-directory: apps/api
+        run: npx prisma generate
+
+  # ─── Stage 5: Security Scan ─────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Scan for hardcoded secrets, localhost, dev artifacts
+      - name: No localhost in source code
+        run: |
+          FOUND=$(grep -rn "localhost" apps/api/src/ apps/web/src/ --include="*.ts" --include="*.tsx" | grep -v "// " | grep -v "node_modules" || true)
+          if [ -n "$FOUND" ]; then
+            echo "❌ FAILED: localhost found in source code:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✅ No localhost in source code"
+
+      - name: No dev artifacts (devMode, devOtp, mock, sandbox)
+        run: |
+          FOUND=$(grep -rni "devMode\|devOtp\|dev_\b\|mock\b\|sandbox\b\|fake\b" apps/api/src/ apps/web/src/ --include="*.ts" --include="*.tsx" | grep -v "node_modules" | grep -v "// " | grep -v ".d.ts" || true)
+          if [ -n "$FOUND" ]; then
+            echo "❌ FAILED: Dev artifacts found:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✅ No dev artifacts"
+
+      - name: No console.log in API source
+        run: |
+          FOUND=$(grep -rn "console\.log" apps/api/src/ --include="*.ts" | grep -v "node_modules" || true)
+          if [ -n "$FOUND" ]; then
+            echo "❌ FAILED: console.log found in API source:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✅ No console.log in API"
+
+      - name: No raw SQL queries
+        run: |
+          FOUND=$(grep -rn "queryRaw\|executeRaw" apps/api/src/ --include="*.ts" | grep -v "node_modules" || true)
+          if [ -n "$FOUND" ]; then
+            echo "❌ FAILED: Raw SQL found:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✅ No raw SQL"
+
+      - name: No dangerouslySetInnerHTML
+        run: |
+          FOUND=$(grep -rn "dangerouslySetInnerHTML" apps/web/src/ --include="*.tsx" | grep -v "node_modules" || true)
+          if [ -n "$FOUND" ]; then
+            echo "❌ FAILED: dangerouslySetInnerHTML found:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✅ No dangerouslySetInnerHTML"
+
+      - name: No !== production pattern
+        run: |
+          FOUND=$(grep -rn "!== 'production'" apps/api/src/ apps/web/src/ --include="*.ts" --include="*.tsx" | grep -v "node_modules" || true)
+          if [ -n "$FOUND" ]; then
+            echo "❌ FAILED: Dangerous !== 'production' pattern found:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✅ No !== 'production' pattern"
+
+      - name: No hardcoded bcrypt rounds
+        run: |
+          FOUND=$(grep -rn "bcrypt\.hash.*[0-9][0-9]*)" apps/api/src/ --include="*.ts" | grep -v "node_modules" | grep -v "BCRYPT_ROUNDS" || true)
+          if [ -n "$FOUND" ]; then
+            echo "❌ FAILED: Hardcoded bcrypt rounds found:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✅ No hardcoded bcrypt rounds"
+
+      - name: No seed files in production
+        run: |
+          if ls apps/api/prisma/seed*.ts 2>/dev/null; then
+            echo "❌ FAILED: Seed files found — must be deleted before production"
+            exit 1
+          fi
+          echo "✅ No seed files"
+
+      - name: No CORS wildcards
+        run: |
+          FOUND=$(grep -rn "origin.*true\|origin.*\*" apps/api/src/ --include="*.ts" | grep -v "node_modules" || true)
+          if [ -n "$FOUND" ]; then
+            echo "❌ FAILED: CORS wildcard found:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✅ No CORS wildcards"
+
+      - name: No include payment true (field leak)
+        run: |
+          FOUND=$(grep -rn "include.*payment.*true" apps/api/src/ --include="*.ts" | grep -v "node_modules" | grep -v "select" || true)
+          if [ -n "$FOUND" ]; then
+            echo "❌ FAILED: include payment true found (leaks gateway fields):"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✅ No payment field leaks"
+
+      - name: .env files are gitignored
+        run: |
+          if git ls-files --cached apps/api/.env apps/web/.env 2>/dev/null | grep -q ".env"; then
+            echo "❌ FAILED: .env files are tracked by git"
+            exit 1
+          fi
+          echo "✅ .env files not tracked"
+
+  # ─── Stage 3: Build Docker Images ──────────────────────────────
+  build-api:
+    name: Build API Image
+    runs-on: ubuntu-latest
+    needs: [typecheck, audit, secrets, prisma, security]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API Docker image
+        working-directory: apps/api
+        run: docker build -t jadwal-api:${{ github.sha }} .
+
+  build-web:
+    name: Build Web Image
+    runs-on: ubuntu-latest
+    needs: [typecheck, audit, secrets, prisma, security]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Web Docker image
+        working-directory: apps/web
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL || 'https://api.jadwal.com/api' }} \
+            -t jadwal-web:${{ github.sha }} .
+
+  # ─── Stage 4: Deploy to AWS (main branch only) ─────────────────
+  # Uses short-lived OIDC credentials — no long-lived AWS access keys stored
+  # in GitHub secrets. The role ARN is public (it's just an identifier; trust
+  # is enforced by the OIDC trust policy in AWS).
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    needs: [build-api, build-web]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      id-token: write   # required for OIDC federation
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: github-actions-deploy-${{ github.run_id }}
+          aws-region: ${{ secrets.AWS_REGION || 'me-south-1' }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push API image
+        working-directory: apps/api
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build -t $ECR_REGISTRY/jadwal-api:${{ github.sha }} -t $ECR_REGISTRY/jadwal-api:latest .
+          docker push $ECR_REGISTRY/jadwal-api:${{ github.sha }}
+          docker push $ECR_REGISTRY/jadwal-api:latest
+
+      - name: Build & push Web image
+        working-directory: apps/web
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }} \
+            -t $ECR_REGISTRY/jadwal-web:${{ github.sha }} -t $ECR_REGISTRY/jadwal-web:latest .
+          docker push $ECR_REGISTRY/jadwal-web:${{ github.sha }}
+          docker push $ECR_REGISTRY/jadwal-web:latest
+
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service --cluster jadwal --service jadwal-api --force-new-deployment
+          aws ecs update-service --cluster jadwal --service jadwal-web --force-new-deployment

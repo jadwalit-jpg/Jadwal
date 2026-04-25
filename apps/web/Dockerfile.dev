@@ -1,0 +1,30 @@
+# ═══════════════════════════════════════════════════════════════
+# Development Dockerfile — Next.js web with hot reload
+# Used ONLY by docker-compose.yml for local dev.
+# Production uses apps/web/Dockerfile (multi-stage, standalone).
+# ═══════════════════════════════════════════════════════════════
+
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+# ─── Install workspace dependencies ────────────────────────────
+# Turborepo hoists shared deps to the root node_modules.
+COPY package.json package-lock.json turbo.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+
+RUN npm install
+
+# ─── Runtime config ────────────────────────────────────────────
+WORKDIR /app/apps/web
+
+# File watcher polling — required for reliable hot reload on
+# Windows/Mac Docker Desktop (filesystem events don't cross the VM).
+ENV WATCHPACK_POLLING=true
+ENV CHOKIDAR_USEPOLLING=true
+
+EXPOSE 3000
+
+# Next.js dev server with hot module reload
+CMD ["npm", "run", "dev"]

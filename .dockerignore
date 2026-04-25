@@ -1,0 +1,70 @@
+# Root .dockerignore — used by dev Dockerfiles (context = repo root)
+# Keeps build context small and prevents secrets from leaking into image layers.
+
+# ─── Secrets ───────────────────────────────────────────────────
+# CRITICAL: never ship .env files into images
+**/.env
+**/.env.*
+!**/.env.example
+
+# ─── Dependencies (installed inside container) ─────────────────
+**/node_modules
+**/.pnp
+**/.pnp.js
+
+# ─── Build outputs ─────────────────────────────────────────────
+**/dist
+**/.next
+**/out
+**/build
+**/.turbo
+**/*.tsbuildinfo
+
+# ─── Dev-only artifacts ────────────────────────────────────────
+**/uploads
+**/test-results
+**/playwright-report
+**/coverage
+**/*.log
+**/npm-debug.log*
+
+# ─── Git + IDE ─────────────────────────────────────────────────
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# ─── Agent / tool configs (local only) ─────────────────────────
+.claude
+.antigravity
+graphify-out
+docs
+
+# ─── Docs and internal notes (dev image doesn't need them) ────
+*.md
+!DOCUMENTATION.md
+
+# ─── Docker files themselves ──────────────────────────────────
+docker-compose.yml
+docker-compose.*.yml
+
+# ─── Stray package-manager artifacts ───────────────────────────
+# Repo uses npm workspaces (see root package.json). Any pnpm-lock.yaml
+# or yarn.lock in apps/* is a leftover from an experiment — the Dockerfile
+# treats package-lock.json at the root as the source of truth. Keeping these
+# out of the build context prevents npm from getting confused about the
+# resolver to use.
+**/pnpm-lock.yaml
+**/yarn.lock
+
+# ─── Test + CI artifacts (prod image doesn't need them) ────────
+**/test
+**/*.spec.ts
+**/*.test.ts
+**/jest.config.js
+**/jest.integration.config.js
+**/e2e
+**/playwright.config.ts

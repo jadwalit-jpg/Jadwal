@@ -1,0 +1,2433 @@
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
+import { PrismaService } from '../prisma/prisma.service';
+import { PaginationDto } from './dto/query-params.dto';
+import { LoyaltyUserQueryDto } from './dto/loyalty-user-query.dto';
+import { Prisma } from '@prisma/client';
+import { CreateCountryDto, UpdateCountryDto } from './dto/country.dto';
+import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
+import { CreateCityDto, UpdateCityDto } from './dto/city.dto';
+import { CreateTrendingEventDto, UpdateTrendingEventDto } from './dto/trending-event.dto';
+import { CreateCouponDto } from './dto/create-coupon.dto';
+import { UpdatePlatformSettingsDto } from './dto/platform-settings.dto';
+import { UpdateActivityDto } from './dto/update-activity.dto';
+import { NotificationService } from '../common/services/notification.service';
+import { LoyaltyService } from '../common/services/loyalty.service';
+import { AvailabilityCacheService } from '../redis/availability-cache.service';
+import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
+import { refundCouponUsage } from '../bookings/bookings.service';
+
+@Injectable()
+export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private notificationService: NotificationService,
+    private loyalty: LoyaltyService,
+    private availabilityCache: AvailabilityCacheService,
+  ) {}
+
+  // ─── Admin Profile ──────────────────────────────────────────
+  async getAdminProfile(userId: string) {
+    return this.prisma.client.user.findUnique({
+      where: { id: userId },
+      select: { id: true, fullName: true, email: true, phone: true, role: true, createdAt: true },
+    });
+  }
+
+  async updateAdminProfile(userId: string, data: { fullName?: string; phone?: string }) {
+    const allowed: Record<string, any> = {};
+    if (data.fullName) allowed.fullName = data.fullName;
+    if (data.phone !== undefined) allowed.phone = data.phone;
+    return this.prisma.client.user.update({
+      where: { id: userId },
+      data: allowed,
+      select: { id: true, fullName: true, email: true, phone: true },
+    });
+  }
+
+  async changeAdminPassword(userId: string, currentPassword: string, newPassword: string) {
+    const db = this.prisma.client;
+    // Opt back into password (globally omitted in PrismaService) for bcrypt compare.
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      omit: { password: false },
+    } as any) as { id: string; password: string | null } | null;
+    if (!user) throw new NotFoundException('User not found');
+    if (!user.password) throw new ForbiddenException('This account uses Google sign-in and has no password.');
+    const valid = await bcrypt.compare(currentPassword, user.password);
+    if (!valid) throw new ForbiddenException('Current password is incorrect');
+    const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
+    const hash = await bcrypt.hash(newPassword, bcryptRounds);
+    await db.$transaction([
+      db.user.update({ where: { id: userId }, data: { password: hash } }),
+      // Invalidate all refresh tokens — forces re-login on all other sessions
+      db.refreshToken.deleteMany({ where: { userId } }),
+    ]);
+    return { message: 'Password updated successfully. Please log in again.' };
+  }
+
+  // ─── Loyalty (WANASA) ─────────────────────────────────────────
+  async getLoyaltyConfig() {
+    const db = this.prisma.client;
+    let config = await db.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
+    if (!config) {
+      config = await db.loyaltyConfig.create({ data: { id: 'singleton' } });
+    }
+    return config;
+  }
+
+  async updateLoyaltyConfig(data: { pointsPerQar?: number; qarPerPoint?: number; minRedemption?: number }) {
+    return this.prisma.client.loyaltyConfig.upsert({
+      where: { id: 'singleton' },
+      update: data,
+      create: { id: 'singleton', ...data },
+    });
+  }
+
+  async getLoyaltyUsers(query: LoyaltyUserQueryDto) {
+    const db = this.prisma.client;
+    const { page = 1, limit = 20, search, sort = 'desc' } = query;
+    const skip = (page - 1) * limit;
+    const where: any = { role: 'CUSTOMER' };
+    if (search) {
+      where.OR = [
+        { fullName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    // `sort` is whitelisted at the DTO ('desc' | 'asc'), so no risk of a
+    // caller injecting arbitrary Prisma order directions.
+    const [users, total] = await Promise.all([
+      db.user.findMany({
+        where,
+        select: { id: true, fullName: true, email: true, loyaltyPoints: true },
+        orderBy: { loyaltyPoints: sort },
+        skip,
+        take: limit,
+      }),
+      db.user.count({ where }),
+    ]);
+    return { data: users, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  /**
+   * Admin manual adjustment to a user's loyalty-point balance.
+   * Writes a LoyaltyLedger row with source ADMIN_ADJUST (actor = the admin).
+   * Delta is bounded by DTO (-1_000_000..+1_000_000) and clamped to not
+   * drive the balance below zero — LoyaltyService records both the
+   * requested delta and the applied delta in the reason line when clamped.
+   */
+  async adjustUserPoints(userId: string, delta: number, reason: string, actorId: string) {
+    return this.prisma.client.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({ where: { id: userId }, select: { id: true } });
+      if (!user) throw new NotFoundException('User not found');
+
+      const result = await this.loyalty.adjust(tx, {
+        userId,
+        delta,
+        actorType: 'ADMIN',
+        actorId,
+        reason,
+      });
+
+      const fresh = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { id: true, fullName: true, loyaltyPoints: true },
+      });
+      return { ...fresh, appliedDelta: result.appliedDelta };
+    });
+  }
+
+  // ─── Dashboard Stats ────────────────────────────────────────
+  async getDashboardStats() {
+    const db = this.prisma.client;
+
+    const [
+      totalUsers,
+      totalVendors,
+      activeVendors,
+      pendingVendors,
+      totalActivities,
+      pendingActivities,
+      totalBookings,
+      confirmedBookings,
+      revenueResult,
+      volumeResult,
+      // New: financial-health KPIs. See the matching cards on the admin
+      // dashboard — platform revenue decomposition + liability exposure.
+      commissionResult,
+      serviceFeeResult,
+      pendingVendorBalance,
+      pointsIssued,
+      refundPendingStats,
+    ] = await Promise.all([
+      db.user.count(),
+      db.vendor.count(),
+      db.vendor.count({ where: { status: 'ACTIVE' } }),
+      db.vendor.count({ where: { status: 'PENDING' } }),
+      db.activity.count(),
+      db.activity.count({ where: { status: 'PENDING' } }),
+      db.booking.count(),
+      db.booking.count({ where: { status: 'CONFIRMED' } }),
+      // Cash collected (PAY2M-settled portion). Wanasa-only bookings have
+      // payment.amount=0 so they correctly do NOT count toward cash revenue.
+      db.payment.aggregate({ where: { status: 'SUCCESS' }, _sum: { amount: true } }),
+      // Full platform volume. totalPrice already carries the vendor's
+      // full earned amount (regardless of how the customer paid), so we
+      // only add back couponDiscount to reconstruct the nominal activity
+      // value. pointsDiscount is NOT added — it's a customer-side saving,
+      // not a deduction from vendor revenue.
+      db.booking.aggregate({
+        where: { payment: { status: 'SUCCESS' } },
+        _sum: { totalPrice: true, pointsDiscount: true, couponDiscount: true },
+      }),
+      // Commission earned by the platform — lifetime gross margin on
+      // every successfully-paid booking regardless of payout status.
+      db.booking.aggregate({
+        where: { payment: { status: 'SUCCESS' } },
+        _sum: { commissionAmount: true },
+      }),
+      // Service fee earned by the platform. Zero on Wanasa-paid bookings
+      // (fee is waived as a loyalty incentive), so this represents only
+      // the cash-path fee revenue.
+      db.booking.aggregate({
+        where: { payment: { status: 'SUCCESS' } },
+        _sum: { serviceFee: true },
+      }),
+      // Pending vendor payout balance: what the platform OWES vendors.
+      // SUCCESS + UNPAID bookings' vendor share. When this grows large,
+      // admin needs to process payouts (or the platform is building up
+      // a liability balance).
+      db.booking.aggregate({
+        where: { payment: { status: 'SUCCESS', payoutStatus: 'UNPAID' } },
+        _sum: { totalPrice: true, commissionAmount: true },
+      }),
+      // Total loyalty points currently in circulation — the platform's
+      // redemption liability. Each point is worth qarPerPoint in future
+      // booking credit, so this × qarPerPoint = QAR on the hook.
+      db.user.aggregate({ _sum: { loyaltyPoints: true } }),
+      // Refund exposure: PENDING refund decisions awaiting vendor/admin
+      // action. High count = risk of customer-support escalations.
+      db.payment.aggregate({
+        where: { status: 'REFUND_PENDING' },
+        _sum: { amount: true },
+        _count: true,
+      }),
+    ]);
+
+    // wanasaFundedValue = how many QAR of customer spend came via points.
+    // Still reported as an audit-only metric so admin can see what portion
+    // of overall volume flowed through loyalty redemption — but it's NOT
+    // added to totalPrice (that would double-count under the new vendor
+    // accounting).
+    const wanasaFundedValue = Number(volumeResult._sum.pointsDiscount ?? 0);
+    const bookingsValue =
+      Number(volumeResult._sum.totalPrice ?? 0) +
+      Number(volumeResult._sum.couponDiscount ?? 0);
+    const totalCommission = Number(commissionResult._sum.commissionAmount ?? 0);
+    const totalServiceFees = Number(serviceFeeResult._sum.serviceFee ?? 0);
+    const pendingPayoutOwed =
+      Number(pendingVendorBalance._sum.totalPrice ?? 0) -
+      Number(pendingVendorBalance._sum.commissionAmount ?? 0);
+    const totalPointsIssued = Number(pointsIssued._sum.loyaltyPoints ?? 0);
+
+    return {
+      totalUsers,
+      totalVendors,
+      activeVendors,
+      pendingVendors,
+      totalActivities,
+      pendingActivities,
+      totalBookings,
+      confirmedBookings,
+      totalRevenue: revenueResult._sum.amount ?? 0,
+      bookingsValue,
+      wanasaFundedValue,
+      // New financial KPIs
+      totalCommission,
+      totalServiceFees,
+      pendingPayoutOwed,
+      totalPointsIssued,
+      refundPendingCount: refundPendingStats._count ?? 0,
+      refundPendingAmount: Number(refundPendingStats._sum.amount ?? 0),
+    };
+  }
+
+  // ─── Users ──────────────────────────────────────────────────
+  async getUsers(query: PaginationDto) {
+    const db = this.prisma.client;
+    const { page = 1, limit = 20, search, status } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.UserWhereInput = {};
+    if (search) {
+      where.OR = [
+        { fullName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (status) {
+      where.role = status as any;
+    }
+
+    const [users, total] = await Promise.all([
+      db.user.findMany({
+        where,
+        select: {
+          id: true, fullName: true, email: true, phone: true,
+          role: true, isDeactivated: true, emailVerified: true, phoneVerified: true, createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      db.user.count({ where }),
+    ]);
+
+    return { data: users, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async updateUserRole(userId: string, role: any) {
+    const db = this.prisma.client;
+    // Protect admin accounts from role changes
+    const target = await db.user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (!target) throw new NotFoundException('User not found');
+    if (target.role === 'ADMIN') throw new ForbiddenException('Cannot modify admin user roles');
+
+    const result = await db.user.update({
+      where: { id: userId },
+      data: { role },
+      select: { id: true, fullName: true, email: true, role: true },
+    });
+    // Invalidate all sessions so the user gets a new JWT with the updated role
+    await db.refreshToken.deleteMany({ where: { userId } });
+    return result;
+  }
+
+  async deactivateUser(userId: string, isDeactivated: boolean) {
+    const db = this.prisma.client;
+    // Protect admin accounts from deactivation
+    const target = await db.user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (!target) throw new NotFoundException('User not found');
+    if (target.role === 'ADMIN') throw new ForbiddenException('Cannot deactivate admin users');
+
+    const result = await db.user.update({
+      where: { id: userId },
+      data: { isDeactivated },
+      select: { id: true, fullName: true, email: true, isDeactivated: true },
+    });
+    // When deactivating, kill all sessions so the user is immediately logged out
+    if (isDeactivated) {
+      await db.refreshToken.deleteMany({ where: { userId } });
+    }
+    return result;
+  }
+
+  async deleteUser(userId: string) {
+    const db = this.prisma.client;
+    const user = await db.user.findUnique({ where: { id: userId }, select: { id: true, fullName: true, role: true } });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.role === 'ADMIN') throw new ForbiddenException('Cannot delete admin users');
+
+    // Refuse to hard-delete while any paid/pending booking still references
+    // this user — either as the paying customer or (if they're a vendor) as
+    // the fulfiller. The cascade below would drop bookings + payments and
+    // cost the real customer their refund. Use the cancel flows first, or
+    // suspend the vendor to trigger the automatic refund cascade.
+    const [asCustomer, asVendor] = await Promise.all([
+      db.booking.count({
+        where: { customerId: userId, status: { in: ['PENDING', 'CONFIRMED'] } },
+      }),
+      db.booking.count({
+        where: {
+          vendor: { userId },
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        },
+      }),
+    ]);
+    const totalBlocking = asCustomer + asVendor;
+    if (totalBlocking > 0) {
+      throw new ForbiddenException(
+        `Cannot delete user: ${totalBlocking} unresolved booking(s) (${asCustomer} as customer, ${asVendor} as vendor). Cancel or refund them first.`,
+      );
+    }
+
+    const affectedActivityIds = await db.$transaction(async (tx: any) => {
+      // If user is a vendor, cascade delete vendor data
+      const vendor = await tx.vendor.findUnique({ where: { userId }, select: { id: true } });
+      if (vendor) {
+        const activities = await tx.activity.findMany({ where: { vendorId: vendor.id }, select: { id: true } });
+        const activityIds = activities.map((a: any) => a.id);
+        if (activityIds.length > 0) {
+          await tx.review.deleteMany({ where: { activityId: { in: activityIds } } });
+        }
+        const bookings = await tx.booking.findMany({ where: { vendorId: vendor.id }, select: { paymentId: true } });
+        const paymentIds = bookings.map((b: any) => b.paymentId).filter(Boolean);
+        await tx.booking.deleteMany({ where: { vendorId: vendor.id } });
+        if (paymentIds.length > 0) {
+          await tx.payment.deleteMany({ where: { id: { in: paymentIds } } });
+        }
+        await tx.activity.deleteMany({ where: { vendorId: vendor.id } });
+        await tx.coupon.deleteMany({ where: { vendorId: vendor.id } });
+        await tx.payoutRequest.deleteMany({ where: { vendorId: vendor.id } });
+        await tx.vendor.delete({ where: { id: vendor.id } });
+      }
+
+      // Delete customer data: likes, reviews, bookings, payments, claimed coupons
+      await tx.like.deleteMany({ where: { userId } });
+      await tx.claimedCoupon.deleteMany({ where: { userId } });
+      await tx.notification.deleteMany({ where: { userId } });
+      await tx.pushSubscription.deleteMany({ where: { userId } });
+      await tx.refreshToken.deleteMany({ where: { userId } });
+      const customerBookings = await tx.booking.findMany({ where: { customerId: userId }, select: { paymentId: true, activityId: true } });
+      const custPaymentIds = customerBookings.map((b: any) => b.paymentId).filter(Boolean);
+      const affectedActivityIds = customerBookings.map((b: any) => b.activityId as string);
+      await tx.review.deleteMany({ where: { userId } });
+      await tx.booking.deleteMany({ where: { customerId: userId } });
+      if (custPaymentIds.length > 0) {
+        await tx.payment.deleteMany({ where: { id: { in: custPaymentIds } } });
+      }
+
+      await tx.user.delete({ where: { id: userId } });
+      return affectedActivityIds;
+    });
+
+    // If the user was a pure customer (no vendor profile), their activities
+    // survive and their cancelled bookings freed capacity — bump cache so
+    // in-flight calendar reads see it. For vendor users, the activities were
+    // deleted inside the tx so cached entries are already unreachable via the
+    // NotFound guard in getCalendarAvailability and will expire on TTL.
+    if (affectedActivityIds && affectedActivityIds.length > 0) {
+      void this.availabilityCache.invalidateMany(affectedActivityIds);
+    }
+
+    return { message: `User "${user.fullName}" has been deleted` };
+  }
+
+  // ─── Vendors ────────────────────────────────────────────────
+  async getVendorStats() {
+    const db = this.prisma.client;
+    const [total, active, pending, suspended] = await Promise.all([
+      db.vendor.count(),
+      db.vendor.count({ where: { status: 'ACTIVE' } }),
+      db.vendor.count({ where: { status: 'PENDING' } }),
+      db.vendor.count({ where: { status: 'SUSPENDED' } }),
+    ]);
+    return { total, active, pending, suspended };
+  }
+
+  async getVendors(query: PaginationDto) {
+    const db = this.prisma.client;
+    const { page = 1, limit = 20, search, status } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.VendorWhereInput = {};
+    if (search) {
+      where.OR = [
+        { businessNameEn: { contains: search, mode: 'insensitive' } },
+        { businessNameAr: { contains: search, mode: 'insensitive' } },
+        { user: { email: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+    if (status) {
+      where.status = status as any;
+    }
+
+    const [vendors, total] = await Promise.all([
+      db.vendor.findMany({
+        where,
+        include: {
+          user: { select: { fullName: true, email: true } },
+          country: { select: { nameEn: true, isoCode: true } },
+          _count: { select: { activities: true, bookings: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      db.vendor.count({ where }),
+    ]);
+
+    return { data: vendors, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async updateVendorStatus(vendorId: string, status: any, adminUserId?: string) {
+    const db = this.prisma.client;
+    const vendor = await db.vendor.update({
+      where: { id: vendorId },
+      data: { status },
+      // slug is needed so the approval notification links to the vendor's
+      // portal home. Without it the link resolves to /vendor/dashboard, which
+      // 404s because vendor pages are namespaced under /vendor/[slug]/*.
+      include: { user: { select: { id: true, fullName: true, email: true } } },
+    });
+    // When suspending a vendor, kill all their sessions immediately
+    if (status === 'SUSPENDED') {
+      await db.refreshToken.deleteMany({ where: { userId: vendor.user.id } });
+    }
+
+    // Notify vendor about status change
+    const typeMap: Record<string, 'VENDOR_APPROVED' | 'VENDOR_SUSPENDED'> = {
+      ACTIVE: 'VENDOR_APPROVED',
+      SUSPENDED: 'VENDOR_SUSPENDED',
+    };
+    if (typeMap[status]) {
+      this.notificationService.send({
+        userId: vendor.user.id,
+        type: typeMap[status],
+        title: status === 'ACTIVE' ? 'Account Approved' : 'Account Suspended',
+        message: status === 'ACTIVE'
+          ? 'Your vendor account has been approved. You can now create activities.'
+          : 'Your vendor account has been suspended. Please contact support.',
+        link: status === 'ACTIVE' ? `/vendor/${vendor.slug}/dashboard` : undefined,
+      });
+    }
+
+    // Vendor SUSPENDED cascade: their activities must be yanked from the catalog
+    // (status = INACTIVE) AND every future paid booking must be cancelled + refunded,
+    // otherwise the customer keeps a valid-looking booking for an event that will
+    // never happen because the vendor is locked out. adminUserId is required to
+    // attribute the cascade in audit + ledger — older callers without it skip the
+    // cascade (vendor activation and trust-level changes don't need this path).
+    if (status === 'SUSPENDED' && adminUserId) {
+      const activities = await db.activity.findMany({
+        where: { vendorId, status: { in: ['ACTIVE', 'PENDING'] } },
+        select: { id: true, titleEn: true },
+        take: 500,
+      });
+      let totalCancelled = 0;
+      for (const a of activities) {
+        await db.activity.update({
+          where: { id: a.id },
+          data: { status: 'INACTIVE' },
+        });
+        const res = await this.cascadeCancelFutureBookings(
+          a.id,
+          a.titleEn,
+          adminUserId,
+          'INACTIVE',
+          'Vendor account suspended',
+        );
+        totalCancelled += res.cancelled;
+      }
+      if (totalCancelled > 0) {
+        this.logger.log(
+          `Vendor suspend cascade: ${totalCancelled} booking(s) cancelled across ${activities.length} activity(ies) for vendor ${vendorId}`,
+        );
+      }
+    }
+
+    return vendor;
+  }
+
+  async updateVendorTrust(vendorId: string, trustLevel: any) {
+    return this.prisma.client.vendor.update({
+      where: { id: vendorId },
+      data: { trustLevel },
+      select: { id: true, businessNameEn: true, trustLevel: true },
+    });
+  }
+
+  async updateVendorCommission(vendorId: string, commissionPct: number | null | undefined) {
+    return this.prisma.client.vendor.update({
+      where: { id: vendorId },
+      data: { commissionPct: commissionPct ?? null },
+      select: { id: true, businessNameEn: true, commissionPct: true },
+    });
+  }
+
+  async deleteVendor(vendorId: string) {
+    const db = this.prisma.client;
+
+    const vendor = await db.vendor.findUnique({
+      where: { id: vendorId },
+      select: { id: true, userId: true, businessNameEn: true },
+    });
+    if (!vendor) throw new NotFoundException('Vendor not found');
+
+    // Refuse to hard-delete while there are unresolved paid / pending bookings.
+    // A cascade delete here would wipe bookings + payments — customers would
+    // silently lose their money. Admin must first suspend the vendor (which
+    // now cascades refunds) or cancel bookings individually.
+    const blockingBookings = await db.booking.count({
+      where: {
+        vendorId,
+        status: { in: ['PENDING', 'CONFIRMED'] },
+      },
+    });
+    if (blockingBookings > 0) {
+      throw new ForbiddenException(
+        `Cannot delete vendor: ${blockingBookings} unresolved booking(s) still exist. Suspend the vendor first to cascade-cancel and refund, then delete.`,
+      );
+    }
+
+    // Delete in transaction: vendor → user (cascading approach)
+    await db.$transaction(async (tx: any) => {
+      // Delete all activities' bookings, reviews first
+      const activities = await tx.activity.findMany({
+        where: { vendorId },
+        select: { id: true },
+      });
+      const activityIds = activities.map((a: any) => a.id);
+
+      if (activityIds.length > 0) {
+        await tx.review.deleteMany({ where: { activityId: { in: activityIds } } });
+        // Delete payments linked to bookings
+        const bookings = await tx.booking.findMany({
+          where: { vendorId },
+          select: { paymentId: true },
+        });
+        const paymentIds = bookings.map((b: any) => b.paymentId).filter(Boolean);
+        await tx.booking.deleteMany({ where: { vendorId } });
+        if (paymentIds.length > 0) {
+          await tx.payment.deleteMany({ where: { id: { in: paymentIds } } });
+        }
+        await tx.activity.deleteMany({ where: { vendorId } });
+      }
+
+      // Delete coupons
+      await tx.coupon.deleteMany({ where: { vendorId } });
+
+      // Delete vendor, then user
+      await tx.vendor.delete({ where: { id: vendorId } });
+      await tx.user.delete({ where: { id: vendor.userId } });
+    });
+
+    return { message: `Vendor "${vendor.businessNameEn}" and associated user have been deleted` };
+  }
+
+  // ─── Activities ─────────────────────────────────────────────
+  async getActivities(query: PaginationDto) {
+    const db = this.prisma.client;
+    const { page = 1, limit = 20, search, status } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.ActivityWhereInput = {};
+    if (search) {
+      where.OR = [
+        { titleEn: { contains: search, mode: 'insensitive' } },
+        { titleAr: { contains: search, mode: 'insensitive' } },
+        { vendor: { businessNameEn: { contains: search, mode: 'insensitive' } } },
+        { vendor: { businessNameAr: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+    if (status) {
+      where.status = status as any;
+    }
+
+    const [activities, total] = await Promise.all([
+      db.activity.findMany({
+        where,
+        include: {
+          vendor: { select: { businessNameEn: true, slug: true } },
+          country: { select: { nameEn: true, currencyCode: true } },
+          category: { select: { nameEn: true } },
+          city: { select: { nameEn: true } },
+          _count: { select: { bookings: true, reviews: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      db.activity.count({ where }),
+    ]);
+
+    return { data: activities, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async updateActivityStatus(
+    activityId: string,
+    status: any,
+    adminUserId: string,
+    reason?: string,
+  ) {
+    const db = this.prisma.client;
+
+    // Step 1: flip the activity status. Doing this BEFORE the cascade ensures
+    // no new bookings can be created while we refund the existing ones (catalog
+    // filters status=ACTIVE; booking creation re-checks status at create time).
+    const activity = await db.activity.update({
+      where: { id: activityId },
+      data: { status },
+      select: { id: true, titleEn: true, status: true, vendor: { select: { userId: true } } },
+    });
+
+    // Step 2: vendor-facing approval/rejection notification (existing behaviour).
+    const activityTypeMap: Record<string, 'ACTIVITY_APPROVED' | 'ACTIVITY_REJECTED'> = {
+      ACTIVE: 'ACTIVITY_APPROVED',
+      BLOCKED: 'ACTIVITY_REJECTED',
+    };
+    if (activityTypeMap[status] && activity.vendor) {
+      this.notificationService.send({
+        userId: activity.vendor.userId,
+        type: activityTypeMap[status],
+        title: status === 'ACTIVE' ? 'Activity Approved' : 'Activity Rejected',
+        message: `Your activity "${activity.titleEn}" has been ${status === 'ACTIVE' ? 'approved and is now live' : 'rejected by admin'}`,
+      });
+    }
+
+    // Step 3: when deactivating or blocking, cascade-cancel every future
+    // PENDING/CONFIRMED booking and refund the customer. Without this, paid
+    // customers would keep the booking record but the event would never happen
+    // and no money would return.
+    let cascadeResult: { cancelled: number; failed: number } | undefined;
+    if (status === 'INACTIVE' || status === 'BLOCKED') {
+      cascadeResult = await this.cascadeCancelFutureBookings(
+        activityId,
+        activity.titleEn,
+        adminUserId,
+        status,
+        reason,
+      );
+    }
+
+    return {
+      ...activity,
+      ...(cascadeResult
+        ? {
+            cancelledBookings: cascadeResult.cancelled,
+            ...(cascadeResult.failed > 0
+              ? { failedCancellations: cascadeResult.failed }
+              : {}),
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * Cascade-cancel every future PENDING/CONFIRMED booking for an activity
+   * that was just deactivated or blocked. Each booking runs in its own
+   * transaction with an optimistic-lock `updateMany` so concurrent writes
+   * (customer cancel, payment callback) can't double-refund. Failures are
+   * counted and logged per booking without aborting the whole batch — admin
+   * can re-run by toggling status if anything got stuck.
+   *
+   * DoS guard: capped at CASCADE_MAX bookings per invocation.
+   * Rate limit: enforced by the caller endpoint (RATE_LIMIT_WRITE).
+   */
+  private async cascadeCancelFutureBookings(
+    activityId: string,
+    activityTitle: string,
+    adminUserId: string,
+    reason: 'INACTIVE' | 'BLOCKED',
+    adminReason?: string,
+  ): Promise<{ cancelled: number; failed: number }> {
+    const db = this.prisma.client;
+    const CASCADE_MAX = 1000;
+
+    const bookings = await db.booking.findMany({
+      where: {
+        activityId,
+        status: { in: ['PENDING', 'CONFIRMED'] },
+        startDatetime: { gte: new Date() },
+      },
+      select: {
+        id: true,
+        ref: true,
+        customerId: true,
+        pointsRedeemed: true,
+        couponCode: true,
+        payment: { select: { id: true, status: true, amount: true } },
+      },
+      take: CASCADE_MAX,
+    });
+
+    if (bookings.length === 0) return { cancelled: 0, failed: 0 };
+
+    // Load loyalty config ONCE — qarPerPoint is platform-level, doesn't change
+    // during the batch. Avoids re-querying per booking.
+    let loyaltyConfig = await db.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
+    if (!loyaltyConfig) {
+      loyaltyConfig = await db.loyaltyConfig.create({ data: { id: 'singleton' } });
+    }
+    const qarPerPoint = loyaltyConfig.qarPerPoint.toNumber();
+
+    const reasonText = reason === 'BLOCKED' ? 'blocked' : 'deactivated';
+    // adminReason is already sanitized by the global SanitizePipe + DTO MaxLength(1000).
+    // We only ever store it, never render it back into notifications (customer-facing
+    // text uses the activity title + a fixed template), which rules out any
+    // reflected-XSS path even if sanitisation were ever bypassed.
+    const refundNote = adminReason
+      ? `Activity ${reasonText} by admin: ${adminReason.slice(0, 500)}`
+      : `Activity ${reasonText} by admin`;
+
+    let cancelled = 0;
+    let failed = 0;
+
+    for (const bk of bookings) {
+      try {
+        const wasPaid = bk.payment?.status === 'SUCCESS';
+        await db.$transaction(async (tx: any) => {
+          // Optimistic lock: only act if still cancellable. Prevents double-
+          // refund if the customer cancelled concurrently or the cron already
+          // expired a PENDING reservation.
+          const upd = await tx.booking.updateMany({
+            where: { id: bk.id, status: { in: ['PENDING', 'CONFIRMED'] } },
+            data: {
+              status: 'CANCELLED',
+              cancelledAt: new Date(),
+              cancelledBy: 'ADMIN',
+              refundDecisionAt: new Date(),
+              refundDecisionBy: adminUserId,
+              refundDecisionActor: 'ADMIN',
+              refundDecisionNote: refundNote,
+            },
+          });
+          if (upd.count === 0) return; // Raced out — nothing to refund.
+
+          if (bk.payment) {
+            if (bk.payment.status === 'SUCCESS') {
+              const paidAmount = Number(bk.payment.amount);
+              await tx.payment.update({
+                where: { id: bk.payment.id },
+                data: {
+                  status: 'REFUNDED',
+                  refundAmount: paidAmount,
+                  refundedAt: new Date(),
+                },
+              });
+              const refundPoints =
+                qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+              if (refundPoints > 0) {
+                await this.loyalty.refund(tx, {
+                  userId: bk.customerId,
+                  amount: refundPoints,
+                  bookingId: bk.id,
+                  source: 'ADMIN_REFUND_APPROVED',
+                  actorType: 'ADMIN',
+                  actorId: adminUserId,
+                  note: `Cascade ${reasonText}: ${paidAmount} refund → ${refundPoints} points, booking ${bk.ref}`,
+                });
+              }
+            } else if (bk.payment.status === 'PENDING') {
+              await tx.payment.update({
+                where: { id: bk.payment.id },
+                data: { status: 'FAILED' },
+              });
+            }
+          }
+
+          const redeemed = Number(bk.pointsRedeemed) || 0;
+          if (redeemed > 0) {
+            await this.loyalty.refund(tx, {
+              userId: bk.customerId,
+              amount: redeemed,
+              bookingId: bk.id,
+              source: 'CANCEL_REFUND_PAID',
+              actorType: 'ADMIN',
+              actorId: adminUserId,
+              note: `Returned redeemed points on cascade cancel for booking ${bk.ref}`,
+            });
+          }
+
+          await refundCouponUsage(tx, bk.couponCode, bk.customerId);
+        });
+
+        cancelled++;
+
+        // Customer notification — fire-and-forget. NotificationService has its
+        // own try/catch; pipeline failure never rolls back the refund.
+        const refundLine = wasPaid
+          ? ' Your payment has been refunded as Wanasa points to your balance.'
+          : '';
+        this.notificationService.send({
+          userId: bk.customerId,
+          type: 'BOOKING_CANCELLED',
+          title: 'Your booking was cancelled',
+          message: `"${activityTitle}" was ${reasonText} by Jadwal support, and your booking ${bk.ref} has been cancelled.${refundLine}`,
+          link: `/bookings/${bk.id}`,
+        });
+      } catch (err: unknown) {
+        // Log class name + business ID only — never the raw message. Admin
+        // can retry the batch by toggling status again; optimistic-lock on
+        // booking.status makes the retry safe.
+        const kind = err instanceof Error ? err.name : 'UnknownError';
+        this.logger.error(`Cascade cancel failed for booking ${bk.id} (${kind})`);
+        failed++;
+      }
+    }
+
+    if (cancelled > 0) {
+      void this.availabilityCache.invalidate(activityId);
+    }
+
+    return { cancelled, failed };
+  }
+
+  async toggleFeatured(activityId: string) {
+    const activity = await this.prisma.client.activity.findUnique({
+      where: { id: activityId },
+      select: { id: true, isFeatured: true, titleEn: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    return this.prisma.client.activity.update({
+      where: { id: activityId },
+      data: { isFeatured: !activity.isFeatured },
+      select: { id: true, titleEn: true, isFeatured: true },
+    });
+  }
+
+  // ─── Bookings ───────────────────────────────────────────────
+  async getBookings(query: PaginationDto) {
+    const db = this.prisma.client;
+    const { page = 1, limit = 20, search, status, paymentStatus } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.BookingWhereInput = {};
+    if (search) {
+      where.OR = [
+        { ref: { contains: search, mode: 'insensitive' } },
+        { customer: { fullName: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+    if (status) {
+      where.status = status as any;
+    }
+    if (paymentStatus) {
+      // Used by the refund queue to narrow to REFUND_PENDING only.
+      where.payment = { status: paymentStatus as any };
+    }
+
+    const [bookings, total] = await Promise.all([
+      db.booking.findMany({
+        where,
+        select: {
+          id: true, ref: true, guests: true, totalPrice: true, serviceFee: true,
+          commissionPct: true, commissionAmount: true, couponCode: true, couponDiscount: true,
+          // Loyalty redemption — surfaces Wanasa points used. Without these,
+          // a points-funded booking renders as QAR 0 with no indication of the
+          // actual activity cost or how it was paid.
+          pointsRedeemed: true, pointsDiscount: true,
+          currencyCode: true, selectedExtras: true, startDatetime: true, endDatetime: true,
+          status: true, createdAt: true,
+          // Cancellation + refund audit fields (null for non-cancelled bookings)
+          cancelledAt: true, cancelledBy: true,
+          refundDecisionAt: true, refundDecisionBy: true, refundDecisionActor: true, refundDecisionNote: true,
+          customer: { select: { id: true, fullName: true, email: true, phone: true } },
+          // bookingType + durationValue surface the actual booked time range
+          // (now flex-length for HOURLY) in the admin table, so support can
+          // see at a glance whether a booking is 2h or 8h.
+          activity: { select: { titleEn: true, bookingType: true, durationValue: true, cancellationPolicy: true, country: { select: { currencyCode: true } } } },
+          vendor: { select: { businessNameEn: true } },
+          payment: { select: { id: true, amount: true, status: true, method: true, paidAt: true, gatewayTxnId: true, refundAmount: true, refundedAt: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      db.booking.count({ where }),
+    ]);
+
+    return { data: bookings, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async updateBookingStatus(adminUserId: string, bookingId: string, status: string) {
+    const db = this.prisma.client;
+    const booking = await db.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        id: true, ref: true, activityId: true, customerId: true, status: true, totalPrice: true,
+        pointsRedeemed: true, pointsAwarded: true, couponCode: true,
+        activity: { select: { titleEn: true } },
+        payment: { select: { id: true, status: true, amount: true } },
+      },
+    });
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    const updated = await db.$transaction(async (tx: any) => {
+      // Admin-initiated cancel stamps cancelledAt/By for history. Admin does
+      // NOT go through the refund queue — admin is final arbiter and refund
+      // is recorded immediately at 100%. Handles edge cases like suspended
+      // vendors who can't log in to process their own queue.
+      const result = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: status as any,
+          ...(status === 'CANCELLED'
+            ? {
+                cancelledAt: new Date(),
+                cancelledBy: 'ADMIN',
+                refundDecisionAt: new Date(),
+                refundDecisionBy: adminUserId,
+                refundDecisionActor: 'ADMIN',
+              }
+            : {}),
+        },
+        include: {
+          customer: { select: { fullName: true } },
+          activity: { select: { titleEn: true } },
+        },
+      });
+
+      // Handle payment state when admin cancels a paid booking.
+      // Refund goes to Wanasa points (store credit), NOT back to card.
+      if (status === 'CANCELLED' && booking.payment) {
+        if (booking.payment.status === 'SUCCESS') {
+          const paidAmount = Number(booking.payment.amount);
+          await tx.payment.update({
+            where: { id: booking.payment.id },
+            data: {
+              status: 'REFUNDED',
+              refundAmount: paidAmount,
+              refundedAt: new Date(),
+            },
+          });
+
+          // Convert full refund to Wanasa points — routed through LoyaltyService
+          // so the ledger records ADMIN_REFUND_APPROVED.
+          let loyaltyConfig = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
+          if (!loyaltyConfig) loyaltyConfig = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
+          const qarPerPoint = loyaltyConfig.qarPerPoint.toNumber();
+          const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+          if (refundPoints > 0) {
+            await this.loyalty.refund(tx, {
+              userId: booking.customerId,
+              amount: refundPoints,
+              bookingId,
+              source: 'ADMIN_REFUND_APPROVED',
+              actorType: 'ADMIN',
+              actorId: null,
+              note: `Admin cancel: ${paidAmount} refund → ${refundPoints} points, booking ${booking.ref}`,
+            });
+          }
+        } else if (booking.payment.status === 'PENDING') {
+          await tx.payment.update({
+            where: { id: booking.payment.id },
+            data: { status: 'FAILED' },
+          });
+        }
+
+        // Refund redeemed loyalty points back to customer (separate from refund-to-points above)
+        const redeemedPoints = Number(booking.pointsRedeemed) || 0;
+        if (redeemedPoints > 0) {
+          await this.loyalty.refund(tx, {
+            userId: booking.customerId,
+            amount: redeemedPoints,
+            bookingId,
+            source: 'CANCEL_REFUND_PAID',
+            actorType: 'ADMIN',
+            actorId: null,
+            note: `Admin cancel returned redeemed points on booking ${booking.ref}`,
+          });
+        }
+      }
+
+      // Coupon refund when admin cancels — regardless of payment status so
+      // the customer's voucher / usage count is restored.
+      if (status === 'CANCELLED') {
+        await refundCouponUsage(tx, booking.couponCode, booking.customerId);
+      }
+
+      // Award loyalty points when booking becomes COMPLETED
+      if (status === 'COMPLETED' && !booking.pointsAwarded) {
+        let config = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
+        if (!config) {
+          config = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
+        }
+        const points = Math.floor(Number(booking.totalPrice) * config.pointsPerQar.toNumber());
+        if (points > 0) {
+          await tx.booking.update({
+            where: { id: bookingId },
+            data: { pointsAwarded: true },
+          });
+          await this.loyalty.earn(tx, {
+            userId: booking.customerId,
+            amount: points,
+            bookingId,
+            note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
+          });
+          // Notify customer (fire-and-forget, after transaction)
+          this.notificationService.send({
+            userId: booking.customerId,
+            type: 'SYSTEM' as any,
+            title: 'Points Earned!',
+            message: `You earned ${points} WANASA points for booking ${booking.ref}`,
+            link: '/bookings',
+          });
+        }
+      }
+
+      return result;
+    });
+
+    // CANCELLED is the only transition that frees capacity. Other transitions
+    // (CONFIRMED, COMPLETED) keep the booking blocking the slot.
+    if (status === 'CANCELLED') {
+      void this.availabilityCache.invalidate(booking.activityId);
+
+      // Customer notification — admin action, customer didn't initiate.
+      // Activity title is from DB, not user input. NotificationService
+      // handles its own errors — fire-and-forget keeps the cancel atomic.
+      const wasPaid = booking.payment?.status === 'SUCCESS';
+      const refundLine = wasPaid
+        ? ' Your payment has been refunded as Wanasa points to your balance.'
+        : '';
+      this.notificationService.send({
+        userId: booking.customerId,
+        type: 'BOOKING_CANCELLED',
+        title: 'Your booking was cancelled',
+        message: `Booking ${booking.ref} for "${booking.activity.titleEn}" was cancelled by Jadwal support.${refundLine}`,
+        link: `/bookings/${bookingId}`,
+      });
+    }
+
+    return updated;
+  }
+
+  // ─── Payouts ──────────────────────────────────────────────
+  async getPayouts(query: PaginationDto) {
+    const db = this.prisma.client;
+    const { page = 1, limit = 20, search } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.PaymentWhereInput = { status: 'SUCCESS' };
+    if (search) {
+      where.booking = {
+        OR: [
+          { ref: { contains: search, mode: 'insensitive' } },
+          { vendor: { businessNameEn: { contains: search, mode: 'insensitive' } } },
+          { customer: { fullName: { contains: search, mode: 'insensitive' } } },
+          { activity: { titleEn: { contains: search, mode: 'insensitive' } } },
+        ],
+      };
+    }
+
+    const [payments, total] = await Promise.all([
+      db.payment.findMany({
+        where,
+        include: {
+          booking: {
+            include: {
+              vendor: { select: { id: true, businessNameEn: true } },
+              customer: { select: { fullName: true } },
+              activity: { select: { titleEn: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      db.payment.count({ where }),
+    ]);
+
+    // Decorate each row with a flag telling the UI whether the vendor has a
+    // non-terminal payout request covering this payment. When true, bulk
+    // mark-as-paid is blocked — admin must resolve the request via the
+    // Payout Requests page first (approve + complete, or reject).
+    //
+    // Two conditions make a payment "locked":
+    //   1. Vendor has a PENDING request: that request implicitly claims ALL
+    //      of the vendor's SUCCESS+UNPAID payments (paymentIds are not
+    //      locked until APPROVE), so we block the whole vendor.
+    //   2. Vendor has an APPROVED/COMPLETED request whose paymentIds array
+    //      includes this specific payment. APPROVED must go through the
+    //      Complete flow to stay consistent with the request record.
+    const vendorIds = Array.from(
+      new Set(payments.map((p) => p.booking?.vendor?.id).filter(Boolean) as string[]),
+    );
+    const inflightRequests = vendorIds.length > 0
+      ? await db.payoutRequest.findMany({
+          where: { vendorId: { in: vendorIds }, status: { in: ['PENDING', 'APPROVED'] } },
+          select: { id: true, vendorId: true, status: true, paymentIds: true },
+        })
+      : [];
+    const pendingVendorIds = new Set(
+      inflightRequests.filter((r) => r.status === 'PENDING').map((r) => r.vendorId),
+    );
+    const lockedPaymentIds = new Set(
+      inflightRequests
+        .filter((r) => r.status === 'APPROVED')
+        .flatMap((r) => r.paymentIds ?? []),
+    );
+    const enriched = payments.map((p) => {
+      const vendorId = p.booking?.vendor?.id;
+      const inflightRequest = vendorId && pendingVendorIds.has(vendorId)
+        ? { status: 'PENDING' as const }
+        : lockedPaymentIds.has(p.id)
+        ? { status: 'APPROVED' as const }
+        : null;
+      return { ...p, inflightRequest };
+    });
+
+    return { data: enriched, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  // ─── Countries CRUD ─────────────────────────────────────────
+  async getCountries() {
+    return this.prisma.client.country.findMany({
+      include: { _count: { select: { cities: true, vendors: true, activities: true } } },
+      orderBy: { nameEn: 'asc' },
+    });
+  }
+
+  async createCountry(dto: CreateCountryDto) {
+    return this.prisma.client.country.create({ data: dto });
+  }
+
+  async updateCountry(id: string, dto: UpdateCountryDto) {
+    return this.prisma.client.country.update({ where: { id }, data: dto });
+  }
+
+  async deleteCountry(id: string) {
+    const country = await this.prisma.client.country.findUnique({
+      where: { id },
+      include: { _count: { select: { vendors: true, activities: true, cities: true } } },
+    });
+    if (!country) throw new NotFoundException('Country not found');
+    if (country._count.vendors > 0 || country._count.activities > 0) {
+      throw new ForbiddenException('Cannot delete a country that has vendors or activities. Remove them first.');
+    }
+    // Delete associated cities first, then the country
+    await this.prisma.client.city.deleteMany({ where: { countryId: id } });
+    return this.prisma.client.country.delete({ where: { id } });
+  }
+
+  // ─── Categories CRUD ────────────────────────────────────────
+  async getCategories() {
+    return this.prisma.client.category.findMany({
+      include: {
+        parent: { select: { nameEn: true } },
+        _count: { select: { activities: true, children: true } },
+      },
+      orderBy: { nameEn: 'asc' },
+    });
+  }
+
+  async createCategory(dto: CreateCategoryDto) {
+    return this.prisma.client.category.create({ data: dto });
+  }
+
+  async updateCategory(id: string, dto: UpdateCategoryDto) {
+    return this.prisma.client.category.update({ where: { id }, data: dto });
+  }
+
+  async deleteCategory(id: string) {
+    const category = await this.prisma.client.category.findUnique({
+      where: { id },
+      include: { _count: { select: { activities: true, children: true } } },
+    });
+    if (!category) throw new NotFoundException('Category not found');
+    if (category._count.activities > 0 || category._count.children > 0) {
+      throw new NotFoundException('Cannot delete category with activities or subcategories');
+    }
+    return this.prisma.client.category.delete({ where: { id } });
+  }
+
+  // ─── Cities CRUD ────────────────────────────────────────────
+  async getCities() {
+    return this.prisma.client.city.findMany({
+      include: {
+        country: { select: { nameEn: true, isoCode: true } },
+        _count: { select: { activities: true } },
+      },
+      orderBy: { nameEn: 'asc' },
+    });
+  }
+
+  async createCity(dto: CreateCityDto) {
+    return this.prisma.client.city.create({
+      data: dto,
+      include: { country: { select: { nameEn: true, isoCode: true } } },
+    });
+  }
+
+  async updateCity(id: string, dto: UpdateCityDto) {
+    return this.prisma.client.city.update({
+      where: { id },
+      data: dto,
+      include: { country: { select: { nameEn: true, isoCode: true } } },
+    });
+  }
+
+  async deleteCity(id: string) {
+    const city = await this.prisma.client.city.findUnique({
+      where: { id },
+      include: { _count: { select: { activities: true } } },
+    });
+    if (!city) throw new NotFoundException('City not found');
+    if (city._count.activities > 0) {
+      throw new NotFoundException('Cannot delete city with activities');
+    }
+    return this.prisma.client.city.delete({ where: { id } });
+  }
+
+  // ─── Coupons ────────────────────────────────────────────────
+  async getCoupons(query: PaginationDto) {
+    const db = this.prisma.client;
+    const { page = 1, limit = 20, search, status } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.CouponWhereInput = {};
+    if (search) {
+      where.OR = [
+        { code: { contains: search, mode: 'insensitive' } },
+        { vendor: { businessNameEn: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+    if (status) {
+      where.status = status as any;
+    }
+
+    const [coupons, total] = await Promise.all([
+      db.coupon.findMany({
+        where,
+        include: { vendor: { select: { businessNameEn: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      db.coupon.count({ where }),
+    ]);
+
+    return { data: coupons, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async createCoupon(dto: CreateCouponDto) {
+    // Percentage coupons must not exceed 100
+    if (dto.discountType === 'PERCENTAGE' && dto.discountValue > 100) {
+      throw new BadRequestException('Percentage discount cannot exceed 100%');
+    }
+    // Expiry must be after start
+    if (new Date(dto.validTo) <= new Date(dto.validFrom)) {
+      throw new BadRequestException('Expiry date must be after the start date');
+    }
+    // Check for duplicate code
+    const existing = await this.prisma.client.coupon.findUnique({ where: { code: dto.code.toUpperCase() } });
+    if (existing) throw new BadRequestException('A coupon with this code already exists');
+
+    return this.prisma.client.coupon.create({
+      data: {
+        code: dto.code.toUpperCase(),
+        discountType: dto.discountType,
+        discountValue: dto.discountValue,
+        validFrom: new Date(dto.validFrom),
+        validTo: new Date(dto.validTo),
+        usageLimit: dto.usageLimit ?? null,
+        minOrderAmount: dto.minOrderAmount ?? null,
+        maxDiscount: dto.maxDiscount ?? null,
+        status: 'APPROVED',
+      },
+      include: { vendor: { select: { businessNameEn: true } } },
+    });
+  }
+
+  async updateCouponStatus(id: string, status: string) {
+    const coupon = await this.prisma.client.coupon.update({
+      where: { id },
+      data: { status: status as any },
+      select: { id: true, code: true, status: true, vendorId: true, vendor: { select: { userId: true } } },
+    });
+
+    // Notify vendor about coupon status
+    if (coupon.vendor && (status === 'APPROVED' || status === 'REJECTED')) {
+      this.notificationService.send({
+        userId: coupon.vendor.userId,
+        type: status === 'APPROVED' ? 'COUPON_APPROVED' : 'COUPON_REJECTED',
+        title: status === 'APPROVED' ? 'Coupon Approved' : 'Coupon Rejected',
+        message: `Your coupon "${coupon.code}" has been ${status.toLowerCase()} by admin`,
+      });
+    }
+
+    return coupon;
+  }
+
+  async deleteCoupon(id: string) {
+    return this.prisma.client.coupon.delete({ where: { id } });
+  }
+
+  // ─── Platform Settings (Commission + Platform Info) ─────────
+  async getPlatformSettings() {
+    let settings = await this.prisma.client.platformSettings.findUnique({
+      where: { id: 'default' },
+    });
+    if (!settings) {
+      settings = await this.prisma.client.platformSettings.create({
+        data: { id: 'default', defaultCommissionPct: 10 },
+      });
+    }
+    return settings;
+  }
+
+  async updatePlatformSettings(dto: UpdatePlatformSettingsDto) {
+    return this.prisma.client.platformSettings.upsert({
+      where: { id: 'default' },
+      update: dto,
+      create: { id: 'default', defaultCommissionPct: dto.defaultCommissionPct ?? 10, ...dto },
+    });
+  }
+
+  // kept for backward compat
+  async getCommissionSettings() {
+    return this.getPlatformSettings();
+  }
+
+  async updateCommissionSettings(defaultCommissionPct: number) {
+    return this.updatePlatformSettings({ defaultCommissionPct });
+  }
+
+  // ─── Trending Events CRUD ──────────────────────────────────
+  async getTrendingEvents() {
+    return this.prisma.client.trendingEvent.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createTrendingEvent(dto: CreateTrendingEventDto) {
+    return this.prisma.client.trendingEvent.create({ data: dto });
+  }
+
+  async updateTrendingEvent(id: string, dto: UpdateTrendingEventDto) {
+    return this.prisma.client.trendingEvent.update({ where: { id }, data: dto });
+  }
+
+  async deleteTrendingEvent(id: string) {
+    return this.prisma.client.trendingEvent.delete({ where: { id } });
+  }
+
+  // ─── Reviews Moderation ─────────────────────────────────────
+  async getReviews(query: PaginationDto) {
+    const db = this.prisma.client;
+    const { page = 1, limit = 20, search } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.ReviewWhereInput = {};
+    if (search) {
+      where.OR = [
+        { text: { contains: search, mode: 'insensitive' } },
+        { customer: { fullName: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [reviews, total] = await Promise.all([
+      db.review.findMany({
+        where,
+        include: {
+          customer: { select: { fullName: true, email: true } },
+          activity: { select: { titleEn: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      db.review.count({ where }),
+    ]);
+
+    return { data: reviews, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async deleteReview(id: string) {
+    return this.prisma.client.review.delete({ where: { id } });
+  }
+
+  // ─── Activity Single + Edit by Admin ───────────────────────────
+  async getActivity(id: string) {
+    const activity = await this.prisma.client.activity.findUnique({
+      where: { id },
+      include: {
+        vendor: { select: { businessNameEn: true, slug: true, countryId: true } },
+        country: { select: { id: true, nameEn: true, currencyCode: true } },
+        category: { select: { id: true, nameEn: true, parentId: true } },
+        city: { select: { id: true, nameEn: true } },
+      },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+    return activity;
+  }
+
+  async updateActivity(id: string, dto: UpdateActivityDto) {
+    const activity = await this.prisma.client.activity.findUnique({ where: { id } });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // HOURLY time config must remain internally consistent (duration ≤ window).
+    // Merge DTO values with existing values so partial PATCHes still validate.
+    assertHourlyTimesConsistent({
+      bookingType: dto.bookingType ?? activity.bookingType,
+      checkInTime: dto.checkInTime ?? activity.checkInTime,
+      checkOutTime: dto.checkOutTime ?? activity.checkOutTime,
+      durationValue: dto.durationValue ?? activity.durationValue,
+    });
+
+    const { categoryId, subCategoryId, cityId, ...rest } = dto;
+    const data: any = { ...rest };
+    if (categoryId) data.category = { connect: { id: categoryId } };
+    if (subCategoryId !== undefined) data.subCategoryId = subCategoryId || null;
+    if (cityId) data.city = { connect: { id: cityId } };
+
+    return this.prisma.client.activity.update({
+      where: { id },
+      data,
+      include: {
+        vendor: { select: { businessNameEn: true } },
+        category: { select: { id: true, nameEn: true } },
+        country: { select: { nameEn: true, currencyCode: true } },
+        city: { select: { id: true, nameEn: true } },
+      },
+    });
+  }
+
+  // ─── Payout Processing ────────────────────────────────────────
+  async markPayoutsPaid(paymentIds: string[]) {
+    const db = this.prisma.client;
+
+    // Block bulk-mark-paid for any payment whose vendor has an in-flight
+    // payout request (PENDING or APPROVED). Those flows own the payment's
+    // lifecycle until admin resolves them on the Payout Requests page;
+    // side-flipping here would desync the request record from the payment
+    // state. We collect every blocker so the error message names the
+    // vendors involved instead of only the first one admin hits.
+    const paymentsWithVendor = await db.payment.findMany({
+      where: { id: { in: paymentIds } },
+      select: { id: true, booking: { select: { vendor: { select: { id: true, businessNameEn: true } } } } },
+    });
+    const vendorIds = Array.from(
+      new Set(paymentsWithVendor.map((p) => p.booking?.vendor?.id).filter(Boolean) as string[]),
+    );
+    const blockers = vendorIds.length > 0
+      ? await db.payoutRequest.findMany({
+          where: { vendorId: { in: vendorIds }, status: { in: ['PENDING', 'APPROVED'] } },
+          select: { vendorId: true, status: true, paymentIds: true, vendor: { select: { businessNameEn: true } } },
+        })
+      : [];
+    // Determine which of the submitted payments are actually locked. A
+    // PENDING request blocks the whole vendor; an APPROVED request blocks
+    // only its locked paymentIds set.
+    const pendingVendorIds = new Set(blockers.filter((r) => r.status === 'PENDING').map((r) => r.vendorId));
+    const approvedLockedIds = new Set(
+      blockers.filter((r) => r.status === 'APPROVED').flatMap((r) => r.paymentIds ?? []),
+    );
+    const offendingVendors = new Set<string>();
+    for (const p of paymentsWithVendor) {
+      const vId = p.booking?.vendor?.id;
+      if (vId && pendingVendorIds.has(vId)) {
+        offendingVendors.add(p.booking!.vendor!.businessNameEn);
+      } else if (approvedLockedIds.has(p.id)) {
+        const vName = p.booking?.vendor?.businessNameEn;
+        if (vName) offendingVendors.add(vName);
+      }
+    }
+    if (offendingVendors.size > 0) {
+      const names = Array.from(offendingVendors).slice(0, 3).join(', ');
+      const tail = offendingVendors.size > 3 ? ` and ${offendingVendors.size - 3} more` : '';
+      throw new BadRequestException(
+        `${names}${tail} ${offendingVendors.size === 1 ? 'has' : 'have'} an in-flight payout request. Approve or reject on the Payout Requests page first — don't bulk-mark these individually.`,
+      );
+    }
+
+    const result = await db.payment.updateMany({
+      where: { id: { in: paymentIds }, status: 'SUCCESS' },
+      data: { payoutStatus: 'PAID', paidAt: new Date() },
+    });
+
+    // Notify each vendor whose payments were marked as paid. Pull the slug
+    // here too so the notification link resolves to a real route (the vendor
+    // portal lives under /vendor/[slug]/*, not /vendor/*).
+    const payments = await this.prisma.client.payment.findMany({
+      where: { id: { in: paymentIds } },
+      select: { booking: { select: { vendorId: true, vendor: { select: { userId: true, slug: true } } } } },
+    });
+    const notifiedVendors = new Set<string>();
+    for (const p of payments) {
+      const vendorUserId = p.booking?.vendor?.userId;
+      const vendorSlug = p.booking?.vendor?.slug;
+      if (vendorUserId && vendorSlug && !notifiedVendors.has(vendorUserId)) {
+        notifiedVendors.add(vendorUserId);
+        this.notificationService.send({
+          userId: vendorUserId,
+          type: 'PAYOUT_PROCESSED',
+          title: 'Payout Processed',
+          message: 'Your payout has been processed and sent to your bank account',
+          link: `/vendor/${vendorSlug}/earnings`,
+        });
+      }
+    }
+
+    return { updated: result.count };
+  }
+
+  /**
+   * Reverts a single payment from PAID → UNPAID. Admin escape hatch for the
+   * "clicked Mark Paid by mistake" scenario.
+   *
+   * Safety contract:
+   *   1. Payment must exist, be SUCCESS, and currently PAID — otherwise
+   *      there's nothing meaningful to revert.
+   *   2. Payment must NOT be locked inside an APPROVED or COMPLETED
+   *      PayoutRequest. Those requests treat the payment as "already
+   *      settled" and flipping it back would desync the vendor's earnings
+   *      page. If the admin truly wants to undo a completed request, that
+   *      goes through a different workflow.
+   *   3. Reason is mandatory (enforced at the DTO) so the audit log has a
+   *      human-readable explanation for why cash that was "done" reopened.
+   *   4. Admin is notified via the audit interceptor (route mapping above).
+   *   5. Vendor is notified so they aren't blindsided by their pending
+   *      balance going up again on their next earnings load.
+   */
+  async markPayoutUnpaid(paymentId: string, adminUserId: string) {
+    const db = this.prisma.client;
+
+    const payment = await db.payment.findUnique({
+      where: { id: paymentId },
+      select: {
+        id: true, status: true, payoutStatus: true, amount: true,
+        booking: {
+          select: {
+            ref: true,
+            vendor: { select: { id: true, userId: true, slug: true, businessNameEn: true } },
+          },
+        },
+      },
+    });
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.status !== 'SUCCESS') {
+      throw new BadRequestException('Only SUCCESS payments can be reverted');
+    }
+    if (payment.payoutStatus !== 'PAID') {
+      throw new BadRequestException(`Payment is already ${payment.payoutStatus ?? 'UNPAID'} — nothing to revert`);
+    }
+
+    // If this payment is locked in a formal payout request (admin already
+    // approved/completed a request that includes it), reverting here would
+    // leave the request record saying "paid" while the payment says "owed."
+    // Block — admin must revert via the payout-requests workflow instead.
+    const lockingRequest = await db.payoutRequest.findFirst({
+      where: {
+        status: { in: ['APPROVED', 'COMPLETED'] },
+        paymentIds: { has: paymentId },
+      },
+      select: { id: true, status: true },
+    });
+    if (lockingRequest) {
+      throw new BadRequestException(
+        `This payment is linked to a ${lockingRequest.status.toLowerCase()} payout request. Revert the request from the Payout Requests page instead.`,
+      );
+    }
+
+    // Optimistic update — only flip if still PAID. Guards against a race
+    // where another admin reverts or a new request completes in parallel.
+    const result = await db.payment.updateMany({
+      where: { id: paymentId, status: 'SUCCESS', payoutStatus: 'PAID' },
+      data: { payoutStatus: 'UNPAID', paidAt: null },
+    });
+    if (result.count === 0) {
+      throw new BadRequestException('Payment state changed concurrently. Please refresh and try again.');
+    }
+
+    // Explicit audit row — the AdminAuditInterceptor already captures the
+    // HTTP body (a tamper-evident record of exactly what was submitted);
+    // this companion row captures the BUSINESS impact (booking, vendor,
+    // amount) in structured JSON so the finance team can reconcile without
+    // cross-referencing the bookings table. Load the admin's real name so
+    // the audit trail names the person, not a placeholder.
+    const admin = await db.user.findUnique({
+      where: { id: adminUserId },
+      select: { fullName: true },
+    });
+    await db.auditLog.create({
+      data: {
+        actorType: 'ADMIN',
+        actorId: adminUserId,
+        actorName: admin?.fullName || `admin:${adminUserId.slice(0, 8)}`,
+        action: 'REVERT_PAYOUT_TO_UNPAID',
+        entity: 'Payment',
+        entityId: paymentId,
+        details: JSON.stringify({
+          bookingRef: payment.booking?.ref ?? null,
+          vendorId: payment.booking?.vendor?.id ?? null,
+          vendorName: payment.booking?.vendor?.businessNameEn ?? null,
+          amount: Number(payment.amount),
+          // Fixed system-stamped motive. Admin confirmed in the UI they're
+          // reverting a mistaken Mark-Paid; no free-form reason needed.
+          reason: 'Reverted mistaken payout marking',
+        }),
+      },
+    });
+
+    // Notify vendor so they see the reversal on their earnings page
+    // instead of being confused when their transferred balance drops.
+    // Link is slug-scoped because vendor routes live under /vendor/[slug]/*
+    // — a slug-less /vendor/earnings 404s.
+    const vendorUserId = payment.booking?.vendor?.userId;
+    const vendorSlug = payment.booking?.vendor?.slug;
+    if (vendorUserId && vendorSlug) {
+      this.notificationService.send({
+        userId: vendorUserId,
+        type: 'SYSTEM' as any,
+        title: 'Payout reversed',
+        message: `Admin reverted the payout for booking ${payment.booking?.ref ?? ''}. It will reappear in your pending balance for re-processing.`,
+        link: `/vendor/${vendorSlug}/earnings`,
+      });
+    }
+
+    return { reverted: true, paymentId };
+  }
+
+  async exportPayouts() {
+    return this.prisma.client.payment.findMany({
+      where: { status: 'SUCCESS' },
+      include: {
+        booking: {
+          include: {
+            vendor: { select: { businessNameEn: true } },
+            customer: { select: { fullName: true } },
+            activity: { select: { titleEn: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // ─── Payout Requests ──────────────────────────────────────────
+  async getPayoutRequests(query: PaginationDto) {
+    const db = this.prisma.client;
+    const { page = 1, limit = 20, status, search } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.PayoutRequestWhereInput = {};
+    if (status) where.status = status as any;
+    if (search) {
+      // Case-insensitive match on either language of the vendor's business
+      // name. `search` is already run through SanitizePipe upstream so no
+      // extra escaping is needed here.
+      where.vendor = {
+        is: {
+          OR: [
+            { businessNameEn: { contains: search, mode: 'insensitive' } },
+            { businessNameAr: { contains: search, mode: 'insensitive' } },
+          ],
+        },
+      };
+    }
+
+    const [requests, total] = await Promise.all([
+      db.payoutRequest.findMany({
+        where,
+        include: {
+          vendor: {
+            select: {
+              id: true,
+              businessNameEn: true,
+              businessNameAr: true,
+              slug: true,
+              // Only the high-level bank NAME flows to the UI so admin can
+              // tell at a glance which bank this vendor is with. Full IBAN +
+              // account name are deliberately NOT exposed here to avoid
+              // banking-credential leakage via screenshots / screen shares /
+              // over-the-shoulder views of the request queue. If admin needs
+              // to verify the exact destination before wiring, they open the
+              // vendor's settings page (separate nav + future audit log).
+              bankDetails: true,
+              country: { select: { currencyCode: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      db.payoutRequest.count({ where }),
+    ]);
+
+    // Sanitise each row's vendor.bankDetails before returning: replace the
+    // raw JSON blob with { hasBankDetails: boolean, bankName?: string }.
+    // Keeps the "has bank details" UX check working without leaking IBAN
+    // or account-holder name to the listing endpoint.
+    const sanitised = requests.map((r: any) => {
+      const raw = r.vendor?.bankDetails as { iban?: string; accountName?: string; bankName?: string } | null | undefined;
+      if (!r.vendor) return r;
+      return {
+        ...r,
+        vendor: {
+          ...r.vendor,
+          bankDetails: raw
+            ? { hasBankDetails: true, bankName: raw.bankName ?? null }
+            : { hasBankDetails: false, bankName: null },
+        },
+      };
+    });
+
+    return { data: sanitised, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async processPayoutRequest(requestId: string, action: 'APPROVED' | 'REJECTED' | 'COMPLETED', adminNote?: string) {
+    const db = this.prisma.client;
+    const request = await db.payoutRequest.findUnique({
+      where: { id: requestId },
+      include: { vendor: { select: { userId: true, slug: true, businessNameEn: true } } },
+    });
+    if (!request) throw new NotFoundException('Payout request not found');
+
+    // Enforce valid status transitions
+    const validTransitions: Record<string, string[]> = {
+      PENDING: ['APPROVED', 'REJECTED'],
+      APPROVED: ['COMPLETED'],
+    };
+    const allowed = validTransitions[request.status] ?? [];
+    if (!allowed.includes(action)) {
+      throw new BadRequestException(`Cannot ${action.toLowerCase()} a ${request.status.toLowerCase()} request`);
+    }
+
+    // ─── PENDING → APPROVED: recompute, cap, LOCK specific payments ──
+    //
+    // The PayoutRequest.amount is a SNAPSHOT taken at request time. Between
+    // request and admin approval, a customer can cancel a booking that was
+    // part of the snapshot and receive a refund (as Wanasa points — the cash
+    // stays with the platform as future point-liability float). If admin
+    // approves the stale snapshot amount, the platform double-pays: once as
+    // points to the customer, again as cash to the vendor.
+    //
+    // Safety contract at APPROVE:
+    //   - Recompute live eligibility (payment.status=SUCCESS + payoutStatus=
+    //     UNPAID — excludes REFUND_PENDING, REFUNDED, REJECTED, FAILED)
+    //   - Cap request.amount to the live figure; auto-note the adjustment
+    //   - PERSIST the specific payment IDs into PayoutRequest.paymentIds so
+    //     the completion step has a deterministic set to mark as PAID
+    //   - DO NOT flip payoutStatus yet — money has not physically moved.
+    //     Flipping here would make the vendor's "Paid Out" card jump up
+    //     before admin actually wires the cash, which is misleading UX.
+    //
+    // The locked paymentIds also prevent double-claim: requestPayout
+    // excludes bookings whose payments are already tied to any non-rejected
+    // PayoutRequest.
+    if (action === 'APPROVED' && request.status === 'PENDING') {
+      const updated = await db.$transaction(async (tx) => {
+        const eligible = await tx.payment.findMany({
+          where: {
+            status: 'SUCCESS',
+            payoutStatus: 'UNPAID',
+            booking: { vendorId: request.vendorId },
+          },
+          select: {
+            id: true,
+            booking: { select: { totalPrice: true, commissionAmount: true } },
+          },
+          // FIFO: oldest payments first. Ensures vendor is paid out for
+          // their earliest-earned bookings first if eligible > requested.
+          orderBy: { createdAt: 'asc' },
+        });
+
+        // Greedy accumulate vendor's share until we reach request.amount.
+        // Any eligible payment beyond that stays UNPAID for a future request.
+        const requestedAmount = Number(request.amount);
+        const paymentsToLock: string[] = [];
+        let accumulated = 0;
+        for (const p of eligible) {
+          if (!p.booking) continue;
+          const vendorShare =
+            Number(p.booking.totalPrice) - Number(p.booking.commissionAmount);
+          if (vendorShare <= 0) continue; // Wanasa-only bookings: nothing to pay out
+          if (accumulated >= requestedAmount) break;
+          // Round to 2dp to match the schema Decimal(10,2)
+          accumulated = Math.round((accumulated + vendorShare) * 100) / 100;
+          paymentsToLock.push(p.id);
+        }
+
+        if (accumulated <= 0) {
+          throw new BadRequestException(
+            'No eligible payments remain for this request — the underlying bookings have been refunded since the request was submitted. Reject the request; the vendor can file a fresh one if anything is still payable.',
+          );
+        }
+
+        const finalAmount = Math.min(requestedAmount, accumulated);
+        const wasAdjusted = finalAmount < requestedAmount;
+        const baseNote = adminNote?.trim() ?? '';
+        const adjustmentNote = `[System: amount auto-adjusted from ${requestedAmount.toFixed(2)} to ${finalAmount.toFixed(2)} — bookings were refunded after this request was submitted]`;
+        const finalNote = wasAdjusted
+          ? (baseNote ? `${baseNote}\n${adjustmentNote}` : adjustmentNote)
+          : (baseNote || null);
+
+        // Optimistic lock on status=PENDING catches concurrent approves.
+        const statusUpdate = await tx.payoutRequest.updateMany({
+          where: { id: requestId, status: 'PENDING' },
+          data: {
+            status: 'APPROVED',
+            amount: finalAmount,
+            adminNote: finalNote,
+            paymentIds: paymentsToLock,
+            processedAt: new Date(),
+          },
+        });
+        if (statusUpdate.count === 0) {
+          throw new ConflictException('This request was already processed by another admin');
+        }
+
+        return tx.payoutRequest.findUniqueOrThrow({ where: { id: requestId } });
+      });
+
+      // Notify vendor: approved but transfer still in-flight.
+      this.notificationService.send({
+        userId: request.vendor.userId,
+        type: 'PAYOUT_PROCESSED',
+        title: 'Payout approved',
+        message: `Your payout of ${Number(updated.amount).toFixed(2)} ${updated.currency} has been approved. Funds will reflect after the bank transfer completes.`,
+        link: `/vendor/${request.vendor.slug}/earnings`,
+      });
+
+      return updated;
+    }
+
+    // ─── APPROVED → COMPLETED: release the lock; admin still has to mark paid ──
+    //
+    // Two-step settlement, split for operational clarity:
+    //   1. Completing the REQUEST closes the payout-request workflow (the
+    //      vendor stops seeing it in-flight) but does NOT mark the
+    //      underlying payments as paid. The request's paymentIds stop
+    //      blocking those rows on the Payments tab, so admin can now see
+    //      them as actionable.
+    //   2. Admin then opens the Payments tab and clicks Mark as Paid on
+    //      those now-actionable rows, confirming the bank transfer
+    //      actually landed on the vendor's side.
+    //
+    // Why split? It gives admin a distinct "money has physically moved"
+    // checkpoint that's decoupled from the request-management workflow.
+    // Completing a request is a promise; marking paid is the receipt.
+    //
+    // Safety: we still re-verify payments are SUCCESS+UNPAID before
+    // closing the request, so a race with markPayoutUnpaid / cascade
+    // refunds can't silently settle a request against missing money.
+    if (action === 'COMPLETED' && request.status === 'APPROVED') {
+      const paymentIds = request.paymentIds ?? [];
+      const updated = await db.$transaction(async (tx) => {
+        if (paymentIds.length === 0) {
+          throw new BadRequestException('This approved request has no locked payments. Contact engineering — data looks inconsistent.');
+        }
+
+        // Confirm the locked payments are still in the expected SUCCESS+UNPAID
+        // state. If a parallel markPayoutsPaid or a cascade refund moved any
+        // of them, abort — admin should investigate rather than close a
+        // request that no longer represents real owed money.
+        const stillEligible = await tx.payment.count({
+          where: {
+            id: { in: paymentIds },
+            status: 'SUCCESS',
+            payoutStatus: 'UNPAID',
+          },
+        });
+        if (stillEligible !== paymentIds.length) {
+          throw new BadRequestException(
+            `Some of the approved payments are no longer eligible (${paymentIds.length - stillEligible} of ${paymentIds.length} changed state). Review the request before completing.`,
+          );
+        }
+
+        // Close the request. Payments stay UNPAID until admin explicitly
+        // marks them paid on the Payments tab.
+        const statusUpdate = await tx.payoutRequest.updateMany({
+          where: { id: requestId, status: 'APPROVED' },
+          data: {
+            status: 'COMPLETED',
+            adminNote: adminNote ?? request.adminNote,
+            processedAt: new Date(),
+          },
+        });
+        if (statusUpdate.count === 0) {
+          throw new ConflictException('This request was already completed by another admin');
+        }
+
+        return tx.payoutRequest.findUniqueOrThrow({ where: { id: requestId } });
+      });
+
+      this.notificationService.send({
+        userId: request.vendor.userId,
+        type: 'PAYOUT_PROCESSED',
+        title: 'Payout approved — transfer in progress',
+        message: `Your payout of ${Number(updated.amount).toFixed(2)} ${updated.currency} has been approved for transfer. You'll be notified again once the admin confirms the cash has landed.`,
+        link: `/vendor/${request.vendor.slug}/earnings`,
+      });
+
+      return updated;
+    }
+
+    // ─── REJECTED (terminal) or any residual transition ──
+    // No money flow, just status + audit note.
+    const updated = await db.payoutRequest.update({
+      where: { id: requestId },
+      data: {
+        status: action,
+        adminNote: adminNote ?? null,
+        processedAt: new Date(),
+      },
+    });
+
+    // Notify vendor
+    this.notificationService.send({
+      userId: request.vendor.userId,
+      type: 'PAYOUT_PROCESSED',
+      title: action === 'REJECTED' ? 'Payout Request Rejected' : 'Payout Processed',
+      message: action === 'REJECTED'
+        ? `Your payout request was rejected${adminNote ? `: ${adminNote}` : ''}`
+        : `Your payout of ${Number(request.amount).toFixed(2)} ${request.currency} has been processed`,
+      link: `/vendor/${request.vendor.slug}/earnings`,
+    });
+
+    return updated;
+  }
+
+  /**
+   * Re-opens a closed payout request. Admin escape hatch for every
+   * "clicked the wrong button" scenario on the request workflow.
+   *
+   * Allowed transitions:
+   *   APPROVED  → PENDING   — releases paymentIds lock, request re-enters queue
+   *   COMPLETED → APPROVED  — reopens for completion; paymentIds stay locked
+   *   COMPLETED → PENDING   — full rewind; paymentIds released
+   *   REJECTED  → PENDING   — unreject, request re-enters queue
+   *
+   * Blocked transitions:
+   *   REJECTED → APPROVED   — eligibility must be re-checked via the normal
+   *                           PENDING → APPROVED path; skipping it would use
+   *                           a stale amount snapshot
+   *   PENDING  → *          — nothing to revert; admin should Reject instead
+   *
+   * Safety contract:
+   *   1. Transition table is whitelisted — no admin-supplied status string
+   *      reaches Prisma.
+   *   2. Reverting to PENDING/APPROVED for a vendor that already has an
+   *      in-flight request is blocked (breaks the "at most one active
+   *      request per vendor" invariant).
+   *   3. Optimistic lock on current status guards against parallel reverts.
+   *   4. Audit row captures actor, from/to states, and vendor context.
+   *   5. Vendor is notified so they're not blindsided by their earnings
+   *      page flipping state.
+   */
+  async revertPayoutRequest(requestId: string, targetStatus: 'PENDING' | 'APPROVED', adminUserId: string) {
+    const db = this.prisma.client;
+
+    const request = await db.payoutRequest.findUnique({
+      where: { id: requestId },
+      include: { vendor: { select: { id: true, userId: true, slug: true, businessNameEn: true } } },
+    });
+    if (!request) throw new NotFoundException('Payout request not found');
+
+    const allowedTransitions: Record<string, Array<'PENDING' | 'APPROVED'>> = {
+      APPROVED: ['PENDING'],
+      COMPLETED: ['PENDING', 'APPROVED'],
+      REJECTED: ['PENDING'],
+    };
+    const valid = allowedTransitions[request.status] ?? [];
+    if (!valid.includes(targetStatus)) {
+      throw new BadRequestException(
+        `Cannot revert a ${request.status.toLowerCase()} request to ${targetStatus.toLowerCase()}. Allowed revert targets: ${valid.length > 0 ? valid.map((s) => s.toLowerCase()).join(', ') : '(none)'}.`,
+      );
+    }
+
+    // Enforce the "at most one in-flight per vendor" invariant. Without this
+    // guard, reverting a REJECTED/COMPLETED request to PENDING while the
+    // vendor already has a newer PENDING would leave two active requests on
+    // the same vendor — downstream approval races would double-lock payments.
+    const otherInflight = await db.payoutRequest.findFirst({
+      where: {
+        vendorId: request.vendorId,
+        status: { in: ['PENDING', 'APPROVED'] },
+        NOT: { id: requestId },
+      },
+      select: { id: true, status: true },
+    });
+    if (otherInflight) {
+      throw new BadRequestException(
+        `${request.vendor?.businessNameEn ?? 'This vendor'} already has a ${otherInflight.status.toLowerCase()} payout request. Resolve that one before reverting this record.`,
+      );
+    }
+
+    // Extra safety: when reverting from COMPLETED, re-confirm the locked
+    // payments are still SUCCESS+UNPAID. If admin has already marked them
+    // paid on the Payments tab (which is legitimate under the two-step
+    // flow), reverting would desync the request from the ledger.
+    if (request.status === 'COMPLETED' && (request.paymentIds?.length ?? 0) > 0) {
+      const stillUnpaid = await db.payment.count({
+        where: { id: { in: request.paymentIds }, status: 'SUCCESS', payoutStatus: 'UNPAID' },
+      });
+      if (stillUnpaid !== request.paymentIds.length) {
+        throw new BadRequestException(
+          'Some of the payments in this request have already been marked as paid on the Payments tab. Revert those payouts first, then retry.',
+        );
+      }
+    }
+
+    // Optimistic update — only flip if still in the observed source state.
+    const updateData: Record<string, unknown> = {
+      status: targetStatus,
+      // Reverting to PENDING releases any payment lock so the request
+      // re-enters the queue with nothing staked. Reverting to APPROVED
+      // keeps the existing paymentIds so Complete can be retried.
+      ...(targetStatus === 'PENDING' ? { paymentIds: [] } : {}),
+      // Clear processedAt when reverting to PENDING so the timeline reads
+      // naturally ("not yet processed" again). Keep it for APPROVED —
+      // that's still a processed decision, just rolled back one step.
+      ...(targetStatus === 'PENDING' ? { processedAt: null } : {}),
+    };
+    const updateResult = await db.payoutRequest.updateMany({
+      where: { id: requestId, status: request.status },
+      data: updateData,
+    });
+    if (updateResult.count === 0) {
+      throw new BadRequestException('Request state changed concurrently. Please refresh and try again.');
+    }
+
+    const updated = await db.payoutRequest.findUniqueOrThrow({ where: { id: requestId } });
+
+    // Audit with business context baked in — the interceptor also captures
+    // the raw body, but this typed row lets the finance team reconcile
+    // without cross-referencing by id.
+    const admin = await db.user.findUnique({ where: { id: adminUserId }, select: { fullName: true } });
+    await db.auditLog.create({
+      data: {
+        actorType: 'ADMIN',
+        actorId: adminUserId,
+        actorName: admin?.fullName || `admin:${adminUserId.slice(0, 8)}`,
+        action: 'REVERT_PAYOUT_REQUEST',
+        entity: 'PayoutRequest',
+        entityId: requestId,
+        details: JSON.stringify({
+          vendorId: request.vendorId,
+          vendorName: request.vendor?.businessNameEn ?? null,
+          fromStatus: request.status,
+          toStatus: targetStatus,
+          amount: Number(request.amount),
+        }),
+      },
+    });
+
+    // Notify vendor — their earnings / eligibility state is about to change.
+    if (request.vendor?.userId && request.vendor?.slug) {
+      this.notificationService.send({
+        userId: request.vendor.userId,
+        type: 'PAYOUT_PROCESSED',
+        title: 'Payout request reopened',
+        message: `Admin reverted your payout request (${Number(request.amount).toFixed(2)} ${request.currency}) from ${request.status.toLowerCase()} back to ${targetStatus.toLowerCase()} for review.`,
+        link: `/vendor/${request.vendor.slug}/earnings`,
+      });
+    }
+
+    return updated;
+  }
+
+  // ─── Vendor Analytics ─────────────────────────────────────────
+  async getVendorAnalytics(vendorId: string) {
+    const db = this.prisma.client;
+    const [
+      revenueByMonth,
+      bookingsByStatus,
+      reviewStats,
+      recentBookings,
+    ] = await Promise.all([
+      db.booking.groupBy({
+        by: ['createdAt'],
+        where: { vendorId, status: { in: ['CONFIRMED', 'COMPLETED'] } },
+        // pointsDiscount + couponDiscount let the admin view both cash
+        // revenue AND nominal bookings value per month. Vendors with heavy
+        // Wanasa redemption would otherwise appear to have "zero revenue"
+        // months on their admin profile, which misrepresents activity.
+        _sum: { totalPrice: true, pointsDiscount: true, couponDiscount: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      db.booking.groupBy({
+        by: ['status'],
+        where: { vendorId },
+        _count: true,
+      }),
+      db.review.aggregate({
+        where: { activity: { vendorId } },
+        _avg: { rating: true },
+        _count: true,
+      }),
+      db.booking.findMany({
+        where: { vendorId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        include: {
+          activity: { select: { titleEn: true } },
+          customer: { select: { fullName: true } },
+        },
+      }),
+    ]);
+
+    return { revenueByMonth, bookingsByStatus, reviewStats, recentBookings };
+  }
+
+  // ─── Audit Logs ───────────────────────────────────────────────
+  async createAuditLog(adminId: string, adminName: string, action: string, entity: string, entityId?: string, details?: string) {
+    return this.prisma.client.auditLog.create({
+      data: { actorType: 'ADMIN', actorId: adminId, actorName: adminName, action, entity, entityId, details },
+    });
+  }
+
+  async getAuditLogs(query: PaginationDto & { actorType?: string; from?: string; to?: string }) {
+    const db = this.prisma.client;
+    const { page = 1, limit = 20, search, actorType, from, to } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.AuditLogWhereInput = {};
+
+    // Filter by actor type — validate against enum
+    const VALID_ACTOR_TYPES = ['ADMIN', 'VENDOR', 'CUSTOMER', 'SYSTEM'] as const;
+    if (actorType && VALID_ACTOR_TYPES.includes(actorType as any)) {
+      where.actorType = actorType as (typeof VALID_ACTOR_TYPES)[number];
+    }
+
+    // Date range filter — validate date strings before parsing
+    if (from || to) {
+      const ISO_DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+      where.createdAt = {};
+      if (from && ISO_DATE.test(from)) {
+        const d = new Date(from + 'T00:00:00.000Z');
+        if (!isNaN(d.getTime())) where.createdAt.gte = d;
+      }
+      if (to && ISO_DATE.test(to)) {
+        const d = new Date(to + 'T23:59:59.999Z');
+        if (!isNaN(d.getTime())) where.createdAt.lte = d;
+      }
+      // If both dates invalid, remove the empty filter
+      if (!where.createdAt.gte && !where.createdAt.lte) delete where.createdAt;
+    }
+
+    // Search across multiple fields
+    if (search) {
+      where.OR = [
+        { action: { contains: search, mode: 'insensitive' } },
+        { entity: { contains: search, mode: 'insensitive' } },
+        { actorName: { contains: search, mode: 'insensitive' } },
+        { details: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [logs, total] = await Promise.all([
+      db.auditLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      db.auditLog.count({ where }),
+    ]);
+
+    return { data: logs, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  // ─── Dashboard Charts Data ────────────────────────────────────
+  async getDashboardCharts() {
+    const db = this.prisma.client;
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+    const [revenueData, bookingsByCategory, vendorGrowth] = await Promise.all([
+      db.payment.findMany({
+        where: { status: 'SUCCESS', createdAt: { gte: sixMonthsAgo } },
+        select: { amount: true, createdAt: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      db.activity.findMany({
+        where: { bookings: { some: { status: { not: 'CANCELLED' } } } },
+        select: {
+          id: true,
+          titleEn: true,
+          category: { select: { nameEn: true } },
+          // Count only non-cancelled bookings so the dashboard matches the
+          // per-vendor activity tiles (both intentionally exclude cancels).
+          _count: {
+            select: { bookings: { where: { status: { not: 'CANCELLED' } } } },
+          },
+        },
+        orderBy: { bookings: { _count: 'desc' } },
+        take: 10,
+      }),
+      db.vendor.findMany({
+        where: { createdAt: { gte: sixMonthsAgo } },
+        select: { createdAt: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    // Aggregate revenue by month
+    const revenueByMonth: Record<string, number> = {};
+    for (const p of revenueData) {
+      const key = `${p.createdAt.getFullYear()}-${String(p.createdAt.getMonth() + 1).padStart(2, '0')}`;
+      revenueByMonth[key] = (revenueByMonth[key] || 0) + Number(p.amount);
+    }
+
+    // Aggregate vendor growth by month
+    const vendorsByMonth: Record<string, number> = {};
+    for (const v of vendorGrowth) {
+      const key = `${v.createdAt.getFullYear()}-${String(v.createdAt.getMonth() + 1).padStart(2, '0')}`;
+      vendorsByMonth[key] = (vendorsByMonth[key] || 0) + 1;
+    }
+
+    // Per-activity cash revenue (vendor share on SUCCESS payments). Done as
+    // one groupBy instead of N queries so the dashboard stays cheap even
+    // with hundreds of active activities. Single round-trip after the
+    // activities list is known.
+    const activityIds = bookingsByCategory.map((a: any) => a.id);
+    const revenueByActivity = activityIds.length > 0
+      ? await db.booking.groupBy({
+          by: ['activityId'],
+          where: {
+            activityId: { in: activityIds },
+            status: { not: 'CANCELLED' },
+            payment: { status: 'SUCCESS' },
+          },
+          _sum: { totalPrice: true, commissionAmount: true },
+        })
+      : [];
+    const revMap = new Map(
+      revenueByActivity.map((r) => [
+        r.activityId,
+        Number(r._sum.totalPrice ?? 0) - Number(r._sum.commissionAmount ?? 0),
+      ]),
+    );
+
+    const topActivities = bookingsByCategory.map((a: any) => ({
+      name: a.titleEn,
+      category: a.category?.nameEn ?? 'Uncategorized',
+      bookings: a._count.bookings,
+      revenue: revMap.get(a.id) ?? 0,
+    }));
+
+    return { revenueByMonth, topActivities, vendorsByMonth };
+  }
+
+  // ─── Admin Notifications (counts) ─────────────────────────────
+  async getNotificationCounts(adminUserId?: string) {
+    const db = this.prisma.client;
+    const [pendingVendors, pendingActivities, pendingCoupons, unreadNotifications] = await Promise.all([
+      db.vendor.count({ where: { status: 'PENDING' } }),
+      db.activity.count({ where: { status: 'PENDING' } }),
+      db.coupon.count({ where: { status: 'PENDING' } }),
+      adminUserId ? db.notification.count({ where: { userId: adminUserId, read: false } }) : Promise.resolve(0),
+    ]);
+    return {
+      pendingVendors,
+      pendingActivities,
+      pendingCoupons,
+      unreadNotifications,
+      total: pendingVendors + pendingActivities + pendingCoupons,
+    };
+  }
+
+  // ─── Global Search ────────────────────────────────────────────
+  async globalSearch(search: string) {
+    const db = this.prisma.client;
+    const take = 5;
+
+    const [users, vendors, activities, bookings] = await Promise.all([
+      db.user.findMany({
+        where: { OR: [
+          { fullName: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+        ]},
+        select: { id: true, fullName: true, email: true, role: true },
+        take,
+      }),
+      db.vendor.findMany({
+        where: { OR: [
+          { businessNameEn: { contains: search, mode: 'insensitive' } },
+          { businessNameAr: { contains: search, mode: 'insensitive' } },
+        ]},
+        select: { id: true, businessNameEn: true, status: true },
+        take,
+      }),
+      db.activity.findMany({
+        where: { OR: [
+          { titleEn: { contains: search, mode: 'insensitive' } },
+          { titleAr: { contains: search, mode: 'insensitive' } },
+        ]},
+        select: { id: true, titleEn: true, status: true },
+        take,
+      }),
+      db.booking.findMany({
+        where: { OR: [
+          { ref: { contains: search, mode: 'insensitive' } },
+          { customer: { fullName: { contains: search, mode: 'insensitive' } } },
+        ]},
+        select: { id: true, ref: true, status: true },
+        take,
+      }),
+    ]);
+
+    return { users, vendors, activities, bookings };
+  }
+
+  // ─── Bulk Actions ─────────────────────────────────────────────
+  async bulkUpdateVendorStatus(vendorIds: string[], status: string) {
+    const result = await this.prisma.client.vendor.updateMany({
+      where: { id: { in: vendorIds } },
+      data: { status: status as any },
+    });
+    return { updated: result.count };
+  }
+
+  async bulkUpdateActivityStatus(activityIds: string[], status: string) {
+    const result = await this.prisma.client.activity.updateMany({
+      where: { id: { in: activityIds } },
+      data: { status: status as any },
+    });
+    return { updated: result.count };
+  }
+
+  async bulkDeleteUsers(userIds: string[]) {
+    // Prevent deleting admins
+    const admins = await this.prisma.client.user.findMany({
+      where: { id: { in: userIds }, role: 'ADMIN' },
+      select: { id: true },
+    });
+    if (admins.length > 0) {
+      throw new ForbiddenException('Cannot bulk delete admin users');
+    }
+    const result = await this.prisma.client.user.deleteMany({
+      where: { id: { in: userIds }, role: { not: 'ADMIN' } },
+    });
+    return { deleted: result.count };
+  }
+
+  // ─── Export Data ──────────────────────────────────────────────
+  async exportUsers(role?: string) {
+    // Whitelist the role value to avoid injecting arbitrary strings into the WHERE clause.
+    // Exports are role-scoped by policy — no mixed-role CSVs allowed.
+    const ALLOWED_ROLES = ['CUSTOMER', 'VENDOR', 'ADMIN'] as const;
+    const where: Prisma.UserWhereInput = {};
+    if (role && (ALLOWED_ROLES as readonly string[]).includes(role)) {
+      where.role = role as (typeof ALLOWED_ROLES)[number];
+    }
+    return this.prisma.client.user.findMany({
+      where,
+      select: { id: true, fullName: true, email: true, phone: true, role: true, isDeactivated: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async exportVendors() {
+    return this.prisma.client.vendor.findMany({
+      include: {
+        user: { select: { fullName: true, email: true } },
+        country: { select: { nameEn: true } },
+        _count: { select: { activities: true, bookings: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async exportActivities() {
+    return this.prisma.client.activity.findMany({
+      include: {
+        vendor: { select: { businessNameEn: true } },
+        country: { select: { nameEn: true } },
+        category: { select: { nameEn: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async exportBookings() {
+    return this.prisma.client.booking.findMany({
+      include: {
+        customer: { select: { fullName: true, email: true } },
+        activity: { select: { titleEn: true } },
+        vendor: { select: { businessNameEn: true } },
+        payment: { select: { status: true, method: true, paidAt: true, amount: true, gatewayTxnId: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+}

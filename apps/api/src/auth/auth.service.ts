@@ -1,0 +1,768 @@
+import {
+  Injectable,
+  UnauthorizedException,
+  ConflictException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
+import { GoogleProfile } from './strategies/google.strategy';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { Response, Request } from 'express';
+import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
+import { PrismaService } from '../prisma/prisma.service';
+import { UsersService } from '../users/users.service';
+import { User } from '@prisma/client';
+import { TokenPayload } from './interfaces/token-payload.interface';
+import { RegisterVendorDto } from './dto/register-vendor.dto';
+import { SecurityLoggerService } from '../common/services/security-logger.service';
+import { AuditLoggerService } from '../common/services/audit-logger.service';
+import { EmailService } from '../email/email.service';
+import { SmsService } from '../sms/sms.service';
+import { NotificationService } from '../common/services/notification.service';
+
+@Injectable()
+export class AuthService {
+  private readonly accessExpiry: number;
+  private readonly refreshExpiry: number;
+  private readonly lockoutThreshold: number;
+  private readonly lockoutDuration: number;
+
+  constructor(
+    private usersService: UsersService,
+    private prisma: PrismaService,
+    private jwtService: JwtService,
+    private configService: ConfigService,
+    private securityLogger: SecurityLoggerService,
+    private auditLogger: AuditLoggerService,
+    private emailService: EmailService,
+    private smsService: SmsService,
+    private notificationService: NotificationService,
+  ) {
+    this.accessExpiry = Number(this.configService.get('JWT_EXPIRATION', '900'));
+    this.refreshExpiry = Number(this.configService.get('REFRESH_TOKEN_EXPIRY_DAYS', '7'));
+    this.lockoutThreshold = Number(this.configService.get('LOCKOUT_THRESHOLD', '5'));
+    this.lockoutDuration = Number(this.configService.get('LOCKOUT_DURATION_MINUTES', '15'));
+  }
+
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  private extractClientInfo(req?: Request) {
+    if (!req) return { ip: undefined, userAgent: undefined };
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
+    const userAgent = req.headers['user-agent'];
+    return { ip, userAgent };
+  }
+
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  /** Public accessor for controllers that need to identify the current session */
+  getTokenHash(rawToken: string): string {
+    return this.hashToken(rawToken);
+  }
+
+  private generateRefreshToken(): string {
+    return crypto.randomBytes(48).toString('base64url');
+  }
+
+  private cookieOptions(maxAgeMs: number) {
+    return {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict' as const,
+      path: '/',
+      maxAge: maxAgeMs,
+    };
+  }
+
+  // ─── Login with all checks (lockout, deactivation, vendor status) ──────────
+
+  async loginWithCheck(email: string, password: string, response: Response, req?: Request) {
+    const { ip, userAgent } = this.extractClientInfo(req);
+    const db = this.prisma.client;
+
+    // Dummy hash for timing-safe responses when user not found
+    const DUMMY_HASH = '$2b$10$dummyhashfortimingequaliz0000000000000000000000000';
+
+    // 1. Find user — only select fields needed for auth flow
+    const user = await db.user.findUnique({
+      where: { email },
+      select: {
+        id: true, email: true, fullName: true, role: true, password: true,
+        failedLoginAttempts: true, lockedUntil: true, emailVerified: true, isDeactivated: true,
+      },
+    });
+    if (!user) {
+      await bcrypt.compare(password, DUMMY_HASH); // equalize timing
+      await this.securityLogger.log({ event: 'LOGIN_FAILED', email, ip, userAgent, details: 'User not found' });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // 2. Check lockout — return generic message to prevent account enumeration
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      await bcrypt.compare(password, user.password || DUMMY_HASH); // equalize timing
+      await this.securityLogger.log({ event: 'LOGIN_FAILED', userId: user.id, email, ip, userAgent, details: 'Account locked' });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // 3. Verify password (null password = OAuth-only account)
+    if (!user.password) {
+      await bcrypt.compare(password, DUMMY_HASH); // equalize timing
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      const attempts = user.failedLoginAttempts + 1;
+      const updateData: any = { failedLoginAttempts: attempts };
+
+      if (attempts >= this.lockoutThreshold) {
+        updateData.lockedUntil = new Date(Date.now() + this.lockoutDuration * 60000);
+        await this.securityLogger.log({ event: 'ACCOUNT_LOCKED', userId: user.id, email, ip, userAgent, details: `Locked after ${attempts} failed attempts` });
+      }
+
+      await db.user.update({ where: { id: user.id }, data: updateData });
+      await this.securityLogger.log({ event: 'LOGIN_FAILED', userId: user.id, email, ip, userAgent, details: `Bad password, attempt ${attempts}` });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // 4. Check email verified (customers only — vendors/admins are created by admin and skip this)
+    if (user.role === 'CUSTOMER' && !user.emailVerified) {
+      await this.securityLogger.log({ event: 'LOGIN_FAILED', userId: user.id, email, ip, userAgent, details: 'Email not verified' });
+      throw new ForbiddenException('EMAIL_NOT_VERIFIED');
+    }
+
+    // 5. Check deactivation
+    if (user.isDeactivated) {
+      await this.securityLogger.log({ event: 'DEACTIVATED_ACCESS', userId: user.id, email, ip, userAgent });
+      throw new ForbiddenException('Your account has been deactivated');
+    }
+
+    // 6. Check vendor status
+    if (user.role === 'VENDOR') {
+      const vendor = await db.vendor.findUnique({ where: { userId: user.id }, select: { status: true } });
+      if (!vendor) throw new ForbiddenException('Vendor profile not found');
+      if (vendor.status === 'PENDING') {
+        await this.securityLogger.log({ event: 'SUSPENDED_VENDOR_ACCESS', userId: user.id, email, ip, userAgent, details: 'PENDING vendor' });
+        throw new ForbiddenException('Your vendor account is pending admin approval');
+      }
+      if (vendor.status === 'SUSPENDED') {
+        await this.securityLogger.log({ event: 'SUSPENDED_VENDOR_ACCESS', userId: user.id, email, ip, userAgent, details: 'SUSPENDED vendor' });
+        throw new ForbiddenException('Your vendor account has been suspended');
+      }
+    }
+
+    // 6. Reset failed attempts
+    if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+      await db.user.update({ where: { id: user.id }, data: { failedLoginAttempts: 0, lockedUntil: null } });
+    }
+
+    // 7. Issue tokens
+    await this.securityLogger.log({ event: 'LOGIN_SUCCESS', userId: user.id, email, ip, userAgent });
+    return this.issueTokens(user, response, req);
+  }
+
+  // ─── Issue access + refresh tokens ──────────────────────────────────────────
+
+  private readonly maxActiveTokens = Number(process.env.MAX_SESSIONS_PER_USER || 5);
+
+  async issueTokens(user: Pick<User, 'id' | 'email' | 'fullName' | 'role'>, response: Response, req?: Request) {
+    const payload: TokenPayload = { email: user.email, sub: user.id, role: user.role };
+    const accessToken = this.jwtService.sign(payload);
+    const db = this.prisma.client;
+    const { ip, userAgent } = this.extractClientInfo(req);
+
+    // Set access token cookie
+    response.cookie('Authentication', accessToken, this.cookieOptions(this.accessExpiry * 1000));
+
+    // Cleanup: delete expired tokens for this user
+    await db.refreshToken.deleteMany({
+      where: { userId: user.id, expiresAt: { lt: new Date() } },
+    });
+
+    // Enforce max active tokens (oldest gets evicted)
+    const activeTokens = await db.refreshToken.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (activeTokens.length >= this.maxActiveTokens) {
+      const tokensToDelete = activeTokens.slice(this.maxActiveTokens - 1).map(t => t.id);
+      await db.refreshToken.deleteMany({ where: { id: { in: tokensToDelete } } });
+    }
+
+    // Generate and store refresh token (hashed in DB, raw in cookie)
+    const rawRefreshToken = this.generateRefreshToken();
+    const tokenHash = this.hashToken(rawRefreshToken);
+    const expiresAt = new Date(Date.now() + this.refreshExpiry * 24 * 60 * 60 * 1000);
+
+    await db.refreshToken.create({
+      data: {
+        userId: user.id,
+        tokenHash,
+        expiresAt,
+        userAgent: userAgent ?? null,
+        ipAddress: ip ?? null,
+        lastUsedAt: new Date(),
+      },
+    });
+
+    response.cookie('RefreshToken', rawRefreshToken, this.cookieOptions(this.refreshExpiry * 24 * 60 * 60 * 1000));
+
+    // Build response body (never includes tokens — they're in cookies)
+    const result: any = {
+      id: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+    };
+
+    if (user.role === 'VENDOR') {
+      const vendor = await this.prisma.client.vendor.findUnique({
+        where: { userId: user.id },
+        select: { id: true, businessNameEn: true, businessNameAr: true, slug: true, status: true, countryId: true },
+      });
+      result.vendor = vendor;
+    }
+
+    return result;
+  }
+
+  // ─── Refresh token rotation ─────────────────────────────────────────────────
+
+  async refreshTokens(refreshTokenRaw: string, response: Response, req?: Request) {
+    const { ip, userAgent } = this.extractClientInfo(req);
+    const db = this.prisma.client;
+    const tokenHash = this.hashToken(refreshTokenRaw);
+
+    const storedToken = await db.refreshToken.findUnique({ where: { tokenHash } });
+    if (!storedToken) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    if (storedToken.expiresAt < new Date()) {
+      await db.refreshToken.delete({ where: { id: storedToken.id } });
+      throw new UnauthorizedException('Refresh token expired');
+    }
+
+    // Rotation: delete used token immediately (single-use)
+    await db.refreshToken.delete({ where: { id: storedToken.id } });
+
+    // Verify user is still valid — select only what issueTokens needs
+    const user = await db.user.findUnique({
+      where: { id: storedToken.userId },
+      select: { id: true, email: true, fullName: true, role: true, isDeactivated: true },
+    });
+    if (!user || user.isDeactivated) {
+      await db.refreshToken.deleteMany({ where: { userId: storedToken.userId } });
+      this.clearAllCookies(response);
+      throw new UnauthorizedException('Account is no longer active');
+    }
+
+    // Check vendor status on each refresh (session invalidation on role change)
+    if (user.role === 'VENDOR') {
+      const vendor = await db.vendor.findUnique({ where: { userId: user.id }, select: { status: true } });
+      if (!vendor || vendor.status === 'SUSPENDED') {
+        await db.refreshToken.deleteMany({ where: { userId: user.id } });
+        this.clearAllCookies(response);
+        throw new ForbiddenException('Your vendor account has been suspended');
+      }
+    }
+
+    await this.securityLogger.log({ event: 'TOKEN_REFRESH', userId: user.id, ip, userAgent });
+
+    // Opportunistic cleanup: delete expired tokens in background (fire-and-forget)
+    this.cleanupExpiredTokens().catch(() => {});
+
+    return this.issueTokens(user, response, req);
+  }
+
+  // ─── Register (customer) — sends verification email, does NOT issue cookies ─
+
+  async registerAndLogin(data: { fullName: string; email: string; password: string; phone?: string }) {
+    const db = this.prisma.client;
+
+    // Pre-check email uniqueness → clean 409 instead of raw Prisma P2002
+    const existingEmail = await db.user.findUnique({ where: { email: data.email }, select: { id: true } });
+    if (existingEmail) throw new ConflictException('Email already registered');
+
+    // Phone is @unique in the schema. Pre-check gives a clean 409 instead of
+    // a raw Prisma P2002. Use a NEUTRAL message (not "phone already registered")
+    // to avoid confirming to an attacker whether a specific phone number exists
+    // in our database — same anti-enumeration reasoning as forgot-password and
+    // resend-verification flows elsewhere in this service.
+    if (data.phone) {
+      const existingPhone = await db.user.findUnique({ where: { phone: data.phone }, select: { id: true } });
+      if (existingPhone) throw new ConflictException('Please use a different phone number');
+    }
+
+    // emailVerified defaults to false in schema; usersService hashes password
+    const user = await this.usersService.create(data);
+
+    await this.sendVerificationEmail(db, user.id, user.email, user.fullName);
+
+    await this.securityLogger.log({ event: 'LOGIN_SUCCESS', userId: user.id, email: user.email, details: 'Customer registered, pending verification' });
+
+    // Permanent audit trail entry for the new account. Fire-and-forget — never
+    // let audit logging break the main flow (AuditLoggerService.log() already
+    // swallows failures).
+    await this.auditLogger.log({
+      actorType: 'CUSTOMER',
+      actorId: user.id,
+      actorName: user.fullName || `user:${user.id.slice(0, 8)}`,
+      action: 'CUSTOMER_REGISTER',
+      entity: 'User',
+      entityId: user.id,
+      details: 'New customer account, pending email verification',
+    });
+
+    return { pending: true, email: user.email };
+  }
+
+  // ─── Verify email token ─────────────────────────────────────────────────────
+
+  async verifyEmail(token: string, response: Response, req?: Request) {
+    const db = this.prisma.client;
+    const { ip, userAgent } = this.extractClientInfo(req);
+
+    const user = await (db.user as any).findUnique({
+      where: { verificationToken: token },
+      select: { id: true, email: true, verificationTokenExpiry: true },
+    });
+    if (!user) throw new BadRequestException('Invalid or expired verification link');
+
+    if (!user.verificationTokenExpiry || user.verificationTokenExpiry < new Date()) {
+      throw new BadRequestException('Verification link has expired. Please request a new one.');
+    }
+
+    // Clear token, mark verified, and select only the fields issueTokens needs
+    const verifiedUser = await db.user.update({
+      where: { id: user.id },
+      data: { emailVerified: true, verificationToken: null, verificationTokenExpiry: null } as any,
+      select: { id: true, email: true, fullName: true, role: true },
+    });
+
+    await this.securityLogger.log({ event: 'LOGIN_SUCCESS', userId: user.id, email: user.email, ip, userAgent, details: 'Email verified' });
+
+    return this.issueTokens(verifiedUser as any, response, req);
+  }
+
+  // ─── Resend verification email ──────────────────────────────────────────────
+
+  async resendVerification(email: string) {
+    const db = this.prisma.client;
+    const genericResponse = { message: 'If that email exists, a new link has been sent.' };
+
+    const user = await db.user.findUnique({
+      where: { email },
+      select: { id: true, email: true, fullName: true, role: true, emailVerified: true },
+    });
+    if (!user || user.role !== 'CUSTOMER') return genericResponse;
+    if (user.emailVerified) return genericResponse;
+
+    await this.sendVerificationEmail(db, user.id, user.email, user.fullName);
+
+    return genericResponse;
+  }
+
+  // ─── Google OAuth — upsert user, merge accounts, issue tokens ──────────────
+
+  async handleGoogleAuth(googleUser: GoogleProfile, response: Response, req?: Request) {
+    const db = this.prisma.client;
+    const { ip, userAgent } = this.extractClientInfo(req);
+
+    const oauthSelect = { id: true, email: true, fullName: true, role: true, isDeactivated: true, profilePicture: true, emailVerified: true } as const;
+
+    // 1. Look up by googleId (returning OAuth user)
+    let user = await db.user.findUnique({ where: { googleId: googleUser.googleId }, select: oauthSelect });
+
+    if (!user) {
+      // 2. Check if email already exists (account merge: link Google to existing account)
+      const existing = await db.user.findUnique({ where: { email: googleUser.email }, select: oauthSelect });
+
+      if (existing) {
+        if (!existing.emailVerified) {
+          throw new ForbiddenException('An account with this email exists but is not verified. Please verify your email first.');
+        }
+        user = await db.user.update({
+          where: { id: existing.id },
+          data: {
+            googleId: googleUser.googleId,
+            ...(existing.profilePicture ? {} : { profilePicture: googleUser.picture }),
+          },
+          select: oauthSelect,
+        });
+      } else {
+        // 3. New user — create with no password (OAuth-only)
+        user = await db.user.create({
+          data: {
+            fullName: googleUser.fullName,
+            email: googleUser.email,
+            password: null,
+            googleId: googleUser.googleId,
+            emailVerified: true,
+            role: 'CUSTOMER',
+            profilePicture: googleUser.picture,
+          },
+          select: oauthSelect,
+        });
+      }
+    }
+
+    // 4. Block deactivated accounts
+    if (user.isDeactivated) {
+      await this.securityLogger.log({ event: 'DEACTIVATED_ACCESS', userId: user.id, email: user.email, ip, userAgent, details: 'Google OAuth attempt' });
+      throw new ForbiddenException('Your account has been deactivated');
+    }
+
+    // 5. Block suspended vendors
+    if (user.role === 'VENDOR') {
+      const vendor = await db.vendor.findUnique({ where: { userId: user.id }, select: { status: true } });
+      if (vendor?.status === 'SUSPENDED') {
+        await this.securityLogger.log({ event: 'SUSPENDED_VENDOR_ACCESS', userId: user.id, email: user.email, ip, userAgent, details: 'Google OAuth' });
+        throw new ForbiddenException('Your vendor account has been suspended');
+      }
+    }
+
+    await this.securityLogger.log({ event: 'LOGIN_SUCCESS', userId: user.id, email: user.email, ip, userAgent, details: 'Google OAuth' });
+
+    return this.issueTokens(user, response, req);
+  }
+
+  // ─── Internal: generate + save + send verification email ───────────────────
+
+  private async sendVerificationEmail(db: any, userId: string, email: string, fullName: string) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const verificationExpiryHours = Number(process.env.VERIFICATION_TOKEN_EXPIRY_HOURS || 24);
+    const expiry = new Date(Date.now() + verificationExpiryHours * 60 * 60 * 1000);
+
+    await db.user.update({
+      where: { id: userId },
+      data: { verificationToken: token, verificationTokenExpiry: expiry },
+    });
+
+    const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
+    const verificationLink = `${frontendUrl}/verify-email?token=${token}`;
+
+    await this.emailService.sendEmailVerification(email, { userName: fullName, verificationLink });
+  }
+
+  // ─── Register vendor ───────────────────────────────────────────────────────
+
+  async registerVendor(dto: RegisterVendorDto) {
+    const db = this.prisma.client;
+
+    const existingUser = await db.user.findUnique({ where: { email: dto.email }, select: { id: true } });
+    if (existingUser) throw new ConflictException('Email already registered');
+
+    const existingBusiness = await db.vendor.findUnique({ where: { businessId: dto.businessId } });
+    if (existingBusiness) throw new ConflictException('Business ID already registered');
+
+    const existingSlug = await db.vendor.findUnique({ where: { slug: dto.slug } });
+    if (existingSlug) throw new ConflictException('Slug already taken');
+
+    if (dto.phone) {
+      // Neutral anti-enumeration message — must match the customer-register
+      // flow (see registerAndLogin). "Phone number already registered" would
+      // confirm to an attacker that a specific phone number is in our DB.
+      const existingPhone = await db.user.findUnique({ where: { phone: dto.phone }, select: { id: true } });
+      if (existingPhone) throw new ConflictException('Please use a different phone number');
+    }
+
+    const country = await db.country.findUnique({ where: { id: dto.countryId } });
+    if (!country || country.status !== 'ACTIVE') {
+      throw new ConflictException('Invalid or inactive country');
+    }
+
+    const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
+    const hashedPassword = await bcrypt.hash(dto.password, bcryptRounds);
+
+    const result = await db.$transaction(async (tx: any) => {
+      const user = await tx.user.create({
+        data: {
+          fullName: dto.fullName,
+          email: dto.email,
+          password: hashedPassword,
+          phone: dto.phone ?? null,
+          role: 'VENDOR',
+        },
+      });
+
+      await tx.vendor.create({
+        data: {
+          userId: user.id,
+          businessNameEn: dto.businessNameEn,
+          businessNameAr: dto.businessNameAr,
+          businessId: dto.businessId,
+          slug: dto.slug,
+          phone: dto.phone ?? null,
+          countryId: dto.countryId,
+          status: 'PENDING',
+        },
+      });
+
+      return user;
+    });
+
+    // Notify all admins: new vendor pending approval
+    this.notificationService.notifyAdmins({
+      type: 'SYSTEM',
+      title: 'New Vendor Registration',
+      message: `${dto.businessNameEn} has registered and is pending approval`,
+      link: '/admin/vendors',
+    });
+
+    return {
+      message: 'Vendor registration submitted successfully. Your account is pending admin approval.',
+      email: result.email,
+    };
+  }
+
+  // ─── Logout ─────────────────────────────────────────────────────────────────
+
+  // ─── Password Reset ──────────────────────────────────────────────────────
+
+  async forgotPassword(email: string) {
+    const db = this.prisma.client;
+
+    // Always return success — never reveal if email exists (anti-enumeration)
+    const user = await db.user.findUnique({
+      where: { email },
+      select: { id: true, fullName: true, role: true },
+    });
+
+    // Check if user has a password (not OAuth-only) without selecting the hash
+    const hasPassword = user
+      ? await db.user.count({ where: { id: user.id, password: { not: null } } }) > 0
+      : false;
+
+    // Only allow reset for customers with passwords (not OAuth-only). Vendors/admins change password from settings.
+    if (user && hasPassword && user.role === 'CUSTOMER') {
+      const token = crypto.randomBytes(32).toString('hex');
+      const resetExpiryHours = Number(process.env.PASSWORD_RESET_EXPIRY_HOURS || 1);
+      const expiry = new Date(Date.now() + resetExpiryHours * 60 * 60 * 1000);
+
+      await db.user.update({
+        where: { id: user.id },
+        data: {
+          passwordResetToken: token,
+          passwordResetExpiry: expiry,
+        },
+      });
+
+      const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
+      const resetLink = `${frontendUrl}/reset-password?token=${token}`;
+
+      this.emailService.sendPasswordReset(email, {
+        userName: user.fullName,
+        resetLink,
+        expiresIn: `${resetExpiryHours} hour${resetExpiryHours > 1 ? 's' : ''}`,
+      });
+
+      this.securityLogger.log({
+        event: 'PASSWORD_RESET_REQUESTED',
+        userId: user.id,
+        details: 'Reset email sent',
+      });
+    }
+
+    // Always return same response regardless of whether email exists
+    return { message: 'If an account exists with this email, a password reset link has been sent.' };
+  }
+
+  async resetPassword(token: string, newPassword: string) {
+    const db = this.prisma.client;
+
+    if (!/^[a-f0-9]{64}$/.test(token)) {
+      throw new BadRequestException('Invalid or expired reset link');
+    }
+
+    const user = await db.user.findFirst({
+      where: {
+        passwordResetToken: token,
+        passwordResetExpiry: { gt: new Date() },
+      },
+      select: { id: true },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Invalid or expired reset link');
+    }
+
+    const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
+    const hash = await bcrypt.hash(newPassword, bcryptRounds);
+
+    await db.$transaction([
+      db.user.update({
+        where: { id: user.id },
+        data: {
+          password: hash,
+          passwordResetToken: null,
+          passwordResetExpiry: null,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        },
+      }),
+      // Invalidate all sessions — forces re-login everywhere
+      db.refreshToken.deleteMany({ where: { userId: user.id } }),
+    ]);
+
+    this.securityLogger.log({
+      event: 'PASSWORD_RESET_COMPLETED',
+      userId: user.id,
+      details: 'Password changed via reset link',
+    });
+
+    return { message: 'Password has been reset successfully. You can now log in with your new password.' };
+  }
+
+  // ─── Logout ─────────────────────────────────────────────────────────────────
+
+  async logout(refreshTokenRaw: string | undefined, userId: string | undefined, response: Response, req?: Request) {
+    const { ip, userAgent } = this.extractClientInfo(req);
+
+    if (refreshTokenRaw) {
+      const tokenHash = this.hashToken(refreshTokenRaw);
+      await this.prisma.client.refreshToken.deleteMany({ where: { tokenHash } });
+    }
+
+    this.clearAllCookies(response);
+
+    if (userId) {
+      await this.securityLogger.log({ event: 'LOGOUT', userId, ip, userAgent });
+    }
+  }
+
+  // ─── Expired token cleanup ─────────────────────────────────────────────────
+
+  /**
+   * Delete all expired refresh tokens from the database.
+   * Called opportunistically on each token refresh (batched, non-blocking)
+   * and can be triggered via admin endpoint or cron job.
+   */
+  async cleanupExpiredTokens(): Promise<number> {
+    const { count } = await this.prisma.client.refreshToken.deleteMany({
+      where: { expiresAt: { lt: new Date() } },
+    });
+    return count;
+  }
+
+  // ─── Clear all auth cookies ─────────────────────────────────────────────────
+
+  private clearAllCookies(response: Response) {
+    const clearOpts = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict' as const,
+      path: '/',
+    };
+    response.cookie('Authentication', '', { ...clearOpts, maxAge: 0 });
+    response.cookie('RefreshToken', '', { ...clearOpts, maxAge: 0 });
+  }
+
+  // ─── Phone OTP Verification ─────────────────────────────────────────────
+
+  async sendPhoneOtp(userId: string, phone: string) {
+    const db = this.prisma.client;
+
+    // Check if phone is already verified by another user
+    const existing = await db.user.findFirst({
+      where: { phone, id: { not: userId }, phoneVerified: true },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException('Phone number already verified by another account');
+    }
+
+    // Generate 6-digit OTP
+    const otp = crypto.randomInt(100000, 999999).toString();
+    const otpHash = this.hashToken(otp);
+    const otpExpiryMinutes = Number(process.env.OTP_EXPIRY_MINUTES || 5);
+    const otpExpiry = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
+
+    await db.user.update({
+      where: { id: userId },
+      data: {
+        phone,
+        phoneOtpHash: otpHash,
+        phoneOtpExpiry: otpExpiry,
+        phoneOtpAttempts: 0,
+        phoneVerified: false,
+      },
+    });
+
+    await this.smsService.sendOtp(phone, { code: otp });
+
+    // SecurityLog keeps only userId as the identity dimension — the user
+    // record itself already has the phone. Storing last-4 here is redundant
+    // and would be recoverable via frequency analysis across many logs.
+    this.securityLogger.log({
+      event: 'PHONE_OTP_SENT',
+      userId,
+    });
+
+    return { message: 'Verification code sent' };
+  }
+
+  async verifyPhoneOtp(userId: string, code: string) {
+    const db = this.prisma.client;
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: { phoneOtpHash: true, phoneOtpExpiry: true, phoneOtpAttempts: true, phone: true },
+    });
+
+    if (!user?.phoneOtpHash || !user.phoneOtpExpiry) {
+      throw new BadRequestException('No pending verification. Please request a new code.');
+    }
+
+    if (user.phoneOtpExpiry < new Date()) {
+      await db.user.update({
+        where: { id: userId },
+        data: { phoneOtpHash: null, phoneOtpExpiry: null, phoneOtpAttempts: 0 },
+      });
+      throw new BadRequestException('Verification code expired. Please request a new one.');
+    }
+
+    const maxOtpAttempts = Number(process.env.OTP_MAX_ATTEMPTS || 5);
+    if (user.phoneOtpAttempts >= maxOtpAttempts) {
+      await db.user.update({
+        where: { id: userId },
+        data: { phoneOtpHash: null, phoneOtpExpiry: null, phoneOtpAttempts: 0 },
+      });
+      throw new BadRequestException('Too many attempts. Please request a new code.');
+    }
+
+    // Increment attempts before checking (costs an attempt even on failure)
+    await db.user.update({
+      where: { id: userId },
+      data: { phoneOtpAttempts: { increment: 1 } },
+    });
+
+    const codeHash = this.hashToken(code);
+    if (codeHash !== user.phoneOtpHash) {
+      throw new BadRequestException('Invalid verification code');
+    }
+
+    // Success — mark phone as verified, clear OTP fields
+    await db.user.update({
+      where: { id: userId },
+      data: {
+        phoneVerified: true,
+        phoneOtpHash: null,
+        phoneOtpExpiry: null,
+        phoneOtpAttempts: 0,
+      },
+    });
+
+    // Same rationale as PHONE_OTP_SENT — userId uniquely identifies the user
+    // and no phone substring is needed for audit.
+    this.securityLogger.log({
+      event: 'PHONE_VERIFIED',
+      userId,
+    });
+
+    return { message: 'Phone verified successfully', phoneVerified: true };
+  }
+}

@@ -1,0 +1,294 @@
+/**
+ * Wave 4 + 5: NotificationService, filters (Prisma/All/Throttler),
+ * SanitizePipe, geo haversine.
+ */
+
+import { of, throwError } from 'rxjs';
+import { HttpException, HttpStatus } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { Test } from '@nestjs/testing';
+import { NotificationService } from '../../src/common/services/notification.service';
+import { WebPushService } from '../../src/common/services/web-push.service';
+import { PrismaService } from '../../src/prisma/prisma.service';
+import { AllExceptionsFilter } from '../../src/common/filters/all-exceptions.filter';
+import { PrismaExceptionFilter } from '../../src/common/filters/prisma-exception.filter';
+import { ThrottlerExceptionFilter } from '../../src/common/filters/throttler-exception.filter';
+import { ThrottlerException } from '@nestjs/throttler';
+import { SanitizePipe } from '../../src/common/pipes/sanitize.pipe';
+import { makePrismaMock } from '../mocks/prisma.mock';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NotificationService
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('NotificationService', () => {
+  async function build() {
+    const prisma = makePrismaMock();
+    const webPush = {
+      sendToUser: jest.fn().mockResolvedValue(undefined),
+    };
+    const mod = await Test.createTestingModule({
+      providers: [
+        NotificationService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: WebPushService, useValue: webPush },
+      ],
+    }).compile();
+    return { sut: mod.get(NotificationService), prisma, webPush };
+  }
+
+  describe('safeLink (exposed via behaviour of send/sendToMany)', () => {
+    test('absolute URLs rejected (stored as null)', async () => {
+      const ctx = await build();
+      await ctx.sut.send({
+        userId: 'u1', type: 'SYSTEM', title: 't', message: 'm',
+        link: 'https://evil.com/attack',
+      });
+      const data = ctx.prisma._client.notification.create.mock.calls[0][0].data;
+      expect(data.link).toBeNull();
+    });
+
+    test('protocol-relative //evil.com rejected', async () => {
+      const ctx = await build();
+      await ctx.sut.send({
+        userId: 'u1', type: 'SYSTEM', title: 't', message: 'm',
+        link: '//evil.com',
+      });
+      expect(ctx.prisma._client.notification.create.mock.calls[0][0].data.link).toBeNull();
+    });
+
+    test('javascript: pseudo-scheme rejected', async () => {
+      const ctx = await build();
+      await ctx.sut.send({
+        userId: 'u1', type: 'SYSTEM', title: 't', message: 'm',
+        link: 'javascript:alert(1)',
+      });
+      expect(ctx.prisma._client.notification.create.mock.calls[0][0].data.link).toBeNull();
+    });
+
+    test('valid relative path /bookings/123 accepted', async () => {
+      const ctx = await build();
+      await ctx.sut.send({
+        userId: 'u1', type: 'SYSTEM', title: 't', message: 'm',
+        link: '/bookings/123',
+      });
+      expect(ctx.prisma._client.notification.create.mock.calls[0][0].data.link).toBe('/bookings/123');
+    });
+  });
+
+  test('send: title + message are length-capped (prevent DoS / storage abuse)', async () => {
+    const ctx = await build();
+    await ctx.sut.send({
+      userId: 'u1', type: 'SYSTEM',
+      title: 'a'.repeat(500),
+      message: 'b'.repeat(1000),
+    });
+    const data = ctx.prisma._client.notification.create.mock.calls[0][0].data;
+    expect(data.title.length).toBeLessThanOrEqual(200);
+    expect(data.message.length).toBeLessThanOrEqual(500);
+  });
+
+  test('send: also fires webPush (fire-and-forget — no await chain)', async () => {
+    const ctx = await build();
+    await ctx.sut.send({ userId: 'u1', type: 'SYSTEM', title: 't', message: 'm' });
+    expect(ctx.webPush.sendToUser).toHaveBeenCalled();
+  });
+
+  test('send: Prisma failure does NOT throw (fire-and-forget)', async () => {
+    const ctx = await build();
+    ctx.prisma._client.notification.create.mockRejectedValueOnce(new Error('DB down'));
+    // Must not throw
+    await expect(ctx.sut.send({ userId: 'u1', type: 'SYSTEM', title: 't', message: 'm' }))
+      .resolves.not.toThrow();
+  });
+
+  test('sendToMany with empty userIds returns early (no DB hit)', async () => {
+    const ctx = await build();
+    await ctx.sut.sendToMany({ userIds: [], type: 'SYSTEM', title: 't', message: 'm' });
+    expect(ctx.prisma._client.notification.createMany).not.toHaveBeenCalled();
+  });
+
+  test('notifyAdmins: no active admins → no-op', async () => {
+    const ctx = await build();
+    ctx.prisma._client.user.findMany.mockResolvedValueOnce([]);
+    await ctx.sut.notifyAdmins({ type: 'SYSTEM', title: 't', message: 'm' });
+    expect(ctx.prisma._client.notification.createMany).not.toHaveBeenCalled();
+  });
+
+  test('notifyAdmins: filters out deactivated admins in the query', async () => {
+    const ctx = await build();
+    ctx.prisma._client.user.findMany.mockResolvedValueOnce([{ id: 'a1' }]);
+    await ctx.sut.notifyAdmins({ type: 'SYSTEM', title: 't', message: 'm' });
+    expect(ctx.prisma._client.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { role: 'ADMIN', isDeactivated: false },
+      }),
+    );
+  });
+
+  test('markAsRead: scoped to userId (IDOR guard)', async () => {
+    const ctx = await build();
+    await ctx.sut.markAsRead('u1', 'notif-1');
+    expect(ctx.prisma._client.notification.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'notif-1', userId: 'u1' } }),
+    );
+  });
+
+  test('clearAll: scoped to userId, returns deleted count', async () => {
+    const ctx = await build();
+    ctx.prisma._client.notification.deleteMany.mockResolvedValueOnce({ count: 7 });
+    const r = await ctx.sut.clearAll('u1');
+    expect(r).toEqual({ deleted: 7 });
+    expect(ctx.prisma._client.notification.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u1' } });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AllExceptionsFilter
+// ═══════════════════════════════════════════════════════════════════════════
+
+function makeHost(req: any, res: any) {
+  return {
+    switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }),
+  } as any;
+}
+
+function makeRes() {
+  const r: any = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+  return r;
+}
+
+describe('AllExceptionsFilter', () => {
+  test('HttpException passes through with its status + message', () => {
+    const filter = new AllExceptionsFilter();
+    const res = makeRes();
+    filter.catch(new HttpException('Not allowed', HttpStatus.FORBIDDEN), makeHost({ path: '/x', method: 'GET' }, res));
+    expect(res.status).toHaveBeenCalledWith(403);
+    // Body shape unchanged for HttpException
+    const body = res.json.mock.calls[0][0];
+    expect(body).toBeDefined();
+  });
+
+  test('unknown Error → generic 500 (no stack / message leak)', () => {
+    const filter = new AllExceptionsFilter();
+    const res = makeRes();
+    filter.catch(new Error('DB down at host prod-db-1.amazonaws.com'), makeHost({ path: '/x', method: 'POST' }, res));
+    expect(res.status).toHaveBeenCalledWith(500);
+    const body = res.json.mock.calls[0][0];
+    expect(body).toEqual({ statusCode: 500, message: 'Internal server error' });
+    expect(JSON.stringify(body)).not.toContain('amazonaws');
+  });
+
+  test('non-Error thrown value → still generic 500', () => {
+    const filter = new AllExceptionsFilter();
+    const res = makeRes();
+    filter.catch('string thrown', makeHost({ path: '/x', method: 'GET' }, res));
+    expect(res.status).toHaveBeenCalledWith(500);
+    const body = res.json.mock.calls[0][0];
+    expect(body.message).toBe('Internal server error');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PrismaExceptionFilter
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('PrismaExceptionFilter', () => {
+  function mkPrismaErr(code: string, message = 'prisma error'): Prisma.PrismaClientKnownRequestError {
+    // Construct a Prisma.PrismaClientKnownRequestError directly
+    const err = new Prisma.PrismaClientKnownRequestError(message, {
+      code, clientVersion: '5.0.0', meta: {},
+    });
+    return err;
+  }
+
+  test.each([
+    ['P2002', 409, /already exists/i],
+    ['P2034', 409, /busy/i],
+    ['P2025', 404, /does not exist/i],
+    ['P2003', 400, /invalid reference/i],
+    ['P2014', 400, /invalid reference/i],
+    ['P2000', 400, /provided data is invalid/i],
+    ['P2011', 400, /provided data is invalid/i],
+    ['P2020', 400, /provided data is invalid/i],
+  ])('code %s → HTTP %d with safe message', (code, status, msg) => {
+    const filter = new PrismaExceptionFilter();
+    const res = makeRes();
+    filter.catch(mkPrismaErr(code), makeHost({ path: '/x', method: 'POST' }, res));
+    expect(res.status).toHaveBeenCalledWith(status);
+    const body = res.json.mock.calls[0][0];
+    expect(body.message).toMatch(msg);
+    // Never leak Prisma code, SQL, or raw message
+    expect(body.message).not.toContain(code);
+    expect(JSON.stringify(body)).not.toContain('prisma error');
+  });
+
+  test('unknown Prisma code → generic 500', () => {
+    const filter = new PrismaExceptionFilter();
+    const res = makeRes();
+    filter.catch(mkPrismaErr('P9999'), makeHost({ path: '/x', method: 'POST' }, res));
+    expect(res.status).toHaveBeenCalledWith(500);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ThrottlerExceptionFilter
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('ThrottlerExceptionFilter', () => {
+  test('reads Retry-After header and returns 429 shape', () => {
+    const filter = new ThrottlerExceptionFilter();
+    const res = makeRes();
+    res.getHeader = jest.fn().mockReturnValue('60');
+    const host = { switchToHttp: () => ({ getResponse: () => res }) } as any;
+
+    filter.catch(new ThrottlerException('rate limited'), host);
+
+    expect(res.status).toHaveBeenCalledWith(429);
+    const body = res.json.mock.calls[0][0];
+    expect(body.statusCode).toBe(429);
+  });
+
+  test('missing Retry-After header → falls back to 60', () => {
+    const filter = new ThrottlerExceptionFilter();
+    const res = makeRes();
+    res.getHeader = jest.fn().mockReturnValue(undefined);
+    const host = { switchToHttp: () => ({ getResponse: () => res }) } as any;
+
+    filter.catch(new ThrottlerException('rate limited'), host);
+    expect(res.status).toHaveBeenCalledWith(429);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SanitizePipe
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('SanitizePipe', () => {
+  const pipe = new SanitizePipe();
+
+  test('custom metadata type → passthrough (no sanitize)', () => {
+    const r = pipe.transform('<script>x</script>', { type: 'custom' } as any);
+    expect(r).toBe('<script>x</script>');
+  });
+
+  test('body string → strips <script> tags', () => {
+    const r = pipe.transform('hello<script>evil()</script>world', { type: 'body' } as any);
+    expect(r).not.toContain('<script>');
+    expect(r).not.toContain('evil()');
+  });
+
+  test('body object → recursively sanitizes string values', () => {
+    const r = pipe.transform(
+      { title: 'ok', desc: '<img src=x onerror=alert(1)>', nested: { note: '<b>safe</b>hi' } },
+      { type: 'body' } as any,
+    );
+    expect((r as any).desc).not.toContain('onerror');
+    expect((r as any).nested.note).not.toContain('<b>');
+  });
+
+  test('non-string primitives pass through unchanged', () => {
+    const r = pipe.transform({ n: 42, b: true, x: null }, { type: 'body' } as any);
+    expect(r).toEqual({ n: 42, b: true, x: null });
+  });
+});

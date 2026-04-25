@@ -1,0 +1,46 @@
+# ═══════════════════════════════════════════════════════════════
+# Development Dockerfile — NestJS API with hot reload
+# Used ONLY by docker-compose.yml for local dev.
+# Production uses apps/api/Dockerfile (multi-stage).
+# ═══════════════════════════════════════════════════════════════
+
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+# OpenSSL — required by Prisma Client at runtime
+# socat  — forwards Prisma Studio's 127.0.0.1 bind to 0.0.0.0 so it's
+#          reachable from the host browser (Prisma 7+ removed --hostname)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl socat \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─── Install workspace dependencies ────────────────────────────
+# Turborepo hoists shared deps to the root node_modules.
+# Copy the root package files + each workspace's package.json so
+# npm install can resolve the whole workspace in one step.
+COPY package.json package-lock.json turbo.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+
+RUN npm install
+
+# ─── Generate Prisma client ────────────────────────────────────
+# Schema must exist at build time so `prisma generate` can run.
+# At runtime the schema is bind-mounted from the host so edits
+# take effect immediately; re-run `npx prisma generate` inside
+# the container after editing the schema.
+COPY apps/api/prisma ./apps/api/prisma
+RUN cd apps/api && npx prisma generate
+
+# ─── Runtime config ────────────────────────────────────────────
+WORKDIR /app/apps/api
+
+# File watcher polling — required for reliable hot reload on
+# Windows/Mac Docker Desktop (filesystem events don't cross the VM).
+ENV CHOKIDAR_USEPOLLING=true
+
+EXPOSE 4000
+
+# Nest CLI watches TypeScript source and rebuilds on change.
+CMD ["npm", "run", "start:dev"]

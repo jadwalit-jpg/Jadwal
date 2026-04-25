@@ -1,0 +1,95 @@
+/**
+ * Mock factories for AuthService dependencies.
+ * Each returns a fresh jest mock per test (call in beforeEach).
+ */
+
+export function makeJwtMock() {
+  return {
+    sign:   jest.fn((payload: unknown) => `signed.${JSON.stringify(payload)}.token`),
+    verify: jest.fn(),
+    decode: jest.fn(),
+  };
+}
+
+export function makeConfigMock(overrides: Record<string, string> = {}) {
+  const defaults: Record<string, string> = {
+    JWT_EXPIRATION:            '900',        // 15 min
+    REFRESH_TOKEN_EXPIRY_DAYS: '7',
+    LOCKOUT_THRESHOLD:         '5',
+    LOCKOUT_DURATION_MINUTES:  '15',
+    NODE_ENV:                  'test',
+    FRONTEND_URL:              'http://localhost:3000',
+    MAX_SESSIONS_PER_USER:     '5',
+  };
+  const merged = { ...defaults, ...overrides };
+  return {
+    get: jest.fn((key: string, fallback?: string) => merged[key] ?? fallback),
+    getOrThrow: jest.fn((key: string) => {
+      const v = merged[key];
+      if (v === undefined) throw new Error(`Config key missing: ${key}`);
+      return v;
+    }),
+  };
+}
+
+export function makeUsersMock() {
+  return {
+    findByEmail:  jest.fn(),
+    findById:     jest.fn(),
+    create:       jest.fn(),
+    update:       jest.fn(),
+  };
+}
+
+export function makeSecurityLoggerMock() {
+  return { log: jest.fn().mockResolvedValue(undefined) };
+}
+
+export function makeAuditLoggerMock() {
+  return {
+    logAuthEvent: jest.fn().mockResolvedValue(undefined),
+    log:          jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+export function makeEmailMock() {
+  return {
+    sendEmailVerification:   jest.fn().mockResolvedValue(undefined),
+    sendPasswordReset:       jest.fn().mockResolvedValue(undefined),
+    sendBookingConfirmation: jest.fn().mockResolvedValue(undefined),
+    sendBookingCancellation: jest.fn().mockResolvedValue(undefined),
+    sendVendorWelcome:       jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+export function makeSmsMock() {
+  return {
+    sendOtp:        jest.fn().mockResolvedValue(undefined),
+    sendBookingSms: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+export function makeNotificationMock() {
+  return {
+    send:         jest.fn().mockResolvedValue(undefined),
+    notifyAdmins: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+export function makeResponseMock() {
+  return {
+    cookie:      jest.fn(),
+    clearCookie: jest.fn(),
+    redirect:    jest.fn(),
+    status:      jest.fn().mockReturnThis(),
+    json:        jest.fn(),
+  };
+}
+
+export function makeRequestMock(overrides: Partial<{ ip: string; headers: Record<string, string>; socket: { remoteAddress: string } }> = {}) {
+  return {
+    ip:      overrides.ip ?? '127.0.0.1',
+    headers: overrides.headers ?? {},
+    socket:  overrides.socket ?? { remoteAddress: '127.0.0.1' },
+  };
+}

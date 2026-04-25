@@ -1,0 +1,145 @@
+'use client';
+
+import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import { Mail, Phone } from 'lucide-react';
+import api from '@/lib/api';
+
+interface PlatformInfo {
+  platformName: string;
+  supportEmail: string | null;
+  supportPhone: string | null;
+  aboutText: string | null;
+}
+
+function smoothScrollTo(targetY: number, duration = 1200) {
+  const startY = window.scrollY;
+  const diff = targetY - startY;
+  let startTime: number | null = null;
+
+  function easeInOutCubic(t: number) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
+  function step(timestamp: number) {
+    if (!startTime) startTime = timestamp;
+    const elapsed = timestamp - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    window.scrollTo(0, startY + diff * easeInOutCubic(progress));
+    if (progress < 1) requestAnimationFrame(step);
+  }
+
+  requestAnimationFrame(step);
+}
+
+export default function Footer() {
+  const { t } = useTranslation();
+  const { data: platform } = useQuery<PlatformInfo>({
+    queryKey: ['platform-info'],
+    queryFn: () => api.get('/catalog/platform-info').then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const name = platform?.platformName ?? 'Jadwal';
+
+  return (
+    <footer className="border-t border-gray-100 dark:border-slate-800/60 bg-white dark:bg-slate-950">
+      <div className="max-w-7xl mx-auto px-6 py-16">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-10">
+          {/* Brand */}
+          <div className="col-span-2 md:col-span-1">
+            <Link href="/" className="flex items-center gap-1">
+              <span className="text-xl font-bold text-gray-900 dark:text-white">{name}</span>
+              <span className="text-xl font-bold text-blue-600">{t('brandAr')}</span>
+            </Link>
+            <p className="mt-3 text-sm text-gray-500 dark:text-slate-400 leading-relaxed">
+              {platform?.aboutText ?? 'Your premier platform for discovering and booking unforgettable experiences across the GCC.'}
+            </p>
+          </div>
+
+          {/* Explore */}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('footer.explore')}</h4>
+            <ul className="space-y-2.5">
+              <li><Link href="/explore" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.allActivities')}</Link></li>
+              <li>
+                <button
+                  onClick={() => {
+                    const el = document.getElementById('featured');
+                    if (el) {
+                      const top = el.getBoundingClientRect().top + window.scrollY - 96;
+                      smoothScrollTo(top);
+                    } else {
+                      window.location.href = '/#featured';
+                    }
+                  }}
+                  className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                >
+                  {t('footer.featured')}
+                </button>
+              </li>
+              <li>
+                <button
+                  onClick={() => {
+                    const el = document.getElementById('trending');
+                    if (el) {
+                      const top = el.getBoundingClientRect().top + window.scrollY - 96;
+                      smoothScrollTo(top);
+                    } else {
+                      window.location.href = '/#trending';
+                    }
+                  }}
+                  className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                >
+                  {t('footer.trending')}
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          {/* Company */}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('footer.company')}</h4>
+            <ul className="space-y-2.5">
+              <li><Link href="/about" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.about')}</Link></li>
+              <li><Link href="/register/vendor" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.becomeVendor')}</Link></li>
+              <li><Link href="/terms" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.terms')}</Link></li>
+              <li><Link href="/privacy" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.privacy')}</Link></li>
+            </ul>
+          </div>
+
+          {/* Contact */}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('footer.contact')}</h4>
+            <ul className="space-y-2.5">
+              {platform?.supportEmail && (
+                <li>
+                  <a href={`mailto:${platform.supportEmail}`} className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                    <Mail className="h-3.5 w-3.5 shrink-0" />
+                    {platform.supportEmail}
+                  </a>
+                </li>
+              )}
+              {platform?.supportPhone && (
+                <li>
+                  <a href={`tel:${platform.supportPhone.replace(/\s/g, '')}`} className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                    <Phone className="h-3.5 w-3.5 shrink-0" />
+                    {platform.supportPhone}
+                  </a>
+                </li>
+              )}
+              {!platform?.supportEmail && !platform?.supportPhone && (
+                <li className="text-sm text-gray-400 dark:text-slate-500">Contact info coming soon</li>
+              )}
+            </ul>
+          </div>
+        </div>
+
+        <div className="mt-12 pt-8 border-t border-gray-100 dark:border-slate-800/60 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p className="text-sm text-gray-400 dark:text-slate-500">&copy; {new Date().getFullYear()} {name}. {t('footer.rights')}</p>
+        </div>
+      </div>
+    </footer>
+  );
+}

@@ -1,0 +1,270 @@
+# ═════════════════════════════════════════════════════════════════════════
+# EXAMPLE deploy workflow — NOT ACTIVE until AWS infrastructure exists.
+#
+# To activate:
+#   1. Provision the AWS resources referenced below (ECR repos, ECS cluster,
+#      task definitions, IAM role for GitHub OIDC, Secrets Manager entries).
+#   2. Fill in every `REPLACE_WITH_*` placeholder with the real ARN / name.
+#   3. Rename this file to `deploy.yml`.
+#   4. Never commit real AWS account IDs, ARNs, subnet IDs, or secret names
+#      here — use GitHub repo Variables (not Secrets) for non-sensitive
+#      identifiers like cluster name / ECR repo URL. Only the `role-to-assume`
+#      ARN appears in the file; it must be in a Variable, not committed.
+#
+# Why this file ships as `.example.yml`: committing a workflow with real
+# AWS ARNs before the infra is ready is a common foot-gun. CI fires on every
+# push, fails with obscure errors, and masks real CI failures. Activate once
+# and only once the target env is real.
+# ═════════════════════════════════════════════════════════════════════════
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false  # queue, don't cancel — interrupted deploys leave
+                              # tasks in a half-transitioned state
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}            # e.g. me-south-1
+  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}        # e.g. 123456789012.dkr.ecr.me-south-1.amazonaws.com
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}          # e.g. jadwal-prod
+  API_SERVICE: ${{ vars.API_SERVICE }}          # e.g. jadwal-api
+  WEB_SERVICE: ${{ vars.WEB_SERVICE }}          # e.g. jadwal-web
+  MIGRATE_TASK_DEF: ${{ vars.MIGRATE_TASK_DEF }} # e.g. jadwal-api-migrate
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────
+  # 1. Build + push api image (multi-stage, linux/amd64, fresh base)
+  # ───────────────────────────────────────────────────────────────────────
+  build-api:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC — no long-lived AWS credentials in GitHub
+      contents: read
+    outputs:
+      image-tag: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}  # arn:aws:iam::ACCT:role/gha-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          pull: true                    # force fresh node:20-alpine base
+          platforms: linux/amd64        # ECS Fargate x86 — never push arm64
+          tags: |
+            ${{ env.ECR_REGISTRY }}/jadwal-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false             # smaller manifest; reduce ECR cost
+
+  # ───────────────────────────────────────────────────────────────────────
+  # 2. Build + push web image with env-specific NEXT_PUBLIC_API_URL
+  # ───────────────────────────────────────────────────────────────────────
+  build-web:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          pull: true
+          platforms: linux/amd64
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+          tags: |
+            ${{ env.ECR_REGISTRY }}/jadwal-web:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+  # ───────────────────────────────────────────────────────────────────────
+  # 3. Trivy scan — block deploy on any HIGH/CRITICAL that has a fix available
+  # ───────────────────────────────────────────────────────────────────────
+  trivy:
+    needs: [build-api, build-web]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [jadwal-api, jadwal-web]
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          ignore-unfixed: true      # don't block on upstream-unpatched CVEs
+          vuln-type: os,library
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.image }}.sarif
+          category: trivy-${{ matrix.image }}
+
+  # ───────────────────────────────────────────────────────────────────────
+  # 4. Run Prisma migrations as a ONE-OFF ECS task BEFORE rolling the service
+  #    (see devops skill §1.2 for why this ordering matters)
+  # ───────────────────────────────────────────────────────────────────────
+  migrate:
+    needs: trivy
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Register a new revision of the migrate task def pointing at :${SHA}.
+      # The task def JSON is stored in infra/ecs/migrate-task.json and uses
+      # `image: ${IMAGE_TAG_PLACEHOLDER}` which we replace here.
+      - name: Register migrate task revision
+        id: register
+        run: |
+          IMG="${{ env.ECR_REGISTRY }}/jadwal-api:${{ github.sha }}"
+          sed -i "s|IMAGE_TAG_PLACEHOLDER|$IMG|g" infra/ecs/migrate-task.json
+          REVISION=$(aws ecs register-task-definition \
+            --cli-input-json file://infra/ecs/migrate-task.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+
+      - name: Run migration (RunTask, wait for exit code 0)
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ steps.register.outputs.revision }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=${{ vars.PRIVATE_SUBNETS }},securityGroups=${{ vars.MIGRATE_SG }},assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+
+          echo "Waiting for migrate task to complete: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks "$TASK_ARN"
+
+          EXIT=$(aws ecs describe-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+
+          if [ "$EXIT" != "0" ]; then
+            echo "::error::Migration task exited with $EXIT — halting deploy"
+            exit 1
+          fi
+          echo "Migration complete"
+
+  # ───────────────────────────────────────────────────────────────────────
+  # 5. Rolling deploy — api + web services updated in parallel
+  # ───────────────────────────────────────────────────────────────────────
+  deploy:
+    needs: migrate
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - { name: jadwal-api, img: jadwal-api }
+          - { name: jadwal-web, img: jadwal-web }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Update task-def image tag, register new revision, update service.
+      # Keeps previousDefinitionArn so rollback is one API call away.
+      - name: Deploy ${{ matrix.service.name }}
+        run: |
+          CURRENT=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} --services ${{ matrix.service.name }} \
+            --query 'services[0].taskDefinition' --output text)
+
+          aws ecs describe-task-definition --task-definition "$CURRENT" \
+            --query 'taskDefinition' > td.json
+
+          # Strip fields AWS doesn't accept on register
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                 .compatibilities, .registeredAt, .registeredBy)
+              | .containerDefinitions[0].image = "${{ env.ECR_REGISTRY }}/${{ matrix.service.img }}:${{ github.sha }}"' \
+              td.json > td-new.json
+
+          NEW_TD=$(aws ecs register-task-definition \
+            --cli-input-json file://td-new.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ matrix.service.name }} \
+            --task-definition "$NEW_TD" \
+            --deployment-configuration "maximumPercent=200,minimumHealthyPercent=100"
+
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} --services ${{ matrix.service.name }}
+
+      - name: Log rollback command for this deploy
+        if: success()
+        run: |
+          echo "::notice::Rollback: aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ matrix.service.name }} --task-definition <previous-revision>"
+
+  # ───────────────────────────────────────────────────────────────────────
+  # 6. Smoke test — prove the public endpoint is healthy after deploy
+  # ───────────────────────────────────────────────────────────────────────
+  smoke:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe /api/health with retry
+        run: |
+          API_URL="${{ vars.PUBLIC_API_URL }}"   # e.g. https://api.jadwal.com
+          for i in 1 2 3 4 5 6; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/api/health" || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "Smoke test passed ($STATUS)"
+              exit 0
+            fi
+            echo "Attempt $i returned $STATUS — retrying in 10s"
+            sleep 10
+          done
+          echo "::error::Smoke test failed after 6 attempts"
+          exit 1

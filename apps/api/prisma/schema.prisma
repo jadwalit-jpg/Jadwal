@@ -1,0 +1,677 @@
+// prisma/schema.prisma
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                String    @id @default(uuid())
+  fullName          String
+  email             String    @unique
+  password          String?
+  phone             String?   @unique
+  profilePicture    String?
+  role              Role      @default(CUSTOMER)
+  isDeactivated     Boolean   @default(false)
+  loyaltyPoints     Int       @default(0)
+  preferredCountryId String?
+  preferredCountry  Country?  @relation(fields: [preferredCountryId], references: [id], onDelete: SetNull)
+  emailVerified            Boolean   @default(false)
+  verificationToken        String?   @unique
+  verificationTokenExpiry  DateTime?
+  phoneVerified         Boolean   @default(false)
+  phoneOtpHash          String?
+  phoneOtpExpiry        DateTime?
+  phoneOtpAttempts      Int       @default(0)
+  passwordResetToken       String?   @unique
+  passwordResetExpiry      DateTime?
+  googleId          String?   @unique
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  bookings          Booking[]
+  reviews           Review[]
+  likes             Like[]
+  vendorProfile     Vendor?
+  refreshTokens     RefreshToken[]
+  notifications      Notification[]
+  pushSubscriptions  PushSubscription[]
+  claimedCoupons     ClaimedCoupon[]
+  loyaltyLedger      LoyaltyLedger[]
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // email, phone, googleId, verificationToken are @unique — no separate @@index needed
+  @@index([role])
+  @@index([role, createdAt])
+  @@index([preferredCountryId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String   @unique
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  // Session tracking — for "Active Sessions" page (admin + vendor)
+  userAgent   String?  // Raw User-Agent header (parsed on frontend for display)
+  ipAddress   String?  // IP address at login time
+  lastUsedAt  DateTime @default(now()) // Updated on each token refresh
+
+  // tokenHash is @unique — no separate @@index needed
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([userId, createdAt])
+  @@map("refresh_tokens")
+}
+
+model SecurityLog {
+  id        String   @id @default(uuid())
+  event     String   // LOGIN_SUCCESS, LOGIN_FAILED, ACCOUNT_LOCKED, LOGOUT, TOKEN_REFRESH, DEACTIVATED_ACCESS, SUSPENDED_VENDOR_ACCESS
+  userId    String?
+  email     String?
+  ip        String?
+  userAgent String?
+  details   String?
+  createdAt DateTime @default(now())
+
+  @@index([event])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("security_logs")
+}
+
+enum Role {
+  CUSTOMER
+  VENDOR
+  ADMIN
+}
+
+model Vendor {
+  id              String     @id @default(uuid())
+  userId          String     @unique
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessNameEn  String
+  businessNameAr  String
+  businessId      String     @unique // Unique Company/Business Serial Number
+  slug            String     @unique // Public-facing profile name
+  descriptionEn   String?
+  descriptionAr   String?
+  phone           String?
+  whatsapp        String?
+  website         String?
+  bankDetails     Json?
+  countryId       String
+  country         Country    @relation(fields: [countryId], references: [id], onDelete: Restrict)
+  status          VendorStatus @default(PENDING)
+  trustLevel      TrustLevel   @default(STANDARD)
+  commissionPct   Decimal?     @db.Decimal(5, 2)
+  activities      Activity[]
+  bookings        Booking[]
+  coupons         Coupon[]
+  payoutRequests  PayoutRequest[]
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // businessId, slug, userId are @unique — no separate @@index needed
+  @@index([countryId])
+  @@index([status])
+  @@map("vendors")
+}
+
+enum VendorStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum TrustLevel {
+  STANDARD
+  VERIFIED
+}
+
+model Country {
+  id              String     @id @default(uuid())
+  nameEn          String     @unique
+  nameAr          String     @unique
+  isoCode         String     @unique // e.g. 'QA', 'SA'
+  currencyCode    String
+  vatPercentage   Decimal    @default(0) @db.Decimal(5, 2)
+  serviceFeeFixed Decimal    @default(0) @db.Decimal(10, 2)
+  defaultTimezone String     @default("UTC")
+  status          CountryStatus @default(ACTIVE)
+  activities      Activity[]
+  cities          City[]
+  vendors         Vendor[]
+  users           User[]
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@map("countries")
+}
+
+enum CountryStatus {
+  ACTIVE
+  HIDDEN
+}
+
+model Category {
+  id              String     @id @default(uuid())
+  nameEn          String     @unique
+  nameAr          String     @unique
+  parentId        String?
+  parent          Category?  @relation("SubCategories", fields: [parentId], references: [id])
+  children        Category[] @relation("SubCategories")
+  slug            String     @unique
+  image           String?
+  commissionPct   Decimal?   @db.Decimal(5, 2)
+  activities      Activity[]
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([parentId])
+  @@map("categories")
+}
+
+model City {
+  id          String     @id @default(uuid())
+  countryId   String
+  country     Country    @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  nameEn      String
+  nameAr      String
+  lat         Float?     // city centre latitude (for geo-matching)
+  lng         Float?     // city centre longitude (for geo-matching)
+  activities  Activity[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([countryId])
+  @@index([countryId, nameEn])
+  @@map("cities")
+}
+
+model Activity {
+  id                String             @id @default(uuid())
+  vendorId          String
+  vendor            Vendor             @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  countryId         String
+  country           Country            @relation(fields: [countryId], references: [id], onDelete: Restrict)
+  titleEn           String
+  titleAr           String
+  slug              String             @unique
+  descriptionEn     String
+  descriptionAr     String
+  categoryId        String
+  category          Category           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  subCategoryId     String?
+  pricePerPerson    Decimal            @db.Decimal(10, 2)
+  durationValue     Int?               // hours (HOURLY) or nights (DAILY fixed); null = flexible DAILY
+  capacity          Int?               // total guests (if !hasUnits) or sum of unit capacities; null = unlimited
+  locationLat       Float
+  locationLng       Float
+  locationAddress   String
+  cityId            String
+  city              City               @relation(fields: [cityId], references: [id], onDelete: Restrict)
+  coverImage        String?
+  gallery           String[]
+  bookingType       BookingType        @default(HOURLY)
+  pricingModel      PricingModel       @default(PER_PERSON)
+  // HOURLY: checkInTime = activity start, checkOutTime = activity end (same day)
+  // DAILY:  checkInTime = guest arrival time, checkOutTime = departure time (different days, checkOutTime can be earlier than checkInTime)
+  checkInTime       String?
+  checkOutTime      String?
+  hasUnits          Boolean            @default(false)
+  unitCount         Int                @default(0)  // number of bookable units (tents, rooms, cabins)
+  unitCapacity      Int                @default(1)  // guests per unit
+  cancellationPolicy String?
+  status            ActivityStatus     @default(PENDING)
+  isFeatured        Boolean            @default(false)
+  extraServices     Json?
+  // For DAILY: activeDays = valid check-in days only
+  // For HOURLY: activeDays = days the activity runs
+  activeDays        String[]           @default([])
+  bookings          Booking[]
+  reviews           Review[]
+  likes             Like[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@index([vendorId])
+  @@index([countryId])
+  @@index([countryId, status])
+  @@index([categoryId])
+  @@index([cityId])
+  @@index([status])
+  @@index([isFeatured, status])
+  @@index([slug])
+  @@index([status, createdAt])
+  @@map("activities")
+}
+
+
+enum BookingType {
+  HOURLY
+  DAILY
+}
+
+enum PricingModel {
+  PER_PERSON // price × guests (HOURLY default; not applicable to DAILY)
+  PER_UNIT   // flat price — guests don't affect price (e.g. ship, villa, yacht)
+}
+
+enum ActivityStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+model Booking {
+  id                String        @id @default(uuid())
+  ref               String        @unique // e.g. JDWL-XXXXX
+  activityId        String
+  activity          Activity      @relation(fields: [activityId], references: [id], onDelete: Restrict)
+  vendorId          String
+  vendor            Vendor        @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  customerId        String
+  customer          User          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  unitNumber        Int?          // logical unit index (1-based), auto-assigned; null = no units
+  startDatetime     DateTime
+  endDatetime       DateTime
+  guests            Int
+  guestBreakdown    Json?
+  selectedExtras    Json?         // [{name, price}] — paid add-ons customer selected at booking time
+  totalPrice        Decimal       @db.Decimal(10, 2)
+  serviceFee        Decimal       @db.Decimal(10, 2)
+  commissionPct     Decimal       @default(0) @db.Decimal(5, 2)  // commission rate frozen at booking time
+  commissionAmount  Decimal       @default(0) @db.Decimal(10, 2) // platform commission = totalPrice * commissionPct / 100
+  couponCode        String?       @db.VarChar(50)                 // coupon applied at booking time (frozen)
+  couponDiscount    Decimal       @default(0) @db.Decimal(10, 2)  // discount amount applied
+  pointsRedeemed    Int           @default(0)                      // loyalty points used for discount
+  pointsDiscount    Decimal       @default(0) @db.Decimal(10, 2)  // monetary value of redeemed points
+  pointsAwarded     Boolean       @default(false)                  // true after points earned on COMPLETED — prevents double-earn
+  currencyCode      String        @db.VarChar(10) @default("QAR") // currency at booking time — survives country config changes
+  idempotencyKey    String?       @unique @db.VarChar(64)          // client UUID; prevents double-submit on network retry
+  status            BookingStatus @default(PENDING)
+  reservedUntil     DateTime?     // Soft reservation expiry — PENDING bookings past this are treated as free
+  paymentId         String?       @unique
+  payment           Payment?      @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  // ─── Cancellation + refund-decision audit trail ─────────────────────
+  // Populated when any actor cancels the booking. cancelledBy is the
+  // canonical record of WHO cancelled (the audit log is secondary).
+  cancelledAt         DateTime?
+  cancelledBy         CancelActor?
+  // Populated when vendor or admin records the refund decision on a
+  // customer-initiated cancellation. refundDecisionBy is the user.id of
+  // whoever clicked the button — kept as a string (not FK) so the audit
+  // record survives user deletion.
+  refundDecisionAt    DateTime?
+  refundDecisionBy    String?
+  refundDecisionActor CancelActor?
+  // Optional note the vendor/admin leaves with the decision. Shown to
+  // the customer + logged in audit trail. Sanitised by the global
+  // SanitizePipe on ingress.
+  refundDecisionNote  String?       @db.VarChar(1000)
+
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([activityId])
+  @@index([activityId, startDatetime])
+  @@index([activityId, unitNumber, startDatetime])
+  @@index([vendorId])
+  @@index([vendorId, status])
+  @@index([customerId])
+  @@index([customerId, createdAt])
+  @@index([customerId, status])
+  @@index([customerId, status, startDatetime])
+  @@index([status])
+  @@index([status, createdAt])
+  @@index([status, reservedUntil])
+  @@index([startDatetime])
+  @@index([endDatetime])
+  @@index([activityId, createdAt])
+  // Fast lookup for the vendor refund-requests page — filters by vendor
+  // + joins on payment.status=REFUND_PENDING. cancelledAt used for sort.
+  @@index([vendorId, cancelledAt])
+  @@map("bookings")
+}
+
+enum CancelActor {
+  CUSTOMER
+  VENDOR
+  ADMIN
+  SYSTEM
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+model Payment {
+  id                 String        @id @default(uuid())
+  bookingId          String?       @unique
+  booking            Booking?
+  amount             Decimal       @db.Decimal(10, 2)
+  currency           String        @default("QAR")
+  gatewayTxnId       String?       @unique
+  gatewayBasketId    String?       @unique
+  gatewayErrCode     String?
+  gatewayErrMsg      String?
+  gatewayResponseKey String?
+  status             PaymentStatus @default(PENDING)
+  payoutStatus       PayoutStatus  @default(UNPAID)
+  paidAt             DateTime?
+  paymentInitiatedAt DateTime?
+  method             String
+  refundAmount       Decimal?      @db.Decimal(10, 2)
+  refundedAt         DateTime?
+  createdAt          DateTime      @default(now())
+
+  @@index([status])
+  @@index([payoutStatus])
+  @@index([status, createdAt])
+  @@index([status, paymentInitiatedAt])
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING         // Booking created, awaiting payment
+  SUCCESS         // Customer paid, money received
+  REFUND_PENDING  // Customer cancelled — awaiting vendor/admin to record decision
+  REFUNDED        // Decision recorded: refund given (amount in refundAmount)
+  REJECTED        // Decision recorded: no refund given (vendor denied)
+  FAILED          // Payment failed originally, or unpaid booking cancelled
+}
+
+enum PayoutStatus {
+  UNPAID
+  PAID
+}
+
+model Review {
+  id            String   @id @default(uuid())
+  activityId    String
+  activity      Activity @relation(fields: [activityId], references: [id], onDelete: Restrict)
+  customerId    String
+  customer      User     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  rating        Int
+  text          String?
+  vendorReply   String?
+  createdAt     DateTime @default(now())
+
+  @@index([activityId])
+  @@index([customerId])
+  @@index([rating])
+  @@map("reviews")
+}
+
+model Like {
+  id         String   @id @default(uuid())
+  activityId String
+  activity   Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([activityId, userId]) // one like per user per activity
+  @@index([activityId])
+  @@index([userId])
+  @@map("likes")
+}
+
+model Coupon {
+  id            String       @id @default(uuid())
+  code          String       @unique
+  vendorId      String?
+  vendor        Vendor?      @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  discountType  DiscountType
+  discountValue Decimal      @db.Decimal(10, 2)
+  validFrom     DateTime
+  validTo       DateTime
+  usageLimit    Int?
+  usedCount     Int          @default(0)
+  minOrderAmount Decimal?    @db.Decimal(10, 2)
+  maxDiscount    Decimal?    @db.Decimal(10, 2)
+  status        CouponStatus @default(PENDING)
+  claimedBy     ClaimedCoupon[]
+  createdAt     DateTime     @default(now())
+
+  // code is @unique — no separate @@index needed
+  @@index([status])
+  @@index([status, validTo])
+  @@index([vendorId])
+  @@map("coupons")
+}
+
+model ClaimedCoupon {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  couponId  String
+  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  used      Boolean  @default(false)
+  claimedAt DateTime @default(now())
+
+  @@unique([userId, couponId])
+  @@index([userId, used])
+  @@index([couponId])
+  @@map("claimed_coupons")
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum CouponStatus {
+  PENDING
+  APPROVED
+  EXPIRED
+}
+
+model PlatformSettings {
+  id                    String   @id @default("default")
+  defaultCommissionPct  Decimal  @default(10) @db.Decimal(5, 2)
+  platformName          String   @default("Jadwal")
+  supportEmail          String?
+  supportPhone          String?
+  aboutText             String?
+  updatedAt             DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+model TrendingEvent {
+  id          String    @id @default(uuid())
+  titleEn     String
+  titleAr     String
+  description String?
+  image       String?
+  eventDate   DateTime?
+  countryId   String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([isActive])
+  @@index([countryId])
+  @@map("trending_events")
+}
+
+model LoyaltyConfig {
+  id             String   @id @default("singleton")
+  // Financial rates — stored as exact Decimal (Postgres NUMERIC(10,4)) so the
+  // loyalty↔money conversion can't drift through float rounding errors.
+  // Decimal.js at the Prisma client level, NUMERIC(10,4) at the DB level.
+  pointsPerQar   Decimal  @default(1.0)  @db.Decimal(10, 4)
+  qarPerPoint    Decimal  @default(0.01) @db.Decimal(10, 4)
+  minRedemption  Int      @default(100)
+  updatedAt      DateTime @updatedAt
+
+  @@map("loyalty_config")
+}
+
+// ── LoyaltyLedger ────────────────────────────────────────────────────────────
+// Append-only record of every change to User.loyaltyPoints.
+// Current balance = sum of ledger deltas. Source-of-truth for reconciliation:
+// if user.loyaltyPoints ever drifts from the ledger sum, the ledger wins.
+//
+// Every mutation of loyaltyPoints MUST write a ledger row IN THE SAME
+// transaction. Writes without a ledger row are banned by lint + review.
+//
+// `source` classifies why the delta happened — enables per-reason analytics,
+// audit trails, and per-reason reversals without parsing free-text notes.
+enum LoyaltyLedgerSource {
+  BOOKING_REDEEM            // customer redeemed points at booking time (negative delta)
+  BOOKING_EARN              // earned on booking COMPLETED (positive)
+  CANCEL_REFUND_UNPAID      // customer cancelled before paying, points returned (positive)
+  CANCEL_REFUND_PAID        // customer cancel of paid booking — original redeemed points returned (positive)
+  VENDOR_REFUND_APPROVED    // vendor approved a refund, converted to points (positive)
+  ADMIN_REFUND_APPROVED     // admin approved a refund, converted to points (positive)
+  ADMIN_ADJUST              // admin manual adjustment (positive or negative)
+  SYSTEM_CORRECTION         // reserved for emergency ledger corrections (must include note)
+}
+
+enum LoyaltyActorType {
+  CUSTOMER
+  VENDOR
+  ADMIN
+  SYSTEM
+}
+
+model LoyaltyLedger {
+  id             String              @id @default(uuid())
+  userId         String
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  delta          Int                 // positive = credit, negative = debit. Never zero.
+  balanceAfter   Int                 // user.loyaltyPoints AFTER this delta — used to detect drift
+  source         LoyaltyLedgerSource
+  bookingId      String?             // nullable — ADMIN_ADJUST isn't tied to a booking
+  actorType      LoyaltyActorType
+  actorId        String?             // null for SYSTEM
+  reason         String              @db.VarChar(500)
+  createdAt      DateTime            @default(now())
+
+  @@index([userId, createdAt])   // per-user history scan
+  @@index([bookingId])            // reverse lookup by booking
+  @@index([source, createdAt])    // per-reason analytics
+  @@map("loyalty_ledger")
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        NotificationType
+  title       String           @db.VarChar(200)
+  message     String           @db.VarChar(500)
+  link        String?          @db.VarChar(300)
+  read        Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  BOOKING_NEW
+  BOOKING_CANCELLED
+  BOOKING_CONFIRMED
+  BOOKING_COMPLETED
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  REVIEW_RECEIVED
+  PAYOUT_PROCESSED
+  COUPON_APPROVED
+  COUPON_REJECTED
+  VENDOR_APPROVED
+  VENDOR_SUSPENDED
+  ACTIVITY_APPROVED
+  ACTIVITY_REJECTED
+  PAYOUT_REQUESTED
+  REFUND_REQUESTED  // Vendor: customer cancelled a paid booking, awaiting decision
+  REFUND_DECIDED    // Customer: vendor/admin recorded the refund decision
+  SYSTEM
+}
+
+model PayoutRequest {
+  id          String              @id @default(uuid())
+  vendorId    String
+  vendor      Vendor              @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  amount      Decimal             @db.Decimal(10, 2)
+  currency    String              @db.VarChar(10) @default("QAR")
+  status      PayoutRequestStatus @default(PENDING)
+  adminNote   String?             @db.VarChar(500)
+  processedAt DateTime?
+  createdAt   DateTime            @default(now())
+  // Payment IDs locked at APPROVE time. Empty on PENDING; populated when
+  // admin approves, used at COMPLETE to flip exactly those payments'
+  // payoutStatus to PAID. Required for deterministic completion + prevents
+  // double-claim: a payment that's already in an APPROVED/COMPLETED request
+  // cannot land in a subsequent request.
+  paymentIds  String[]            @default([])
+
+  @@index([vendorId])
+  @@index([status])
+  @@index([vendorId, status])
+  @@map("payout_requests")
+}
+
+enum PayoutRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  actorType   ActorType @default(ADMIN)
+  actorId     String
+  actorName   String
+  action      String
+  entity      String
+  entityId    String?
+  details     String?
+  createdAt   DateTime  @default(now())
+
+  @@index([actorId])
+  @@index([actorType])
+  @@index([entity])
+  @@index([createdAt])
+  @@index([createdAt, actorType])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique // browser push endpoint URL
+  p256dh    String   // encryption key
+  auth      String   // auth secret
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}
+
+enum ActorType {
+  ADMIN
+  VENDOR
+  CUSTOMER
+  SYSTEM
+}

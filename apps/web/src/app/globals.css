@@ -1,0 +1,381 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ──────────────────────────────────────────────────────────────
+   Jadwal design tokens
+   Mirrors Design System/lib/tokens.jsx — warm off-white bg, sky
+   primary, gold (Wanasa) accent. Semantic tokens re-skinned per
+   theme; raw brand scales are theme-agnostic.
+   ────────────────────────────────────────────────────────────── */
+:root {
+  /* legacy — preserved for existing pages until refactored */
+  --background: #f0f7ff;
+  --foreground: #171717;
+
+  /* semantic surfaces — light */
+  --jadwal-bg: #fafaf7;
+  --jadwal-bg-soft: #f5f2ec;
+  --jadwal-surface: #ffffff;
+  --jadwal-surface-raised: #ffffff;
+  --jadwal-surface-muted: #f8f6f1;
+  --jadwal-border-subtle: rgba(15, 23, 42, 0.08);
+  --jadwal-border-strong: rgba(15, 23, 42, 0.14);
+  --jadwal-text: #0f172a;
+  --jadwal-text-muted: #64748b;
+  --jadwal-text-faint: #94a3b8;
+  --jadwal-primary: #0ea5e9;
+  --jadwal-primary-hover: #0284c7;
+  --jadwal-on-primary: #ffffff;
+  --jadwal-accent: #b58820;
+  --jadwal-accent-soft: rgba(181, 136, 32, 0.12);
+  --jadwal-accent-text: #8a6418;
+  --jadwal-success: #059669;
+  --jadwal-warning: #d97706;
+  --jadwal-danger: #dc2626;
+  --jadwal-glass: rgba(255, 255, 255, 0.6);
+  --jadwal-glass-border: rgba(255, 255, 255, 0.6);
+  --jadwal-shadow: 0 2px 6px -2px rgba(15, 23, 42, 0.08),
+    0 8px 24px -8px rgba(15, 23, 42, 0.1);
+  --jadwal-shadow-lg: 0 8px 24px -12px rgba(15, 23, 42, 0.12),
+    0 24px 48px -16px rgba(15, 23, 42, 0.14);
+  --jadwal-shadow-primary: 0 4px 12px -4px rgba(14, 165, 233, 0.5);
+  --jadwal-shadow-gold: 0 4px 12px -4px rgba(181, 136, 32, 0.5);
+}
+
+:root.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+
+  /* semantic surfaces — dark */
+  --jadwal-bg: #020617;
+  --jadwal-bg-soft: #0b1322;
+  --jadwal-surface: #0f172a;
+  --jadwal-surface-raised: #1e293b;
+  --jadwal-surface-muted: #0d1628;
+  --jadwal-border-subtle: rgba(148, 163, 184, 0.14);
+  --jadwal-border-strong: rgba(148, 163, 184, 0.28);
+  --jadwal-text: #f1f5f9;
+  --jadwal-text-muted: #94a3b8;
+  --jadwal-text-faint: #64748b;
+  --jadwal-primary: #38bdf8;
+  --jadwal-primary-hover: #7dd3fc;
+  --jadwal-on-primary: #f8fafc;
+  --jadwal-accent: #e5b84b;
+  --jadwal-accent-soft: rgba(229, 184, 75, 0.14);
+  --jadwal-accent-text: #f5dc8f;
+  --jadwal-success: #34d399;
+  --jadwal-warning: #fbbf24;
+  --jadwal-danger: #f87171;
+  --jadwal-glass: rgba(15, 23, 42, 0.6);
+  --jadwal-glass-border: rgba(148, 163, 184, 0.18);
+  --jadwal-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.6),
+    0 2px 6px rgba(0, 0, 0, 0.4);
+  --jadwal-shadow-lg: 0 24px 48px -16px rgba(0, 0, 0, 0.7),
+    0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+@theme inline {
+  /* legacy */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  /* Fonts — Latin primary, Arabic (Noto Kufi Arabic) as the fallback family so
+     Arabic Unicode glyphs are served from the bundled font rather than the OS
+     default (Tahoma on Windows, Geeza Pro on macOS, etc.). Latin characters
+     continue to render from Inter/Outfit because those are listed first. */
+  --font-sans: var(--font-inter), var(--font-arabic), system-ui, sans-serif;
+  --font-display: var(--font-outfit), var(--font-arabic), system-ui, sans-serif;
+  --font-inter: var(--font-inter), var(--font-arabic), system-ui, sans-serif;
+  --font-outfit: var(--font-outfit), var(--font-arabic), system-ui, sans-serif;
+
+  /* Jadwal semantic surfaces (Tailwind utilities: bg-jadwal-bg, text-jadwal-text, ...) */
+  --color-jadwal-bg: var(--jadwal-bg);
+  --color-jadwal-bg-soft: var(--jadwal-bg-soft);
+  --color-jadwal-surface: var(--jadwal-surface);
+  --color-jadwal-surface-raised: var(--jadwal-surface-raised);
+  --color-jadwal-surface-muted: var(--jadwal-surface-muted);
+  --color-jadwal-border-subtle: var(--jadwal-border-subtle);
+  --color-jadwal-border-strong: var(--jadwal-border-strong);
+  --color-jadwal-text: var(--jadwal-text);
+  --color-jadwal-text-muted: var(--jadwal-text-muted);
+  --color-jadwal-text-faint: var(--jadwal-text-faint);
+  --color-jadwal-primary: var(--jadwal-primary);
+  --color-jadwal-primary-hover: var(--jadwal-primary-hover);
+  --color-jadwal-on-primary: var(--jadwal-on-primary);
+  --color-jadwal-accent: var(--jadwal-accent);
+  --color-jadwal-accent-soft: var(--jadwal-accent-soft);
+  --color-jadwal-accent-text: var(--jadwal-accent-text);
+  --color-jadwal-success: var(--jadwal-success);
+  --color-jadwal-warning: var(--jadwal-warning);
+  --color-jadwal-danger: var(--jadwal-danger);
+
+  /* Jadwal brand gold scale — Wanasa currency accent (Tailwind's gold palette does not exist by default) */
+  --color-jadwal-gold-50: #fdf8ed;
+  --color-jadwal-gold-100: #faeecb;
+  --color-jadwal-gold-200: #f5dc8f;
+  --color-jadwal-gold-400: #e5b84b;
+  --color-jadwal-gold-500: #d4a42c;
+  --color-jadwal-gold-600: #b58820;
+  --color-jadwal-gold-700: #8a6418;
+
+  /* shadows */
+  --shadow-jadwal: var(--jadwal-shadow);
+  --shadow-jadwal-lg: var(--jadwal-shadow-lg);
+  --shadow-jadwal-primary: var(--jadwal-shadow-primary);
+  --shadow-jadwal-gold: var(--jadwal-shadow-gold);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Arabic / RTL typography
+   When the page is in RTL mode, use Tajawal as the primary font
+   family (not just the Unicode fallback). This gives the Arabic UI
+   the weight + visual density GCC marketplace users expect — same
+   treatment as wqtah.com, Rafeeq, etc. Latin digits and any stray
+   English words mixed into Arabic content still render through
+   Tajawal's Latin glyphs, which are tuned to sit next to Arabic
+   stems without size jumps.
+
+   Small-text weight bump: Arabic glyphs at 12-14px in regular weight
+   (400) read noticeably thinner than Latin at the same size because
+   their strokes carry less visual density per glyph. Every Arabic
+   marketplace + app design system (wqtah, Noon, Talabat) bumps small
+   body text to medium (500) or semibold (600). We do it here as a
+   one-liner so every breadcrumb, caption, badge, chip, and table cell
+   reads as substantial in Arabic without touching any component.
+   English text stays at the designer's intended weight.
+   ────────────────────────────────────────────────────────────── */
+:root[dir="rtl"],
+:root[lang="ar"] {
+  --font-sans: var(--font-arabic), var(--font-inter), system-ui, sans-serif;
+  --font-display: var(--font-arabic), var(--font-outfit), system-ui, sans-serif;
+  --font-inter: var(--font-arabic), var(--font-inter), system-ui, sans-serif;
+  --font-outfit: var(--font-arabic), var(--font-outfit), system-ui, sans-serif;
+}
+
+:root[dir="rtl"] .text-xs,
+:root[dir="rtl"] .text-\[10px\],
+:root[dir="rtl"] .text-\[11px\],
+:root[dir="rtl"] .text-\[12px\],
+:root[dir="rtl"] .text-\[13px\],
+:root[dir="rtl"] .text-sm {
+  font-weight: 500;
+}
+
+:root[dir="rtl"] .text-base {
+  font-weight: 500;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Shared utilities for the new design system
+   ────────────────────────────────────────────────────────────── */
+.jadwal-glass {
+  background: var(--jadwal-glass);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--jadwal-glass-border);
+}
+
+@keyframes jadwal-shim {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.jadwal-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--jadwal-border-subtle),
+    var(--jadwal-border-strong),
+    var(--jadwal-border-subtle)
+  );
+  background-size: 200% 100%;
+  animation: jadwal-shim 1.6s ease-in-out infinite;
+}
+
+@keyframes slide-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-in-up {
+  animation: slide-in-up 0.25s ease-out;
+}
+
+/* ── Glass Surface ── */
+.glass-surface {
+  position: relative;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1.5rem;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+/* Noise grain overlay */
+.glass-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 128px 128px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Top edge highlight — light refraction */
+.glass-surface::after {
+  content: "";
+  position: absolute;
+  inset-inline: 10%;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.4),
+    transparent
+  );
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Glass input fields */
+.glass-input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.75rem;
+  transition: all 0.2s ease;
+}
+.glass-input:focus {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(96, 165, 250, 0.5);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+}
+
+/* Glass button */
+.glass-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.75rem;
+  transition: all 0.2s ease;
+}
+.glass-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+/* ── Hero Animations ── */
+@keyframes float-boat {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-14px) rotate(1.5deg); }
+}
+
+@keyframes wave-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes wave-drift-slow {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.hero-boat {
+  animation: float-boat 4s ease-in-out infinite;
+  will-change: transform;
+}
+
+.hero-wave {
+  animation: wave-drift 12s linear infinite;
+  will-change: transform;
+}
+
+.hero-wave-slow {
+  animation: wave-drift-slow 18s linear infinite;
+  will-change: transform;
+}
+
+/* ── Cloud Animations ── */
+@keyframes cloud-drift-slow {
+  from { transform: translateX(0); }
+  to { transform: translateX(60vw); }
+}
+
+@keyframes cloud-drift-mid {
+  from { transform: translateX(0); }
+  to { transform: translateX(50vw); }
+}
+
+@keyframes cloud-drift-fast {
+  from { transform: translateX(0); }
+  to { transform: translateX(70vw); }
+}
+
+.hero-cloud-slow {
+  animation: cloud-drift-slow 45s linear infinite;
+  will-change: transform;
+}
+
+.hero-cloud-mid {
+  animation: cloud-drift-mid 30s linear infinite;
+  will-change: transform;
+}
+
+.hero-cloud-fast {
+  animation: cloud-drift-fast 20s linear infinite;
+  will-change: transform;
+}
+
+/* ── Sun / Moon Animations ── */
+@keyframes sun-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-18px); }
+}
+
+@keyframes sun-glow-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(1.15); }
+}
+
+@keyframes moon-glow-pulse {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.08); }
+}
+
+.hero-sun {
+  animation: sun-bob 6s ease-in-out infinite;
+  will-change: transform;
+}
+
+.hero-sun-glow {
+  animation: sun-glow-pulse 6s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+.hero-moon-glow {
+  animation: moon-glow-pulse 8s ease-in-out infinite;
+  will-change: opacity, transform;
+}

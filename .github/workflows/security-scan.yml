@@ -1,0 +1,110 @@
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+  schedule:
+    # Weekly full scan on Monday 06:00 UTC — catches newly-disclosed CVEs
+    # even on code that hasn't changed.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+  security-events: write   # needed for CodeQL + SARIF upload
+  pull-requests: read
+
+jobs:
+  # ─── Semgrep — static analysis for OWASP Top 10 + Node.js rules ───
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config=p/owasp-top-ten \
+            --config=p/nodejsscan \
+            --config=p/typescript \
+            --config=p/react \
+            --config=p/javascript \
+            --config=p/secrets \
+            --error \
+            --severity=ERROR \
+            --severity=WARNING \
+            --sarif --output=semgrep.sarif \
+            apps/
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  # ─── retire.js — known-vulnerable JS libs in node_modules AND bundle ───
+  retirejs:
+    name: retire.js
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install retire
+        run: npm install -g retire
+
+      - name: Retire scan — API
+        run: retire --path apps/api --severity high --exitwith 1
+
+      - name: Retire scan — Web
+        run: retire --path apps/web --severity high --exitwith 1
+
+  # ─── CodeQL — GitHub's own deep static analysis ───
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended,security-and-quality
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # ─── npm audit — one more time, with signatures verified ───
+  npm-audit:
+    name: npm audit (production)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install with frozen lockfile
+        run: npm ci
+      - name: Verify package integrity signatures
+        run: npm audit signatures
+      - name: API audit (production deps)
+        working-directory: apps/api
+        run: npm audit --omit=dev --audit-level=high
+      - name: Web audit (production deps)
+        working-directory: apps/web
+        run: npm audit --omit=dev --audit-level=high

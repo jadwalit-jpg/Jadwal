@@ -1,0 +1,156 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import * as bcrypt from 'bcrypt';
+import { User } from '@prisma/client';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+
+@Injectable()
+export class UsersService {
+  constructor(private prisma: PrismaService) {}
+
+  /**
+   * Internal auth use ONLY — opts back into password (omitted globally).
+   * NEVER return this directly in an API response.
+   */
+  async findOneForAuth(email: string): Promise<User | null> {
+    return this.prisma.client.user.findUnique({
+      where: { email },
+      omit: { password: false },
+    } as any) as Promise<User | null>;
+  }
+
+  /**
+   * Internal auth use ONLY — opts back into password (omitted globally).
+   * NEVER return this directly in an API response.
+   */
+  async findByIdForAuth(id: string): Promise<User | null> {
+    return this.prisma.client.user.findUnique({
+      where: { id },
+      omit: { password: false },
+    } as any) as Promise<User | null>;
+  }
+
+  async create(data: { fullName: string; email: string; password: string; phone?: string; role?: string }): Promise<User> {
+    const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
+    const hashedPassword = await bcrypt.hash(data.password, bcryptRounds);
+    return this.prisma.client.user.create({
+      data: {
+        fullName: data.fullName,
+        email: data.email,
+        password: hashedPassword,
+        ...(data.phone ? { phone: data.phone } : {}),
+        ...(data.role ? { role: data.role as any } : {}),
+      },
+    });
+  }
+
+  // ─── Customer profile ──────────────────────────────────────────────────────
+
+  async getProfile(userId: string) {
+    const user = await this.prisma.client.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        emailVerified: true,
+        phoneVerified: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    // Booking stats — runs in parallel
+    const [totalBookings, upcomingCount, completedCount, totalSpentAgg] = await Promise.all([
+      this.prisma.client.booking.count({
+        where: { customerId: userId },
+      }),
+      this.prisma.client.booking.count({
+        where: { customerId: userId, status: 'CONFIRMED', startDatetime: { gt: new Date() } },
+      }),
+      this.prisma.client.booking.count({
+        where: { customerId: userId, status: 'COMPLETED' },
+      }),
+      this.prisma.client.booking.aggregate({
+        where: { customerId: userId, status: { in: ['CONFIRMED', 'COMPLETED'] } },
+        _sum: { totalPrice: true, serviceFee: true },
+      }),
+    ]);
+
+    const totalSpent =
+      Number(totalSpentAgg._sum.totalPrice ?? 0) +
+      Number(totalSpentAgg._sum.serviceFee ?? 0);
+
+    return {
+      ...user,
+      stats: {
+        totalBookings,
+        upcomingCount,
+        completedCount,
+        totalSpent: Math.round(totalSpent * 100) / 100,
+      },
+    };
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.prisma.client.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    // If phone number changed, reset verification status
+    const phoneChanged = dto.phone !== undefined && dto.phone !== user.phone;
+
+    const updated = await this.prisma.client.user.update({
+      where: { id: userId },
+      data: {
+        ...(dto.fullName !== undefined && { fullName: dto.fullName }),
+        ...(dto.phone !== undefined && { phone: dto.phone }),
+        ...(phoneChanged && { phoneVerified: false, phoneOtpHash: null, phoneOtpExpiry: null, phoneOtpAttempts: 0 }),
+      },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        emailVerified: true,
+        phoneVerified: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+
+    return updated;
+  }
+
+  // ─── Loyalty points ──────────────────────────────────────────────────────
+
+  /**
+   * Returns the customer's loyalty points balance and the public-facing
+   * redemption config (qarPerPoint + minRedemption). Never exposes admin-only
+   * settings like pointsPerQar.
+   */
+  async getPoints(userId: string) {
+    const user = await this.prisma.client.user.findUnique({
+      where: { id: userId },
+      select: { loyaltyPoints: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    // Load loyalty config singleton (create with defaults if missing)
+    let config = await this.prisma.client.loyaltyConfig.findUnique({
+      where: { id: 'singleton' },
+    });
+    if (!config) {
+      config = await this.prisma.client.loyaltyConfig.create({
+        data: { id: 'singleton' },
+      });
+    }
+
+    return {
+      loyaltyPoints: user.loyaltyPoints,
+      qarPerPoint: config.qarPerPoint.toNumber(),
+      minRedemption: config.minRedemption,
+    };
+  }
+}
