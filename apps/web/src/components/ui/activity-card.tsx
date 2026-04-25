@@ -152,6 +152,7 @@ export function ActivityCard({
 
   return (
     <article
+      data-testid="activity-card"
       className={cn(
         'group shrink-0 flex flex-col overflow-hidden rounded-[20px] border border-jadwal-border-subtle bg-jadwal-surface shadow-jadwal transition-shadow hover:shadow-jadwal-lg',
         sz.w,
