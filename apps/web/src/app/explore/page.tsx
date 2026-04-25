@@ -258,23 +258,26 @@ function ExploreContent() {
               {locationStatus !== 'granted' && locationStatus !== 'requesting' && (
                 <button
                   onClick={requestLocation}
+                  aria-label={t('explore.nearMe')}
                   className="flex items-center gap-2 px-4 py-3.5 border-s border-gray-200 dark:border-slate-700 text-sm text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 transition-colors cursor-pointer"
                 >
-                  <MapPin className="h-4 w-4" />
+                  <MapPin className="h-4 w-4" aria-hidden="true" />
                   <span className="hidden sm:inline">{t('explore.nearMe')}</span>
                 </button>
               )}
               {locationStatus === 'granted' && (
                 <span className="flex items-center gap-2 px-4 py-3.5 border-s border-gray-200 dark:border-slate-700 text-xs text-emerald-600 dark:text-emerald-400">
-                  <MapPin className="h-4 w-4" />
+                  <MapPin className="h-4 w-4" aria-hidden="true" />
                   <span className="hidden sm:inline">{t('explore.nearbyActive')}</span>
                 </span>
               )}
               <button
                 onClick={() => setShowFilters(!showFilters)}
+                aria-label={t('explore.filters')}
+                aria-expanded={showFilters}
                 className="flex items-center gap-2 px-4 py-3.5 border-s border-gray-200 dark:border-slate-700 text-sm text-gray-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-white transition-colors"
               >
-                <SlidersHorizontal className="h-4 w-4" />
+                <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
                 <span className="hidden sm:inline">{t('explore.filters')}</span>
               </button>
             </div>
@@ -343,16 +346,16 @@ function ExploreContent() {
                     value={minPrice}
                     onChange={(e) => handleMinPriceChange(e.target.value)}
                     placeholder={t('explore.minPrice')}
-                    className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 transition-all"
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 transition-all"
                   />
-                  <span className="text-xs text-gray-400 dark:text-slate-500 shrink-0">-</span>
+                  <span className="text-xs text-gray-500 dark:text-slate-400 shrink-0">-</span>
                   <input
                     type="number"
                     min="0"
                     value={maxPrice}
                     onChange={(e) => handleMaxPriceChange(e.target.value)}
                     placeholder={t('explore.maxPrice')}
-                    className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 transition-all"
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 transition-all"
                   />
                 </div>
               </div>
@@ -470,18 +473,18 @@ function ExploreContent() {
 
                   {/* Content */}
                   <div className="p-5">
-                    <h3 className="font-semibold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors line-clamp-1">
+                    <h2 className="font-semibold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors line-clamp-1">
                       {localized(activity, 'title')}
-                    </h3>
+                    </h2>
 
                     {activity.locationAddress && (
-                      <div className="mt-1.5 flex items-center gap-1.5 text-sm text-gray-400 dark:text-slate-500">
+                      <div className="mt-1.5 flex items-center gap-1.5 text-sm text-gray-500 dark:text-slate-400">
                         <MapPin className="h-3.5 w-3.5 shrink-0" />
                         <span className="line-clamp-1">{activity.locationAddress}</span>
                       </div>
                     )}
 
-                    <div className="mt-2 flex items-center gap-3 text-xs text-gray-400 dark:text-slate-500">
+                    <div className="mt-2 flex items-center gap-3 text-xs text-gray-500 dark:text-slate-400">
                       <span className="flex items-center gap-1">
                         <Clock className="h-3.5 w-3.5" />
                         {activity.bookingType === 'DAILY'
@@ -511,10 +514,10 @@ function ExploreContent() {
 
                     <div className="mt-3 pt-3 border-t border-gray-100 dark:border-slate-800/60 flex items-center justify-between">
                       <div>
-                        <span className="text-xs text-gray-400 dark:text-slate-500">{t('explore.from')}</span>
+                        <span className="text-xs text-gray-500 dark:text-slate-400">{t('explore.from')}</span>
                         <p className="text-lg font-bold text-gray-900 dark:text-white">
                           {Number(activity.pricePerPerson).toFixed(0)}{' '}
-                          <span className="text-xs font-normal text-gray-400 dark:text-slate-500">
+                          <span className="text-xs font-normal text-gray-500 dark:text-slate-400">
                             {activity.country?.currencyCode ?? 'QAR'}{' '}
                             {activity.bookingType === 'DAILY'
                               ? t('explore.perNight')
@@ -537,7 +540,7 @@ function ExploreContent() {
           <div className="text-center py-20">
             <Search className="h-12 w-12 text-gray-300 dark:text-slate-600 mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-gray-700 dark:text-slate-300">{t('explore.noActivitiesFound')}</h3>
-            <p className="mt-1 text-sm text-gray-400 dark:text-slate-500">{t('explore.tryAdjusting')}</p>
+            <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">{t('explore.tryAdjusting')}</p>
             {hasActiveFilters && (
               <button onClick={clearFilters} className="mt-4 px-4 py-2 bg-sky-600 text-white text-sm font-medium rounded-xl hover:bg-sky-700 transition-colors">
                 {t('explore.clearAll')}

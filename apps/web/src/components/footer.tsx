@@ -60,7 +60,7 @@ export default function Footer() {
 
           {/* Explore */}
           <div>
-            <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('footer.explore')}</h4>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('footer.explore')}</h2>
             <ul className="space-y-2.5">
               <li><Link href="/explore" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.allActivities')}</Link></li>
               <li>
@@ -100,7 +100,7 @@ export default function Footer() {
 
           {/* Company */}
           <div>
-            <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('footer.company')}</h4>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('footer.company')}</h2>
             <ul className="space-y-2.5">
               <li><Link href="/about" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.about')}</Link></li>
               <li><Link href="/register/vendor" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.becomeVendor')}</Link></li>
@@ -111,7 +111,7 @@ export default function Footer() {
 
           {/* Contact */}
           <div>
-            <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('footer.contact')}</h4>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('footer.contact')}</h2>
             <ul className="space-y-2.5">
               {platform?.supportEmail && (
                 <li>
@@ -130,14 +130,14 @@ export default function Footer() {
                 </li>
               )}
               {!platform?.supportEmail && !platform?.supportPhone && (
-                <li className="text-sm text-gray-400 dark:text-slate-500">Contact info coming soon</li>
+                <li className="text-sm text-gray-500 dark:text-slate-400">Contact info coming soon</li>
               )}
             </ul>
           </div>
         </div>
 
         <div className="mt-12 pt-8 border-t border-gray-100 dark:border-slate-800/60 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-sm text-gray-400 dark:text-slate-500">&copy; {new Date().getFullYear()} {name}. {t('footer.rights')}</p>
+          <p className="text-sm text-gray-500 dark:text-slate-400">&copy; {new Date().getFullYear()} {name}. {t('footer.rights')}</p>
         </div>
       </div>
     </footer>
