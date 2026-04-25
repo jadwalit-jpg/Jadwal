@@ -82,8 +82,11 @@ describe('AdminService loyalty config', () => {
     const admin = makeAdmin();
     await admin.updateLoyaltyConfig({ qarPerPoint: 0.02, pointsPerQar: 2 });
     const cfg = await ctx.prisma.loyaltyConfig.findUniqueOrThrow({ where: { id: 'singleton' } });
-    expect(cfg.qarPerPoint).toBe(0.02);
-    expect(cfg.pointsPerQar).toBe(2);
+    // Decimal fields come back as Prisma.Decimal (or string in pg-driver
+    // mode) — coerce via Number() so the equality check works in both
+    // Prisma 6 (Decimal.js) and Prisma 7 + pg adapter (string).
+    expect(Number(cfg.qarPerPoint)).toBe(0.02);
+    expect(Number(cfg.pointsPerQar)).toBe(2);
   });
 
   test('updateLoyaltyConfig is idempotent upsert — doesn\'t create duplicate rows', async () => {
@@ -94,8 +97,8 @@ describe('AdminService loyalty config', () => {
     await admin.updateLoyaltyConfig({ pointsPerQar: 5 });
     expect(await ctx.prisma.loyaltyConfig.count()).toBe(1);
     const cfg = await ctx.prisma.loyaltyConfig.findUniqueOrThrow({ where: { id: 'singleton' } });
-    expect(cfg.qarPerPoint).toBe(0.03);
-    expect(cfg.pointsPerQar).toBe(5);
+    expect(Number(cfg.qarPerPoint)).toBe(0.03);
+    expect(Number(cfg.pointsPerQar)).toBe(5);
   });
 });
 
