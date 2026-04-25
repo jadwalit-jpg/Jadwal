@@ -119,7 +119,8 @@ export default function Home() {
   // Keeping clouds (more visible) + hero text (load-bearing fade-on-scroll)
   // parallax intact.
   const cloudsY = useTransform(heroProgress, [0, 1], ['0%', '20%']);
-  const contentY = useTransform(heroProgress, [0, 1], ['0%', '15%']);
+  // contentY removed 2026-04-25 — hero text container is now static.
+  // heroOpacity still drives the clouds-wrapper fade.
   const heroOpacity = useTransform(heroProgress, [0, 0.8], [1, 0]);
 
   const countryName = country ? localized(country, 'name') : '';
@@ -289,10 +290,13 @@ export default function Home() {
           </div>
         </motion.div>
 
-        {/* Hero content */}
-        <motion.div
-          style={{ y: contentY, opacity: heroOpacity }}
-          className="relative z-20 flex-1 flex flex-col items-center justify-center max-w-6xl mx-auto w-full px-6 pb-56 md:pb-64 text-center will-change-transform"
+        {/* Hero content. Static (parallax removed 2026-04-25 — was the
+            heaviest hydration cost in / because it wrapped the entire
+            hero subtree with two scroll-bound motion values). The h1 +
+            search card now paint without waiting for framer to set up
+            scroll subscriptions. */}
+        <div
+          className="relative z-20 flex-1 flex flex-col items-center justify-center max-w-6xl mx-auto w-full px-6 pb-56 md:pb-64 text-center"
         >
           <p
             className="text-xs sm:text-sm font-semibold tracking-[0.2em] uppercase text-white/85 mb-4 drop-shadow"
@@ -368,7 +372,7 @@ export default function Home() {
               page). Moving them off the LCP path is a real perf win
               with no UX loss — the count-up animation triggers when
               they scroll into view either way. */}
-        </motion.div>
+        </div>
 
         {/* Waves (light) */}
         <div
