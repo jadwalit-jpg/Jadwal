@@ -66,6 +66,7 @@ const CUSTOMER_CANDIDATES = uniqueCreds([
 
 const VENDOR_CANDIDATES = uniqueCreds([
   ...envCred('VENDOR'),
+  { email: 'vendor@jadwal-test.local', password: 'S3cure!Pass1' },
   { email: 'vendor@jadwal.com', password: 'Vendor123!' },
   { email: 'vendor@jadwal.com', password: 'Admin123!' },
 ]);
@@ -85,8 +86,24 @@ export async function loginAsCustomer(page: Page): Promise<Cred> {
 }
 
 export async function loginAsVendor(page: Page): Promise<Cred> {
+  // Vendors authenticate via the same /login form as customers — server
+  // resolves their role and redirects to /vendor/[slug]/dashboard.
   for (const cred of VENDOR_CANDIDATES) {
     if (await loginCustomerWith(page, cred)) return cred;
   }
   throw new Error('Unable to authenticate vendor with known credentials');
+}
+
+/**
+ * Read the vendor's slug after login by hitting GET /api/auth/me via the
+ * authenticated browser context. Used by vendor specs to navigate to
+ * /vendor/[slug]/* without hard-coding the slug.
+ */
+export async function vendorSlugFromMe(page: Page): Promise<string> {
+  const res = await page.request.get('/api/auth/me');
+  if (!res.ok()) throw new Error('Could not read /api/auth/me to resolve vendor slug');
+  const body = (await res.json()) as { vendor?: { slug?: string }; vendorSlug?: string };
+  const slug = body.vendor?.slug ?? body.vendorSlug;
+  if (!slug) throw new Error('No vendor slug in /api/auth/me response — is the user actually a VENDOR?');
+  return slug;
 }
