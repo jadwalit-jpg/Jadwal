@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { useAuth } from '@/context/auth-context';
 import { useRouter, useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -13,12 +14,24 @@ import { getApiError } from '@/lib/utils';
 import { sanitize, sanitizeObject } from '@/lib/validation';
 import { VendorSidebar } from '../../../_components/vendor-sidebar';
 import { Check, Loader2, X, BookmarkIcon, AlertCircle, ImagePlus, AlertTriangle } from 'lucide-react';
-import { LocationPicker } from '@/components/location-picker';
 import { useToast } from '@/components/toast';
 import CustomSelect from '@/components/custom-select';
-import ImageUploader from '@/components/image-uploader';
-import TimePicker from '@/components/time-picker';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
+
+// Heavy widgets — leaflet, canvas, custom time UI — only mount when their
+// wizard step opens. Cuts the initial JS chunk for this route.
+const LocationPicker = dynamic(
+  () => import('@/components/location-picker').then((m) => m.LocationPicker),
+  { ssr: false, loading: () => <div className="h-[400px] w-full jadwal-skeleton rounded-xl" /> },
+);
+const ImageUploader = dynamic(() => import('@/components/image-uploader'), {
+  ssr: false,
+  loading: () => <div className="h-32 w-full jadwal-skeleton rounded-xl" />,
+});
+const TimePicker = dynamic(() => import('@/components/time-picker'), {
+  ssr: false,
+  loading: () => <div className="h-12 w-full jadwal-skeleton rounded-xl" />,
+});
 
 async function compressCoverImage(file: File): Promise<File> {
   return new Promise((resolve) => {

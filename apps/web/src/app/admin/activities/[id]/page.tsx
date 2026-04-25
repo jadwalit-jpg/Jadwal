@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter, useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -8,12 +9,23 @@ import { getApiError } from '@/lib/utils';
 import { sanitize, sanitizeObject } from '@/lib/validation';
 import AdminLayout from '../../_components/admin-layout';
 import { Check, Loader2, X, BookmarkIcon, AlertTriangle, ImagePlus } from 'lucide-react';
-import { LocationPicker } from '@/components/location-picker';
 import { useToast } from '@/components/toast';
 import CustomSelect from '@/components/custom-select';
-import ImageUploader from '@/components/image-uploader';
-import TimePicker from '@/components/time-picker';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
+
+// Heavy widgets — only mount when their respective wizard step opens.
+const LocationPicker = dynamic(
+  () => import('@/components/location-picker').then((m) => m.LocationPicker),
+  { ssr: false, loading: () => <div className="h-[400px] w-full jadwal-skeleton rounded-xl" /> },
+);
+const ImageUploader = dynamic(() => import('@/components/image-uploader'), {
+  ssr: false,
+  loading: () => <div className="h-32 w-full jadwal-skeleton rounded-xl" />,
+});
+const TimePicker = dynamic(() => import('@/components/time-picker'), {
+  ssr: false,
+  loading: () => <div className="h-12 w-full jadwal-skeleton rounded-xl" />,
+});
 
 const DAYS_OF_WEEK = [
   { label: 'Sunday', value: 'SUN' },
