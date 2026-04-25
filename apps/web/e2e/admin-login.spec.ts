@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 const ADMIN_EMAIL = 'admin@jadwal.com';
-const ADMIN_PASSWORD = 'admin123Password';
+const ADMIN_PASSWORD = 'Admin123!';
 
 test.describe('Admin login', () => {
   test('should show login page and sign in successfully', async ({ page }) => {

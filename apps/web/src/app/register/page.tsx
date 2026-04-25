@@ -173,9 +173,12 @@ export default function RegisterPage() {
                   )}
 
                   <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-white/50 ms-0.5">{t('auth.fullName')}</label>
+                    <label htmlFor="register-full-name" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.fullName')}</label>
                     <input
+                      id="register-full-name"
+                      name="fullName"
                       type="text"
+                      autoComplete="name"
                       required
                       placeholder="John Doe"
                       value={fullName}
@@ -185,9 +188,12 @@ export default function RegisterPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-white/50 ms-0.5">{t('auth.emailAddress')}</label>
+                    <label htmlFor="register-email" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.emailAddress')}</label>
                     <input
+                      id="register-email"
+                      name="email"
                       type="email"
+                      autoComplete="email"
                       required
                       placeholder="name@example.com"
                       value={email}
@@ -197,9 +203,12 @@ export default function RegisterPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-white/50 ms-0.5">{t('auth.password')}</label>
+                    <label htmlFor="register-password" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.password')}</label>
                     <input
+                      id="register-password"
+                      name="password"
                       type="password"
+                      autoComplete="new-password"
                       required
                       placeholder={t('auth.passwordHint')}
                       value={password}
@@ -209,11 +218,14 @@ export default function RegisterPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-white/50 ms-0.5">
+                    <label htmlFor="register-phone" className="text-sm font-medium text-white/50 ms-0.5">
                       {t('auth.phone')} <span className="text-white/20">({t('auth.optional')})</span>
                     </label>
                     <input
+                      id="register-phone"
+                      name="phone"
                       type="tel"
+                      autoComplete="tel"
                       placeholder="+974 1234 5678"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}

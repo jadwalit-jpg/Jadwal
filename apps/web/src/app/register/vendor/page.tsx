@@ -277,9 +277,12 @@ function VendorAuthContent() {
                 )}
 
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-gray-700 dark:text-slate-300 ms-0.5">{t('auth.emailAddress')}</label>
+                  <label htmlFor="vendor-login-email" className="text-sm font-medium text-gray-700 dark:text-slate-300 ms-0.5">{t('auth.emailAddress')}</label>
                   <input
+                    id="vendor-login-email"
+                    name="email"
                     type="email"
+                    autoComplete="email"
                     required
                     className={inputCls}
                     placeholder="name@example.com"
@@ -290,10 +293,13 @@ function VendorAuthContent() {
 
                 <div className="space-y-1.5">
                   <div className="flex justify-between items-center ms-0.5">
-                    <label className="text-sm font-medium text-gray-700 dark:text-slate-300">{t('auth.password')}</label>
+                    <label htmlFor="vendor-login-password" className="text-sm font-medium text-gray-700 dark:text-slate-300">{t('auth.password')}</label>
                   </div>
                   <input
+                    id="vendor-login-password"
+                    name="password"
                     type="password"
+                    autoComplete="current-password"
                     required
                     className={inputCls}
                     placeholder="••••••••"

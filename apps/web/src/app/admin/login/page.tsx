@@ -83,11 +83,14 @@ export default function AdminLoginPage() {
               )}
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700 dark:text-slate-300 ms-0.5">
+                <label htmlFor="admin-login-email" className="text-sm font-medium text-gray-700 dark:text-slate-300 ms-0.5">
                   Email Address
                 </label>
                 <input
+                  id="admin-login-email"
+                  name="email"
                   type="email"
+                  autoComplete="email"
                   required
                   className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-900/50 border border-gray-200 dark:border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl text-sm text-gray-900 dark:text-white outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-slate-600"
                   placeholder="admin@jadwal.com"
@@ -98,10 +101,13 @@ export default function AdminLoginPage() {
 
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center ms-0.5">
-                  <label className="text-sm font-medium text-gray-700 dark:text-slate-300">Password</label>
+                  <label htmlFor="admin-login-password" className="text-sm font-medium text-gray-700 dark:text-slate-300">Password</label>
                 </div>
                 <input
+                  id="admin-login-password"
+                  name="password"
                   type="password"
+                  autoComplete="current-password"
                   required
                   className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-900/50 border border-gray-200 dark:border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl text-sm text-gray-900 dark:text-white outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-slate-600"
                   placeholder="••••••••"

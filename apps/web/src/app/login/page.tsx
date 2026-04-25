@@ -195,9 +195,12 @@ function LoginContent() {
                   )}
 
                   <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-white/50 ms-0.5">{t('auth.emailAddress')}</label>
+                    <label htmlFor="login-email" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.emailAddress')}</label>
                     <input
+                      id="login-email"
+                      name="email"
                       type="email"
+                      autoComplete="email"
                       required
                       placeholder="name@example.com"
                       value={email}
@@ -208,13 +211,16 @@ function LoginContent() {
 
                   <div className="space-y-1.5">
                     <div className="flex justify-between items-center ms-0.5">
-                      <label className="text-sm font-medium text-white/50">{t('auth.password')}</label>
+                      <label htmlFor="login-password" className="text-sm font-medium text-white/50">{t('auth.password')}</label>
                       <Link href="/forgot-password" className="text-xs text-blue-400/70 hover:text-blue-400 transition-colors">
                         {t('auth.forgotPassword')}
                       </Link>
                     </div>
                     <input
+                      id="login-password"
+                      name="password"
                       type="password"
+                      autoComplete="current-password"
                       required
                       placeholder="••••••••"
                       value={password}

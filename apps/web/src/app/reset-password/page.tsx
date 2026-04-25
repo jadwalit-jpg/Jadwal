@@ -92,10 +92,13 @@ function ResetPasswordContent() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">{t('auth.newPassword')}</label>
+              <label htmlFor="reset-password" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">{t('auth.newPassword')}</label>
               <div className="relative">
                 <input
+                  id="reset-password"
+                  name="password"
                   type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -114,9 +117,12 @@ function ResetPasswordContent() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">{t('auth.confirmPassword')}</label>
+              <label htmlFor="reset-password-confirm" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">{t('auth.confirmPassword')}</label>
               <input
+                id="reset-password-confirm"
+                name="passwordConfirm"
                 type="password"
+                autoComplete="new-password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 required
