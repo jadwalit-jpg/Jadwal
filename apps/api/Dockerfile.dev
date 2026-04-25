@@ -23,15 +23,14 @@ COPY package.json package-lock.json turbo.json ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 
-RUN npm install --ignore-scripts
-
-# ─── Generate Prisma client ────────────────────────────────────
-# Schema must exist at build time so `prisma generate` can run.
-# At runtime the schema is bind-mounted from the host so edits
-# take effect immediately; re-run `npx prisma generate` inside
-# the container after editing the schema.
+# Copy the Prisma schema BEFORE npm install so the api workspace's
+# 'postinstall' hook (which runs `prisma generate`) finds the schema.
+# At runtime the schema is bind-mounted from the host so edits take
+# effect immediately; re-run `npx prisma generate` inside the container
+# after editing the schema.
 COPY apps/api/prisma ./apps/api/prisma
-RUN cd apps/api && npx prisma generate
+
+RUN npm install
 
 # ─── Runtime config ────────────────────────────────────────────
 WORKDIR /app/apps/api
