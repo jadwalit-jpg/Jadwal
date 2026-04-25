@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import {
   Calendar,
   Gift,
@@ -517,14 +518,17 @@ export default function Home() {
           </svg>
         </div>
 
-        {/* Boat — physical `left-1/2` so it stays centered on screen regardless of language direction */}
+        {/* Boat — physical `left-1/2` so it stays centered on screen regardless of language direction.
+            `priority` flags this as an LCP candidate so Next.js preloads it
+            (otherwise Lighthouse identified the boat as our LCP element at 4.6s). */}
         <div className="absolute bottom-10 md:bottom-14 left-1/2 -translate-x-1/2 z-20 w-28 sm:w-36 md:w-44 hero-boat pointer-events-none">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <Image
             src="/images/userhero/boat.svg"
             alt=""
             width={144}
             height={72}
+            priority
+            unoptimized
             className="w-full h-auto drop-shadow-[0_4px_20px_rgba(0,0,0,0.3)] dark:invert dark:opacity-80"
           />
         </div>

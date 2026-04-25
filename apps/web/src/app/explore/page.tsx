@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 import { Search, MapPin, Star, Clock, Users, ChevronLeft, ChevronRight, SlidersHorizontal, X } from 'lucide-react';
 import { useEffect, useState, useMemo, useCallback, Suspense } from 'react';
@@ -427,10 +428,15 @@ function ExploreContent() {
           )}
         </div>
 
-        {/* Activity Grid — Skeleton or Cards */}
+        {/* Activity Grid — Skeleton or Cards.
+            Skeleton count = 3 (was 6) to minimize the height delta between
+            the loading state and the loaded state for typical result counts.
+            A larger skeleton block shrinks visibly when real results land,
+            pulling the footer up = CLS. With small/empty result sets this
+            matters most. */}
         {isLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {Array.from({ length: 6 }).map((_, i) => (
+            {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="rounded-2xl border border-gray-200/80 dark:border-slate-800/60 bg-white dark:bg-slate-900/50 overflow-hidden animate-pulse">
                 <div className="h-48 bg-gray-200 dark:bg-slate-800" />
                 <div className="p-5 space-y-3">
@@ -444,21 +450,39 @@ function ExploreContent() {
         ) : activities.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {activities.map((activity, i) => (
+              // Opacity-only fade-in — `y: 20` transform here was contributing
+              // ~0.15 CLS (Lighthouse pinned the footer as the shift target,
+              // but the trigger was each card moving 20px on mount). Pure
+              // opacity fade has the same visual feel without layout shift.
               <motion.div
                 key={activity.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
                 transition={{ duration: 0.3, delay: i * 0.05 }}
               >
                 <Link
                   href={`/activity/${activity.slug}`}
                   className="group block rounded-2xl border border-gray-200/80 dark:border-slate-800/60 bg-white dark:bg-slate-900/50 overflow-hidden hover:shadow-lg hover:shadow-gray-200/50 dark:hover:shadow-none hover:border-blue-200 dark:hover:border-blue-800/50 transition-all"
                 >
-                  {/* Image */}
+                  {/* Image — fixed h-48 (192px) parent reserves space so the
+                      image swap doesn't shift surrounding content (CLS).
+                      next/image with `fill` lets the optimizer pick AVIF/WebP
+                      and proper srcset; `sizes` matches the grid layout. */}
                   <div className="h-48 bg-linear-to-br from-gray-100 to-gray-200 dark:from-slate-800 dark:to-slate-700 relative overflow-hidden">
                     {(activity.coverImage || activity.gallery?.[0]) ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={activity.coverImage || activity.gallery[0]} alt={localized(activity, 'title')} width={400} height={192} loading="lazy" decoding="async" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                      <Image
+                        src={activity.coverImage || activity.gallery[0]}
+                        alt={localized(activity, 'title')}
+                        fill
+                        sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                        loading="lazy"
+                        // Dev: API serves uploads from localhost:4000 which the
+                        // Next image optimizer (running inside docker) can't
+                        // reach. In prod, S3/CDN URLs are public and full
+                        // AVIF/WebP negotiation runs.
+                        unoptimized={process.env.NODE_ENV !== 'production'}
+                        className="object-cover group-hover:scale-105 transition-transform duration-500"
+                      />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
                         <MapPin className="h-8 w-8 text-gray-300 dark:text-slate-600" />
