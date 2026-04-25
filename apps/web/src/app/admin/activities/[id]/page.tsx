@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import NextImage from 'next/image';
 import { useRouter, useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -91,7 +92,14 @@ function CoverImageUploader({ value, onChange, error }: { value: string; onChang
     <div>
       {preview ? (
         <div className="relative rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700 max-w-[480px]">
-          <img src={preview} alt="Cover" width={480} height={224} decoding="async" className="w-full h-56 object-cover" />
+          <NextImage
+            src={preview}
+            alt="Cover"
+            width={480}
+            height={224}
+            unoptimized={process.env.NODE_ENV !== 'production'}
+            className="w-full h-56 object-cover"
+          />
           {uploading && <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><Loader2 className="h-6 w-6 text-white animate-spin" /></div>}
           <button type="button" onClick={() => { setPreview(''); onChange(''); }} className="absolute top-2 end-2 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition cursor-pointer"><X className="h-4 w-4" /></button>
         </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import NextImage from 'next/image';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { getApiError } from '@/lib/utils';
@@ -366,8 +367,15 @@ export default function AdminCategoriesPage() {
                         <td className="px-3 py-4">
                           {cat.image ? (
                             <div className="w-10 h-10 rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={cat.image} alt={cat.nameEn} width={40} height={40} loading="lazy" decoding="async" className="w-full h-full object-cover" />
+                              <NextImage
+                                src={cat.image}
+                                alt={cat.nameEn}
+                                width={40}
+                                height={40}
+                                loading="lazy"
+                                unoptimized={process.env.NODE_ENV !== 'production'}
+                                className="w-full h-full object-cover"
+                              />
                             </div>
                           ) : (
                             <div className="w-10 h-10 rounded-lg bg-linear-to-br from-blue-500/20 to-indigo-500/20 dark:from-blue-500/30 dark:to-indigo-500/30 flex items-center justify-center text-sm font-bold text-blue-600 dark:text-blue-400">

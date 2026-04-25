@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
+import NextImage from 'next/image';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { getApiError } from '@/lib/utils';
@@ -383,7 +384,14 @@ export default function AdminTrendingPage() {
                         <p className="text-[11px] text-gray-400">Uploading...</p>
                       </div>
                     ) : imagePreview ? (
-                      <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                      <NextImage
+                        src={imagePreview}
+                        alt="Preview"
+                        fill
+                        sizes="180px"
+                        unoptimized={process.env.NODE_ENV !== 'production'}
+                        className="object-cover"
+                      />
                     ) : (
                       <div className="text-center px-2">
                         <ImageIcon className="h-7 w-7 text-gray-300 dark:text-slate-600 mx-auto mb-2" />

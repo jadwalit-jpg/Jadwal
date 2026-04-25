@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useCallback, useRef } from 'react';
+import NextImage from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -674,8 +675,15 @@ export default function AdminActivitiesPage() {
                   className={`shrink-0 h-14 w-20 rounded-lg overflow-hidden border-2 transition-all ${i === lightbox.index ? 'border-white' : 'border-white/20 opacity-60 hover:opacity-100'}`}
                   aria-label={`Go to image ${i + 1}`}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img} alt="" width={80} height={56} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                  <NextImage
+                    src={img}
+                    alt=""
+                    width={80}
+                    height={56}
+                    loading="lazy"
+                    unoptimized={process.env.NODE_ENV !== 'production'}
+                    className="h-full w-full object-cover"
+                  />
                 </button>
               ))}
             </div>
