@@ -1,7 +1,6 @@
 {
   "brand": "Jadwal",
   "brandAr": "جدول",
-
   "nav": {
     "home": "الرئيسية",
     "explore": "استكشف",
@@ -17,7 +16,6 @@
     "vendor": "لوحة البائع",
     "dashboard": "لوحة التحكم"
   },
-
   "footer": {
     "explore": "استكشف",
     "allActivities": "جميع الأنشطة",
@@ -31,7 +29,6 @@
     "contact": "تواصل معنا",
     "rights": "جميع الحقوق محفوظة."
   },
-
   "home": {
     "heroTitle1": "بوابتك إلى",
     "heroTitle2": "تجارب لا تُنسى",
@@ -70,7 +67,6 @@
     "ctaSubtitle": "احجز مغامرتك القادمة واصنع ذكريات لا تُنسى مع جدول.",
     "getStarted": "ابدأ الآن"
   },
-
   "activity": {
     "bookNow": "احجز الآن",
     "reviews": "التقييمات",
@@ -140,7 +136,6 @@
       "couponApplied": "تم تطبيق القسيمة: -{{amount}} خصم"
     }
   },
-
   "booking": {
     "myBookings": "حجوزاتي",
     "trackReservations": "تتبع جميع حجوزاتك هنا",
@@ -224,7 +219,6 @@
       "cancelFailed": "تعذر إلغاء هذا الحجز."
     }
   },
-
   "likes": {
     "title": "الأنشطة المفضلة",
     "subtitle": "الأنشطة التي حفظتها لوقت لاحق",
@@ -232,7 +226,6 @@
     "emptyDesc": "اضغط على القلب في أي نشاط لحفظه هنا",
     "explore": "استكشف الأنشطة"
   },
-
   "auth": {
     "welcomeBack": "مرحباً بعودتك",
     "signInToAccount": "سجل الدخول إلى حسابك",
@@ -301,7 +294,6 @@
       "invalidResetLink": "رابط إعادة التعيين غير صالح. يرجى طلب واحد جديد."
     }
   },
-
   "profile": {
     "title": "ملفي الشخصي",
     "subtitle": "إدارة تفاصيل حسابك",
@@ -310,8 +302,8 @@
     "upcoming": "القادمة",
     "completed": "المكتملة",
     "totalSpent": "إجمالي الإنفاق",
-    "verified": "حساب موثق",
-    "notVerified": "البريد غير موثق",
+    "verified": "مُوثَّق",
+    "notVerified": "غير مُوثَّق",
     "edit": "تعديل",
     "saving": "جاري الحفظ…",
     "save": "حفظ",
@@ -322,8 +314,6 @@
     "notSet": "غير محدد",
     "memberSince": "عضو منذ",
     "viewBookings": "عرض حجوزاتي",
-    "verified": "مُوثَّق",
-    "notVerified": "غير مُوثَّق",
     "verifyNow": "توثيق الآن",
     "phoneVerifiedAria": "الهاتف مُوثَّق",
     "phoneUnverifiedAria": "الهاتف غير مُوثَّق",
@@ -334,7 +324,6 @@
       "updateFailed": "فشل تحديث الملف الشخصي. يرجى المحاولة مرة أخرى."
     }
   },
-
   "offers": {
     "title": "العروض والقسائم",
     "subtitle": "احصل على قسيمة واستخدمها في أي حجز. واحدة لكل عميل.",
@@ -354,7 +343,6 @@
       "claimed": "تم الحصول على العرض! يمكنك استخدامه عند الدفع."
     }
   },
-
   "about": {
     "title": "عن",
     "fallbackDesc": "منصتك الأولى لاكتشاف وحجز تجارب لا تُنسى في دول الخليج.",
@@ -366,7 +354,6 @@
     "vettedVendorsDesc": "كل بائع يتم مراجعته واعتماده قبل إدراج الأنشطة.",
     "getInTouch": "تواصل معنا"
   },
-
   "phone": {
     "addPhone": "إضافة رقم الهاتف",
     "verifyToBook": "تحقق من هاتفك لإكمال الحجوزات",
@@ -383,7 +370,6 @@
     "resendIn": "إعادة الإرسال خلال",
     "resend": "إعادة الإرسال"
   },
-
   "notifications": {
     "title": "الإشعارات",
     "markAllRead": "تعيين الكل كمقروء",
@@ -396,13 +382,11 @@
     "pushEnabled": "تم تفعيل الإشعارات!",
     "pushDenied": "تم رفض إذن الإشعارات"
   },
-
   "calendar": {
     "selected": "محدد",
     "available": "متاح",
     "fullyBooked": "محجوز بالكامل"
   },
-
   "vendor": {
     "portalTitle": "بوابة البائعين",
     "signInDesc": "سجل الدخول إلى حساب البائع",
@@ -426,7 +410,6 @@
     "toast": {
       "registrationSubmitted": "تم إرسال التسجيل بنجاح"
     },
-
     "portalBrand": "جدول - بائع",
     "nav": {
       "dashboard": "اللوحة الرئيسية",
@@ -481,7 +464,6 @@
         "BLOCKED": "محظور"
       }
     },
-
     "bookings": {
       "title": "الحجوزات",
       "subtitle": "إدارة حجوزات العملاء",
@@ -553,23 +535,22 @@
         "close": "إغلاق"
       }
     },
-
     "earnings": {
       "title": "الأرباح",
       "subtitle": "تتبع إيراداتك وسجل المدفوعات",
       "dash": "—",
       "stats": {
         "transferred": {
-          "label": "المحوّل",
-          "sub": "مدفوعات مكتملة (في حسابك البنكي)"
+          "label": "المُحوَّل",
+          "sub": "مدفوعات اكتملت إلى حسابك البنكي"
         },
         "available": {
-          "label": "متاح للطلب",
-          "sub": "نقد مؤهل (جاهز للسحب)"
+          "label": "متاح للسحب",
+          "sub": "الرصيد المؤهَّل (جاهز للسحب)"
         },
         "inProgress": {
-          "label": "قيد المعالجة",
-          "sub": "بانتظار الإدارة / التحويل البنكي"
+          "label": "قيد التحويل",
+          "sub": "بانتظار اعتماد الإدارة أو التحويل البنكي"
         }
       },
       "requestPayout": {
@@ -580,13 +561,13 @@
         "requesting": "جاري الإرسال..."
       },
       "eligibility": {
-        "VENDOR_SUSPENDED": "Your vendor account is suspended. Payouts are disabled until the suspension is lifted.",
-        "INFLIGHT_PENDING": "You already have a payout request awaiting admin review. Wait for it to be processed before filing another.",
-        "INFLIGHT_APPROVED": "You have an approved payout in progress. Wait for the transfer to complete before requesting again.",
-        "NO_BANK_DETAILS": "Add your bank details in Settings before you can request a payout.",
-        "NO_BALANCE": "You have no eligible cash balance to withdraw right now.",
-        "BELOW_MINIMUM": "Your available balance is below the minimum payout amount.",
-        "generic": "You cannot request a payout right now."
+        "VENDOR_SUSPENDED": "حساب مزود الخدمة مُعلَّق حاليًا. السحب متوقف حتى إلغاء التعليق.",
+        "INFLIGHT_PENDING": "لديك طلب سحب قيد المراجعة من الإدارة. الرجاء انتظار معالجته قبل تقديم طلب جديد.",
+        "INFLIGHT_APPROVED": "لديك طلب سحب موافَق عليه قيد التنفيذ. الرجاء انتظار اكتمال التحويل قبل تقديم طلب جديد.",
+        "NO_BANK_DETAILS": "يجب إضافة بيانات حسابك البنكي من الإعدادات قبل طلب السحب.",
+        "NO_BALANCE": "لا يوجد رصيد مؤهَّل للسحب حاليًا.",
+        "BELOW_MINIMUM": "الرصيد المتاح أقل من الحد الأدنى المسموح للسحب.",
+        "generic": "لا يمكن طلب السحب في الوقت الحالي."
       },
       "payoutRequests": {
         "title": "طلبات السحب",
@@ -622,13 +603,12 @@
         "clearing": "جاري الإزالة..."
       },
       "toast": {
-        "clearedRejected": "تمت إزالة طلب السحب المرفوض من سجلك",
-        "clearFailed": "فشل إزالة الطلب المرفوض",
-        "requestSubmitted": "تم إرسال طلب السحب. ستعالجه الإدارة قريباً.",
-        "requestFailed": "فشل طلب السحب"
+        "clearedRejected": "تم حذف طلب السحب المرفوض من سجلك",
+        "clearFailed": "تعذّر حذف الطلب المرفوض",
+        "requestSubmitted": "تم إرسال طلب السحب. ستتولى الإدارة معالجته قريبًا.",
+        "requestFailed": "تعذّر إرسال طلب السحب"
       }
     },
-
     "refundRequests": {
       "title": "طلبات الاسترداد",
       "badgePending": "{{count}} قيد الانتظار",
@@ -668,10 +648,10 @@
         "PARTIAL_REFUND": "استرداد جزئي"
       },
       "suggested": {
-        "labelFull": "Full refund",
-        "labelNone": "No refund",
-        "labelHalf": "50% refund",
-        "reasonNoCancelTs": "No cancel timestamp",
+        "labelFull": "استرداد كامل",
+        "labelNone": "بدون استرداد",
+        "labelHalf": "استرداد 50٪",
+        "reasonNoCancelTs": "لا يوجد وقت إلغاء مسجَّل",
         "reasonNonRefundable": "Non-refundable activity",
         "reasonPartialOk": "Cancelled {{hours}}h before start",
         "reasonPartialLate": "Cancelled less than {{deadline}}h before start",
@@ -706,7 +686,6 @@
         "amountExceeds": "Amount cannot exceed the paid amount ({{max}})"
       }
     },
-
     "coupons": {
       "title": "القسائم والعروض",
       "subtitle": "أنشئ أكواد خصم لأنشطتك",
@@ -759,7 +738,6 @@
         "validToAfterFrom": "يجب أن يكون «صالحة حتى» بعد «صالحة من»"
       }
     },
-
     "analytics": {
       "title": "التحليلات",
       "subtitle": "أداء جميع أنشطتك.",
@@ -801,7 +779,6 @@
       "thEngagement": "التفاعل",
       "noRating": "—"
     },
-
     "reviews": {
       "title": "التقييمات",
       "subtitle": "ملاحظات العملاء على أنشطتك",
@@ -821,7 +798,6 @@
         "replyFailed": "فشل نشر الرد"
       }
     },
-
     "settings": {
       "title": "الإعدادات",
       "subtitle": "إدارة ملف عملك وتفضيلاتك",
@@ -883,11 +859,9 @@
         }
       }
     },
-
     "loading": {
       "portal": "جاري تحميل لوحة المزوّد"
     },
-
     "activities": {
       "list": {
         "title": "أنشطتي",
@@ -980,40 +954,40 @@
           "SAT": "السبت"
         },
         "errors": {
-          "titleEnRequired": "English title is required",
-          "titleEnMin": "Title must be at least 5 characters",
-          "titleEnMax": "Title must be 150 characters or less",
-          "titleArRequired": "Arabic title is required",
-          "titleArMin": "Title must be at least 5 characters",
-          "titleArMax": "Title must be 150 characters or less",
-          "slugRequired": "Slug is required",
-          "slugFormat": "Slug must be lowercase letters, numbers, and hyphens only",
-          "slugMin": "Slug must be at least 3 characters",
-          "categoryRequired": "Category is required",
-          "descriptionEnRequired": "English description is required",
-          "descriptionEnMin": "Description must be at least 50 characters",
-          "descriptionEnMax": "Description must be 2000 characters or less",
-          "descriptionArRequired": "Arabic description is required",
-          "descriptionArMin": "Description must be at least 50 characters",
-          "descriptionArMax": "Description must be 2000 characters or less",
-          "durationMin": "Duration (hours) must be at least 1",
-          "durationMax": "Hourly duration cannot exceed 24 hours",
-          "startTimeRequired": "Start time is required",
-          "endTimeRequired": "End time is required",
-          "endAfterStart": "End time must be after start time",
-          "checkInRequired": "Check-in time is required",
-          "checkOutRequired": "Check-out time is required",
-          "priceRequired": "Valid price is required",
-          "priceTooHigh": "Price seems too high",
-          "capacityRequired": "Capacity is required when units are not enabled",
-          "capacityTooHigh": "Capacity seems too high",
-          "cityRequired": "City is required",
-          "locationRequired": "Location name is required",
-          "locationShort": "Location name is too short",
-          "mapPinRequired": "Please pin the location on the map",
-          "coverRequired": "Cover image is required",
-          "galleryMin": "Please upload at least 2 gallery images",
-          "cancellationRequired": "Please select a cancellation policy"
+          "titleEnRequired": "العنوان بالإنجليزية مطلوب",
+          "titleEnMin": "يجب ألا يقل العنوان عن 5 أحرف",
+          "titleEnMax": "يجب ألا يزيد العنوان عن 150 حرفًا",
+          "titleArRequired": "العنوان بالعربية مطلوب",
+          "titleArMin": "يجب ألا يقل العنوان عن 5 أحرف",
+          "titleArMax": "يجب ألا يزيد العنوان عن 150 حرفًا",
+          "slugRequired": "المعرّف (slug) مطلوب",
+          "slugFormat": "المعرّف يجب أن يحتوي على أحرف إنجليزية صغيرة وأرقام وشرطات فقط",
+          "slugMin": "المعرّف يجب ألا يقل عن 3 أحرف",
+          "categoryRequired": "الفئة مطلوبة",
+          "descriptionEnRequired": "الوصف بالإنجليزية مطلوب",
+          "descriptionEnMin": "يجب ألا يقل الوصف عن 50 حرفًا",
+          "descriptionEnMax": "يجب ألا يزيد الوصف عن 2000 حرف",
+          "descriptionArRequired": "الوصف بالعربية مطلوب",
+          "descriptionArMin": "يجب ألا يقل الوصف عن 50 حرفًا",
+          "descriptionArMax": "يجب ألا يزيد الوصف عن 2000 حرف",
+          "durationMin": "المدة بالساعات يجب ألا تقل عن ساعة واحدة",
+          "durationMax": "لا يمكن أن تتجاوز المدة 24 ساعة",
+          "startTimeRequired": "وقت البداية مطلوب",
+          "endTimeRequired": "وقت النهاية مطلوب",
+          "endAfterStart": "وقت النهاية يجب أن يكون بعد وقت البداية",
+          "checkInRequired": "وقت الدخول مطلوب",
+          "checkOutRequired": "وقت المغادرة مطلوب",
+          "priceRequired": "السعر مطلوب وغير صحيح",
+          "priceTooHigh": "السعر يبدو مرتفعًا جدًا، يرجى المراجعة",
+          "capacityRequired": "الطاقة الاستيعابية مطلوبة عند تعطيل الوحدات",
+          "capacityTooHigh": "الطاقة الاستيعابية تبدو كبيرة جدًا، يرجى المراجعة",
+          "cityRequired": "المدينة مطلوبة",
+          "locationRequired": "اسم الموقع مطلوب",
+          "locationShort": "اسم الموقع قصير جدًا",
+          "mapPinRequired": "يرجى تحديد الموقع على الخريطة",
+          "coverRequired": "صورة الغلاف مطلوبة",
+          "galleryMin": "يرجى رفع صورتين على الأقل لمعرض الصور",
+          "cancellationRequired": "يرجى اختيار سياسة الإلغاء"
         },
         "cover": {
           "invalidType": "نوع الملف غير صالح. استخدم JPG أو PNG أو WebP أو GIF.",
@@ -1162,7 +1136,6 @@
       }
     }
   },
-
   "payment": {
     "success": "تم الدفع بنجاح",
     "successDesc": "تم تأكيد حجزك. ستتلقى تأكيداً قريباً.",
@@ -1173,7 +1146,6 @@
     "tryAgain": "حاول مرة أخرى",
     "backToBookings": "العودة لحجوزاتي"
   },
-
   "terms": {
     "title": "شروط الخدمة",
     "lastUpdated": "آخر تحديث",
@@ -1229,7 +1201,6 @@
       "p1": "لأيّ استفسار بخصوص هذه الشروط، يمكنك التواصل معنا على support@jadwal.com."
     }
   },
-
   "privacy": {
     "title": "سياسة الخصوصية",
     "lastUpdated": "آخر تحديث",
@@ -1335,7 +1306,6 @@
       "p1": "للاستفسارات المتعلقة بالخصوصية، يمكنك التواصل مع فريق حماية البيانات على privacy@jadwal.com."
     }
   },
-
   "explore": {
     "title": "استكشف الأنشطة",
     "subtitle": "اكتشف تجارب مميزة بالقرب منك",
@@ -1379,7 +1349,6 @@
     "nearMe": "بالقرب مني",
     "nearbyActive": "مرتب حسب المسافة"
   },
-
   "loyalty": {
     "title": "نقاط الولاء",
     "points": "نقاط",
@@ -1402,7 +1371,6 @@
     "earnedOnBooking": "مكتسبة من حجز",
     "wanasa": "وناسة"
   },
-
   "common": {
     "loading": "جاري التحميل...",
     "error": "حدث خطأ ما",
@@ -1418,7 +1386,6 @@
     "viewDetails": "عرض التفاصيل",
     "by": "بواسطة"
   },
-
   "status": {
     "booking": {
       "PENDING": "قيد الانتظار",
@@ -1450,7 +1417,6 @@
       "COMPLETED": "مكتمل"
     }
   },
-
   "toast": {
     "saveSuccess": "تم الحفظ بنجاح",
     "saveFailed": "فشل الحفظ",
@@ -1471,5 +1437,54 @@
     "requiredField": "هذا الحقل مطلوب",
     "tooLong": "طويل جداً",
     "tooShort": "قصير جداً"
+  },
+  "errors": {
+    "ACTIVITY": {
+      "NOT_FOUND": "لم يتم العثور على هذه التجربة",
+      "NOT_HOURLY": "هذه التجربة غير متاحة للحجز بالساعة",
+      "NOT_DAILY": "هذه التجربة غير متاحة للحجز بالليلة",
+      "CONFIG_INCOMPLETE": "إعدادات هذه التجربة غير مكتملة، تواصل مع مزود الخدمة"
+    },
+    "BOOKING": {
+      "SLOT_BUSY": "هذا الموعد قيد الحجز حاليًا، حاول مرة أخرى بعد لحظات",
+      "CAPACITY_FULL": "الموعد ممتلئ، لا توجد أماكن متاحة في هذا الوقت",
+      "NOT_FOUND": "لم يتم العثور على هذا الحجز",
+      "INVALID_DATE": "صيغة التاريخ غير صحيحة",
+      "INVALID_MONTH": "صيغة الشهر غير صحيحة",
+      "PAST_DATE": "لا يمكن الحجز إلا في تاريخ مستقبلي",
+      "TOO_FAR_AHEAD": "هذا التاريخ بعيد جدًا، الرجاء اختيار تاريخ أقرب",
+      "GUESTS_INVALID": "عدد الضيوف غير صحيح",
+      "SLOT_INVALID": "الوقت المختار غير صالح",
+      "CHECKOUT_BEFORE_CHECKIN": "تاريخ المغادرة يجب أن يكون بعد تاريخ الوصول",
+      "CANCEL_DEADLINE_PASSED": "انتهت مهلة الإلغاء لهذا الحجز",
+      "ALREADY_CANCELLED": "تم إلغاء هذا الحجز سابقًا",
+      "UNIT_UNAVAILABLE": "الوحدة المختارة لم تعد متاحة"
+    },
+    "COUPON": {
+      "INVALID": "رمز الخصم غير صحيح",
+      "INACTIVE": "رمز الخصم غير مُفعّل",
+      "NOT_YET_VALID": "رمز الخصم لم يبدأ سريانه بعد",
+      "EXPIRED": "انتهت صلاحية رمز الخصم",
+      "USAGE_LIMIT": "استُخدم رمز الخصم بأقصى عدد مسموح به",
+      "NOT_FOR_ACTIVITY": "رمز الخصم لا ينطبق على هذه التجربة",
+      "MIN_ORDER": "الحد الأدنى للطلب هو {{amount}}",
+      "FORMAT_INVALID": "صيغة رمز الخصم غير صحيحة"
+    },
+    "AUTH": {
+      "INVALID_CREDENTIALS": "البريد الإلكتروني أو كلمة المرور غير صحيحة",
+      "ACCOUNT_LOCKED": "تم تعليق هذا الحساب مؤقتًا، حاول مرة أخرى بعد دقائق",
+      "EMAIL_NOT_VERIFIED": "يرجى تأكيد بريدك الإلكتروني قبل تسجيل الدخول",
+      "EMAIL_TAKEN": "يوجد حساب مسجَّل مسبقًا بهذا البريد",
+      "UNAUTHORIZED": "انتهت جلستك، الرجاء تسجيل الدخول من جديد"
+    },
+    "PAYMENT": {
+      "FAILED": "فشلت عملية الدفع، الرجاء المحاولة مرة أخرى",
+      "AMOUNT_MISMATCH": "مبلغ الدفع لا يطابق إجمالي الحجز",
+      "ALREADY_PROCESSED": "تمت معالجة هذه الدفعة مسبقًا"
+    },
+    "COMMON": {
+      "BAD_REQUEST": "الطلب غير صحيح",
+      "SERVER_ERROR": "حدث خطأ غير متوقع، الرجاء المحاولة لاحقًا"
+    }
   }
 }

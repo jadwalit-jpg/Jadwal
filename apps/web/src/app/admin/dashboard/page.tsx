@@ -426,7 +426,7 @@ function TopActivitiesTable({ items }: { items: ChartsData['topActivities'] }) {
   const max = Math.max(...items.map((i) => i.bookings), 1);
   return (
     <div>
-      <div className="grid grid-cols-[1fr_96px_72px] gap-3 px-1 pb-2 border-b border-gray-100 dark:border-slate-800 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+      <div className="grid grid-cols-[minmax(0,1fr)_96px_72px] gap-3 px-1 pb-2 border-b border-gray-100 dark:border-slate-800 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
         <div>Activity</div>
         <div>Share</div>
         <div className="text-end">Revenue</div>
@@ -434,7 +434,7 @@ function TopActivitiesTable({ items }: { items: ChartsData['topActivities'] }) {
       {items.slice(0, 5).map((a, i) => (
         <div
           key={i}
-          className={`grid grid-cols-[1fr_96px_72px] gap-3 px-1 py-3 items-center ${i < Math.min(items.length, 5) - 1 ? 'border-b border-gray-50 dark:border-slate-800/50' : ''}`}
+          className={`grid grid-cols-[minmax(0,1fr)_96px_72px] gap-3 px-1 py-3 items-center ${i < Math.min(items.length, 5) - 1 ? 'border-b border-gray-50 dark:border-slate-800/50' : ''}`}
         >
           <div className="flex items-center gap-3 min-w-0">
             <span className="w-1.5 h-9 rounded bg-sky-500 shrink-0" aria-hidden="true" />
@@ -705,7 +705,7 @@ export default function AdminDashboardPage() {
             </>
           )}
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr_1fr] gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-4">
           {/* Hero loyalty liability card — donut + label */}
           <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-6 flex items-center gap-5 relative overflow-hidden">
             {/* soft radial accent */}
@@ -754,7 +754,7 @@ export default function AdminDashboardPage() {
       {/* ─── Section 3: Trends ─────────────────────────────── */}
       <section className="mb-10">
         <SectionHeader title="Trends" sub="Last 6 months" />
-        <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr_1.5fr] gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1.5fr)] gap-4">
           <ChartCard
             title="Revenue over time"
             sub="Cash settled · last 6 months"

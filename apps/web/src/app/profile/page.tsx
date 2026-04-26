@@ -391,7 +391,7 @@ export default function ProfilePage() {
               </div>
 
               {/* Contact + Wanasa two-column */}
-              <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr] gap-4 md:gap-5">
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-4 md:gap-5">
                 {/* Contact info */}
                 <div className="rounded-2xl bg-jadwal-surface border border-jadwal-border-subtle shadow-jadwal overflow-hidden">
                   <div className="px-6 pt-5 pb-3 flex items-center justify-between gap-3">

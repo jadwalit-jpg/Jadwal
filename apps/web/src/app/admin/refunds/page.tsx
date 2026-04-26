@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { sanitize } from '@/lib/validation';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
@@ -167,7 +167,7 @@ export default function AdminRefundQueuePage() {
                         <span className="text-xs text-gray-500 dark:text-slate-400">·</span>
                         <span className="text-sm text-gray-700 dark:text-slate-200 truncate">{b.activity.titleEn}</span>
                         <span className="text-xs text-gray-500 dark:text-slate-400">·</span>
-                        <span className="text-xs text-gray-500 dark:text-slate-400">{b.vendor.businessNameEn}</span>
+                        <span className="text-xs text-gray-500 dark:text-slate-400 wrap-break-word min-w-0">{b.vendor.businessNameEn}</span>
                       </div>
                       <div className="mt-1 text-sm text-gray-600 dark:text-slate-300">
                         <span className="font-medium">{b.customer.fullName}</span>

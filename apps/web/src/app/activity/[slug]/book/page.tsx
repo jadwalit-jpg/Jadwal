@@ -17,7 +17,8 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import api from '@/lib/api';
-import { cn, getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
+import { cn } from '@/lib/utils';
 import { sanitizeObject } from '@/lib/validation';
 import { localized } from '@/lib/localize';
 import { useAuth } from '@/context/auth-context';

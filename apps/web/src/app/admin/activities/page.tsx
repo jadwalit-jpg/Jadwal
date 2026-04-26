@@ -288,8 +288,8 @@ export default function AdminActivitiesPage() {
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
                             <ChevronDown className={`h-3.5 w-3.5 text-gray-400 transition-transform duration-200 shrink-0 ${isExpanded ? 'rotate-180' : ''}`} />
-                            <div>
-                              <p className="font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
+                            <div className="min-w-0">
+                              <p className="font-medium text-gray-900 dark:text-white flex items-center gap-1.5 wrap-break-word max-w-[260px]">
                                 {activity.titleEn}
                                 {activity.isFeatured && (
                                   <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400 shrink-0" />

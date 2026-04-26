@@ -11,7 +11,7 @@ import { localized } from '@/lib/localize';
 import Link from 'next/link';
 import { Building2, CheckCircle, LogIn, UserPlus } from 'lucide-react';
 import { sanitize, sanitizeObject, validateEmail, validatePassword, validateFullName, validatePhone, validateSlug } from '@/lib/validation';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import CustomSelect from '@/components/custom-select';
 
 interface Country {

@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { sanitize } from '@/lib/validation';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useToast } from '@/components/toast';
@@ -572,7 +572,7 @@ export default function RequestsTab() {
                         {amount.toFixed(2)} {currency}
                       </span>{' '}
                       from{' '}
-                      <span className="font-medium text-gray-700 dark:text-slate-200">{vendorName}</span>{' '}
+                      <span className="font-medium text-gray-700 dark:text-slate-200 wrap-break-word">{vendorName}</span>{' '}
                       will re-open at the selected status and the vendor is notified.
                     </p>
                   </div>

@@ -10,7 +10,7 @@ import { localized } from '@/lib/localize';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { ACTIVITY_WIZARD_ERR, wizardSteps, daysOfWeek } from '../../../_lib/vendor-activity-wizard-copy';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { sanitize, sanitizeObject } from '@/lib/validation';
 import { VendorSidebar } from '../../../_components/vendor-sidebar';
 import { Check, Loader2, Plus, X, BookmarkIcon, AlertCircle, ImagePlus } from 'lucide-react';

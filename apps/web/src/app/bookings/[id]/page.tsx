@@ -21,7 +21,7 @@ import {
 import { motion } from 'framer-motion';
 import api from '@/lib/api';
 import { localized } from '@/lib/localize';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { isAllowedPay2mFormAction } from '@/lib/pay2m';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
@@ -205,7 +205,7 @@ export default function BookingDetailPage() {
           <button
             type="button"
             onClick={() => router.back()}
-            className="inline-flex items-center gap-2 text-sm text-jadwal-text-muted hover:text-jadwal-primary transition-colors mb-6"
+            className="inline-flex items-center gap-2 text-sm font-semibold text-jadwal-text-muted hover:text-jadwal-primary transition-colors mb-6"
           >
             <ArrowLeft className="w-4 h-4" aria-hidden="true" />
             {t('booking.myBookings')}

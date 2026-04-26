@@ -111,7 +111,7 @@ export default function AdminReviewsPage() {
                       <p className="font-medium text-gray-900 dark:text-white">{review.customer.fullName}</p>
                       <p className="text-xs text-gray-400 dark:text-slate-500">{review.customer.email}</p>
                     </td>
-                    <td className="px-6 py-4 text-gray-600 dark:text-slate-300">{review.activity.titleEn}</td>
+                    <td className="px-6 py-4 text-gray-600 dark:text-slate-300 wrap-break-word max-w-[260px]">{review.activity.titleEn}</td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-0.5">
                         {Array.from({ length: 5 }).map((_, i) => (

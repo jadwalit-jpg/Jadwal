@@ -4,7 +4,7 @@ import React, { useState, useCallback } from 'react';
 import NextImage from 'next/image';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { sanitize } from '@/lib/validation';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
@@ -369,7 +369,7 @@ export default function AdminTrendingPage() {
             </div>
 
             <form onSubmit={handleSubmit} className="p-5">
-              <div className="grid grid-cols-[180px_1fr] gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-[180px_minmax(0,1fr)] gap-5">
 
                 {/* ── Left: Image ── */}
                 <div className="flex flex-col gap-1.5">
@@ -458,7 +458,7 @@ export default function AdminTrendingPage() {
                         onClick={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
                         className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${form.isActive ? 'bg-blue-600' : 'bg-gray-300 dark:bg-slate-700'}`}
                       >
-                        <span className={`absolute top-0.5 inset-s-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.isActive ? 'translate-x-4' : 'translate-x-0'}`} />
+                        <span className={`absolute top-0.5 inset-s-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.isActive ? 'translate-x-4 rtl:-translate-x-4' : 'translate-x-0'}`} />
                       </button>
                       <span className="text-sm text-gray-600 dark:text-slate-400">Active</span>
                     </div>

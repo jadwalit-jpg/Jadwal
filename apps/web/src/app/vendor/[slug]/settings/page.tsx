@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { sanitize, validatePassword } from '@/lib/validation';
 import { useToast } from '@/components/toast';
 import { VendorSidebar } from '../../_components/vendor-sidebar';

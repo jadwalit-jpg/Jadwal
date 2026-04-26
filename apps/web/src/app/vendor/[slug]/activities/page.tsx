@@ -237,7 +237,9 @@ export default function VendorActivitiesPage() {
                               >
                                 <span
                                   className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transform transition-transform ${
-                                    activity.status === 'ACTIVE' ? 'translate-x-4' : 'translate-x-0.5'
+                                    activity.status === 'ACTIVE'
+                                      ? 'translate-x-4 rtl:-translate-x-4'
+                                      : 'translate-x-0.5 rtl:-translate-x-0.5'
                                   }`}
                                 />
                               </button>

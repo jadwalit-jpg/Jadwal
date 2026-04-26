@@ -7,7 +7,7 @@ import { useToast } from '@/components/toast';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import CustomSelect from '@/components/custom-select';
 import { Search, ChevronLeft, ChevronRight, CheckCircle, Download, CreditCard, Sparkles, Wallet, Clock, Info, Undo2, AlertTriangle, X } from 'lucide-react';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 
 interface Payment {
   id: string;
@@ -656,7 +656,7 @@ export default function PaymentsTab() {
                       and the bank transfer never actually happened. It reopens{' '}
                       <span className="font-semibold text-gray-700 dark:text-slate-200">{vendorShare.toFixed(2)} {currency}</span>{' '}
                       as owed to{' '}
-                      <span className="font-medium text-gray-700 dark:text-slate-200">{vendorName}</span>.
+                      <span className="font-medium text-gray-700 dark:text-slate-200 wrap-break-word">{vendorName}</span>.
                       The vendor is notified and the amount reappears in their pending balance.
                     </p>
                   </div>

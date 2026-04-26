@@ -1,7 +1,6 @@
 {
   "brand": "Jadwal",
   "brandAr": "جدول",
-
   "nav": {
     "home": "Home",
     "explore": "Explore",
@@ -17,7 +16,6 @@
     "vendor": "Vendor Panel",
     "dashboard": "Dashboard"
   },
-
   "footer": {
     "explore": "Explore",
     "allActivities": "All Activities",
@@ -31,7 +29,6 @@
     "contact": "Contact",
     "rights": "All rights reserved."
   },
-
   "home": {
     "heroTitle1": "Your Gateway to",
     "heroTitle2": "Unforgettable Experiences",
@@ -70,7 +67,6 @@
     "ctaSubtitle": "Book your next adventure and create lasting memories with Jadwal.",
     "getStarted": "Get Started"
   },
-
   "activity": {
     "bookNow": "Book Now",
     "reviews": "Reviews",
@@ -140,7 +136,6 @@
       "couponApplied": "Coupon applied: -{{amount}} discount"
     }
   },
-
   "booking": {
     "myBookings": "My Bookings",
     "trackReservations": "Track all your reservations here",
@@ -224,7 +219,6 @@
       "cancelFailed": "Could not cancel this booking."
     }
   },
-
   "likes": {
     "title": "Liked Activities",
     "subtitle": "Activities you've saved for later",
@@ -232,7 +226,6 @@
     "emptyDesc": "Tap the heart on any activity to save it here",
     "explore": "Explore Activities"
   },
-
   "auth": {
     "welcomeBack": "Welcome Back",
     "signInToAccount": "Sign in to your account",
@@ -301,7 +294,6 @@
       "invalidResetLink": "Invalid reset link. Please request a new one."
     }
   },
-
   "profile": {
     "title": "My Profile",
     "subtitle": "Manage your account details",
@@ -310,8 +302,8 @@
     "upcoming": "Upcoming",
     "completed": "Completed",
     "totalSpent": "Total Spent",
-    "verified": "Verified account",
-    "notVerified": "Email not verified",
+    "verified": "Verified",
+    "notVerified": "Not verified",
     "edit": "Edit",
     "saving": "Saving…",
     "save": "Save",
@@ -322,8 +314,6 @@
     "notSet": "Not set",
     "memberSince": "Member Since",
     "viewBookings": "View My Bookings",
-    "verified": "Verified",
-    "notVerified": "Not verified",
     "verifyNow": "Verify now",
     "phoneVerifiedAria": "Phone verified",
     "phoneUnverifiedAria": "Phone not verified",
@@ -334,7 +324,6 @@
       "updateFailed": "Failed to update profile. Please try again."
     }
   },
-
   "offers": {
     "title": "Offers & Vouchers",
     "subtitle": "Claim a voucher and use it on any booking. One per customer.",
@@ -354,7 +343,6 @@
       "claimed": "Offer claimed! You can use it at checkout."
     }
   },
-
   "about": {
     "title": "About",
     "fallbackDesc": "Your premier platform for discovering and booking unforgettable experiences across the GCC.",
@@ -366,7 +354,6 @@
     "vettedVendorsDesc": "Every vendor is reviewed and approved before listing activities.",
     "getInTouch": "Get in Touch"
   },
-
   "phone": {
     "addPhone": "Add Phone Number",
     "verifyToBook": "Verify your phone to complete bookings",
@@ -383,7 +370,6 @@
     "resendIn": "Resend in",
     "resend": "Resend"
   },
-
   "notifications": {
     "title": "Notifications",
     "markAllRead": "Mark all read",
@@ -396,13 +382,11 @@
     "pushEnabled": "Notifications enabled!",
     "pushDenied": "Notification permission denied"
   },
-
   "calendar": {
     "selected": "Selected",
     "available": "Available",
     "fullyBooked": "Fully booked"
   },
-
   "vendor": {
     "portalTitle": "Vendor Portal",
     "signInDesc": "Sign in to your vendor account",
@@ -426,7 +410,6 @@
     "toast": {
       "registrationSubmitted": "Registration submitted successfully"
     },
-
     "portalBrand": "Jadwal Vendor",
     "nav": {
       "dashboard": "Dashboard",
@@ -481,7 +464,6 @@
         "BLOCKED": "Blocked"
       }
     },
-
     "bookings": {
       "title": "Bookings",
       "subtitle": "Manage customer reservations",
@@ -553,7 +535,6 @@
         "close": "Close"
       }
     },
-
     "earnings": {
       "title": "Earnings",
       "subtitle": "Track your revenue and payout history",
@@ -628,7 +609,6 @@
         "requestFailed": "Failed to request payout"
       }
     },
-
     "refundRequests": {
       "title": "Refund Requests",
       "badgePending": "{{count}} pending",
@@ -706,7 +686,6 @@
         "amountExceeds": "Amount cannot exceed the paid amount ({{max}})"
       }
     },
-
     "coupons": {
       "title": "Coupons & Promotions",
       "subtitle": "Create discount codes for your activities",
@@ -759,7 +738,6 @@
         "validToAfterFrom": "Valid To must be after Valid From"
       }
     },
-
     "analytics": {
       "title": "Analytics",
       "subtitle": "Performance across all your activities.",
@@ -801,7 +779,6 @@
       "thEngagement": "Engagement",
       "noRating": "—"
     },
-
     "reviews": {
       "title": "Reviews",
       "subtitle": "Customer feedback on your activities",
@@ -821,7 +798,6 @@
         "replyFailed": "Failed to post reply"
       }
     },
-
     "settings": {
       "title": "Settings",
       "subtitle": "Manage your business profile and preferences",
@@ -883,11 +859,9 @@
         }
       }
     },
-
     "loading": {
       "portal": "Loading vendor portal"
     },
-
     "activities": {
       "list": {
         "title": "My Activities",
@@ -1162,7 +1136,6 @@
       }
     }
   },
-
   "payment": {
     "success": "Payment Successful",
     "successDesc": "Your booking is confirmed. You will receive a confirmation shortly.",
@@ -1173,7 +1146,6 @@
     "tryAgain": "Try Again",
     "backToBookings": "Back to My Bookings"
   },
-
   "terms": {
     "title": "Terms of Service",
     "lastUpdated": "Last updated",
@@ -1229,7 +1201,6 @@
       "p1": "For questions about these Terms, contact us at support@jadwal.com."
     }
   },
-
   "privacy": {
     "title": "Privacy Policy",
     "lastUpdated": "Last updated",
@@ -1335,7 +1306,6 @@
       "p1": "For privacy-related inquiries, contact our Data Protection team at privacy@jadwal.com."
     }
   },
-
   "explore": {
     "title": "Explore Activities",
     "subtitle": "Discover amazing experiences near you",
@@ -1379,7 +1349,6 @@
     "nearMe": "Near Me",
     "nearbyActive": "Sorted by distance"
   },
-
   "loyalty": {
     "title": "Loyalty Points",
     "points": "Points",
@@ -1402,7 +1371,6 @@
     "earnedOnBooking": "Earned from booking",
     "wanasa": "WANASA"
   },
-
   "common": {
     "loading": "Loading...",
     "error": "Something went wrong",
@@ -1418,7 +1386,6 @@
     "viewDetails": "View Details",
     "by": "By"
   },
-
   "status": {
     "booking": {
       "PENDING": "Pending",
@@ -1450,7 +1417,6 @@
       "COMPLETED": "Completed"
     }
   },
-
   "toast": {
     "saveSuccess": "Saved successfully",
     "saveFailed": "Failed to save",
@@ -1471,5 +1437,54 @@
     "requiredField": "This field is required",
     "tooLong": "Too long",
     "tooShort": "Too short"
+  },
+  "errors": {
+    "ACTIVITY": {
+      "NOT_FOUND": "Activity not found",
+      "NOT_HOURLY": "This activity is not bookable by the hour",
+      "NOT_DAILY": "This activity is not bookable by the night",
+      "CONFIG_INCOMPLETE": "Activity configuration incomplete"
+    },
+    "BOOKING": {
+      "SLOT_BUSY": "This slot is currently being booked. Please try again in a moment.",
+      "CAPACITY_FULL": "All units are fully booked for this time",
+      "NOT_FOUND": "Booking not found",
+      "INVALID_DATE": "Invalid date format",
+      "INVALID_MONTH": "Invalid month format",
+      "PAST_DATE": "You can only book future dates",
+      "TOO_FAR_AHEAD": "This date is too far in the future",
+      "GUESTS_INVALID": "Number of guests is invalid",
+      "SLOT_INVALID": "Invalid time slot",
+      "CHECKOUT_BEFORE_CHECKIN": "Check-out must be after check-in",
+      "CANCEL_DEADLINE_PASSED": "The cancellation deadline has passed for this booking",
+      "ALREADY_CANCELLED": "This booking has already been cancelled",
+      "UNIT_UNAVAILABLE": "The selected unit is no longer available"
+    },
+    "COUPON": {
+      "INVALID": "Invalid coupon code",
+      "INACTIVE": "This coupon is not active",
+      "NOT_YET_VALID": "This coupon is not yet valid",
+      "EXPIRED": "This coupon has expired",
+      "USAGE_LIMIT": "This coupon has reached its usage limit",
+      "NOT_FOR_ACTIVITY": "This coupon is not valid for this activity",
+      "MIN_ORDER": "Minimum order amount is {{amount}}",
+      "FORMAT_INVALID": "Invalid coupon code format"
+    },
+    "AUTH": {
+      "INVALID_CREDENTIALS": "Invalid email or password",
+      "ACCOUNT_LOCKED": "This account is temporarily locked. Please try again in a few minutes.",
+      "EMAIL_NOT_VERIFIED": "Please verify your email before signing in",
+      "EMAIL_TAKEN": "An account with this email already exists",
+      "UNAUTHORIZED": "Your session has expired. Please sign in again."
+    },
+    "PAYMENT": {
+      "FAILED": "Payment failed. Please try again.",
+      "AMOUNT_MISMATCH": "The payment amount does not match the booking total",
+      "ALREADY_PROCESSED": "This payment has already been processed"
+    },
+    "COMMON": {
+      "BAD_REQUEST": "Invalid request",
+      "SERVER_ERROR": "Something went wrong. Please try again."
+    }
   }
 }

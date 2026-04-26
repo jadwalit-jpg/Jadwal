@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { sanitize, validatePassword } from '@/lib/validation';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';

@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
 import { Search, ChevronLeft, ChevronRight, CheckCircle, Clock, XCircle, Globe, BadgeCheck, ChevronDown, Mail, Phone, Hash, Link as LinkIcon, Calendar, Building2, ShieldX, Trash2, AlertTriangle, Download, Percent } from 'lucide-react';
@@ -372,8 +372,8 @@ export default function AdminVendorsPage() {
                                     <div className="flex items-center gap-2 text-sm">
                                       <Building2 className="h-4 w-4 text-gray-400 dark:text-slate-500 shrink-0" />
                                       <span className="text-gray-500 dark:text-slate-400">Business:</span>
-                                      <span className="text-gray-900 dark:text-white font-medium">{vendor.businessNameEn}</span>
-                                      <span className="text-gray-400 dark:text-slate-500">({vendor.businessNameAr})</span>
+                                      <span className="text-gray-900 dark:text-white font-medium wrap-break-word min-w-0">{vendor.businessNameEn}</span>
+                                      <span className="text-gray-400 dark:text-slate-500 wrap-break-word min-w-0">({vendor.businessNameAr})</span>
                                     </div>
                                     <div className="flex items-center gap-2 text-sm">
                                       <Hash className="h-4 w-4 text-gray-400 dark:text-slate-500 shrink-0" />
@@ -388,7 +388,7 @@ export default function AdminVendorsPage() {
                                     <div className="flex items-center gap-2 text-sm">
                                       <Mail className="h-4 w-4 text-gray-400 dark:text-slate-500 shrink-0" />
                                       <span className="text-gray-500 dark:text-slate-400">Email:</span>
-                                      <span className="text-gray-900 dark:text-white font-medium">{vendor.user.email}</span>
+                                      <span className="text-gray-900 dark:text-white font-medium wrap-break-word min-w-0">{vendor.user.email}</span>
                                     </div>
                                     {vendor.phone && (
                                       <div className="flex items-center gap-2 text-sm">

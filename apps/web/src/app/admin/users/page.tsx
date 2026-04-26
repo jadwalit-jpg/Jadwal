@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
 import { Search, ChevronLeft, ChevronRight, Shield, UserCircle, ShieldCheck, Ban, CheckCircle, Trash2, AlertTriangle, Download } from 'lucide-react';
@@ -270,9 +270,9 @@ export default function AdminUsersPage() {
                           <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shadow-sm">
                             {user.fullName.charAt(0).toUpperCase()}
                           </div>
-                          <div>
-                            <p className="font-medium text-gray-900 dark:text-white">{user.fullName}</p>
-                            <p className="text-xs text-gray-400 dark:text-slate-500">{user.email}</p>
+                          <div className="min-w-0">
+                            <p className="font-medium text-gray-900 dark:text-white wrap-break-word max-w-[220px]">{user.fullName}</p>
+                            <p className="text-xs text-gray-400 dark:text-slate-500 wrap-break-word max-w-[220px]">{user.email}</p>
                           </div>
                         </div>
                       </td>

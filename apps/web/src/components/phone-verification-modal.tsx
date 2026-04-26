@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Phone, Loader2, ShieldCheck, X, ArrowLeft, ChevronDown } from 'lucide-react';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { useToast } from '@/components/toast';
 
 /* ─── Country codes ──────────────────────────────────────────── */

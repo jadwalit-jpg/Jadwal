@@ -3,7 +3,7 @@
 import React, { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { sanitize } from '@/lib/validation';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useToast } from '@/components/toast';
@@ -277,8 +277,8 @@ export default function AdminBookingsPage() {
                           <p className="text-xs text-gray-400 dark:text-slate-500">{booking.guests} guest(s)</p>
                         </td>
                         <td className="px-6 py-4">
-                          <p className="text-gray-700 dark:text-slate-300">{booking.activity.titleEn}</p>
-                          <p className="text-xs text-gray-400 dark:text-slate-500">{booking.vendor.businessNameEn}</p>
+                          <p className="text-gray-700 dark:text-slate-300 wrap-break-word max-w-[240px]">{booking.activity.titleEn}</p>
+                          <p className="text-xs text-gray-400 dark:text-slate-500 wrap-break-word max-w-[240px]">{booking.vendor.businessNameEn}</p>
                         </td>
                         <td className="px-6 py-4 text-gray-500 dark:text-slate-400 text-xs">
                           <p>{new Date(booking.startDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>

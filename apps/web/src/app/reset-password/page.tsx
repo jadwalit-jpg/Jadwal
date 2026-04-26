@@ -8,7 +8,7 @@ import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { Lock, CheckCircle, Loader2, Eye, EyeOff } from 'lucide-react';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { validatePassword } from '@/lib/validation';
 import Navbar from '@/components/navbar';
 import { useToast } from '@/components/toast';

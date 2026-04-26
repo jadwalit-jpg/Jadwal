@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ShieldCheck, ExternalLink } from 'lucide-react';
 import { sanitize, validateLoginForm } from '@/lib/validation';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import api from '@/lib/api';
 
 export default function AdminLoginPage() {

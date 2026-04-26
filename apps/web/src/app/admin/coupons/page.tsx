@@ -4,7 +4,7 @@ import { useState, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { sanitize } from '@/lib/validation';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
 import { Search, ChevronLeft, ChevronRight, CheckCircle, Clock, XCircle, Plus, Trash2, Pencil, X, AlertTriangle, RefreshCw } from 'lucide-react';

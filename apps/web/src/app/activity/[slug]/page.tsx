@@ -27,7 +27,8 @@ import { useTranslation } from 'react-i18next';
 import api from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
-import { getApiError, cn } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
+import { cn } from '@/lib/utils';
 import { localized } from '@/lib/localize';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
@@ -393,7 +394,7 @@ export default function ActivityDetailPage() {
           ) : null}
         </div>
 
-        <h1 className="font-display text-[26px] md:text-[36px] font-semibold tracking-[-0.8px] md:tracking-[-1px] text-jadwal-text m-0 leading-[1.15] text-balance">
+        <h1 className="font-display text-[26px] md:text-[36px] font-semibold tracking-[-0.8px] md:tracking-[-1px] text-jadwal-text m-0 leading-[1.15] text-balance wrap-break-word">
           {title}
         </h1>
 
@@ -657,8 +658,8 @@ export default function ActivityDetailPage() {
       </div>
 
       {/* Two-column body */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 md:gap-10 pt-6 md:pt-10 pb-20">
-        <div className="flex flex-col gap-6 md:gap-7">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-6 md:gap-10 pt-6 md:pt-10 pb-20">
+        <div className="flex flex-col gap-6 md:gap-7 min-w-0">
           {/* About */}
           {desc ? (
             <Section
@@ -666,7 +667,7 @@ export default function ActivityDetailPage() {
                 defaultValue: 'About this experience',
               })}
             >
-              <p className="text-[15px] leading-[1.7] text-jadwal-text whitespace-pre-line text-pretty">
+              <p className="text-[15px] leading-[1.7] text-jadwal-text whitespace-pre-line text-pretty wrap-break-word">
                 {desc}
               </p>
             </Section>

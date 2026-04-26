@@ -7,7 +7,7 @@ import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { Mail, ArrowLeft, CheckCircle, Loader2 } from 'lucide-react';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { sanitize } from '@/lib/validation';
 import Navbar from '@/components/navbar';
 
