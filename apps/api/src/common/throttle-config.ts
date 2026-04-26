@@ -9,29 +9,38 @@
 
 const ttl = () => Number(process.env.THROTTLE_SHORT_TTL || 60000);
 
+// When THROTTLE_ENABLED=false (or unset to false), bypass per-route limits by
+// returning an effectively-unlimited value. Per-endpoint @Throttle decorators
+// would otherwise override the relaxed global throttler from app.module.ts and
+// re-impose the production limit on this route. Production should set
+// THROTTLE_ENABLED=true and the per-tier limits.
+const disabled = process.env.THROTTLE_ENABLED === 'false';
+const limit = (envValue: string | undefined, prodDefault: number) =>
+  disabled ? 100000 : Number(envValue || prodDefault);
+
 /** 1/min — extremely rare operations (admin cleanup cron) */
-export const RATE_LIMIT_MINIMAL = { short: { ttl: ttl(), limit: Number(process.env.THROTTLE_MINIMAL_LIMIT || 1) } };
+export const RATE_LIMIT_MINIMAL = { short: { ttl: ttl(), limit: limit(process.env.THROTTLE_MINIMAL_LIMIT, 1) } };
 
 /** 3/min — high-risk mutations (resend verification, password change, bulk delete) */
-export const RATE_LIMIT_STRICT = { short: { ttl: ttl(), limit: Number(process.env.THROTTLE_STRICT_LIMIT || 3) } };
+export const RATE_LIMIT_STRICT = { short: { ttl: ttl(), limit: limit(process.env.THROTTLE_STRICT_LIMIT, 3) } };
 
 /** 5/min — auth mutations, payment initiate, delete operations */
-export const RATE_LIMIT_AUTH = { short: { ttl: ttl(), limit: Number(process.env.THROTTLE_AUTH_LIMIT || 5) } };
+export const RATE_LIMIT_AUTH = { short: { ttl: ttl(), limit: limit(process.env.THROTTLE_AUTH_LIMIT, 5) } };
 
 /** 10/min — standard CRUD write operations */
-export const RATE_LIMIT_WRITE = { short: { ttl: ttl(), limit: Number(process.env.THROTTLE_WRITE_LIMIT || 10) } };
+export const RATE_LIMIT_WRITE = { short: { ttl: ttl(), limit: limit(process.env.THROTTLE_WRITE_LIMIT, 10) } };
 
 /** 15/min — frequent reads (session list, payment status) */
-export const RATE_LIMIT_READ = { short: { ttl: ttl(), limit: Number(process.env.THROTTLE_READ_LIMIT || 15) } };
+export const RATE_LIMIT_READ = { short: { ttl: ttl(), limit: limit(process.env.THROTTLE_READ_LIMIT, 15) } };
 
 /** 20/min — callbacks, uploads, payout management */
-export const RATE_LIMIT_CALLBACK = { short: { ttl: ttl(), limit: Number(process.env.THROTTLE_CALLBACK_LIMIT || 20) } };
+export const RATE_LIMIT_CALLBACK = { short: { ttl: ttl(), limit: limit(process.env.THROTTLE_CALLBACK_LIMIT, 20) } };
 
 /** 30/min — customer interactions (likes, reviews, /me) */
-export const RATE_LIMIT_INTERACTION = { short: { ttl: ttl(), limit: Number(process.env.THROTTLE_INTERACTION_LIMIT || 30) } };
+export const RATE_LIMIT_INTERACTION = { short: { ttl: ttl(), limit: limit(process.env.THROTTLE_INTERACTION_LIMIT, 30) } };
 
 /** 60/min — vendor/catalog reads */
-export const RATE_LIMIT_VENDOR = { short: { ttl: ttl(), limit: Number(process.env.THROTTLE_VENDOR_LIMIT || 60) } };
+export const RATE_LIMIT_VENDOR = { short: { ttl: ttl(), limit: limit(process.env.THROTTLE_VENDOR_LIMIT, 60) } };
 
 /** 120/min — admin reads (generous for dashboard) */
-export const RATE_LIMIT_ADMIN = { short: { ttl: ttl(), limit: Number(process.env.THROTTLE_ADMIN_LIMIT || 120) } };
+export const RATE_LIMIT_ADMIN = { short: { ttl: ttl(), limit: limit(process.env.THROTTLE_ADMIN_LIMIT, 120) } };

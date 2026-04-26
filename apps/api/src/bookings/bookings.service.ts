@@ -5,6 +5,11 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
+import {
+  BusinessNotFoundException,
+  BusinessBadRequestException,
+  BusinessConflictException,
+} from '../common/exceptions/business-exception';
 import * as crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -271,7 +276,7 @@ export class BookingsService {
       include: { country: { select: { defaultTimezone: true } } },
     });
     if (!activity || activity.status !== 'ACTIVE') {
-      throw new NotFoundException('Activity not found');
+      throw new BusinessNotFoundException('ACTIVITY.NOT_FOUND', 'Activity not found');
     }
     if (activity.bookingType !== 'HOURLY') {
       throw new BadRequestException('Activity is not HOURLY');
@@ -371,7 +376,7 @@ export class BookingsService {
       where: { id: activityId },
     });
     if (!activity || activity.status !== 'ACTIVE') {
-      throw new NotFoundException('Activity not found');
+      throw new BusinessNotFoundException('ACTIVITY.NOT_FOUND', 'Activity not found');
     }
     if (activity.bookingType !== 'DAILY') {
       throw new BadRequestException('Activity is not DAILY');
@@ -450,7 +455,7 @@ export class BookingsService {
       },
     });
     if (!activity || activity.status !== 'ACTIVE') {
-      throw new NotFoundException('Activity not found');
+      throw new BusinessNotFoundException('ACTIVITY.NOT_FOUND', 'Activity not found');
     }
 
     // FIX #5: Safe month parsing — use Date.UTC to handle December correctly
@@ -638,7 +643,7 @@ export class BookingsService {
         category: { select: { commissionPct: true } },
       },
     });
-    if (!activity) throw new NotFoundException('Activity not found');
+    if (!activity) throw new BusinessNotFoundException('ACTIVITY.NOT_FOUND', 'Activity not found');
     if (activity.status !== 'ACTIVE') throw new BadRequestException('Activity is not available for booking');
     if (activity.vendor.status !== 'ACTIVE') throw new BadRequestException('This vendor is not active');
 
@@ -803,7 +808,10 @@ export class BookingsService {
     });
     const lockToken = await this.redisLock.acquire(lockKey, this.redisLockTtlMs);
     if (!lockToken) {
-      throw new ConflictException('This slot is currently being booked. Please try again in a moment.');
+      throw new BusinessConflictException(
+        'BOOKING.SLOT_BUSY',
+        'This slot is currently being booked. Please try again in a moment.',
+      );
     }
 
     // Availability check + booking creation in a transaction (atomic).
@@ -857,7 +865,11 @@ export class BookingsService {
             }
           }
           if (!resolvedUnitNumber) {
-            throw new ConflictException({ message: 'All units are fully booked for this time', available: 0, requested: dto.guests });
+            throw new BusinessConflictException(
+              'BOOKING.CAPACITY_FULL',
+              'All units are fully booked for this time',
+              { available: 0, requested: dto.guests },
+            );
           }
         }
 

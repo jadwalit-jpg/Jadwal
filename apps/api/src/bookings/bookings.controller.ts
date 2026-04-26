@@ -11,6 +11,7 @@ import {
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
+import { BusinessBadRequestException } from '../common/exceptions/business-exception';
 import { Throttle } from '@nestjs/throttler';
 import { RATE_LIMIT_WRITE, RATE_LIMIT_AUTH, RATE_LIMIT_READ } from '../common/throttle-config';
 import { BookingsService } from './bookings.service';
@@ -124,7 +125,7 @@ export class BookingsController {
 
     const codeUpper = code.toUpperCase().trim();
     if (!/^[A-Z0-9_-]+$/.test(codeUpper)) {
-      throw new BadRequestException('Invalid coupon code format');
+      throw new BusinessBadRequestException('COUPON.FORMAT_INVALID', 'Invalid coupon code format');
     }
 
     const db = this.prisma.client;
@@ -146,14 +147,14 @@ export class BookingsController {
       },
     });
 
-    if (!coupon) throw new BadRequestException('Invalid coupon code');
-    if (coupon.status !== 'APPROVED') throw new BadRequestException('This coupon is not active');
+    if (!coupon) throw new BusinessBadRequestException('COUPON.INVALID', 'Invalid coupon code');
+    if (coupon.status !== 'APPROVED') throw new BusinessBadRequestException('COUPON.INACTIVE', 'This coupon is not active');
 
     const now = new Date();
-    if (now < coupon.validFrom) throw new BadRequestException('This coupon is not yet valid');
-    if (now > coupon.validTo) throw new BadRequestException('This coupon has expired');
+    if (now < coupon.validFrom) throw new BusinessBadRequestException('COUPON.NOT_YET_VALID', 'This coupon is not yet valid');
+    if (now > coupon.validTo) throw new BusinessBadRequestException('COUPON.EXPIRED', 'This coupon has expired');
     if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
-      throw new BadRequestException('This coupon has reached its usage limit');
+      throw new BusinessBadRequestException('COUPON.USAGE_LIMIT', 'This coupon has reached its usage limit');
     }
 
     // Verify coupon belongs to the activity's vendor (vendor-specific coupons)
@@ -162,16 +163,21 @@ export class BookingsController {
         where: { id: activityId },
         select: { vendorId: true },
       });
-      if (!activity) throw new BadRequestException('Activity not found');
+      if (!activity) throw new BusinessBadRequestException('ACTIVITY.NOT_FOUND', 'Activity not found');
       if (activity.vendorId !== coupon.vendorId) {
-        throw new BadRequestException('This coupon is not valid for this activity');
+        throw new BusinessBadRequestException('COUPON.NOT_FOR_ACTIVITY', 'This coupon is not valid for this activity');
       }
     }
 
     // Check minimum order amount
     const orderAmount = Number(amount) || 0;
     if (coupon.minOrderAmount && orderAmount < Number(coupon.minOrderAmount)) {
-      throw new BadRequestException(`Minimum order amount is ${Number(coupon.minOrderAmount)}`);
+      const min = Number(coupon.minOrderAmount);
+      throw new BusinessBadRequestException(
+        'COUPON.MIN_ORDER',
+        `Minimum order amount is ${min}`,
+        { amount: min },
+      );
     }
 
     // Calculate discount preview

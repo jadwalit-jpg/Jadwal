@@ -38,6 +38,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
       // Normalise to { statusCode, message } — strip any extra fields that
       // framework internals may have attached (e.g. validator metadata).
+      // BusinessException (see common/exceptions/business-exception.ts)
+      // attaches `errorCode` + optional `params` so the client can render
+      // a localised string instead of falling back to the English message.
       const payload =
         typeof body === 'string'
           ? { statusCode: status, message: body }
@@ -47,6 +50,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
               // Preserve validation error arrays (class-validator) — they're
               // designed to be client-facing.
               ...((body as any)?.error ? { error: (body as any).error } : {}),
+              ...((body as any)?.errorCode ? { errorCode: (body as any).errorCode } : {}),
+              ...((body as any)?.params ? { params: (body as any).params } : {}),
             };
 
       response.status(status).json(payload);

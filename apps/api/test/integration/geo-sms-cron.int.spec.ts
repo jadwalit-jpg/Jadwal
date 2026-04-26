@@ -121,6 +121,16 @@ describe('SmsService.sendOtp', () => {
   const ORIG = process.env.NODE_ENV;
   afterEach(() => { process.env.NODE_ENV = ORIG; });
 
+  // mockClear() preserves mockImplementation*Once queues; if any earlier
+  // test (in this file or another in the same run) leaves a queued
+  // mockRejectedValueOnce on __sendMock, the prod-mode assertion below
+  // sees a phantom rejection. mockReset wipes both calls + impl.
+  beforeEach(() => {
+    snsMocks.__sendMock.mockReset().mockResolvedValue({});
+    snsMocks.PublishCommand.mockReset().mockImplementation((args: any) => ({ __cmd: 'Publish', args }));
+    snsMocks.SNSClient.mockReset().mockImplementation(() => ({ send: snsMocks.__sendMock }));
+  });
+
   function makeConfig(overrides: Record<string, string> = {}) {
     const merged: Record<string, string> = {
       SMS_ENABLED: 'false', AWS_REGION: 'me-south-1', ...overrides,

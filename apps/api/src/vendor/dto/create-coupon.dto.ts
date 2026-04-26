@@ -5,6 +5,8 @@ import {
   IsNumber,
   IsOptional,
   IsDateString,
+  IsArray,
+  IsUUID,
   Min,
   Max,
   MaxLength,
@@ -47,4 +49,15 @@ export class CreateVendorCouponDto {
   @IsOptional()
   @Min(0)
   maxDiscount?: number;
+
+  // The vendor coupons UI lets the vendor scope the coupon to specific
+  // activities (or leave empty = applies to all). The form always sends an
+  // array (empty when no scoping). Currently the service ignores it; storing
+  // the scoping is a follow-up — for now just whitelist the field so the
+  // global ValidationPipe (`forbidNonWhitelisted: true`) doesn't reject the
+  // request.
+  @IsArray()
+  @IsOptional()
+  @IsUUID('all', { each: true })
+  activityIds?: string[];
 }
