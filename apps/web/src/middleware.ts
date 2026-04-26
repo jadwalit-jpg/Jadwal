@@ -22,14 +22,25 @@ function decodeJwtPayload(token: string): { role?: string } | null {
 }
 
 // ─── API origin for CSP connect-src ───────────────────────────
-// NEXT_PUBLIC_API_URL is required; we can't throw at module load here
-// (Edge runtime) so we fall back to 'self' which is safe but restrictive.
+// CSP needs an origin we can name in img-src / connect-src. Two cases:
+//   1) NEXT_PUBLIC_API_URL is absolute (legacy: "http://api.example.com/api")
+//      → use its origin.
+//   2) NEXT_PUBLIC_API_URL is relative ("/api") because we proxy through
+//      Next.js — same-origin already covers /api/* and /uploads/*, so
+//      'self' is enough. We DO still need to allow the raw API origin
+//      for any historical absolute URLs that may live in the DB; pass
+//      it via API_PROXY_TARGET (server-side env, no client leak).
 const API_ORIGIN = (() => {
-  try {
-    return new URL(process.env.NEXT_PUBLIC_API_URL!).origin;
-  } catch {
-    return "'self'";
+  const candidates = [process.env.NEXT_PUBLIC_API_URL, process.env.API_PROXY_TARGET];
+  for (const c of candidates) {
+    if (!c) continue;
+    try {
+      return new URL(c).origin;
+    } catch {
+      // not absolute, try next
+    }
   }
+  return "'self'";
 })();
 
 const IMG_HOSTS = [

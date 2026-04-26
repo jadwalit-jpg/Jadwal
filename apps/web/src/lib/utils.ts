@@ -1,6 +1,5 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import axios from 'axios';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -38,34 +37,7 @@ export function isSafeRelativePath(raw: unknown): raw is string {
   return true;
 }
 
-/**
- * Safely extract a human-readable error message from any thrown value.
- *
- * Security posture:
- *  - Only the BACKEND's validated error payload (`err.response.data.message`)
- *    is surfaced to the UI. The backend's AllExceptionsFilter + PrismaExceptionFilter
- *    already map every known error class to a whitelisted generic message, so
- *    these strings are safe to display.
- *  - Raw JS `Error.message` strings (from local parse failures, typos, etc.)
- *    are NEVER bubbled up to the UI — they could contain stack hints or
- *    internal file paths. They're intentionally swallowed in favour of the
- *    generic `fallback`.
- *  - The returned string is length-capped so a compromised or misbehaving
- *    backend can't push a 10 MB blob into a toast.
- *
- * Usage:
- *   onError: (err) => toast(getApiError(err, 'Failed to save'), 'error')
- *   catch (err) { setError(getApiError(err, 'Something went wrong')); }
- */
-export function getApiError(err: unknown, fallback = 'Something went wrong'): string {
-  const MAX_LEN = 500;
-  const trim = (s: string) => (s.length > MAX_LEN ? `${s.slice(0, MAX_LEN)}…` : s);
-  if (axios.isAxiosError(err)) {
-    const msg: unknown = err.response?.data?.message;
-    if (typeof msg === 'string' && msg.length > 0) return trim(msg);
-    if (Array.isArray(msg) && typeof msg[0] === 'string') return trim(msg[0]);
-  }
-  // Intentionally no `Error.message` leak path — the backend's filters
-  // produce the only user-facing strings we trust.
-  return fallback;
-}
+// `getApiError` lives in `lib/api-error.ts` (it imports `i18n.ts` which
+// transitively touches `react-i18next` → React.createContext, breaking
+// any Server Component that imports from this file). Update imports to:
+//   import { getApiError } from '@/lib/api-error';
