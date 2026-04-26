@@ -11,9 +11,53 @@ if (!process.env.NEXT_PUBLIC_API_URL) {
 // nonce. Keeping CSP out of next.config.ts headers() avoids shipping a static
 // CSP with 'unsafe-inline' — a stored-XSS-to-redirect amplifier.
 
+// Same-origin proxy target for /api/*. Lets the browser see auth cookies
+// as same-origin (works around WebKit/ITP dropping cross-port cookies)
+// without leaking ports into client bundles. Default points at the local
+// API container; production deployments override via API_PROXY_TARGET in
+// the docker-compose / ECS task env (e.g. http://api.internal:4000/api).
+//
+// Hardcoding the default is intentional: it only resolves on the SERVER
+// (Next.js dev/prod node process), never reaches the client bundle, and
+// the env var override is the documented prod path.
+const API_PROXY_TARGET =
+  process.env.API_PROXY_TARGET || "http://localhost:4000/api";
+
+// Uploads proxy target — bare API origin (without `/api`) so we can route
+// /uploads/* to the API server's /uploads/* endpoint. Same-origin = passes
+// the strict img-src 'self' CSP without leaking the API host into client
+// code.
+const UPLOADS_PROXY_TARGET = (() => {
+  try {
+    return new URL(API_PROXY_TARGET).origin;
+  } catch {
+    return "http://localhost:4000";
+  }
+})();
+
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: resolve(__dirname, "../../"),
+  async rewrites() {
+    return [
+      // Browser hits /api/* on the same origin as the page. Next.js
+      // forwards to the API container server-side, so the eventual
+      // Set-Cookie response is recorded against the page origin and
+      // SameSite=Strict + HttpOnly cookies are honoured by every
+      // browser (incl. WebKit / iOS Safari).
+      {
+        source: "/api/:path*",
+        destination: `${API_PROXY_TARGET}/:path*`,
+      },
+      // Same trick for uploaded images (and any other static API
+      // assets): keep them same-origin so img-src 'self' is enough
+      // without whitelisting the API host.
+      {
+        source: "/uploads/:path*",
+        destination: `${UPLOADS_PROXY_TARGET}/uploads/:path*`,
+      },
+    ];
+  },
   images: {
     // Modern formats first — Next.js negotiates based on Accept header
     formats: ["image/avif", "image/webp"],

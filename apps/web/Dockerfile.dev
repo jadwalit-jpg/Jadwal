@@ -14,6 +14,12 @@ COPY package.json package-lock.json turbo.json ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 
+# apps/api has `postinstall: prisma generate` which needs the schema at
+# install time. Copy it before npm install so the postinstall hook resolves
+# (we don't run the API in this container; the file is just along for the
+# ride during workspace install).
+COPY apps/api/prisma ./apps/api/prisma
+
 RUN npm install
 
 # ─── Runtime config ────────────────────────────────────────────
