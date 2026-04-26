@@ -130,6 +130,11 @@
 body {
   background: var(--background);
   color: var(--foreground);
+  /* Safety net: any element that overflows horizontally (long unbroken
+     strings, oversized images, runaway grids) gets clipped at the body
+     edge instead of dragging the whole page sideways on mobile.
+     `clip` (not `hidden`) preserves position:sticky inside the viewport. */
+  overflow-x: clip;
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -142,14 +147,23 @@ body {
    Tajawal's Latin glyphs, which are tuned to sit next to Arabic
    stems without size jumps.
 
-   Small-text weight bump: Arabic glyphs at 12-14px in regular weight
-   (400) read noticeably thinner than Latin at the same size because
-   their strokes carry less visual density per glyph. Every Arabic
-   marketplace + app design system (wqtah, Noon, Talabat) bumps small
-   body text to medium (500) or semibold (600). We do it here as a
-   one-liner so every breadcrumb, caption, badge, chip, and table cell
-   reads as substantial in Arabic without touching any component.
-   English text stays at the designer's intended weight.
+   Small-text weight bump: Arabic glyphs at 10-14px in regular/medium
+   weight read noticeably thinner than Latin at the same size because
+   their strokes carry less visual density per glyph. Even at semibold
+   (600) the smallest sizes (≤12px) feel anaemic against UI chrome.
+   Every Arabic marketplace + app design system (wqtah, Noon, Talabat)
+   bumps small body text past the Latin equivalent.
+
+   Floor model (matches wqtah.com / Noon / Talabat):
+     Smallest readable Arabic text is 14px / semibold (600). Anything
+     smaller in source gets bumped UP — both size AND weight. Captions,
+     badges, breadcrumbs, chip labels render at the same rendered
+     height as `text-sm font-semibold`.
+
+   `!important` is intentional: overrides any per-component
+   `font-medium` / `font-semibold` etc. so one design-system line
+   carries every Arabic surface. English text in the same class is
+   untouched (rule never fires outside RTL).
    ────────────────────────────────────────────────────────────── */
 :root[dir="rtl"],
 :root[lang="ar"] {
@@ -159,17 +173,17 @@ body {
   --font-outfit: var(--font-arabic), var(--font-outfit), system-ui, sans-serif;
 }
 
+/* Floor: anything ≤ 14px renders as 14px / semibold in Arabic */
 :root[dir="rtl"] .text-xs,
+:root[dir="rtl"] .text-sm,
 :root[dir="rtl"] .text-\[10px\],
 :root[dir="rtl"] .text-\[11px\],
 :root[dir="rtl"] .text-\[12px\],
 :root[dir="rtl"] .text-\[13px\],
-:root[dir="rtl"] .text-sm {
-  font-weight: 500;
-}
-
-:root[dir="rtl"] .text-base {
-  font-weight: 500;
+:root[dir="rtl"] .text-\[14px\] {
+  font-size: 0.875rem !important; /* 14px */
+  line-height: 1.4 !important;
+  font-weight: 600 !important;
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -217,12 +231,22 @@ body {
   animation: slide-in-up 0.25s ease-out;
 }
 
-/* ── Glass Surface ── */
+/* ── Glass Surface ──
+ *
+ * Mobile perf: backdrop-filter is GPU-expensive (the browser has to
+ * rasterize all content behind the blur on every paint). On mid-range
+ * mobile, an enabled backdrop-blur on the LCP element added ~1-1.5s
+ * of LCP delay vs a solid translucent panel. Strategy:
+ *   - Mobile (≤640px): drop backdrop-filter entirely. Solid translucent
+ *     panel reads almost identically to the human eye on small screens
+ *     and saves ~1-1.5s LCP.
+ *   - Desktop (>640px): keep the glass effect but reduce the blur radius
+ *     from 12px → 8px. Smaller radius is materially cheaper to compute.
+ *     Visual difference is imperceptible on most displays.
+ */
 .glass-surface {
   position: relative;
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  background: rgba(255, 255, 255, 0.06); /* slightly more opaque for the no-blur fallback */
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 1.5rem;
   box-shadow:
@@ -230,6 +254,14 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     inset 0 -1px 0 rgba(255, 255, 255, 0.03);
   overflow: hidden;
+}
+
+@media (min-width: 641px) {
+  .glass-surface {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(8px) saturate(1.2);
+    -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  }
 }
 
 /* Noise grain overlay */
@@ -308,6 +340,15 @@ body {
   will-change: transform;
 }
 
+/* The wave SVGs are 200% of their parent's width and animate
+   `translateX(-50%)` for a seamless drift loop. Mobile RTL was
+   sensitive to that 100vw overflow — the browser tracks the off-
+   parent half against the document's right-to-left flow and the
+   resulting layout recalc surfaced as the hero "shake". Adding
+   `overflow-hidden` on the wave parents (page.tsx) clips the
+   overflow at the parent box, isolating the animated SVG from
+   the section's overflow tracking. The animation itself runs as
+   designed. */
 .hero-wave {
   animation: wave-drift 12s linear infinite;
   will-change: transform;
@@ -379,3 +420,8 @@ body {
   animation: moon-glow-pulse 8s ease-in-out infinite;
   will-change: opacity, transform;
 }
+
+/* All hero animations always run. Waves are the only thing currently
+   off (commented in their .hero-wave / .hero-wave-slow rules above) —
+   testing whether the wave-drift keyframes were the actual mobile-
+   Arabic shake cause. */

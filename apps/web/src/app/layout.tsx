@@ -36,11 +36,18 @@ const outfit = Outfit({
 // `preload: false` — Arabic glyphs aren't in the critical Latin path, so we
 // avoid the preload on every page. Loads on demand when dir="rtl" or any
 // Arabic Unicode-range glyph appears.
+//
+// `display: 'optional'` — eliminates the font-swap layout shift ("shake")
+// in the hero on Arabic. If Tajawal arrives in the ~100ms block period,
+// it's used; otherwise the system Arabic fallback is locked in for the
+// page lifetime. After first visit the font is cached so subsequent loads
+// always render with Tajawal. This avoids the visible reflow when the h1
+// + subtitle + small text re-paint mid-render.
 const tajawal = Tajawal({
   variable: "--font-arabic",
   subsets: ["arabic"],
   weight: ["400", "500", "700", "800"],
-  display: "swap",
+  display: "optional",
   preload: false,
 });
 

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from 'react-i18next';
@@ -10,6 +11,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import NotificationBell from '@/components/notification-bell';
 
 export default function Navbar({ variant = 'transparent' }: { variant?: 'transparent' | 'solid' }) {
+  const router = useRouter();
   const { user, logout, loading: authLoading } = useAuth();
   const { theme, setTheme } = useTheme();
   const { t, i18n } = useTranslation();
@@ -20,9 +22,17 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
   const userMenuRef = useRef<HTMLDivElement>(null);
   const isAr = i18n.language === 'ar';
 
+  // changeLanguage updates the i18n singleton (so all useTranslation
+  // consumers re-render) AND writes the cookie. router.refresh() then
+  // re-fetches the RSC payload for the current route — this is required
+  // because server components like the home `/` hero render translated
+  // strings from the cookie at request time; without a refresh those
+  // strings stay frozen at whatever language the page was first loaded
+  // with. Client components update from i18n state immediately.
   const toggleLanguage = useCallback(() => {
     i18n.changeLanguage(isAr ? 'en' : 'ar');
-  }, [i18n, isAr]);
+    router.refresh();
+  }, [i18n, isAr, router]);
 
   // Close user dropdown on outside click
   useEffect(() => {

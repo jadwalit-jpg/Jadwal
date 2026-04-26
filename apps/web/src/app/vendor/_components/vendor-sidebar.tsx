@@ -51,9 +51,13 @@ export function VendorSidebar() {
   const router = useRouter();
   const { t, i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
+  // router.refresh() re-fetches the RSC payload so any server-rendered
+  // translated strings update with the new cookie value. Client-side
+  // i18n consumers update synchronously from the i18n singleton.
   const toggleLanguage = useCallback(() => {
     i18n.changeLanguage(isAr ? 'en' : 'ar');
-  }, [i18n, isAr]);
+    router.refresh();
+  }, [i18n, isAr, router]);
 
   useEffect(() => setMounted(true), []);
 
@@ -102,7 +106,7 @@ export function VendorSidebar() {
             <Link
               key={path}
               href={href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
                 isActive
                   ? 'bg-linear-to-r from-teal-500/10 to-emerald-500/10 dark:from-teal-500/15 dark:to-emerald-500/15 text-teal-600 dark:text-teal-400 shadow-sm'
                   : 'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-slate-200'
@@ -125,7 +129,7 @@ export function VendorSidebar() {
         <button
           type="button"
           onClick={toggleLanguage}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium w-full transition-all duration-200 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-slate-200 cursor-pointer"
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold w-full transition-all duration-200 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-slate-200 cursor-pointer"
           aria-label={isAr ? 'Switch to English' : 'التبديل إلى العربية'}
         >
           <Languages className="h-[18px] w-[18px] shrink-0" />
@@ -135,7 +139,7 @@ export function VendorSidebar() {
           <button
             type="button"
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium w-full transition-all duration-200 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-slate-200 cursor-pointer"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold w-full transition-all duration-200 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800/60 hover:text-gray-900 dark:hover:text-slate-200 cursor-pointer"
             aria-label={t('vendor.sidebar.toggleTheme')}
           >
             {theme === 'dark' ? <Sun className="h-[18px] w-[18px] text-amber-400" /> : <Moon className="h-[18px] w-[18px] text-slate-500" />}
@@ -145,7 +149,7 @@ export function VendorSidebar() {
         <button
           type="button"
           onClick={handleLogout}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium w-full transition-all duration-200 text-gray-600 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 cursor-pointer"
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold w-full transition-all duration-200 text-gray-600 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 cursor-pointer"
         >
           <LogOut className="h-[18px] w-[18px]" />
           {t('vendor.sidebar.signOut')}
