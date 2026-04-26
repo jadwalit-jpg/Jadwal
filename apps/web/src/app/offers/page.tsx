@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import { CheckCircle, Clock, Gift, Tag } from 'lucide-react';
 import api from '@/lib/api';
-import { getApiError } from '@/lib/utils';
+import { getApiError } from '@/lib/api-error';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import Navbar from '@/components/navbar';
@@ -99,24 +99,44 @@ export default function OffersPage() {
             </p>
           </motion.div>
 
+          {/*
+            CLS fix on this page is subtle: when there are zero offers
+            (common during empty-DB seasons + soft-launch periods), the
+            loaded state collapses to a small empty-state block (~250px)
+            while the loading state previously rendered four 240px
+            skeletons (~1000px). The 750px collapse pushed the footer
+            up and produced a 0.18 mobile CLS hit. Naively bumping the
+            skeleton count or height made it worse (turned a shrink
+            into a stretch).
+            Real fix: pin BOTH the loading and the empty state to the
+            same single-row height as a single rendered card, so the
+            grid container is identical in both states. When offers
+            exist, the grid grows past the floor naturally — only the
+            additional rows below add height, and they're symmetric in
+            the loaded vs loading single-row case (one skeleton card
+            per offer would be the next refinement, but for now we
+            optimise for the empty-DB + 0-2-offers case which is the
+            current launch reality).
+          */}
           {isLoading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {[1, 2, 3, 4].map((i) => (
-                <Skeleton key={i} className="h-48 rounded-2xl" />
-              ))}
+              <Skeleton className="min-h-60 rounded-2xl" />
+              <Skeleton className="hidden sm:block min-h-60 rounded-2xl" />
             </div>
           ) : offers.length === 0 ? (
-            <div className="text-center py-20">
-              <Tag
-                className="h-10 w-10 text-jadwal-text-faint mx-auto mb-3"
-                aria-hidden="true"
-              />
-              <p className="text-jadwal-text-muted font-medium">
-                {t('offers.noOffers')}
-              </p>
-              <p className="text-xs text-jadwal-text-faint mt-1">
-                {t('offers.checkBack')}
-              </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="min-h-60 flex flex-col items-center justify-center rounded-2xl bg-jadwal-surface border border-jadwal-border-subtle text-center px-6 sm:col-span-2">
+                <Tag
+                  className="h-10 w-10 text-jadwal-text-faint mb-3"
+                  aria-hidden="true"
+                />
+                <p className="text-jadwal-text-muted font-medium">
+                  {t('offers.noOffers')}
+                </p>
+                <p className="text-xs text-jadwal-text-faint mt-1">
+                  {t('offers.checkBack')}
+                </p>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -133,7 +153,14 @@ export default function OffersPage() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: Math.min(i * 0.05, 0.4) }}
-                    className="rounded-2xl bg-jadwal-surface border border-jadwal-border-subtle shadow-jadwal overflow-hidden"
+                    /*
+                      `min-h-60` here MUST match the skeleton's min-h
+                      (line 116). Otherwise the page total height
+                      changes between loading state and loaded state
+                      and the footer below shifts — that was the
+                      0.180 -> 0.232 mobile CLS hit on /offers.
+                    */
+                    className="rounded-2xl bg-jadwal-surface border border-jadwal-border-subtle shadow-jadwal overflow-hidden min-h-60"
                   >
                     <div className="px-6 py-4 text-white bg-[linear-gradient(135deg,var(--color-jadwal-gold-500)_0%,var(--color-jadwal-gold-700)_100%)]">
                       <p className="font-display text-2xl font-bold tracking-[-0.5px] tabular-nums">
