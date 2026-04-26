@@ -3,22 +3,19 @@
  *
  * Skips when the customer has no confirmed bookings.
  */
-import { existsSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 
 const CUSTOMER_STATE = 'e2e/.auth/customer.json';
-const HAS_CUSTOMER_STATE = existsSync(CUSTOMER_STATE);
-
 test.describe('Customer booking cancel + refund', () => {
-  test.use({ storageState: HAS_CUSTOMER_STATE ? CUSTOMER_STATE : undefined });
+  test.use({ storageState: CUSTOMER_STATE });
 
-  test('happy: cancel a confirmed booking + submit refund reason', async ({ page, request }) => {
-    test.skip(!HAS_CUSTOMER_STATE, 'Customer storageState not available');
-
-    const list = await request.get('/api/bookings/my?status=CONFIRMED&page=1&limit=1');
-    test.skip(!list.ok(), 'Could not query my bookings');
-    const body = (await list.json()) as { data?: Array<{ id: string }> };
-    const bookingId = body.data?.[0]?.id;
+  test('happy: cancel a confirmed booking + submit refund reason', async ({ page }) => {
+    // Cross-origin: web :3000, API :4000.
+    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
+    const list = await page.request.get(`${apiBase}/bookings/my?status=CONFIRMED&page=1&limit=1`).catch(() => null);
+    if (!list || !list.ok()) test.skip(true, 'Could not query my bookings');
+    const body = (await list!.json().catch(() => null)) as { data?: Array<{ id: string }> } | null;
+    const bookingId = body?.data?.[0]?.id;
     test.skip(!bookingId, 'No confirmed booking to cancel');
 
     await page.goto(`/bookings/${bookingId}`);
@@ -43,7 +40,6 @@ test.describe('Customer booking cancel + refund', () => {
   });
 
   test('error: bookings list page renders heading', async ({ page }) => {
-    test.skip(!HAS_CUSTOMER_STATE, 'Customer storageState not available');
     await page.goto('/bookings');
     await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { name: /bookings|الحجوزات/i }).first())

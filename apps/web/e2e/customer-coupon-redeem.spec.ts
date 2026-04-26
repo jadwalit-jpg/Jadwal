@@ -8,28 +8,23 @@
  * Coupon code: pulled from /api/coupons/active (read-only). Skips if
  * none exist.
  */
-import { existsSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 
 const CUSTOMER_STATE = 'e2e/.auth/customer.json';
-const HAS_CUSTOMER_STATE = existsSync(CUSTOMER_STATE);
-
 test.describe('Customer coupon redemption', () => {
-  test.use({ storageState: HAS_CUSTOMER_STATE ? CUSTOMER_STATE : undefined });
+  test.use({ storageState: CUSTOMER_STATE });
 
-  test('happy: apply coupon at checkout + see price drop', async ({ page, request }) => {
-    test.skip(!HAS_CUSTOMER_STATE, 'Customer storageState not available');
-
-    const couponList = await request.get('/api/coupons/active?page=1&limit=1');
-    test.skip(!couponList.ok(), 'Could not fetch active coupons');
-    const couponBody = (await couponList.json()) as { data?: Array<{ code: string }> };
-    const code = couponBody.data?.[0]?.code;
-    test.skip(!code, 'No active coupon to redeem');
+  test('happy: apply coupon at checkout + see price drop', async ({ page }) => {
+    // Use the seeded coupon code (E2EFIVE) — pinned in seed-e2e-data.ts so
+    // we don't need an API listing endpoint that may not exist.
+    const code = process.env.E2E_COUPON_CODE || 'E2EFIVE';
 
     await page.goto('/');
     await page.waitForLoadState('networkidle');
+    await dismissPhonePrompt(page);
     await page.locator('[data-testid="activity-card"], article:has(a[href^="/activity/"])').first().click();
     await expect(page).toHaveURL(/\/activity\//, { timeout: 10000 });
+    await dismissPhonePrompt(page);
     await page.getByRole('button', { name: /book|reserve|احجز/i }).first().click();
     await expect(page).toHaveURL(/\/activity\/.*\/book/, { timeout: 10000 });
     await page.waitForLoadState('networkidle');
@@ -52,12 +47,12 @@ test.describe('Customer coupon redemption', () => {
   });
 
   test('error: invalid coupon shows error', async ({ page }) => {
-    test.skip(!HAS_CUSTOMER_STATE, 'Customer storageState not available');
-
     await page.goto('/');
     await page.waitForLoadState('networkidle');
+    await dismissPhonePrompt(page);
     await page.locator('[data-testid="activity-card"], article:has(a[href^="/activity/"])').first().click();
     await expect(page).toHaveURL(/\/activity\//, { timeout: 10000 });
+    await dismissPhonePrompt(page);
     await page.getByRole('button', { name: /book|reserve|احجز/i }).first().click();
     await expect(page).toHaveURL(/\/activity\/.*\/book/, { timeout: 10000 });
     await page.waitForLoadState('networkidle');
@@ -78,3 +73,15 @@ test.describe('Customer coupon redemption', () => {
     expect(hasError).toBe(true);
   });
 });
+
+/**
+ * The customer PhonePrompt modal can intercept pointer events on any
+ * customer-facing page when the seed user has no phone set. Click "Skip
+ * for now" if the prompt is visible — no-op otherwise.
+ */
+async function dismissPhonePrompt(page: import('@playwright/test').Page) {
+  const skip = page.getByRole('button', { name: /^(skip for now|تخطي|لاحقا|لاحقًا)$/i }).first();
+  if (await skip.isVisible().catch(() => false)) {
+    await skip.click().catch(() => undefined);
+  }
+}

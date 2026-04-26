@@ -4,29 +4,27 @@
  * Updates the business profile fields (EN + AR), saves, reloads, asserts
  * persistence. Phone field uses a stable test number.
  */
-import { existsSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { vendorSlugFromMe } from './_fixtures/auth';
+import { isVendorAuthenticated, vendorSlugFromMe } from './_fixtures/auth';
 
 const VENDOR_STATE = 'e2e/.auth/vendor.json';
-const HAS_VENDOR_STATE = existsSync(VENDOR_STATE);
-
 test.describe('Vendor settings update', () => {
-  test.use({ storageState: HAS_VENDOR_STATE ? VENDOR_STATE : undefined });
+  test.use({ storageState: VENDOR_STATE });
 
   test('happy: update business profile + reload preserves changes', async ({ page }) => {
-    test.skip(!HAS_VENDOR_STATE, 'Vendor storageState not available');
+    if (!(await isVendorAuthenticated(page))) {
+      test.skip(true, 'Vendor session expired during long suite run');
+    }
     const slug = await vendorSlugFromMe(page);
     const newDesc = `E2E desc ${Date.now()}`;
 
     await page.goto(`/vendor/${slug}/settings`);
     await page.waitForLoadState('networkidle');
 
-    // Description (EN) — locale-tolerant.
-    const descEn = page.getByLabel(/description.*english|english description|الوصف.*انجليزي/i).first();
-    if (!(await descEn.isVisible().catch(() => false))) {
-      test.skip(true, 'No English description input visible');
-    }
+    // Description (EN) — labels have no htmlFor, so locate the textarea by
+    // its placeholder ("About your business...").
+    const descEn = page.getByPlaceholder(/about your business|english description|الوصف/i).first();
+    await expect(descEn).toBeVisible({ timeout: 10000 });
     await descEn.fill(newDesc);
 
     await page.getByRole('button', { name: /save|update|حفظ|تحديث/i }).first().click();
@@ -38,7 +36,9 @@ test.describe('Vendor settings update', () => {
   });
 
   test('error: settings page heading visible', async ({ page }) => {
-    test.skip(!HAS_VENDOR_STATE, 'Vendor storageState not available');
+    if (!(await isVendorAuthenticated(page))) {
+      test.skip(true, 'Vendor session expired during long suite run — heading test n/a');
+    }
     const slug = await vendorSlugFromMe(page);
 
     await page.goto(`/vendor/${slug}/settings`);

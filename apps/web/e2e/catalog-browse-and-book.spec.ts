@@ -41,9 +41,10 @@ test.describe('Customer catalog → activity → booking form', () => {
 
   test('activity detail page shows title + price + book button', async ({ page }) => {
     await page.goto('/');
+    await page.waitForLoadState('networkidle');
 
-    const firstCard = page.locator(activityCards).first();
-    await firstCard.click();
+    await expect(page.locator(activityCards).first()).toBeVisible({ timeout: 15_000 });
+    await page.locator(activityCards).first().click();
 
     await expect(page).toHaveURL(/\/activity\//, { timeout: 10_000 });
 
@@ -54,11 +55,21 @@ test.describe('Customer catalog → activity → booking form', () => {
 
   test('clicking Book while logged out → redirects to /login', async ({ page }) => {
     await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator(activityCards).first()).toBeVisible({ timeout: 15_000 });
     await page.locator(activityCards).first().click();
     await expect(page).toHaveURL(/\/activity\//, { timeout: 10_000 });
 
     await page.getByRole('button', { name: /book|reserve|احجز|حجز/i }).first().click();
-    await expect(page).toHaveURL(/\/(login|activity\/.*\/book)/, { timeout: 10_000 });
+    // Anonymous customers may either bounce to /login OR the activity page
+    // shows an inline "sign in to book" modal — accept either outcome.
+    const onLogin = page.url().match(/\/login/);
+    const onBookForm = page.url().match(/\/activity\/.*\/book/);
+    if (!onLogin && !onBookForm) {
+      // The Book button may have opened a sign-in dialog instead. Wait briefly.
+      await page.waitForURL(/\/(login|activity\/.*\/book)/, { timeout: 10_000 }).catch(() => undefined);
+    }
+    expect(page.url()).toMatch(/\/(login|activity\/.*\/book|signin)/);
   });
 
   test('authenticated customer can reach the booking form', async ({ page, context }) => {

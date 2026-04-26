@@ -7,26 +7,23 @@
  * paths requires either a fixture seed or running this after the customer
  * book-mock-pay spec has run.
  */
-import { existsSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import { vendorSlugFromMe } from './_fixtures/auth';
 
 const VENDOR_STATE = 'e2e/.auth/vendor.json';
-const HAS_VENDOR_STATE = existsSync(VENDOR_STATE);
-
 test.describe('Vendor booking actions', () => {
-  test.use({ storageState: HAS_VENDOR_STATE ? VENDOR_STATE : undefined });
+  test.use({ storageState: VENDOR_STATE });
 
-  test('happy: confirm a pending booking', async ({ page, request }) => {
-    test.skip(!HAS_VENDOR_STATE, 'Vendor storageState not available');
+  test('happy: confirm a pending booking', async ({ page }) => {
     const slug = await vendorSlugFromMe(page);
 
-    const pending = await request.get(
-      `/api/vendor/${slug}/bookings?status=PENDING&page=1&limit=1`,
-    );
-    test.skip(!pending.ok(), 'Could not fetch pending bookings');
-    const body = (await pending.json()) as { data?: Array<{ id: string }> };
-    const bookingId = body.data?.[0]?.id;
+    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
+    const pending = await page.request.get(
+      `${apiBase}/vendor/${slug}/bookings?status=PENDING&page=1&limit=1`,
+    ).catch(() => null);
+    test.skip(!pending || !pending.ok(), 'Could not fetch pending bookings');
+    const body = (await pending!.json().catch(() => null)) as { data?: Array<{ id: string }> } | null;
+    const bookingId = body?.data?.[0]?.id;
     test.skip(!bookingId, 'No pending booking to confirm — seed one first');
 
     await page.goto(`/vendor/${slug}/bookings`);
@@ -43,16 +40,16 @@ test.describe('Vendor booking actions', () => {
     ).toBeVisible({ timeout: 10000 });
   });
 
-  test('error: reject path on a pending booking', async ({ page, request }) => {
-    test.skip(!HAS_VENDOR_STATE, 'Vendor storageState not available');
+  test('error: reject path on a pending booking', async ({ page }) => {
     const slug = await vendorSlugFromMe(page);
 
-    const pending = await request.get(
-      `/api/vendor/${slug}/bookings?status=PENDING&page=1&limit=1`,
-    );
-    test.skip(!pending.ok(), 'Could not fetch pending bookings');
-    const body = (await pending.json()) as { data?: Array<{ id: string }> };
-    const bookingId = body.data?.[0]?.id;
+    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
+    const pending = await page.request.get(
+      `${apiBase}/vendor/${slug}/bookings?status=PENDING&page=1&limit=1`,
+    ).catch(() => null);
+    test.skip(!pending || !pending.ok(), 'Could not fetch pending bookings');
+    const body = (await pending!.json().catch(() => null)) as { data?: Array<{ id: string }> } | null;
+    const bookingId = body?.data?.[0]?.id;
     test.skip(!bookingId, 'No pending booking to reject');
 
     await page.goto(`/vendor/${slug}/bookings`);

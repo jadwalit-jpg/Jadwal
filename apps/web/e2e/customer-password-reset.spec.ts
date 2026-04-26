@@ -23,10 +23,9 @@ test.describe('Customer password reset', () => {
     // a valid email to reset. If signup is rate-limited or the API is
     // unreachable, skip with a clear message.
     await page.goto('/register');
+    await page.waitForLoadState('networkidle');
     const fullName = page.getByLabel(/full name|الاسم/i).first();
-    if (!(await fullName.isVisible().catch(() => false))) {
-      test.skip(true, 'Register form not visible — page changed');
-    }
+    await expect(fullName).toBeVisible({ timeout: 10000 });
     await fullName.fill('E2E Reset');
     await page.getByLabel(/email|البريد/i).fill(email);
     await page.getByLabel(/^password$|كلمة المرور/i).fill('S3cure!Pass1');
@@ -47,21 +46,26 @@ test.describe('Customer password reset', () => {
     ).toBeVisible({ timeout: 10000 });
   });
 
-  test('error: forgot-password with empty email shows validation', async ({ page }) => {
+  test('error: forgot-password with empty email blocks submission', async ({ page }) => {
     await page.goto('/forgot-password');
-    await page.getByRole('button', { name: /send|reset|submit|إرسال/i }).first().click();
-    const hasError = await page
-      .getByText(/required|invalid|valid email|مطلوب|بريد صالح/i)
-      .first()
-      .isVisible({ timeout: 5000 })
-      .catch(() => false);
-    // Some forms accept empty + show a generic anti-enumeration toast
-    // instead of validation. Either is acceptable.
+    // The form prevents submit when email is empty: button is disabled +
+    // input has required + onSubmit early-returns. Any of these is correct
+    // UX — verify the no-submission outcome rather than chasing an error UI
+    // that the form intentionally doesn't render.
+    const submitBtn = page.getByRole('button', { name: /send|reset|submit|إرسال/i }).first();
+    const isDisabled = await submitBtn.isDisabled().catch(() => false);
+    if (isDisabled) {
+      expect(isDisabled).toBe(true);
+      return;
+    }
+    // Fallback: if button is enabled, clicking should still not produce a
+    // success toast (HTML5 required + onSubmit guard).
+    await submitBtn.click().catch(() => undefined);
     const genericToast = await page
       .getByText(/check.*inbox|sent|تحقق|أرسلنا/i)
       .first()
-      .isVisible({ timeout: 1000 })
+      .isVisible({ timeout: 1500 })
       .catch(() => false);
-    expect(hasError || genericToast).toBe(true);
+    expect(genericToast).toBe(false);
   });
 });

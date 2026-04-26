@@ -3,18 +3,14 @@
  *
  * Smoke: page loads, table or empty state renders, status filter works.
  */
-import { existsSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import { vendorSlugFromMe } from './_fixtures/auth';
 
 const VENDOR_STATE = 'e2e/.auth/vendor.json';
-const HAS_VENDOR_STATE = existsSync(VENDOR_STATE);
-
 test.describe('Vendor bookings list', () => {
-  test.use({ storageState: HAS_VENDOR_STATE ? VENDOR_STATE : undefined });
+  test.use({ storageState: VENDOR_STATE });
 
   test('happy: bookings page loads', async ({ page }) => {
-    test.skip(!HAS_VENDOR_STATE, 'Vendor storageState not available');
     const slug = await vendorSlugFromMe(page);
 
     await page.goto(`/vendor/${slug}/bookings`);
@@ -30,22 +26,15 @@ test.describe('Vendor bookings list', () => {
   });
 
   test('error: status filter narrows / clears table', async ({ page }) => {
-    test.skip(!HAS_VENDOR_STATE, 'Vendor storageState not available');
     const slug = await vendorSlugFromMe(page);
 
     await page.goto(`/vendor/${slug}/bookings`);
     await page.waitForLoadState('networkidle');
 
-    const filter = page.getByRole('combobox', { name: /status|الحالة/i }).first();
-    if (!(await filter.isVisible().catch(() => false))) {
-      test.skip(true, 'No status filter visible');
-    }
-    await filter.click();
-    const cancelledOption = page.getByRole('option', { name: /cancelled|ملغ/i }).first();
-    if (!(await cancelledOption.isVisible().catch(() => false))) {
-      test.skip(true, 'No CANCELLED option in status filter');
-    }
-    await cancelledOption.click();
+    // CustomSelect renders a <button> trigger labelled "All Statuses"; the
+    // dropdown items are <button>s too (not real <option>s).
+    await page.getByRole('button', { name: /all statuses|all|الحالة|الكل/i }).first().click();
+    await page.getByRole('button', { name: /^cancelled$|^ملغ/i }).first().click();
     await page.waitForLoadState('networkidle');
     // No assertion that count > 0 — there may be no cancelled bookings.
     // Page still renders.

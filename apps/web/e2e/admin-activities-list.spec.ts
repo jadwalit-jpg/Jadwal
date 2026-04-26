@@ -3,18 +3,13 @@
  *
  * Smoke: page loads, lightbox opens on a thumb click if rows exist.
  */
-import { existsSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 
 const ADMIN_STATE = 'e2e/.auth/admin.json';
-const HAS_ADMIN_STATE = existsSync(ADMIN_STATE);
-
 test.describe('Admin activities list', () => {
-  test.use({ storageState: HAS_ADMIN_STATE ? ADMIN_STATE : undefined });
+  test.use({ storageState: ADMIN_STATE });
 
   test('happy: list loads, image thumbs appear when rows exist', async ({ page }) => {
-    test.skip(!HAS_ADMIN_STATE, 'Admin storageState not available');
-
     await page.goto('/admin/activities');
     await page.waitForLoadState('networkidle');
 
@@ -39,13 +34,11 @@ test.describe('Admin activities list', () => {
   });
 
   test('error: search box filters or shows empty', async ({ page }) => {
-    test.skip(!HAS_ADMIN_STATE, 'Admin storageState not available');
-
     await page.goto('/admin/activities');
     await page.waitForLoadState('networkidle');
 
-    const search = page.getByPlaceholder(/search|بحث/i).first();
-    if (!(await search.isVisible().catch(() => false))) test.skip(true, 'No search input');
+    const search = page.getByPlaceholder(/search by activity|search|بحث/i).first();
+    await expect(search).toBeVisible({ timeout: 10000 });
     await search.fill('zzz-no-such-activity');
     await search.press('Enter');
     await page.waitForTimeout(500);

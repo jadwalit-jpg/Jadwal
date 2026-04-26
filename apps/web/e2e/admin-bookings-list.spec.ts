@@ -3,18 +3,13 @@
  *
  * Smoke: page loads, status filter works.
  */
-import { existsSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 
 const ADMIN_STATE = 'e2e/.auth/admin.json';
-const HAS_ADMIN_STATE = existsSync(ADMIN_STATE);
-
 test.describe('Admin bookings list', () => {
-  test.use({ storageState: HAS_ADMIN_STATE ? ADMIN_STATE : undefined });
+  test.use({ storageState: ADMIN_STATE });
 
   test('happy: bookings page loads', async ({ page }) => {
-    test.skip(!HAS_ADMIN_STATE, 'Admin storageState not available');
-
     await page.goto('/admin/bookings');
     await page.waitForLoadState('networkidle');
 
@@ -27,16 +22,14 @@ test.describe('Admin bookings list', () => {
   });
 
   test('error: filter by status keeps page rendering', async ({ page }) => {
-    test.skip(!HAS_ADMIN_STATE, 'Admin storageState not available');
-
     await page.goto('/admin/bookings');
     await page.waitForLoadState('networkidle');
 
-    const filter = page.getByRole('combobox', { name: /status|الحالة/i }).first();
-    if (!(await filter.isVisible().catch(() => false))) test.skip(true, 'No status filter');
-    await filter.click();
-    const cancelled = page.getByRole('option', { name: /cancelled|ملغ/i }).first();
-    if (await cancelled.isVisible().catch(() => false)) await cancelled.click();
+    // Custom dropdown: open by clicking the trigger button labelled
+    // "All Statuses" (or whatever the current value is), then click the
+    // "Cancelled" option (also a <button>, not a real <option>).
+    await page.getByRole('button', { name: /all statuses|all|الجميع|الكل|status|الحالة/i }).first().click();
+    await page.getByRole('button', { name: /^cancelled$|^ملغ/i }).first().click();
     await page.waitForLoadState('networkidle');
 
     await expect(page.getByRole('heading', { name: /bookings|الحجوزات/i }).first())

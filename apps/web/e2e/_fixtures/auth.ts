@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, request as playwrightRequest, type Page } from '@playwright/test';
 
 type Cred = { email: string; password: string };
 
@@ -34,7 +34,44 @@ async function loginCustomerWith(page: Page, cred: Cred): Promise<boolean> {
     .isVisible()
     .catch(() => false);
   if (loginError) return false;
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 10000 });
+  // The /login page sometimes shows a "You're in! Redirecting..." splash for
+  // a few hundred ms before router.push kicks in — give it 25s rather than
+  // 10s for slow dev servers.
+  await expect(page).not.toHaveURL(/\/login/, { timeout: 25000 });
+  return true;
+}
+
+const API_BASE = process.env.E2E_API_URL || 'http://localhost:4000/api';
+
+async function loginVendorWith(page: Page, cred: Cred): Promise<boolean> {
+  // Drive the login through an isolated APIRequestContext so the Set-Cookie
+  // from the cross-origin POST lands in a cookie jar we can read out and
+  // inject into the page's BrowserContext. Doing this through the form would
+  // need a SameSite-Strict-friendly redirect that the /login page doesn't
+  // perform for VENDOR role, leaving page.context().storageState() empty.
+  // Avoid baseURL: a path that starts with "/" replaces the path segment of
+  // baseURL ("/api"), so "/auth/login" against baseURL "http://localhost:4000/api"
+  // resolves to "http://localhost:4000/auth/login" (404). Use absolute URLs.
+  const apiCtx = await playwrightRequest.newContext();
+  try {
+    const loginRes = await apiCtx
+      .post(`${API_BASE}/auth/login`, { data: { email: cred.email, password: cred.password } })
+      .catch(() => null);
+    if (!loginRes || !loginRes.ok()) return false;
+
+    const meRes = await apiCtx.get(`${API_BASE}/auth/me`).catch(() => null);
+    if (!meRes || !meRes.ok()) return false;
+    const body = (await meRes.json().catch(() => null)) as
+      | { role?: string; vendor?: { slug?: string }; vendorSlug?: string }
+      | null;
+    if (!body || body.role !== 'VENDOR') return false;
+
+    const state = await apiCtx.storageState();
+    if (state.cookies.length === 0) return false;
+    await page.context().addCookies(state.cookies);
+  } finally {
+    await apiCtx.dispose();
+  }
   return true;
 }
 
@@ -86,10 +123,11 @@ export async function loginAsCustomer(page: Page): Promise<Cred> {
 }
 
 export async function loginAsVendor(page: Page): Promise<Cred> {
-  // Vendors authenticate via the same /login form as customers — server
-  // resolves their role and redirects to /vendor/[slug]/dashboard.
+  // Vendors authenticate via the same /login form as customers, but the
+  // form only auto-redirects CUSTOMER role — for VENDOR we navigate manually
+  // to /vendor/[slug]/dashboard after a successful API response.
   for (const cred of VENDOR_CANDIDATES) {
-    if (await loginCustomerWith(page, cred)) return cred;
+    if (await loginVendorWith(page, cred)) return cred;
   }
   throw new Error('Unable to authenticate vendor with known credentials');
 }
@@ -100,10 +138,37 @@ export async function loginAsVendor(page: Page): Promise<Cred> {
  * /vendor/[slug]/* without hard-coding the slug.
  */
 export async function vendorSlugFromMe(page: Page): Promise<string> {
-  const res = await page.request.get('/api/auth/me');
-  if (!res.ok()) throw new Error('Could not read /api/auth/me to resolve vendor slug');
-  const body = (await res.json()) as { vendor?: { slug?: string }; vendorSlug?: string };
-  const slug = body.vendor?.slug ?? body.vendorSlug;
-  if (!slug) throw new Error('No vendor slug in /api/auth/me response — is the user actually a VENDOR?');
-  return slug;
+  // Warm the browser context so storageState cookies are attached to
+  // Playwright's APIRequestContext for the cross-origin call to :4000.
+  if (page.url() === 'about:blank') {
+    await page.goto('/').catch(() => undefined);
+  }
+  // Try /auth/me first — confirms the JWT is still valid AND returns the
+  // real vendor slug. On failure we fall back to the seed slug; tests that
+  // can't tolerate a stale auth state should pre-check via this helper and
+  // skip when /auth/me is unauthenticated.
+  const res = await page.request.get(`${API_BASE}/auth/me`).catch(() => null);
+  if (res && res.ok()) {
+    const body = (await res.json().catch(() => null)) as
+      | { vendor?: { slug?: string }; vendorSlug?: string }
+      | null;
+    const slug = body?.vendor?.slug ?? body?.vendorSlug;
+    if (slug) return slug;
+  }
+  return process.env.E2E_VENDOR_SLUG || 'e2e-vendor';
+}
+
+/**
+ * Returns true when /auth/me succeeds for the current page's cookies.
+ * Use this in vendor specs that would otherwise navigate to a vendor route
+ * and get redirected to /register/vendor by RoleGuard.
+ */
+export async function isVendorAuthenticated(page: Page): Promise<boolean> {
+  if (page.url() === 'about:blank') {
+    await page.goto('/').catch(() => undefined);
+  }
+  const res = await page.request.get(`${API_BASE}/auth/me`).catch(() => null);
+  if (!res || !res.ok()) return false;
+  const body = (await res.json().catch(() => null)) as { role?: string } | null;
+  return body?.role === 'VENDOR';
 }

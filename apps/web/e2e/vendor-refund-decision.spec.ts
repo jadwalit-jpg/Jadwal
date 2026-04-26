@@ -2,24 +2,21 @@
  * E2E — vendor approves or rejects a refund request.
  * Skips when no refund request exists.
  */
-import { existsSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import { vendorSlugFromMe } from './_fixtures/auth';
 
 const VENDOR_STATE = 'e2e/.auth/vendor.json';
-const HAS_VENDOR_STATE = existsSync(VENDOR_STATE);
-
 test.describe('Vendor refund decision', () => {
-  test.use({ storageState: HAS_VENDOR_STATE ? VENDOR_STATE : undefined });
+  test.use({ storageState: VENDOR_STATE });
 
-  test('happy: approve a pending refund request', async ({ page, request }) => {
-    test.skip(!HAS_VENDOR_STATE, 'Vendor storageState not available');
+  test('happy: approve a pending refund request', async ({ page }) => {
     const slug = await vendorSlugFromMe(page);
 
-    const list = await request.get(`/api/vendor/${slug}/refund-requests?status=PENDING&page=1&limit=1`);
-    test.skip(!list.ok(), 'Could not fetch refund requests');
-    const body = (await list.json()) as { data?: Array<{ id: string }> };
-    const refundId = body.data?.[0]?.id;
+    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
+    const list = await page.request.get(`${apiBase}/vendor/${slug}/refund-requests?status=PENDING&page=1&limit=1`).catch(() => null);
+    test.skip(!list || !list.ok(), 'Could not fetch refund requests');
+    const body = (await list!.json().catch(() => null)) as { data?: Array<{ id: string }> } | null;
+    const refundId = body?.data?.[0]?.id;
     test.skip(!refundId, 'No pending refund requests — skip approve flow');
 
     await page.goto(`/vendor/${slug}/refund-requests`);
@@ -43,7 +40,6 @@ test.describe('Vendor refund decision', () => {
   });
 
   test('error: list page renders with empty state when no refunds', async ({ page }) => {
-    test.skip(!HAS_VENDOR_STATE, 'Vendor storageState not available');
     const slug = await vendorSlugFromMe(page);
 
     await page.goto(`/vendor/${slug}/refund-requests`);
