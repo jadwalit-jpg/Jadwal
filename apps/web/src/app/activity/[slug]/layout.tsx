@@ -65,15 +65,40 @@ function assetOrigin(): string | null {
   }
 }
 
-/** Build an absolute URL for the cover image regardless of how it was stored. */
+/**
+ * Build an absolute URL for the cover image, AND drop the image entirely
+ * if it points to an off-domain origin. Defense-in-depth: vendor activity
+ * approval already gates what's published, but if a malicious cover URL
+ * ever slipped past review (e.g. `http://evil.cdn/x.jpg`) we don't want
+ * Jadwal-branded share previews emitting it. Allowed origin is whatever
+ * NEXT_PUBLIC_API_URL resolves to (the CDN/upload host). Future hosts can
+ * be added to the allowlist below.
+ */
 function absoluteImageUrl(coverImage: string | null | undefined): string | null {
   if (!coverImage) return null;
-  if (/^https?:\/\//i.test(coverImage)) return coverImage;
   const origin = assetOrigin();
   if (!origin) return null;
-  return coverImage.startsWith('/')
-    ? `${origin}${coverImage}`
-    : `${origin}/${coverImage}`;
+
+  let absolute: string;
+  if (/^https?:\/\//i.test(coverImage)) {
+    absolute = coverImage;
+  } else if (coverImage.startsWith('/')) {
+    absolute = `${origin}${coverImage}`;
+  } else {
+    absolute = `${origin}/${coverImage}`;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(absolute);
+  } catch {
+    return null;
+  }
+
+  // Allow only the configured asset origin. Add future hosts (CDN, S3
+  // public bucket, etc.) here when they come online.
+  const allowed = new Set<string>([origin]);
+  return allowed.has(parsed.origin) ? parsed.toString() : null;
 }
 
 export async function generateMetadata({
