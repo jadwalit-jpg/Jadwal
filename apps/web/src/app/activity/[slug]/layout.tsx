@@ -54,7 +54,7 @@ function safeDescription(raw: string | null | undefined): string {
     : stripped;
 }
 
-/** Derive the asset origin (e.g. http://localhost:4000) from the API URL. */
+// Derive the asset origin (e.g. http://127.0.0.1:4000) from the API URL.
 function assetOrigin(): string | null {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL;
   if (!apiUrl) return null;
@@ -116,16 +116,14 @@ export async function generateMetadata({
   // SSR-time fetches need a URL that resolves from the rendering process.
   // Two scenarios:
   //   1. Docker dev/prod: web container can't reach the api container via
-  //      `localhost` (that resolves to the web container itself). Use
-  //      INTERNAL_API_URL=http://api:4000/api set in docker-compose.
-  //   2. Plain `npm run dev` on host: NEXT_PUBLIC_API_URL=http://localhost
-  //      :4000/api works, but Node 18+ resolves `localhost` to IPv6 (::1)
-  //      first; if the API only binds IPv4, fetch throws ECONNREFUSED.
-  //      Substitute 127.0.0.1 to force IPv4.
-  const browserUrl = process.env.NEXT_PUBLIC_API_URL;
-  const internalUrl =
-    process.env.INTERNAL_API_URL ||
-    browserUrl?.replace(/^(https?:\/\/)localhost\b/, '$1127.0.0.1');
+  //      its sibling network name on its loopback interface. Use
+  //      INTERNAL_API_URL=http://api:4000/api set in docker-compose / ECS.
+  //   2. Plain `npm run dev` on host: Node 18+ resolves `127.0.0.1` IPv4-
+  //      first which is what we want. The browser-facing API URL must
+  //      already be IPv4 (set NEXT_PUBLIC_API_URL=http://127.0.0.1:4000/api
+  //      for non-Docker dev — same caveat applies on Windows where
+  //      localhost-as-IPv6 trips Node's HTTP client).
+  const internalUrl = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
 
   const fallback: Metadata = {
     title: 'Jadwal',

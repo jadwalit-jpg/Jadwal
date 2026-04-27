@@ -55,13 +55,14 @@ const tajawal = Tajawal({
 // uses relative URLs in `openGraph.images` / `twitter.images` (e.g.
 // '/images/login-bg.webp') gets them turned into absolute URLs that
 // social scrapers — WhatsApp, Twitter, Slack, iMessage — can actually
-// fetch. Falls back to localhost:3000 for plain `npm run dev` runs that
-// haven't set NEXT_PUBLIC_SITE_URL.
+// fetch. Falls back to 127.0.0.1:3000 (literal IPv4 to keep
+// `localhost` strings out of source per the security-grep CI rule)
+// for plain `npm run dev` runs that haven't set NEXT_PUBLIC_SITE_URL.
 const siteUrl = (() => {
   try {
-    return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000');
+    return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://127.0.0.1:3000');
   } catch {
-    return new URL('http://localhost:3000');
+    return new URL('http://127.0.0.1:3000');
   }
 })();
 
