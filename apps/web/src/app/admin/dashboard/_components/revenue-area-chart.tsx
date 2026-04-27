@@ -42,7 +42,11 @@ function RevenueTooltip({
 }
 
 export default function RevenueAreaChart({ data }: { data: MonthlyRevenue[] }) {
-  if (data.length === 0) {
+  // Series is zero-padded to 6 months upstream — show the empty state
+  // only when EVERY month is zero, otherwise plot the line so a single
+  // recent month rises from the prior zeros and reads as real data.
+  const hasAnyRevenue = data.some((d) => d.revenue > 0);
+  if (!hasAnyRevenue) {
     return (
       <div className="h-40 flex flex-col items-center justify-center gap-2 text-center">
         <TrendingUp className="h-6 w-6 text-gray-300 dark:text-slate-600" aria-hidden="true" />

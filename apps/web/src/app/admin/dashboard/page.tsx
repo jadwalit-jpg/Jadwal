@@ -96,6 +96,30 @@ interface ChartsData {
   topActivities: { name: string; category: string; bookings: number; revenue?: number }[];
 }
 
+// Always returns 6 entries ending with the current month, zero-filled
+// for any month the input map omits. Lets the trend charts render with
+// 6 axis ticks even when the platform has < 6 months of data.
+function padToLast6Months(
+  map?: Record<string, number>,
+): { key: string; value: number }[] {
+  const out: { key: string; value: number }[] = [];
+  const now = new Date();
+  for (let offset = 5; offset >= 0; offset--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    out.push({ key, value: Number(map?.[key] ?? 0) });
+  }
+  return out;
+}
+
+// Render "YYYY-MM" → "Mon YY" (e.g. "Apr 26") so the axis reads naturally
+// even when the 6-month window spans a year boundary.
+function monthLabel(key: string): string {
+  const [year, month] = key.split('-');
+  const d = new Date(Number(year), Number(month) - 1, 1);
+  return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+}
+
 // Tone presets extracted from the design brief's palette. Each `fg` pair
 // covers the accent text colour in light and dark mode; `bg` is the soft
 // tinted pill behind the icon. Centralised so every KPI card on the page
@@ -175,7 +199,9 @@ function SectionHeader({ title, sub, action }: { title: string; sub?: string; ac
 
 function BarChart({ data }: { data: { key: string; value: number }[] }) {
   const max = useMemo(() => Math.max(...data.map((d) => d.value), 1), [data]);
-  if (data.length === 0) {
+  // Series is zero-padded to 6 months upstream — show the empty state only
+  // when every month is zero so the chart never collapses to nothing.
+  if (!data.some((d) => d.value > 0)) {
     return <div className="h-24 flex items-center justify-center text-xs text-gray-400 dark:text-slate-500">No data yet</div>;
   }
   return (
@@ -433,28 +459,26 @@ export default function AdminDashboardPage() {
   // Derived chart series. Shaped as { month, revenue } so the Recharts
   // AreaChart can bind directly — same shape the vendor analytics page
   // uses, keeping both dashboards visually and structurally consistent.
-  // Month label is rendered "Mon YY" (e.g. "Apr 26") so the axis reads
-  // naturally even when 6 months span a year boundary.
-  const revenueSeries: MonthlyRevenue[] = useMemo(() => {
-    if (!charts?.revenueByMonth) return [];
-    return Object.entries(charts.revenueByMonth)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => {
-        const [year, month] = key.split('-');
-        const d = new Date(Number(year), Number(month) - 1, 1);
-        return {
-          month: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
-          revenue: Number(value),
-        };
-      });
-  }, [charts]);
+  //
+  // Both series are zero-padded to always span the last 6 months. The
+  // backend's `revenueByMonth` / `vendorsByMonth` maps only contain months
+  // with non-zero data — so without padding, a single-point month renders
+  // as a lonely floating dot under the "Last 6 months" caption. Padding
+  // turns that into a rising-from-zero curve that visually confirms data
+  // exists.
+  const revenueSeries: MonthlyRevenue[] = useMemo(
+    () =>
+      padToLast6Months(charts?.revenueByMonth).map(({ key, value }) => ({
+        month: monthLabel(key),
+        revenue: value,
+      })),
+    [charts],
+  );
 
-  const vendorSeries = useMemo(() => {
-    if (!charts?.vendorsByMonth) return [];
-    return Object.entries(charts.vendorsByMonth)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => ({ key, value: Number(value) }));
-  }, [charts]);
+  const vendorSeries = useMemo(
+    () => padToLast6Months(charts?.vendorsByMonth),
+    [charts],
+  );
 
   // "Last sync N min ago" — derived from TanStack's dataUpdatedAt so it
   // reflects the actual last network fetch, not a fake clock.
