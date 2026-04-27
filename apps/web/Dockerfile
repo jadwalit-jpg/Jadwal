@@ -5,7 +5,7 @@
 #   Run:     docker run -p 3000:3000 jadwal-web:latest
 
 # ── Stage 1: Install prod deps for the web workspace ──────────────
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 
 # Copy lockfile + both workspace manifests. npm needs them all to resolve
@@ -18,7 +18,7 @@ COPY apps/api/package.json ./apps/api/
 RUN npm ci --omit=dev --ignore-scripts --workspace=web --include-workspace-root=false
 
 # ── Stage 2: Build ────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -44,7 +44,7 @@ RUN npm run build
 # ── Stage 3: Production image ──────────────────────────────────────
 # Next.js standalone output produces a minimal server.js + only the
 # node_modules files actually imported at runtime.
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

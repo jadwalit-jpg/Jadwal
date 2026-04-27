@@ -94,7 +94,12 @@ function buildCsp(nonce: string, isProd: boolean): string {
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,
-    `upgrade-insecure-requests`,
+    // upgrade-insecure-requests is a hard "force HTTPS" instruction.
+    // On http://localhost it breaks every request (no TLS = SSL connect
+    // error on WebKit/iOS). Only emit it when we know we're behind real
+    // TLS — gated on the same ENABLE_HSTS env var as the HSTS header
+    // (CloudFront / ALB sets it).
+    ...(process.env.ENABLE_HSTS === 'true' ? [`upgrade-insecure-requests`] : []),
   ];
 
   if (reportUri) directives.push(`report-uri ${reportUri}`);

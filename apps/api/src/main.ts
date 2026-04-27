@@ -123,7 +123,17 @@ async function bootstrap() {
         },
       },
       crossOriginEmbedderPolicy: false,
-      hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
+      // HSTS gated on ENABLE_HSTS=true. NODE_ENV=production isn't
+      // enough — the local prod-build container still runs over HTTP
+      // on localhost, and HSTS poisons WebKit/iOS Safari to auto-
+      // upgrade every localhost request to HTTPS (no TLS = SSL connect
+      // errors, breaks all CSS/JS chunks). Real prod sets ENABLE_HSTS
+      // at the task definition; CloudFront / ALB also add HSTS at the
+      // edge regardless.
+      hsts:
+        process.env.ENABLE_HSTS === 'true'
+          ? { maxAge: 63072000, includeSubDomains: true, preload: true }
+          : false,
     }),
   );
 

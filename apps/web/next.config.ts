@@ -13,24 +13,41 @@ if (!process.env.NEXT_PUBLIC_API_URL) {
 
 // Same-origin proxy target for /api/*. Lets the browser see auth cookies
 // as same-origin (works around WebKit/ITP dropping cross-port cookies)
-// without leaking ports into client bundles. Default points at the local
-// API container; production deployments override via API_PROXY_TARGET in
-// the docker-compose / ECS task env (e.g. http://api.internal:4000/api).
+// without leaking ports into client bundles. Always resolves on the
+// SERVER side; never ships to the client bundle.
 //
-// Hardcoding the default is intentional: it only resolves on the SERVER
-// (Next.js dev/prod node process), never reaches the client bundle, and
-// the env var override is the documented prod path.
-const API_PROXY_TARGET =
-  process.env.API_PROXY_TARGET || "http://localhost:4000/api";
+// Dev: defaults to the local API container.
+// Prod: REQUIRED. We refuse to start without an explicit value so a
+// misconfigured deploy can't silently route /api/* into a void
+// (e.g. forwarding to localhost:4000 inside the container, where
+// nothing listens, every request 404s, but the page still renders).
+const API_PROXY_TARGET = (() => {
+  if (process.env.API_PROXY_TARGET) return process.env.API_PROXY_TARGET;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "[FATAL] API_PROXY_TARGET must be set in production. " +
+        "Set it on the ECS task definition / docker-compose env. " +
+        'Example: API_PROXY_TARGET="http://api.internal:4000/api"',
+    );
+  }
+  return "http://localhost:4000/api";
+})();
 
 // Uploads proxy target — bare API origin (without `/api`) so we can route
 // /uploads/* to the API server's /uploads/* endpoint. Same-origin = passes
 // the strict img-src 'self' CSP without leaking the API host into client
-// code.
+// code. Derived from API_PROXY_TARGET; if that's malformed, fail loud in
+// production rather than silently breaking image loads.
 const UPLOADS_PROXY_TARGET = (() => {
   try {
     return new URL(API_PROXY_TARGET).origin;
   } catch {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "[FATAL] API_PROXY_TARGET is not a valid absolute URL: " +
+          `"${API_PROXY_TARGET}". Cannot derive UPLOADS_PROXY_TARGET.`,
+      );
+    }
     return "http://localhost:4000";
   }
 })();
@@ -38,6 +55,10 @@ const UPLOADS_PROXY_TARGET = (() => {
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: resolve(__dirname, "../../"),
+  // Strip `X-Powered-By: Next.js` header. ZAP baseline flagged it as a
+  // low-risk software-version disclosure; removing it makes drive-by
+  // scanners' job marginally harder.
+  poweredByHeader: false,
   async rewrites() {
     return [
       // Browser hits /api/* on the same origin as the page. Next.js
@@ -104,10 +125,22 @@ const nextConfig: NextConfig = {
             key: "Referrer-Policy",
             value: "strict-origin-when-cross-origin",
           },
-          {
-            key: "Strict-Transport-Security",
-            value: "max-age=31536000; includeSubDomains; preload",
-          },
+          // HSTS is gated on ENABLE_HSTS=true so the local prod-build
+          // container (still NODE_ENV=production but served over HTTP
+          // on localhost) doesn't poison WebKit / iOS Safari into
+          // auto-upgrading every localhost request to HTTPS, which
+          // breaks all dev/test traffic with SSL connect errors.
+          // Real prod deploys set ENABLE_HSTS=true at the edge or in
+          // task definition env. CloudFront / ALB also typically add
+          // HSTS at the edge regardless.
+          ...(process.env.ENABLE_HSTS === "true"
+            ? [
+                {
+                  key: "Strict-Transport-Security",
+                  value: "max-age=31536000; includeSubDomains; preload",
+                },
+              ]
+            : []),
           {
             // Deny powerful browser APIs by default. Nothing on this frontend
             // requests geolocation (we use IP-based detection), camera, mic,
@@ -136,6 +169,26 @@ const nextConfig: NextConfig = {
             // malicious page tries to load our endpoints as scripts or pixels.
             key: "Cross-Origin-Resource-Policy",
             value: "same-site",
+          },
+          {
+            // Activates cross-origin isolation: the page can only load
+            // cross-origin resources that explicitly opt in via a CORP
+            // header (or are CORS-fetched). Cross-origin images / scripts
+            // without that header are loaded credentialless (no cookies).
+            // Pairs with COOP=same-origin above to make the document a
+            // protected, isolated browsing context — blocks Spectre-class
+            // side-channel reads against our origin.
+            //
+            // `credentialless` (vs `require-corp`) is chosen because it
+            // does NOT block cross-origin assets that lack CORP headers
+            // (e.g. third-party images, S3 buckets that don't set CORP);
+            // they're just loaded anonymously. Trade-off: a malicious
+            // cross-origin script can't read our credentialed responses
+            // either way, but `require-corp` is stricter at the cost of
+            // breaking image loads we don't control. Revisit when our
+            // CDN/S3 is configured to send CORP=cross-origin universally.
+            key: "Cross-Origin-Embedder-Policy",
+            value: "credentialless",
           },
           // Content-Security-Policy is set per-request in middleware.ts
           // with a cryptographic nonce — see middleware for the full policy.
