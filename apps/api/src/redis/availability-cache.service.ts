@@ -38,6 +38,9 @@ export class AvailabilityCacheService implements OnModuleInit {
   // characters or wildcard patterns into keys. unitNumber (when present) must
   // be a positive integer below MAX_CACHEABLE_UNIT to bound cache cardinality.
   private isSafe(activityId: string, month: string, unitNumber?: number): boolean {
+    // nosemgrep: ajinabraham.njsscan.dos.regex_dos.regex_dos
+    // Both UUID_RE and MONTH_RE are fixed-format patterns (hex/dash and
+    // YYYY-MM) with no nested quantifiers — no backtracking risk.
     if (!UUID_RE.test(activityId) || !MONTH_RE.test(month)) return false;
     if (unitNumber === undefined || unitNumber === null) return true;
     return (

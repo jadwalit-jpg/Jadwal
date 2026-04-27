@@ -41,6 +41,9 @@ function ResetPasswordContent() {
       toast(pwCheck.error, 'error');
       return;
     }
+    // nosemgrep: ajinabraham.njsscan.crypto.timing_attack_node.node_timing_attack
+    // Comparing two values the user just typed in their own browser — neither
+    // side is a secret an attacker could probe with timing.
     if (password !== confirm) {
       toast(t('auth.toast.passwordsNoMatch'), 'error');
       return;

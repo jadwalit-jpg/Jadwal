@@ -32,6 +32,9 @@ export default function ImageUploader({ value, onChange, error }: ImageUploaderP
   const inputRef = useRef<HTMLInputElement>(null);
 
   const uploadFile = useCallback(async (file: File) => {
+    // nosemgrep: ajinabraham.njsscan.crypto.crypto_node.node_insecure_random_generator
+    // Math.random() is intentional here — `id` is a UI key for the preview list,
+    // never used as a token, secret, or anything security-sensitive.
     const id = `${Date.now()}-${Math.random()}`;
     const previewUrl = URL.createObjectURL(file);
 

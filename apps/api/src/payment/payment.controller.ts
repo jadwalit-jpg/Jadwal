@@ -66,6 +66,8 @@ export class PaymentController {
 
     try {
       const result = await this.paymentService.handleCallback(query);
+      // nosemgrep: ajinabraham.njsscan.dos.regex_dos.regex_dos
+      // UUID_RE is a fixed-format hex/dash pattern with no nested quantifiers.
       const safeBookingId = result.bookingId && UUID_RE.test(result.bookingId) ? result.bookingId : '';
 
       if (result.status === 'success') {

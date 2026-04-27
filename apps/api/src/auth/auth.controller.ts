@@ -44,6 +44,8 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
     @Req() req: Request,
   ) {
+    // nosemgrep: ajinabraham.njsscan.dos.regex_dos.regex_dos
+    // Bounded literal character class, fixed `{64}` quantifier — safe.
     if (!token || !/^[a-f0-9]{64}$/.test(token)) {
       throw new BadRequestException('Invalid verification token');
     }

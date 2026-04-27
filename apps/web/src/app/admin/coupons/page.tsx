@@ -69,8 +69,13 @@ export default function AdminCouponsPage() {
   const generateCode = useCallback(() => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/0/1 to avoid confusion
     const prefix = 'JDWL-';
+    // Use crypto.getRandomValues so the suggested code can't be predicted from
+    // a known seed — coupons grant real discounts, so even though the admin
+    // can edit the value, defaulting to a CSPRNG is the safer choice.
+    const buf = new Uint32Array(8);
+    crypto.getRandomValues(buf);
     let code = '';
-    for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    for (let i = 0; i < 8; i++) code += chars[buf[i] % chars.length];
     setCouponCode(prefix + code);
   }, []);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; code: string } | null>(null);

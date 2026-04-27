@@ -52,6 +52,9 @@ export class RequestLoggerMiddleware implements NestMiddleware {
 
   use(req: Request & { requestId?: string; user?: { id?: string } }, res: Response, next: NextFunction) {
     const inboundId = req.header('x-request-id');
+    // nosemgrep: ajinabraham.njsscan.dos.regex_dos.regex_dos
+    // Bounded character class with a fixed `{1,128}` upper bound — input
+    // length is capped, no alternation/nesting, no backtracking risk.
     const requestId = inboundId && /^[A-Za-z0-9._-]{1,128}$/.test(inboundId)
       ? inboundId
       : randomUUID();

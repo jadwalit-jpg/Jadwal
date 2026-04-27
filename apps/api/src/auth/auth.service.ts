@@ -638,6 +638,9 @@ export class AuthService {
   async resetPassword(token: string, newPassword: string) {
     const db = this.prisma.client;
 
+    // nosemgrep: ajinabraham.njsscan.dos.regex_dos.regex_dos
+    // Bounded literal character class with a fixed `{64}` quantifier — no
+    // alternation, no nested quantifiers, no catastrophic-backtracking risk.
     if (!/^[a-f0-9]{64}$/.test(token)) {
       throw new BadRequestException('Invalid or expired reset link');
     }
