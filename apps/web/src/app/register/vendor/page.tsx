@@ -125,8 +125,8 @@ function VendorAuthContent() {
     const pwCheck = validatePassword(pw);
     if (!pwCheck.valid) errs.password = (pwCheck as { error: string }).error;
 
-    if (pw && confirmPw && pw !== confirmPw) errs.confirmPassword = 'Passwords do not match';
-    else if (!confirmPw) errs.confirmPassword = 'Please confirm your password';
+    if (pw && confirmPw && pw !== confirmPw) errs.confirmPassword = 'Passwords do not match'; // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_password
+    else if (!confirmPw) errs.confirmPassword = 'Please confirm your password'; // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_password
 
     if (phone) {
       const phoneCheck = validatePhone(rawPhone);
