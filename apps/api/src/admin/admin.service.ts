@@ -2241,18 +2241,31 @@ export class AdminService {
       }),
     ]);
 
-    // Aggregate revenue by month
+    // Aggregate revenue + vendor growth by month. Maps are PRE-PADDED to
+    // exactly 6 months ending on the current month so the frontend chart
+    // titled "Last 6 months" always has 6 data points — even when only
+    // the current month has any activity. Without this, sparse data
+    // renders as a single floating dot under the 6-month caption (the
+    // contract / UI mismatch fixed on 2026-04-27).
+    //
+    // Convention: time-bucketed endpoints return DENSE windows. See
+    // .antigravity/rules.md §"API contracts — dense time windows".
+    const now = new Date();
     const revenueByMonth: Record<string, number> = {};
+    const vendorsByMonth: Record<string, number> = {};
+    for (let offset = 5; offset >= 0; offset--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      revenueByMonth[key] = 0;
+      vendorsByMonth[key] = 0;
+    }
     for (const p of revenueData) {
       const key = `${p.createdAt.getFullYear()}-${String(p.createdAt.getMonth() + 1).padStart(2, '0')}`;
-      revenueByMonth[key] = (revenueByMonth[key] || 0) + Number(p.amount);
+      if (key in revenueByMonth) revenueByMonth[key] += Number(p.amount);
     }
-
-    // Aggregate vendor growth by month
-    const vendorsByMonth: Record<string, number> = {};
     for (const v of vendorGrowth) {
       const key = `${v.createdAt.getFullYear()}-${String(v.createdAt.getMonth() + 1).padStart(2, '0')}`;
-      vendorsByMonth[key] = (vendorsByMonth[key] || 0) + 1;
+      if (key in vendorsByMonth) vendorsByMonth[key] += 1;
     }
 
     // Per-activity cash revenue (vendor share on SUCCESS payments). Done as

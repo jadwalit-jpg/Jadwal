@@ -36,10 +36,20 @@ tests/reports/
 # or in S3 (prod). Never store uploaded files in git history.
 apps/api/uploads/
 
-# Per-user Claude state — skills + project settings.json ARE committed,
-# but per-machine state stays local
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
+# Internal-only directories — NEVER commit. Contain workspace docs,
+# security assessments, project plans, agent skill prompts, and other
+# content that's appropriate for private working files but not for the
+# repo. History was scrubbed of these on 2026-04-27; the explicit
+# excludes below + the negation removals further down keep them out.
+.claude/
+.antigravity/
+docs/
+
+# AWS OIDC policy templates live as on-disk infra reference, not in
+# the repo. Replace the ACCOUNT_ID / org / repo placeholders locally
+# when configuring deployment.
+.github/aws-oidc-trust-policy.json
+.github/aws-oidc-permissions-policy.json
 
 # Graphify knowledge graph output (tool artifact)
 graphify-out/
@@ -51,10 +61,16 @@ backups-*/
 payment.txt
 **/payment.txt
 
-# Markdown notes outside committed-docs paths stay local
-# (BOOKING_LOGIC.md, README.md, internal scratch notes etc remain local)
+# Markdown + text notes stay LOCAL by default. The previous policy of
+# negating `docs/`, `.antigravity/`, `.claude/` (and carving out
+# `DOCUMENTATION.md`) was rolled back on 2026-04-27 — those paths
+# were exposing internal working docs (security assessments,
+# roadmap, agent skill prompts). History was scrubbed of every
+# matching file in EVERY commit; this rule keeps them from sneaking
+# back in.
+#
+# The only narrow exception is `apps/web/public/robots.txt` — the
+# Next.js framework needs that file at runtime to serve `/robots.txt`.
 *.md
-!/DOCUMENTATION.md
-!docs/**/*.md
-!.antigravity/**/*.md
-!.claude/**/*.md
+*.txt
+!apps/web/public/robots.txt
