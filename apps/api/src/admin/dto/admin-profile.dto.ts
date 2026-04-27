@@ -1,5 +1,6 @@
 import { IsString, IsOptional, MinLength, MaxLength, Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { IsStrongPassword } from '../../common/validators/password-strength';
 
 export class UpdateAdminProfileDto {
   @IsString()
@@ -25,5 +26,7 @@ export class ChangeAdminPasswordDto {
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, {
     message: 'Password must contain at least one uppercase letter, one lowercase letter, and one number',
   })
+  // zxcvbn-backed strength check — admin passwords get the same gate.
+  @IsStrongPassword()
   newPassword!: string;
 }

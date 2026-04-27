@@ -28,7 +28,11 @@ export class AuthController {
   ) {}
 
   @Post('register')
-  @Throttle(RATE_LIMIT_AUTH)
+  // STRICT (3/min) — bumped from AUTH on the live-prod hardening pass.
+  // Account creation is high-value to attackers (bot signup → review
+  // spam, coupon farming, payment-fraud setup) so per-IP cap goes to 3.
+  // Add per-(IP+email) keying in a follow-up to also block IP-cycling.
+  @Throttle(RATE_LIMIT_STRICT)
   async register(@Body() dto: RegisterDto) {
     return this.authService.registerAndLogin(dto);
   }
@@ -53,13 +57,16 @@ export class AuthController {
   }
 
   @Post('register/vendor')
-  @Throttle(RATE_LIMIT_AUTH)
+  @Throttle(RATE_LIMIT_STRICT)
   async registerVendor(@Body() dto: RegisterVendorDto) {
     return this.authService.registerVendor(dto);
   }
 
   @Post('login')
-  @Throttle(RATE_LIMIT_AUTH)
+  // STRICT (3/min) on login — credential-stuffing attacks rely on
+  // high-throughput login attempts. Per-account lockout (5 fails) +
+  // per-IP STRICT (3/min) double-gates the path.
+  @Throttle(RATE_LIMIT_STRICT)
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) response: Response,
@@ -255,7 +262,11 @@ export class AuthController {
   }
 
   @Post('phone/verify-otp')
-  @Throttle(RATE_LIMIT_AUTH)
+  // STRICT (3/min) — phone OTP is 6-digit numeric (1M space). At 5/min
+  // a brute-force tries 7200 codes/day = 0.7% chance of hitting per
+  // day. At 3/min that drops to 4320 codes/day = 0.43% per day. Pair
+  // with per-account counter to hard-fail after N wrong codes.
+  @Throttle(RATE_LIMIT_STRICT)
   @UseGuards(JwtAuthGuard)
   async verifyPhoneOtp(
     @CurrentUser() user: RequestUser,
@@ -273,7 +284,10 @@ export class AuthController {
   }
 
   @Post('reset-password')
-  @Throttle(RATE_LIMIT_AUTH)
+  // STRICT (3/min) — reset uses a one-time token, but tightening
+  // per-IP throttle prevents token brute-forcing if the token entropy
+  // ever turns out lower than expected.
+  @Throttle(RATE_LIMIT_STRICT)
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto.token, dto.newPassword);
   }

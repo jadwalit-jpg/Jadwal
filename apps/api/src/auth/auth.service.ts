@@ -26,6 +26,7 @@ import { NotificationService } from '../common/services/notification.service';
 export class AuthService {
   private readonly accessExpiry: number;
   private readonly refreshExpiry: number;
+  private readonly sessionMaxDays: number;
   private readonly lockoutThreshold: number;
   private readonly lockoutDuration: number;
 
@@ -42,6 +43,13 @@ export class AuthService {
   ) {
     this.accessExpiry = Number(this.configService.get('JWT_EXPIRATION', '900'));
     this.refreshExpiry = Number(this.configService.get('REFRESH_TOKEN_EXPIRY_DAYS', '7'));
+    // Absolute session lifetime cap. Default 7 days. Even if the user
+    // keeps rotating their refresh token (which would otherwise extend
+    // indefinitely), the session is forcibly logged out after this many
+    // days from the original login. Pairs with refreshExpiry so the
+    // *individual* token still has the same TTL — this just adds a
+    // hard ceiling on the rotation chain.
+    this.sessionMaxDays = Number(this.configService.get('SESSION_MAX_DAYS', '7'));
     this.lockoutThreshold = Number(this.configService.get('LOCKOUT_THRESHOLD', '5'));
     this.lockoutDuration = Number(this.configService.get('LOCKOUT_DURATION_MINUTES', '15'));
   }
@@ -68,6 +76,31 @@ export class AuthService {
     return crypto.randomBytes(48).toString('base64url');
   }
 
+  /**
+   * Auth-cookie attribute set. Audit (2026-04-27):
+   *   - httpOnly       : JS in the page can't read the cookie. Stops
+   *                      stored-XSS from exfiltrating the access token.
+   *   - secure         : only sent over HTTPS. Gated on production so
+   *                      the local dev server over HTTP still works.
+   *                      Localhost is browser-special-cased to accept
+   *                      Secure cookies in dev anyway.
+   *   - sameSite=strict: cookie is NEVER sent on cross-site navigation.
+   *                      Hard-blocks CSRF without needing a CSRF token.
+   *   - path=/         : cookie scoped to the whole origin.
+   *   - no Domain attr : implicitly host-only. Subdomains can't read.
+   *
+   * On the `__Host-` cookie-name prefix:
+   *   The `__Host-` prefix is a browser guarantee that the cookie was
+   *   set with Secure + Path=/ + no Domain (which we already do). It
+   *   would add NO real security beyond what we have today. The cost
+   *   of renaming the cookie ('Authentication' -> '__Host-
+   *   Authentication') is a forced-logout of every active session and
+   *   coordinated changes in middleware.ts (which reads
+   *   `request.cookies.get('Authentication')`). For a live prod app
+   *   the cost outweighs the marginal gain — the audit conclusion is
+   *   that the existing attributes already satisfy the security
+   *   intent of the `__Host-` prefix.
+   */
   private cookieOptions(maxAgeMs: number) {
     return {
       httpOnly: true,
@@ -168,7 +201,17 @@ export class AuthService {
 
   private readonly maxActiveTokens = Number(process.env.MAX_SESSIONS_PER_USER || 5);
 
-  async issueTokens(user: Pick<User, 'id' | 'email' | 'fullName' | 'role'>, response: Response, req?: Request) {
+  async issueTokens(
+    user: Pick<User, 'id' | 'email' | 'fullName' | 'role'>,
+    response: Response,
+    req?: Request,
+    // Pass-through for refresh-token rotation: when we ROTATE a token,
+    // the new RefreshToken row needs to inherit the original session's
+    // start time so the absolute max-age cap (sessionMaxDays) is
+    // measured from when the user first logged in, not from the latest
+    // rotation. Fresh logins omit this and get `new Date()` below.
+    sessionStartedAt?: Date,
+  ) {
     const payload: TokenPayload = { email: user.email, sub: user.id, role: user.role };
     const accessToken = this.jwtService.sign(payload);
     const db = this.prisma.client;
@@ -203,6 +246,9 @@ export class AuthService {
         userId: user.id,
         tokenHash,
         expiresAt,
+        // Carry the original session start across rotations so the
+        // absolute session lifetime cap is measured from first login.
+        sessionStartedAt: sessionStartedAt ?? new Date(),
         userAgent: userAgent ?? null,
         ipAddress: ip ?? null,
         lastUsedAt: new Date(),
@@ -247,6 +293,20 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token expired');
     }
 
+    // Absolute session-age cap. Even though refresh-token rotation
+    // would otherwise extend the session indefinitely, we enforce a
+    // hard ceiling (default 7 days) measured from the original login.
+    // This bounds the blast radius of a stolen refresh token: an
+    // attacker who exfiltrates one can keep rotating it, but only
+    // until the cap is hit; after that the user is forced to re-auth.
+    const sessionAgeMs = Date.now() - storedToken.sessionStartedAt.getTime();
+    const sessionMaxMs = this.sessionMaxDays * 24 * 60 * 60 * 1000;
+    if (sessionAgeMs > sessionMaxMs) {
+      await db.refreshToken.delete({ where: { id: storedToken.id } });
+      this.clearAllCookies(response);
+      throw new UnauthorizedException('Session expired — please log in again');
+    }
+
     // Rotation: delete used token immediately (single-use)
     await db.refreshToken.delete({ where: { id: storedToken.id } });
 
@@ -276,7 +336,10 @@ export class AuthService {
     // Opportunistic cleanup: delete expired tokens in background (fire-and-forget)
     this.cleanupExpiredTokens().catch(() => {});
 
-    return this.issueTokens(user, response, req);
+    // Pass the original session start time through to the new token row.
+    // Without this, every rotation would reset the 7-day absolute cap and
+    // we'd be back to indefinite sessions.
+    return this.issueTokens(user, response, req, storedToken.sessionStartedAt);
   }
 
   // ─── Register (customer) — sends verification email, does NOT issue cookies ─

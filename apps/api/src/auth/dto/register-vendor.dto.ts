@@ -1,5 +1,6 @@
 import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { IsStrongPassword } from '../../common/validators/password-strength';
 
 export class RegisterVendorDto {
   @IsString()
@@ -20,6 +21,8 @@ export class RegisterVendorDto {
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, {
     message: 'Password must contain at least one uppercase letter, one lowercase letter, and one number',
   })
+  // zxcvbn-backed strength check.
+  @IsStrongPassword()
   password!: string;
 
   @IsString()

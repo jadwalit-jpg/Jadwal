@@ -59,6 +59,14 @@ model RefreshToken {
   expiresAt   DateTime
   createdAt   DateTime @default(now())
 
+  // Original session start time — preserved across refresh-token
+  // rotations. `createdAt` resets on every rotation, but
+  // `sessionStartedAt` carries forward from the very first login so we
+  // can enforce an absolute session lifetime (e.g. 7 days max regardless
+  // of how often the refresh has rotated). Defaults to `now()` so
+  // existing rows added pre-migration get a sensible start time.
+  sessionStartedAt DateTime @default(now())
+
   // Session tracking — for "Active Sessions" page (admin + vendor)
   userAgent   String?  // Raw User-Agent header (parsed on frontend for display)
   ipAddress   String?  // IP address at login time

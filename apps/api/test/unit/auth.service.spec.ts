@@ -295,7 +295,7 @@ describe('AuthService.refreshTokens', () => {
     const tokenHash = ctx.sut.getTokenHash(rawToken);
 
     ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce({
-      id: 'rt1', userId: 'u1', tokenHash, expiresAt: futureDate(),
+      id: 'rt1', userId: 'u1', tokenHash, expiresAt: futureDate(), sessionStartedAt: new Date(),
     });
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
       id: 'u1', email: 'a@b.com', fullName: 'A', role: 'CUSTOMER', isDeactivated: false,
@@ -317,7 +317,7 @@ describe('AuthService.refreshTokens', () => {
   test('expired refresh token → deletes row + 401', async () => {
     const rawToken = 'a'.repeat(64);
     ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce({
-      id: 'rt1', userId: 'u1', tokenHash: 'h', expiresAt: pastDate(),
+      id: 'rt1', userId: 'u1', tokenHash: 'h', expiresAt: pastDate(), sessionStartedAt: new Date(),
     });
 
     await expect(ctx.sut.refreshTokens(rawToken, makeResponseMock() as any))
@@ -327,7 +327,7 @@ describe('AuthService.refreshTokens', () => {
 
   test('deactivated user → revokes ALL sessions + clears cookies + 401', async () => {
     ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce({
-      id: 'rt1', userId: 'u1', tokenHash: 'h', expiresAt: futureDate(),
+      id: 'rt1', userId: 'u1', tokenHash: 'h', expiresAt: futureDate(), sessionStartedAt: new Date(),
     });
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
       id: 'u1', email: 'a@b.com', fullName: 'A', role: 'CUSTOMER', isDeactivated: true,
@@ -346,7 +346,7 @@ describe('AuthService.refreshTokens', () => {
 
   test('user deleted between token issue + refresh → same clean 401', async () => {
     ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce({
-      id: 'rt1', userId: 'u1', tokenHash: 'h', expiresAt: futureDate(),
+      id: 'rt1', userId: 'u1', tokenHash: 'h', expiresAt: futureDate(), sessionStartedAt: new Date(),
     });
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce(null);
 
@@ -356,7 +356,7 @@ describe('AuthService.refreshTokens', () => {
 
   test('suspended vendor on refresh → revokes all sessions + 403', async () => {
     ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce({
-      id: 'rt1', userId: 'u1', tokenHash: 'h', expiresAt: futureDate(),
+      id: 'rt1', userId: 'u1', tokenHash: 'h', expiresAt: futureDate(), sessionStartedAt: new Date(),
     });
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
       id: 'u1', email: 'v@b.com', fullName: 'V', role: 'VENDOR', isDeactivated: false,

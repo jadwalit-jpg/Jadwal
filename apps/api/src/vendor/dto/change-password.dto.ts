@@ -1,4 +1,5 @@
 import { IsString, MinLength, MaxLength, Matches } from 'class-validator';
+import { IsStrongPassword } from '../../common/validators/password-strength';
 
 export class ChangePasswordDto {
   @IsString()
@@ -11,5 +12,7 @@ export class ChangePasswordDto {
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, {
     message: 'Password must contain at least one uppercase letter, one lowercase letter, and one number',
   })
+  // zxcvbn-backed strength check — same rule as RegisterDto.
+  @IsStrongPassword()
   newPassword!: string;
 }
