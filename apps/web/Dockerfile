@@ -86,7 +86,16 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD wget -qO- http://localhost:3000/ || exit 1
+  CMD wget -qO- http://localhost:3000/health || exit 1
+# /health is a tiny App Router route (apps/web/src/app/health/route.ts)
+# that returns the static string "ok" with `dynamic = 'force-static'`. No
+# SSR, no DB / no API calls / no rewrites — probe resolves in microseconds.
+# Probing / instead would trigger a full home-page render every 30 s × N
+# tasks, which is wasteful at scale and can flap during cold-start when
+# the home page is paying its first-render cost. The probe is liveness-
+# only — it confirms the Node process is up and accepting connections,
+# nothing else. Deep readiness (is the upstream API alive?) belongs in a
+# separate monitor, not the ALB target group.
 
 # Next.js standalone server entrypoint. With monorepo outputFileTracingRoot,
 # the server.js lives inside apps/web/ in the standalone bundle.

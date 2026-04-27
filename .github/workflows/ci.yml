@@ -100,6 +100,28 @@ jobs:
         working-directory: apps/api
         run: npx prisma generate
 
+      - name: Prisma version is in lockstep with migrations image
+        # The migrations image (apps/api/Dockerfile.migrations) ships its
+        # own copy of the `prisma` CLI pinned to an exact version. The
+        # CLI engine MUST match the engine the API workspace builds the
+        # client with — a desync silently breaks `migrate deploy` against
+        # databases shaped by the new schema. Both must be exact pins,
+        # both must be the same version. Caret-prefixed deps in api would
+        # let `npm update` drift them apart without tripping any test.
+        run: |
+          API_VER=$(node -p "require('./apps/api/package.json').devDependencies.prisma")
+          MIG_VER=$(grep -oP '"prisma":"\K[^"]+' apps/api/Dockerfile.migrations | head -1)
+          echo "api/package.json prisma=$API_VER  Dockerfile.migrations prisma=$MIG_VER"
+          if [ -z "$API_VER" ] || [ -z "$MIG_VER" ] || [ "$API_VER" != "$MIG_VER" ]; then
+            echo "❌ Prisma version drift between api workspace and migrations image"
+            exit 1
+          fi
+          if echo "$API_VER" | grep -qE '^[\^~]'; then
+            echo "❌ api workspace prisma must be an exact pin (no ^ or ~), got: $API_VER"
+            exit 1
+          fi
+          echo "✅ Prisma versions locked"
+
   # ─── Stage 4b: Lint (eslint on api + web) ──────────────────────
   lint:
     name: Lint
