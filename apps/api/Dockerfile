@@ -65,10 +65,17 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 
-# Full install (including dev deps) for the api workspace — needed for
-# @nestjs/cli + prisma + typescript at build time.
+# Full install (including dev deps) — needed for @nestjs/cli, prisma, and
+# typescript at build time. NOTE: we deliberately omit `--workspace=api`
+# here. With the workspace flag, npm hoists @prisma/client to root
+# /app/node_modules but doesn't symlink it into apps/api/node_modules,
+# and Prisma 7's generator (used by the next RUN below) does NOT
+# traverse upward beyond the workspace's local node_modules. Skipping
+# the flag installs the full workspace graph with proper hoisting that
+# `npx prisma generate` can resolve. Builder stage size is throwaway —
+# only the runner stage's pruned /app/node_modules ships.
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --ignore-scripts --workspace=api
+    npm ci --ignore-scripts
 
 # Copy api sources + prisma schema
 COPY apps/api ./apps/api
@@ -101,6 +108,13 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
 COPY --from=builder /app/apps/api/package.json ./apps/api/
 COPY --from=builder /app/package.json ./
+
+# Strip the npm CLI shipped with the node:22-alpine base image. The
+# runtime never calls npm (entrypoint is `node dist/main.js`), and npm's
+# bundled transitive deps include picomatch 4.0.3 which trips Trivy with
+# CVE-2026-33671. Removing npm eliminates the false-positive cleanly
+# instead of carrying a Trivy ignore-list entry.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg
 
 # Uploads dir for local-dev storage driver (S3 in prod skips this)
 RUN mkdir -p /app/uploads && chown -R jadwal:jadwal /app/uploads /app/apps

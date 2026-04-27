@@ -72,6 +72,13 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 jadwal && \
     adduser --system --uid 1001 jadwal
 
+# Strip the npm CLI shipped with the node:22-alpine base image. The
+# runtime never calls npm (entrypoint is `node server.js` from Next.js
+# standalone output), and npm's bundled transitive deps include
+# picomatch 4.0.3 which trips Trivy with CVE-2026-33671. Removing npm
+# eliminates the false-positive cleanly.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg
+
 # Copy the standalone build output. `outputFileTracingRoot` = monorepo root,
 # so the standalone bundle lives at apps/web/.next/standalone/apps/web/.
 COPY --from=builder /app/apps/web/public ./apps/web/public

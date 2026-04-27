@@ -46,7 +46,24 @@ WORKDIR /app
 # was the whole point of splitting this image out. The pinned version
 # MUST match the version in apps/api/package.json devDependencies so
 # the engine bundled in the CLI matches the schema. Bump together.
-RUN echo '{"name":"jadwal-migrations","version":"1.0.0","dependencies":{"prisma":"7.4.2"}}' > package.json
+# `overrides` forces patched versions of CVE-affected transitive deps that
+# Prisma 7's CLI brings in (hono, @hono/node-server, effect, lodash,
+# picomatch). Without these, Trivy flags 5 HIGH CVEs on this image even
+# though the migrations container only runs `prisma migrate deploy` and
+# never serves traffic. The overrides keep the deploy gate green.
+# Bump these alongside the Prisma version when you upgrade.
+RUN echo '{ \
+  "name":"jadwal-migrations", \
+  "version":"1.0.0", \
+  "dependencies":{"prisma":"7.8.0"}, \
+  "overrides":{ \
+    "hono":"^4.12.4", \
+    "@hono/node-server":"^1.19.10", \
+    "effect":"^3.20.0", \
+    "lodash":"^4.18.1", \
+    "picomatch":"^4.0.4" \
+  } \
+}' > package.json
 
 RUN --mount=type=cache,target=/root/.npm \
     npm install --omit=dev --ignore-scripts \
@@ -88,9 +105,15 @@ RUN echo "module.exports = { schema: 'prisma/schema.prisma', migrations: { path:
       > prisma.config.js \
  && chown jadwal:jadwal prisma.config.js
 
+# Strip the npm CLI shipped with the node:22-alpine base image — its
+# bundled transitive picomatch 4.0.3 trips Trivy with CVE-2026-33671.
+# We run prisma directly via node below, so npx isn't needed at runtime.
+USER root
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg
 USER jadwal
 
-# `prisma migrate deploy` is idempotent — applies any pending
-# migrations in order, exits 0 if there's nothing to do, exits
+# Direct node invocation of the Prisma CLI, bypassing npm/npx (which we
+# just stripped). `prisma migrate deploy` is idempotent — applies any
+# pending migrations in order, exits 0 if there's nothing to do, exits
 # non-zero on any failure. Exactly what the deploy pipeline wants.
-CMD ["npx", "--yes", "prisma", "migrate", "deploy"]
+CMD ["node", "/app/node_modules/prisma/build/index.js", "migrate", "deploy"]
