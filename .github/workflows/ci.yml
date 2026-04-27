@@ -363,8 +363,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build API Docker image
-        working-directory: apps/api
-        run: docker build -t jadwal-api:${{ github.sha }} .
+        # Build from the monorepo ROOT so the Dockerfile's
+        # `COPY package.json package-lock.json ./` and `COPY
+        # turbo.json ./` resolve. The image references monorepo-
+        # level files (workspaces, lockfile, turbo config) so it
+        # can't be built from inside `apps/api/`.
+        run: docker build -f apps/api/Dockerfile -t jadwal-api:${{ github.sha }} .
 
   build-web:
     name: Build Web Image
@@ -373,9 +377,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build Web Docker image
-        working-directory: apps/web
+        # Same reason as build-api above: monorepo root context for
+        # the Dockerfile's root-level COPYs (lockfile, turbo.json,
+        # apps/api/package.json for cross-workspace resolution).
         run: |
           docker build \
+            -f apps/web/Dockerfile \
             --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL || 'https://api.jadwal.com/api' }} \
             -t jadwal-web:${{ github.sha }} .
 
@@ -400,12 +407,16 @@ jobs:
       - name: Bundle size check
         env:
           NEXT_PUBLIC_API_URL: "https://api.placeholder.com/api"
+          # next.config.ts ships a strict `[FATAL] API_PROXY_TARGET
+          # must be set in production` guard. `next build` runs with
+          # NODE_ENV=production by default, so the guard fires here
+          # too. We're not actually proxying anything from a CI
+          # bundle-size run, so a placeholder value is fine — it
+          # just satisfies the throw.
+          API_PROXY_TARGET: "https://api.placeholder.com/api"
         # Invoke via `bash` instead of `./...` because the executable
         # bit is not preserved when the repo is checked out on a
-        # Windows host (the bit was added locally, but Git's Windows
-        # filemode handling can drop it). `bash <script>` runs the
-        # script regardless of executable-bit state — works
-        # identically on the Linux runner.
+        # Windows host (Git's filemode handling can drop +x).
         run: bash scripts/bundle-size-check.sh
 
   # ─── Stage 4: Deploy to AWS (main branch only) ─────────────────
