@@ -1,0 +1,25 @@
+# ─── Semgrep ignore patterns ─────────────────────────────────────────
+# Files in this list are skipped entirely by `semgrep scan`. Use ONLY
+# for paths where the matched code is legitimately not production
+# (test fixtures, seed scripts, dev tooling). For inline false-
+# positive suppression on a single line, prefer `// nosemgrep:
+# <rule-id>` in source instead — it documents the reasoning at the
+# match site.
+
+# E2E test fixtures intentionally hard-code test-account passwords so
+# Playwright can log in without a credential vault. The accounts only
+# exist in the local/test database (seeded by the scripts below) and
+# never appear in production.
+apps/web/e2e/
+
+# Local seed scripts — populate the dev/test database with deterministic
+# test users (customer + vendor + admin). Hard-coded passwords here are
+# the *fixture* values, not real credentials, and the scripts are not
+# bundled into any production image (Dockerfile only copies src/, dist/).
+apps/api/prisma/seed-e2e-customer.ts
+apps/api/prisma/seed-e2e-vendor.ts
+apps/api/prisma/seed-e2e-data.ts
+
+# Manual one-off booking-creation script for local QA — same rationale
+# as the seed scripts above.
+apps/api/scripts/create-test-booking.ts
