@@ -230,7 +230,18 @@ jobs:
 
       - name: No dev artifacts (devMode, devOtp, mock, sandbox)
         run: |
-          FOUND=$(grep -rni "devMode\|devOtp\|dev_\b\|mock\b\|sandbox\b\|fake\b" apps/api/src/ apps/web/src/ --include="*.ts" --include="*.tsx" | grep -v "node_modules" | grep -v "// " | grep -v ".d.ts" || true)
+          # `sandbox=` is the legitimate HTML iframe attribute (used by
+          # the Google Maps embed on the activity detail page) so we
+          # exclude it from the dev-artifact grep. We're targeting
+          # *variable / function names* like `sandboxMode`, `mockApi`,
+          # not HTML attributes.
+          FOUND=$(grep -rni "devMode\|devOtp\|dev_\b\|mock\b\|sandbox\b\|fake\b" apps/api/src/ apps/web/src/ --include="*.ts" --include="*.tsx" \
+            | grep -v "node_modules" \
+            | grep -v "// " \
+            | grep -v ".d.ts" \
+            | grep -v 'sandbox="' \
+            | grep -v "sandbox='" \
+            || true)
           if [ -n "$FOUND" ]; then
             echo "❌ FAILED: Dev artifacts found:"
             echo "$FOUND"
