@@ -1368,22 +1368,26 @@ webDescribe('REGRESSION: FE — activity map iframe is sandboxed', () => {
 });
 
 webDescribe('REGRESSION: FE — getApiError does not leak raw Error.message', () => {
-  const utils = readSrcSafe('../../apps/web/src/lib/utils.ts');
+  // `getApiError` was extracted from `utils.ts` into its own module
+  // (`lib/api-error.ts`) when the i18next dependency made it
+  // unsafe-to-import from RSC contexts. The regression checks now
+  // read the new file.
+  const apiError = readSrcSafe('../../apps/web/src/lib/api-error.ts');
 
   test('getApiError exists', () => {
-    expect(utils).toMatch(/export function getApiError/);
+    expect(apiError).toMatch(/export function getApiError/);
   });
 
   test('output is length-capped (no runaway error strings)', () => {
     // Must enforce a cap so a malicious backend cannot splash a megabyte of
     // text into the toast / UI. The cap may be expressed as a constant.
-    expect(utils).toMatch(/MAX_LEN\s*=\s*500|slice\(0,\s*500\)|slice\(0,\s*MAX_LEN\)/);
+    expect(apiError).toMatch(/MAX_LEN\s*=\s*500|slice\(0,\s*500\)|slice\(0,\s*MAX_LEN\)/);
   });
 
   test('no raw Error.message leak path (only trusted backend strings surface)', () => {
     // Explicit comment in the source guards against a future dev adding a
     // fall-through to err.message and re-opening the leak vector.
-    expect(utils).toMatch(/No.*Error\.message.*leak|Intentionally no.*Error\.message/i);
+    expect(apiError).toMatch(/No.*Error\.message.*leak|Intentionally no.*Error\.message/i);
   });
 });
 

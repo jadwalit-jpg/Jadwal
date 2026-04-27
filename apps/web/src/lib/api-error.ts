@@ -62,5 +62,10 @@ export function getApiError(err: unknown, fallback = 'Something went wrong'): st
     if (typeof msg === 'string' && msg.length > 0) return trim(msg);
     if (Array.isArray(msg) && typeof msg[0] === 'string') return trim(msg[0]);
   }
+  // Intentionally no Error.message fall-through — only trusted
+  // backend-supplied strings (response.data.message / errorCode)
+  // surface in the UI. A leak from raw `err.message` would expose
+  // axios stack frames, network internals, or chained-cause text
+  // that may include URLs, IPs, or tokens. Keep the guard tight.
   return fallback;
 }
