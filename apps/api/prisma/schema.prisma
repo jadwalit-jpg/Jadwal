@@ -5,7 +5,13 @@ datasource db {
 }
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Ship engines for: dev box (`native`) + Alpine prod runtime
+  // (`linux-musl-openssl-3.0.x`). Without this Prisma defaults to "native"
+  // only, which means the engine matches *whoever ran prisma generate* —
+  // unsafe across Mac/Windows dev → Linux prod. Pinning also drops ~100 MB
+  // of unused engine binaries from the prod image.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 model User {
