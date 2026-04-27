@@ -46,18 +46,23 @@ export default function LikedActivitiesPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
 
-  // Redirect to login if not authenticated
-  if (!authLoading && !user) {
-    router.push('/login?callbackUrl=/likes');
-    return null;
-  }
-
+  // Hook MUST be called before any early return to satisfy React's
+  // rules-of-hooks (the lint error fixed 2026-04-27 — previously
+  // the redirect-on-unauthenticated short-circuited the hook order).
+  // The `enabled` flag below already gates the actual fetch on having
+  // a logged-in customer, so the hook is a no-op pre-auth.
   const { data: activities, isLoading, isError } = useQuery<LikedActivity[]>({
     queryKey: ['my-likes'],
     queryFn: () => api.get('/customer/likes').then((r) => r.data),
     enabled: !!user && user.role === 'CUSTOMER',
     staleTime: 30_000,
   });
+
+  // Redirect to login if not authenticated
+  if (!authLoading && !user) {
+    router.push('/login?callbackUrl=/likes');
+    return null;
+  }
 
   const Chevron = isRtl ? ChevronLeft : ChevronRight;
 

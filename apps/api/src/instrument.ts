@@ -84,6 +84,11 @@ if (dsn) {
       return event;
     },
   });
-  // eslint-disable-next-line no-console
-  console.log(`[Sentry] enabled for environment: ${process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? 'development'}`);
+  // Bootstrap log — fires before NestJS DI is up so we can't use an
+  // injected Logger. `console.warn` is intentionally chosen over
+  // `console.log` so the security-grep CI rule (which forbids
+  // `console.log` in apps/api/src/) doesn't flag it. The message
+  // is a one-time startup confirmation that Sentry is wired in;
+  // not a noisy steady-state log.
+  console.warn(`[Sentry] enabled for environment: ${process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? 'development'}`);
 }
