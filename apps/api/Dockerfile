@@ -1,9 +1,21 @@
+# syntax=docker/dockerfile:1.7
 # Build context MUST be the monorepo root (apps/api is an npm workspace).
 #   Build:   docker build -f apps/api/Dockerfile -t jadwal-api:latest .
 #   Run:     docker run -p 4000:4000 --env-file .env jadwal-api:latest
+#
+# `# syntax` line above enables BuildKit features. Lets us use
+# `--mount=type=cache` on RUN steps so the npm download cache persists
+# between builds — local rebuild after a code change drops from ~60s to
+# ~10s on the install step. Same speedup applies in CI when GitHub
+# Actions caches the BuildKit cache between runs.
+#
+# All FROM lines pin `--platform=linux/amd64` so we always produce an
+# amd64 image regardless of the host arch (matters when developers on
+# Apple Silicon Macs build locally — without the pin Docker would build
+# arm64 and ECS Fargate would refuse to run it with "exec format error").
 
 # ── Stage 1: Install prod deps for the api workspace ──────────────
-FROM node:22-alpine AS deps
+FROM --platform=linux/amd64 node:22-alpine AS deps
 WORKDIR /app
 
 # Copy lockfile + both workspace manifests. npm needs the root manifest to
@@ -29,7 +41,8 @@ COPY apps/web/package.json ./apps/web/
 #      fixtures (test/, __tests__/, examples/) shipped inside packages.
 #      No runtime path reads them; pure shipping cost.
 # Combined: ~150-200 MB drop on the final image with zero behaviour change.
-RUN npm ci --omit=dev --ignore-scripts --workspace=api --include-workspace-root=false \
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev --ignore-scripts --workspace=api --include-workspace-root=false \
  && rm -rf node_modules/prisma node_modules/.bin/prisma \
            node_modules/typescript node_modules/.bin/tsc node_modules/.bin/tsserver \
            apps/api/node_modules/prisma apps/api/node_modules/typescript \
@@ -45,7 +58,7 @@ RUN npm ci --omit=dev --ignore-scripts --workspace=api --include-workspace-root=
       \) -prune -exec rm -rf {} + 2>/dev/null || true
 
 # ── Stage 2: Build ────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM --platform=linux/amd64 node:22-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -54,7 +67,8 @@ COPY apps/web/package.json ./apps/web/
 
 # Full install (including dev deps) for the api workspace — needed for
 # @nestjs/cli + prisma + typescript at build time.
-RUN npm ci --ignore-scripts --workspace=api
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts --workspace=api
 
 # Copy api sources + prisma schema
 COPY apps/api ./apps/api
@@ -66,7 +80,7 @@ RUN npx prisma generate
 RUN npm run build
 
 # ── Stage 3: Production image ──────────────────────────────────────
-FROM node:22-alpine AS runner
+FROM --platform=linux/amd64 node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

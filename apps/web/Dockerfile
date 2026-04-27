@@ -1,11 +1,21 @@
+# syntax=docker/dockerfile:1.7
 # Build context MUST be the monorepo root (apps/web is an npm workspace).
 #   Build:   docker build -f apps/web/Dockerfile \
 #              --build-arg NEXT_PUBLIC_API_URL=https://api.jadwal.com/api \
 #              -t jadwal-web:latest .
 #   Run:     docker run -p 3000:3000 jadwal-web:latest
+#
+# `# syntax` line above enables BuildKit features. Lets us use
+# `--mount=type=cache` on RUN steps so npm's download cache persists
+# between builds. Speeds up CI's `npm ci` step from ~60s to ~10s on
+# warm cache. Same effect locally if you rebuild the image.
+#
+# All FROM lines pin `--platform=linux/amd64` so we always produce an
+# amd64 image regardless of the host arch — matters when developers on
+# Apple Silicon Macs build locally; ECS Fargate runs amd64 by default.
 
 # ── Stage 1: Install prod deps for the web workspace ──────────────
-FROM node:22-alpine AS deps
+FROM --platform=linux/amd64 node:22-alpine AS deps
 WORKDIR /app
 
 # Copy lockfile + both workspace manifests. npm needs them all to resolve
@@ -15,10 +25,11 @@ COPY apps/web/package.json ./apps/web/
 COPY apps/api/package.json ./apps/api/
 
 # Install prod deps for the web workspace only.
-RUN npm ci --omit=dev --ignore-scripts --workspace=web --include-workspace-root=false
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev --ignore-scripts --workspace=web --include-workspace-root=false
 
 # ── Stage 2: Build ────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM --platform=linux/amd64 node:22-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -26,7 +37,8 @@ COPY apps/web/package.json ./apps/web/
 COPY apps/api/package.json ./apps/api/
 
 # Full install (dev deps needed for next build + tailwind + postcss).
-RUN npm ci --ignore-scripts --workspace=web
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts --workspace=web
 
 # Copy web sources + turbo manifest (Next.js outputFileTracingRoot needs
 # the monorepo root to correctly trace cross-workspace imports).
@@ -51,7 +63,7 @@ RUN npm run build
 # ── Stage 3: Production image ──────────────────────────────────────
 # Next.js standalone output produces a minimal server.js + only the
 # node_modules files actually imported at runtime.
-FROM node:22-alpine AS runner
+FROM --platform=linux/amd64 node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
