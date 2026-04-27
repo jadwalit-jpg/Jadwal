@@ -158,7 +158,14 @@ async function bootstrap() {
   // this NODE_ENV check blocks the static handler + cross-origin CORP from
   // ever attaching. Two independent conditions must BOTH misconfigure for
   // prod to accidentally serve local /uploads.
-  if (process.env.STORAGE_DRIVER === 'local' && process.env.NODE_ENV !== 'production') {
+  //
+  // Allowlist (NODE_ENV in {development, test}) instead of denylist
+  // (NODE_ENV !== production) so a misconfigured `staging` value also
+  // refuses to mount the dev-only static handler — and so the security-
+  // grep CI rule can stay strict on `if (...!== 'production')`.
+  const nodeEnv = process.env.NODE_ENV;
+  const isDevOrTest = nodeEnv === 'development' || nodeEnv === 'test';
+  if (process.env.STORAGE_DRIVER === 'local' && isDevOrTest) {
     app.use('/uploads', (_req: Request, res: Response, next: NextFunction) => {
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
       next();

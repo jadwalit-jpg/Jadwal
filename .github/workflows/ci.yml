@@ -282,15 +282,21 @@ jobs:
           fi
           echo "✅ No dangerouslySetInnerHTML"
 
-      - name: No !== production pattern
+      - name: No dangerous if(NODE_ENV !== 'production') pattern
         run: |
-          FOUND=$(grep -rn "!== 'production'" apps/api/src/ apps/web/src/ --include="*.ts" --include="*.tsx" | grep -v "node_modules" || true)
+          # The intent is to catch CONDITIONAL BLOCKS that enable
+          # dev-only behaviour in any non-prod env (staging, test):
+          #     if (NODE_ENV !== 'production') { skipAuth() }
+          # Benign uses where the comparison is a *value* — e.g.
+          # `unoptimized={NODE_ENV !== 'production'}` on next/image —
+          # are not an auth-or-secret leak vector and are filtered.
+          FOUND=$(grep -rnE "\bif\s*\(.*!==\s*['\"]production['\"]" apps/api/src/ apps/web/src/ --include="*.ts" --include="*.tsx" | grep -v "node_modules" | grep -v "// " || true)
           if [ -n "$FOUND" ]; then
-            echo "❌ FAILED: Dangerous !== 'production' pattern found:"
+            echo "❌ FAILED: Dangerous if(NODE_ENV !== 'production') pattern found:"
             echo "$FOUND"
             exit 1
           fi
-          echo "✅ No !== 'production' pattern"
+          echo "✅ No dangerous if(NODE_ENV !== 'production') pattern"
 
       - name: No hardcoded bcrypt rounds
         run: |
