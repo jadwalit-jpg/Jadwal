@@ -26,7 +26,7 @@ export class SmsService {
 
     // Only initialize SNS client when SMS is enabled (avoids credential errors in dev)
     this.snsClient = this.enabled
-      ? new SNSClient({ region: this.config.get('AWS_REGION', 'me-south-1') })
+      ? new SNSClient({ region: this.config.get('AWS_REGION', 'me-central-1') })
       : null;
   }
 

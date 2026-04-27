@@ -473,7 +473,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: github-actions-deploy-${{ github.run_id }}
-          aws-region: ${{ secrets.AWS_REGION || 'me-south-1' }}
+          aws-region: ${{ secrets.AWS_REGION || 'me-central-1' }}
 
       - name: Login to Amazon ECR
         id: ecr

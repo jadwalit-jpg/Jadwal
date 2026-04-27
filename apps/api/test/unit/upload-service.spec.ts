@@ -72,7 +72,7 @@ function makeConfig(overrides: Record<string, string> = {}) {
     STORAGE_DRIVER: 'local',
     API_URL: 'https://api.jadwal.test',
     S3_BUCKET: '',
-    S3_REGION: 'me-south-1',
+    S3_REGION: 'me-central-1',
     CDN_URL: '',
     UPLOAD_MAX_SIZE_MB: '10',
     UPLOAD_MAX_DIMENSION: '1920',

@@ -50,7 +50,7 @@ const IMG_HOSTS = [
   'https://*.tile.openstreetmap.org',
   'https://unpkg.com',
   'https://jadwal-assets.s3.amazonaws.com',
-  'https://jadwal-assets.s3.me-south-1.amazonaws.com',
+  'https://jadwal-assets.s3.me-central-1.amazonaws.com',
   'https://cdn.jadwal.app',
   API_ORIGIN,
 ];

@@ -33,8 +33,8 @@ concurrency:
                               # tasks in a half-transitioned state
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}            # e.g. me-south-1
-  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}        # e.g. 123456789012.dkr.ecr.me-south-1.amazonaws.com
+  AWS_REGION: ${{ vars.AWS_REGION }}            # e.g. me-central-1
+  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}        # e.g. 123456789012.dkr.ecr.me-central-1.amazonaws.com
   ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}          # e.g. jadwal-prod
   API_SERVICE: ${{ vars.API_SERVICE }}          # e.g. jadwal-api
   WEB_SERVICE: ${{ vars.WEB_SERVICE }}          # e.g. jadwal-web

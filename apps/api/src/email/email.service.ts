@@ -35,7 +35,7 @@ export class EmailService {
 
     // Only initialize SES client when email is enabled (avoids credential errors in dev)
     this.sesClient = this.enabled
-      ? new SESClient({ region: this.config.get('AWS_REGION', 'me-south-1') })
+      ? new SESClient({ region: this.config.get('AWS_REGION', 'me-central-1') })
       : null;
   }
 

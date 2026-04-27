@@ -29,7 +29,7 @@ function makeConfig(overrides: Record<string, string> = {}) {
     EMAIL_FROM: 'noreply@jadwal.com',
     EMAIL_ENABLED: 'false',
     APP_URL: 'https://app.jadwal.test',
-    AWS_REGION: 'me-south-1',
+    AWS_REGION: 'me-central-1',
     ADMIN_EMAIL: 'ops@jadwal.com',
   };
   const merged = { ...defaults, ...overrides };

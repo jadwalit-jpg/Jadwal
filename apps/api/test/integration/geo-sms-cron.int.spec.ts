@@ -133,7 +133,7 @@ describe('SmsService.sendOtp', () => {
 
   function makeConfig(overrides: Record<string, string> = {}) {
     const merged: Record<string, string> = {
-      SMS_ENABLED: 'false', AWS_REGION: 'me-south-1', ...overrides,
+      SMS_ENABLED: 'false', AWS_REGION: 'me-central-1', ...overrides,
     };
     return {
       get: (k: string, fallback?: string) => merged[k] ?? fallback,
