@@ -251,7 +251,10 @@ jobs:
 
       - name: No console.log in API source
         run: |
-          FOUND=$(grep -rn "console\.log" apps/api/src/ --include="*.ts" | grep -v "node_modules" || true)
+          # Same `grep -v "// "` filter as the other security-grep
+          # rules: only real CALLS to console.log are caught, not
+          # comment text that happens to mention them.
+          FOUND=$(grep -rn "console\.log" apps/api/src/ --include="*.ts" | grep -v "node_modules" | grep -v "// " || true)
           if [ -n "$FOUND" ]; then
             echo "❌ FAILED: console.log found in API source:"
             echo "$FOUND"
