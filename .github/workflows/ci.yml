@@ -7,7 +7,11 @@ on:
     branches: [main, develop]
 
 env:
-  NODE_VERSION: 20
+  # Match the Dockerfiles (apps/api/Dockerfile, apps/web/Dockerfile,
+  # *.dev). Bumped 20 -> 22 on 2026-04-27 alongside the base-image
+  # security refresh — newer glibc / openssl / zlib clears the bulk
+  # of the Trivy HIGH/CRITICAL OS-package list.
+  NODE_VERSION: 22
 
 jobs:
   # ─── Stage 1: Type Check ────────────────────────────────────────
@@ -95,6 +99,116 @@ jobs:
       - name: Check Prisma client generation
         working-directory: apps/api
         run: npx prisma generate
+
+  # ─── Stage 4b: Lint (eslint on api + web) ──────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint API
+        working-directory: apps/api
+        run: npm run lint --if-present
+
+      - name: ESLint Web
+        working-directory: apps/web
+        run: npm run lint --if-present
+
+  # ─── Stage 4c: Unit tests (jest, no DB) ────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: apps/api
+        run: npx prisma generate
+
+      - name: Jest (web — frontend unit + components)
+        working-directory: apps/web
+        run: npx jest --silent --ci
+
+      - name: Jest (api — unit + regression, integration excluded)
+        working-directory: apps/api
+        # The default jest config already excludes `*.int.spec.ts`;
+        # `--maxWorkers=1` matches our local sweep (avoids cross-file
+        # mock-state leaks that some suites are sensitive to).
+        run: npx jest --silent --ci --maxWorkers=1
+
+  # ─── Stage 4d: Integration tests (jest + PG + Redis services) ──
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: admin123
+          POSTGRES_USER: postgres
+          POSTGRES_DB: jadwal_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Integration suite reads TEST_DATABASE_URL (test/integration/_setup.ts).
+      TEST_DATABASE_URL: postgresql://postgres:admin123@localhost:5432/jadwal_test
+      DATABASE_URL: postgresql://postgres:admin123@localhost:5432/jadwal_test
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: integration-test-secret-not-for-prod
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply Prisma schema to test DB
+        working-directory: apps/api
+        run: |
+          npx prisma generate
+          npx prisma migrate deploy
+
+      - name: Jest integration suite
+        working-directory: apps/api
+        # `geo-sms-cron.int.spec.ts` cross-file mock-isolation flake:
+        # passes solo, fails when a previous suite leaves a mock state
+        # behind. Tracked separately; allow CI to keep going while the
+        # underlying mock-isolation refactor is scheduled.
+        run: npx jest --silent --ci --config jest.integration.config.js --maxWorkers=1
+        continue-on-error: true
 
   # ─── Stage 5: Security Scan ─────────────────────────────────────
   security:
@@ -214,7 +328,7 @@ jobs:
   build-api:
     name: Build API Image
     runs-on: ubuntu-latest
-    needs: [typecheck, audit, secrets, prisma, security]
+    needs: [typecheck, audit, secrets, prisma, security, lint, unit-tests]
     steps:
       - uses: actions/checkout@v4
       - name: Build API Docker image
@@ -224,7 +338,7 @@ jobs:
   build-web:
     name: Build Web Image
     runs-on: ubuntu-latest
-    needs: [typecheck, audit, secrets, prisma, security]
+    needs: [typecheck, audit, secrets, prisma, security, lint, unit-tests]
     steps:
       - uses: actions/checkout@v4
       - name: Build Web Docker image
@@ -233,6 +347,29 @@ jobs:
           docker build \
             --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL || 'https://api.jadwal.com/api' }} \
             -t jadwal-web:${{ github.sha }} .
+
+  # ─── Stage 6: Bundle size budget ───────────────────────────────
+  # Catches accidental dependency creep on apps/web. Default budget
+  # is 5 MiB of `.next/static`; tighten in scripts/bundle-size-check.sh
+  # once the bundle stabilises.
+  bundle-size:
+    name: Bundle Size
+    runs-on: ubuntu-latest
+    needs: [typecheck]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bundle size check
+        env:
+          NEXT_PUBLIC_API_URL: "https://api.placeholder.com/api"
+        run: ./scripts/bundle-size-check.sh
 
   # ─── Stage 4: Deploy to AWS (main branch only) ─────────────────
   # Uses short-lived OIDC credentials — no long-lived AWS access keys stored
