@@ -1,0 +1,30 @@
+## .dive-ci — image-size + layer-efficiency budget enforced in CI.
+##
+## Loaded by `dive --ci <image>` in .github/workflows/docker-size-budget.yml.
+## Runs after every Dockerfile / dependency change and fails the PR if any
+## of the rules below fire — catches accidental image bloat at PR time
+## instead of after a year of slow drift.
+##
+## Tuning notes:
+##   - Numbers were calibrated against the Tier-1-pruned api image (806 MB)
+##     and the Next.js standalone web image (348 MB). Bumps are explicit
+##     and reviewable here, not silent.
+##   - lowestEfficiency is a 0–1 ratio of "useful bytes" (i.e. files that
+##     actually survive into the final image) over total bytes added across
+##     all layers. < 0.95 typically means a layer added something a later
+##     layer deleted — pure dead weight.
+##   - highestUserWastedPercent is the fraction of the image that is dead
+##     weight. > 0.05 = > 5% of the image is wasted bytes.
+##   - highestWastedBytes is the absolute cap. 50 MB feels generous; tune
+##     downward as the image gets leaner.
+
+rules:
+  # Fail if image-stack efficiency drops below 95%.
+  lowestEfficiency: 0.95
+
+  # Fail if more than 5% of total image bytes are "wasted" (added by one
+  # layer and removed by a later one).
+  highestUserWastedPercent: 0.05
+
+  # Hard cap on absolute wasted bytes — 50 MB.
+  highestWastedBytes: 50000000

@@ -1,0 +1,96 @@
+# syntax=docker/dockerfile:1.7
+# ═══════════════════════════════════════════════════════════════
+# Migrations-only image — runs `prisma migrate deploy` against
+# whichever DATABASE_URL the runtime env passes in. Used as a
+# one-shot ECS Task (NOT a service) — invoked by the deploy
+# pipeline before the app rolls out.
+#
+# Why a separate image instead of reusing apps/api/Dockerfile:
+#
+# 1. Decoupling. App rollout no longer carries the Prisma CLI
+#    inside the runtime image. Smaller (40 MB lighter) and a
+#    smaller attack surface (compromised app container can't
+#    `npx prisma migrate` arbitrarily).
+#
+# 2. Explicit failure mode. When this task exits non-zero, the
+#    deploy pipeline blocks the app rollout — you see a clean
+#    "migration task failed: <Prisma error>" in CloudWatch
+#    instead of a generic crash loop on the app side.
+#
+# 3. Observability. This task gets its own CloudWatch log group
+#    so migration runs are independently auditable.
+#
+# Usage in CI (after AWS lands):
+#   aws ecs run-task \
+#     --cluster jadwal-prod \
+#     --task-definition jadwal-migrations \
+#     --launch-type FARGATE \
+#     --network-configuration "..." \
+#     --wait
+#
+# Build context MUST be the monorepo root (same as the API image):
+#   docker build -f apps/api/Dockerfile.migrations \
+#     -t jadwal-migrations:latest .
+#
+# Local smoke test against the dev DB:
+#   docker run --rm \
+#     -e DATABASE_URL="postgresql://postgres:admin123@host.docker.internal:5433/jadwal_test" \
+#     jadwal-migrations:latest
+
+# ── Stage 1: Pull just the Prisma CLI + its deps ──────────────────
+FROM --platform=linux/amd64 node:22-alpine AS deps
+WORKDIR /app
+
+# A standalone npm package with `prisma` (the CLI) as its only dep.
+# Avoids dragging in the entire api workspace's node_modules — that
+# was the whole point of splitting this image out. The pinned version
+# MUST match the version in apps/api/package.json devDependencies so
+# the engine bundled in the CLI matches the schema. Bump together.
+RUN echo '{"name":"jadwal-migrations","version":"1.0.0","dependencies":{"prisma":"7.4.2"}}' > package.json
+
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --omit=dev --ignore-scripts \
+ && find node_modules -type f \( \
+        -name "*.d.ts" -o -name "*.map" -o \
+        -name "LICENSE*" -o -name "CHANGELOG*" -o \
+        -name "*.md" -o -name "README*" \
+      \) -delete 2>/dev/null \
+ && find node_modules -type d \( \
+        -name "test" -o -name "tests" -o -name "__tests__" -o \
+        -name "docs" -o -name "examples" -o -name ".github" \
+      \) -prune -exec rm -rf {} + 2>/dev/null || true
+
+# ── Stage 2: Final image ──────────────────────────────────────────
+FROM --platform=linux/amd64 node:22-alpine AS runner
+WORKDIR /app
+
+# Non-root user — same posture as the app image.
+RUN addgroup --system --gid 1001 jadwal && \
+    adduser --system --uid 1001 jadwal
+
+# Copy the standalone package + Prisma CLI from the deps stage.
+# `--chown` pre-ownership means we don't need a separate RUN chown -R
+# step (which would create a duplicate full-image layer ~300 MB heavy).
+COPY --from=deps --chown=jadwal:jadwal /app/package.json ./
+COPY --from=deps --chown=jadwal:jadwal /app/node_modules ./node_modules
+
+# Schema + migration SQL only — no app source, no compiled dist.
+# Migration files are deterministic so this layer changes only when
+# a new migration is added; ECR push stays small.
+COPY --chown=jadwal:jadwal apps/api/prisma ./prisma
+
+# Inline prisma.config.js — wires DATABASE_URL from env into the
+# datasource. Prisma 7 requires this file (or schema-level `url`)
+# for `migrate deploy` to know where to connect. We use plain JS
+# instead of copying the repo's prisma.config.ts to avoid dragging
+# in tsx / dotenv just to read one env var.
+RUN echo "module.exports = { schema: 'prisma/schema.prisma', migrations: { path: 'prisma/migrations' }, datasource: { url: process.env.DATABASE_URL } };" \
+      > prisma.config.js \
+ && chown jadwal:jadwal prisma.config.js
+
+USER jadwal
+
+# `prisma migrate deploy` is idempotent — applies any pending
+# migrations in order, exits 0 if there's nothing to do, exits
+# non-zero on any failure. Exactly what the deploy pipeline wants.
+CMD ["npx", "--yes", "prisma", "migrate", "deploy"]

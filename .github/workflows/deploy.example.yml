@@ -108,10 +108,42 @@ jobs:
           provenance: false
 
   # ───────────────────────────────────────────────────────────────────────
-  # 3. Trivy scan — block deploy on any HIGH/CRITICAL that has a fix available
+  # 3a. Build + push the migrations image (separate from the api image so
+  #     the prod app container doesn't carry the Prisma CLI). Used by the
+  #     migrate job below as a one-shot Fargate task before the rolling
+  #     deploy.
+  # ───────────────────────────────────────────────────────────────────────
+  build-migrations:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/api/Dockerfile.migrations
+          push: true
+          pull: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.ECR_REGISTRY }}/jadwal-migrations:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+  # ───────────────────────────────────────────────────────────────────────
+  # 3b. Trivy scan — block deploy on any HIGH/CRITICAL that has a fix available
   # ───────────────────────────────────────────────────────────────────────
   trivy:
-    needs: [build-api, build-web]
+    needs: [build-api, build-web, build-migrations]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -119,7 +151,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [jadwal-api, jadwal-web]
+        image: [jadwal-api, jadwal-web, jadwal-migrations]
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -158,13 +190,16 @@ jobs:
           role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Register a new revision of the migrate task def pointing at :${SHA}.
-      # The task def JSON is stored in infra/ecs/migrate-task.json and uses
-      # `image: ${IMAGE_TAG_PLACEHOLDER}` which we replace here.
+      # Register a new revision of the migrate task def pointing at :${SHA}
+      # of the SEPARATE migrations image (NOT jadwal-api — the prod api
+      # image no longer carries the Prisma CLI; that's the whole point of
+      # splitting migrations out). The task def JSON at infra/ecs/
+      # migrate-task.json uses `image: IMAGE_TAG_PLACEHOLDER` which we
+      # replace here.
       - name: Register migrate task revision
         id: register
         run: |
-          IMG="${{ env.ECR_REGISTRY }}/jadwal-api:${{ github.sha }}"
+          IMG="${{ env.ECR_REGISTRY }}/jadwal-migrations:${{ github.sha }}"
           sed -i "s|IMAGE_TAG_PLACEHOLDER|$IMG|g" infra/ecs/migrate-task.json
           REVISION=$(aws ecs register-task-definition \
             --cli-input-json file://infra/ecs/migrate-task.json \

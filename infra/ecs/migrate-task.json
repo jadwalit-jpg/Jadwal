@@ -1,0 +1,39 @@
+{
+  "_comment": "Template for the ONE-OFF migrations task. Fill the <PLACEHOLDERS> from your AWS account, then `aws ecs register-task-definition --cli-input-json file://this-file.json`. Re-register on every Prisma migration commit so the image tag tracks the latest. NOT a service — invoked via `aws ecs run-task` from the deploy pipeline (see .github/workflows/deploy.example.yml). Logs land in their own CloudWatch group so a failed migration is easy to spot independently of the app.",
+
+  "family": "jadwal-migrations",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+
+  "cpu": "256",
+  "memory": "512",
+
+  "executionRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/jadwal-ecs-execution",
+  "taskRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/jadwal-ecs-task",
+
+  "containerDefinitions": [
+    {
+      "name": "migrations",
+      "image": "IMAGE_TAG_PLACEHOLDER",
+      "essential": true,
+      "readonlyRootFilesystem": false,
+
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/DATABASE_URL"
+        }
+      ],
+
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/jadwal-migrations",
+          "awslogs-region": "<AWS_REGION>",
+          "awslogs-stream-prefix": "migrations",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}
