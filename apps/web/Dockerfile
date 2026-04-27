@@ -38,6 +38,13 @@ COPY turbo.json ./
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# API_PROXY_TARGET — required by next.config.ts in production. Server-side
+# only (not baked into the client bundle); used at runtime by Next.js's
+# rewrite() to forward /api/* to the API container. Build still needs it
+# present because next.config.ts validates it during `next build`.
+ARG API_PROXY_TARGET
+ENV API_PROXY_TARGET=$API_PROXY_TARGET
+
 WORKDIR /app/apps/web
 RUN npm run build
 
