@@ -380,10 +380,15 @@ jobs:
         # Same reason as build-api above: monorepo root context for
         # the Dockerfile's root-level COPYs (lockfile, turbo.json,
         # apps/api/package.json for cross-workspace resolution).
+        # API_PROXY_TARGET is required at build time because
+        # next.config.ts evaluates the prod-guard while Next compiles
+        # the config. We pass a placeholder here — real prod values
+        # come from ECS task-definition env, not the image.
         run: |
           docker build \
             -f apps/web/Dockerfile \
             --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL || 'https://api.jadwal.com/api' }} \
+            --build-arg API_PROXY_TARGET=${{ secrets.API_PROXY_TARGET || 'https://api.placeholder.com/api' }} \
             -t jadwal-web:${{ github.sha }} .
 
   # ─── Stage 6: Bundle size budget ───────────────────────────────

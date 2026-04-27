@@ -20,8 +20,12 @@
 name: deploy
 
 on:
-  push:
-    branches: [main]
+  # Manual-only until AWS infra is provisioned. Once activated, switch
+  # to `push: branches: [main]`. Leaving an `on: push` trigger here
+  # while the file is still `.example.yml` makes the workflow fire on
+  # every commit and fail at the first AWS_REGION-required step,
+  # masking real CI failures and spamming the Actions tab.
+  workflow_dispatch:
 
 concurrency:
   group: deploy-${{ github.ref }}
