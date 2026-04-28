@@ -44,6 +44,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false   # Scorecard inspects the .git config
+          fetch-depth: 0               # Scorecard's Branch-Protection /
+                                       # Code-Review checks need full
+                                       # commit history; default shallow
+                                       # fetch (depth=1) silently skips them
 
       - name: Run analysis
         uses: ossf/scorecard-action@v2.4.1

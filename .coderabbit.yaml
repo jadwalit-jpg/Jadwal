@@ -39,7 +39,7 @@ reviews:
     - "!**/playwright-report/**"
     - "!**/*-snapshots/**"          # Playwright visual baselines
     - "!**/__snapshots__/**"        # Jest snapshots
-    - "!**/migrations/*.sql"        # Prisma migrations are reviewed via schema.prisma diff
+    - "!**/migrations/**/*.sql"     # Prisma migrations are reviewed via schema.prisma diff (recursive — files live in timestamped subdirs)
     - "!graphify-out/**"
     - "!tests/reports/**"
     - "!**/*.lock"
