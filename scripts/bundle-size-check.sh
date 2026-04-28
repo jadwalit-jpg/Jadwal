@@ -59,17 +59,17 @@ fi
 # `find -printf '%s\t%p'` emits tab-separated; pin awk -F'\t' so paths
 # containing spaces (e.g. "jadwal webapp" on Windows) survive intact.
 #
-# Capture the sorted output into a variable BEFORE piping to head:
-# under `set -o pipefail`, `find | sort | head` lets head close the
-# pipe after 15 lines, which makes coreutils 8.30+ sort exit non-zero
-# with "fflush failed: Broken pipe" — pipefail propagates that as
-# exit 2 and `set -e` kills the script even though the budget passed.
+# Avoid `head` entirely under `set -o pipefail`: any upstream writer
+# (including bash's echo builtin and coreutils 8.30+ sort) can hit
+# SIGPIPE when head closes the pipe early, exit non-zero, and pipefail
+# then kills the script with exit 141 even though the budget already
+# passed. awk's `NR <= 15` clause limits output without closing the
+# pipe to its own stdin.
 echo
 echo "▶ Top 15 largest static files:"
-SORTED=$(find "$STATIC_DIR" -type f -printf '%s\t%p\n' | sort -rn)
-echo "$SORTED" \
-  | head -n 15 \
-  | awk -F'\t' -v r="$STATIC_DIR/" '{
+find "$STATIC_DIR" -type f -printf '%s\t%p\n' \
+  | sort -rn \
+  | awk -F'\t' -v r="$STATIC_DIR/" 'NR <= 15 {
       path = $2
       idx = index(path, r)
       if (idx > 0) path = substr(path, idx + length(r))
