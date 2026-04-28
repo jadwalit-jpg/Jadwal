@@ -12,7 +12,6 @@ import { localized } from '@/lib/localize';
 import {
   CalendarRange,
   CalendarCheck,
-  Clock,
   Plus,
   Activity,
   ChevronRight,

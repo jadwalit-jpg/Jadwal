@@ -32,13 +32,31 @@ RUN --mount=type=cache,target=/root/.npm \
 FROM --platform=linux/amd64 node:22-alpine AS builder
 WORKDIR /app
 
+# node:22-alpine ships yarn 1.22.x. Next.js 15.5+'s lockfile-patching
+# step calls `yarn config get registry` to detect the package manager
+# and then trips on the corepack-style `"packageManager": "npm@11.6.2"`
+# we declare in root package.json (yarn 1.x parses the value as
+# "yarn@npm@11.6.2" and aborts). We use npm exclusively, so strip
+# yarn before npm install so Next never finds it. Same defense as
+# the runner stage (line 80) which already strips npm/yarn for the
+# same Trivy-CVE reason.
+RUN rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg
+
 COPY package.json package-lock.json ./
 COPY apps/web/package.json ./apps/web/
 COPY apps/api/package.json ./apps/api/
 
 # Full install (dev deps needed for next build + tailwind + postcss).
+# Scripts ENABLED in this builder stage so platform-specific native
+# binaries (notably `lightningcss-linux-x64-musl.node` used by Tailwind
+# v4 + Next.js's font subsystem) get installed via their postinstall
+# hooks. Without this, `next build` aborts with
+# "Cannot find module '../lightningcss.linux-x64-musl.node'".
+# Security posture: this is only the BUILDER stage, which is thrown
+# away after producing the standalone bundle. The runner stage at the
+# bottom still uses `--ignore-scripts` to harden the production image.
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --ignore-scripts --workspace=web
+    npm ci --workspace=web
 
 # Copy web sources + turbo manifest (Next.js outputFileTracingRoot needs
 # the monorepo root to correctly trace cross-workspace imports).

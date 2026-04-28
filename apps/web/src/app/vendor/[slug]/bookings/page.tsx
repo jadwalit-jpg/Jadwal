@@ -58,8 +58,6 @@ function computeNominalTotal(b: any): number {
   return t + c;
 }
 
-const inputCls = 'px-3 py-2.5 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/30 text-gray-900 dark:text-white placeholder:text-gray-400';
-
 export default function VendorBookingsPage() {
   const { user } = useAuth();
   const { slug: _slug } = useParams() as { slug: string };

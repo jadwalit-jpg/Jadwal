@@ -312,7 +312,7 @@ export default function BookActivityPage() {
         setCheckOut(cin.toISOString().split('T')[0]);
         return;
       }
-      if (!checkIn || (checkIn && checkOut)) {
+      if (!checkIn || checkOut) {
         setCheckIn(date);
         setCheckOut(null);
       } else {

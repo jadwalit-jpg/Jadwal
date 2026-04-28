@@ -16,7 +16,6 @@
     "db:studio": "npx prisma studio --schema apps/api/prisma/schema.prisma",
     "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true"
   },
-  "packageManager": "npm@11.6.2",
   "devDependencies": {
     "turbo": "latest"
   },
@@ -27,6 +26,11 @@
     "cross-spawn": "^7.0.6",
     "minimatch": "^9.0.7",
     "lodash": "^4.18.1",
-    "postcss": "^8.5.12"
+    "postcss": "^8.5.12",
+    "@hono/node-server": "^1.19.13",
+    "@tootallnate/once": "^3.0.1",
+    "ajv": "^8.17.2",
+    "tmp": "^0.2.5",
+    "uuid": "^14.0.0"
   }
 }

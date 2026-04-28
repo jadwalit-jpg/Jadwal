@@ -314,7 +314,6 @@ export default function VendorRefundRequestsPage() {
                 const suggested = suggestedRefund(r, t);
                 const paid = r.payment ? Number(r.payment.amount) : Number(r.totalPrice);
                 const currency = r.currencyCode || r.activity.country?.currencyCode || 'QAR';
-                const policyRaw = r.activity.cancellationPolicy ?? 'FREE_CANCELLATION';
                 return (
                   <div
                     key={r.id}
