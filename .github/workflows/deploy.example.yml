@@ -194,13 +194,24 @@ jobs:
       # of the SEPARATE migrations image (NOT jadwal-api — the prod api
       # image no longer carries the Prisma CLI; that's the whole point of
       # splitting migrations out). The task def JSON at infra/ecs/
-      # migrate-task.json uses `image: IMAGE_TAG_PLACEHOLDER` which we
-      # replace here.
+      # migrate-task.json uses three placeholder tokens which we replace
+      # before register-task-definition:
+      #   - IMAGE_TAG_PLACEHOLDER  → jadwal-migrations:<SHA> ECR image URI
+      #   - <AWS_ACCOUNT_ID>       → 12-digit account id (from sts caller-id)
+      #   - <AWS_REGION>           → me-central-1 (from env)
+      # Without all three the call fails with "Unable to parse ARN" or
+      # "Role ARN not found" because literal "<AWS_ACCOUNT_ID>" strings
+      # leak through to the IAM role / SSM parameter / log group ARNs.
       - name: Register migrate task revision
         id: register
         run: |
           IMG="${{ env.ECR_REGISTRY }}/jadwal-migrations:${{ github.sha }}"
-          sed -i "s|IMAGE_TAG_PLACEHOLDER|$IMG|g" infra/ecs/migrate-task.json
+          ACCT="$(aws sts get-caller-identity --query Account --output text)"
+          sed -i \
+            -e "s|IMAGE_TAG_PLACEHOLDER|$IMG|g" \
+            -e "s|<AWS_ACCOUNT_ID>|$ACCT|g" \
+            -e "s|<AWS_REGION>|${AWS_REGION}|g" \
+            infra/ecs/migrate-task.json
           REVISION=$(aws ecs register-task-definition \
             --cli-input-json file://infra/ecs/migrate-task.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
