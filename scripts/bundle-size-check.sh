@@ -58,10 +58,16 @@ fi
 # Per-chunk breakdown for visibility (top 15 largest files).
 # `find -printf '%s\t%p'` emits tab-separated; pin awk -F'\t' so paths
 # containing spaces (e.g. "jadwal webapp" on Windows) survive intact.
+#
+# Capture the sorted output into a variable BEFORE piping to head:
+# under `set -o pipefail`, `find | sort | head` lets head close the
+# pipe after 15 lines, which makes coreutils 8.30+ sort exit non-zero
+# with "fflush failed: Broken pipe" — pipefail propagates that as
+# exit 2 and `set -e` kills the script even though the budget passed.
 echo
 echo "▶ Top 15 largest static files:"
-find "$STATIC_DIR" -type f -printf '%s\t%p\n' \
-  | sort -rn \
+SORTED=$(find "$STATIC_DIR" -type f -printf '%s\t%p\n' | sort -rn)
+echo "$SORTED" \
   | head -n 15 \
   | awk -F'\t' -v r="$STATIC_DIR/" '{
       path = $2
