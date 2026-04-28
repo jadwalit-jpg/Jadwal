@@ -27,6 +27,13 @@ on:
   # masking real CI failures and spamming the Actions tab.
   workflow_dispatch:
 
+# Default to read-only at workflow level — jobs that need write
+# permissions (id-token: write for OIDC, packages: write for ECR push)
+# declare them explicitly per-job below.
+# Closes the OpenSSF Scorecard "Token-Permissions" finding.
+permissions:
+  contents: read
+
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false  # queue, don't cancel — interrupted deploys leave

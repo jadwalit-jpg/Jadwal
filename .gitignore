@@ -74,3 +74,8 @@ payment.txt
 *.md
 *.txt
 !apps/web/public/robots.txt
+# SECURITY.md is a public-facing policy required by GitHub's vuln-reporting
+# UI and the OpenSSF Scorecard "Security-Policy" check — must be tracked.
+# Scoped to ROOT so internal security-implementation docs deeper in the
+# tree (e.g. apps/api/SECURITY.md) stay ignored.
+!/SECURITY.md
