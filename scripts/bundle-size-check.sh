@@ -58,12 +58,18 @@ fi
 # Per-chunk breakdown for visibility (top 15 largest files).
 # `find -printf '%s\t%p'` emits tab-separated; pin awk -F'\t' so paths
 # containing spaces (e.g. "jadwal webapp" on Windows) survive intact.
+#
+# Avoid `head` entirely under `set -o pipefail`: any upstream writer
+# (including bash's echo builtin and coreutils 8.30+ sort) can hit
+# SIGPIPE when head closes the pipe early, exit non-zero, and pipefail
+# then kills the script with exit 141 even though the budget already
+# passed. awk's `NR <= 15` clause limits output without closing the
+# pipe to its own stdin.
 echo
 echo "▶ Top 15 largest static files:"
 find "$STATIC_DIR" -type f -printf '%s\t%p\n' \
   | sort -rn \
-  | head -n 15 \
-  | awk -F'\t' -v r="$STATIC_DIR/" '{
+  | awk -F'\t' -v r="$STATIC_DIR/" 'NR <= 15 {
       path = $2
       idx = index(path, r)
       if (idx > 0) path = substr(path, idx + length(r))
