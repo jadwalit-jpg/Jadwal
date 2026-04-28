@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Default to read-only at workflow level — every job that needs more
+# (e.g. security-events: write for SARIF upload) declares it explicitly.
+# Closes the OpenSSF Scorecard "Token-Permissions" finding.
+permissions:
+  contents: read
+
 env:
   # Match the Dockerfiles (apps/api/Dockerfile, apps/web/Dockerfile,
   # *.dev). Bumped 20 -> 22 on 2026-04-27 alongside the base-image

@@ -12,6 +12,11 @@
 
 name: Docker image-size budget
 
+# Read-only — only builds images and runs `dive --ci`, no writes anywhere.
+# Closes the OpenSSF Scorecard "Token-Permissions" finding.
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:
