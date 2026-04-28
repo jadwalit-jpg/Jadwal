@@ -1,0 +1,69 @@
+# OpenSSF Scorecard — automated security-posture scoring across 18 categories
+# (branch protection, signed releases, dangerous workflows, fuzzing, SAST, etc).
+# Public repos get free OSSF backend support that publishes the score to:
+#   https://securityscorecards.dev/viewer/?uri=github.com/kashkoool/Jadwal
+#
+# Why we run it:
+#   - Catches posture regressions silently (e.g. someone disables branch
+#     protection, adds a long-lived AWS key as a GitHub secret, etc.)
+#   - Surfaces SARIF results to the GitHub Security tab alongside CodeQL/
+#     Semgrep, so the same triage flow handles all findings.
+#   - The published score is a public health badge — useful when the repo
+#     becomes a portfolio piece or onboards collaborators.
+#
+# Schedule: Mondays 06:00 UTC (off-peak, before the team's working day).
+# Also runs on push to main so a security-relevant PR's effect is scored
+# the moment it lands.
+
+name: Scorecard supply-chain security
+
+on:
+  branch_protection_rule:    # fires whenever someone edits the main rules
+  schedule:
+    - cron: "0 6 * * 1"       # weekly Monday 06:00 UTC
+  push:
+    branches: [main]
+  workflow_dispatch: {}       # manual trigger from Actions UI
+
+# Token permissions are MINIMAL — Scorecard only needs to read the repo.
+# `id-token: write` is required for the OIDC handshake that publishes the
+# score; `security-events: write` is required to upload SARIF.
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # upload SARIF to Security tab
+      id-token: write          # publish to OpenSSF API for the public badge
+      contents: read
+
+    steps:
+      - name: Checkout (full history needed for some Scorecard checks)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # Scorecard inspects the .git config
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@v2.4.1
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # `publish_results: true` opts into the public Scorecard API.
+          # Required for the badge URL above to resolve.
+          # Set to false ONLY if the repo must stay strictly private-posture.
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 7
+
+      - name: Upload SARIF to GitHub code-scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: scorecard

@@ -1,0 +1,55 @@
+# Dependency Review — block PRs that introduce vulnerable / non-allowed deps
+# BEFORE they merge to main, instead of after-the-fact via Dependabot alerts.
+#
+# How it differs from the existing security-scan.yml:
+#   - security-scan.yml runs Semgrep / CodeQL / retire.js / npm audit on the
+#     POST-MERGE main branch. Catches things after they land.
+#   - This action runs on each PR's diff vs main. Reviews ONLY the dependency
+#     changes (added / removed / version-bumped) and flags any that introduce
+#     advisories at the configured severity. Stops bad deps at the gate.
+#
+# Free for public repos. Uses the GitHub-hosted Advisory Database (same source
+# as Dependabot) so no extra API keys / config required.
+
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: write   # comment on the PR with a summary table
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Block any new HIGH or CRITICAL vuln from landing.
+          # MODERATE is allowed because npm transitive trees often have noise
+          # we cannot patch without breaking changes. Existing 6 dev-only
+          # MODERATEs are tracked in run.txt §LIVE AWS RESOURCES + Security
+          # tab; PRs that ADD a new MODERATE will surface in the action's
+          # comment but won't fail.
+          fail-on-severity: high
+
+          # Surface a markdown table comment on the PR — visible to reviewers
+          # without diving into the action log.
+          comment-summary-in-pr: on-failure
+
+          # Acceptable open-source licences for any newly-added dep.
+          # Mirrors the licences already in our tree (MIT / Apache 2.0 / BSD
+          # are dominant, ISC / 0BSD also common in node ecosystem).
+          # Flag anything outside the list — usually means a copyleft GPL
+          # crept in via a transitive bump.
+          allow-licenses: >-
+            MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD,
+            CC0-1.0, CC-BY-3.0, CC-BY-4.0, Unlicense, Python-2.0,
+            BlueOak-1.0.0, MIT-0

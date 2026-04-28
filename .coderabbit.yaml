@@ -1,0 +1,112 @@
+# CodeRabbit configuration — https://docs.coderabbit.ai/guides/configure-coderabbit
+#
+# CodeRabbit is the AI PR reviewer GitHub App that left the "Major" comment
+# on PR #33. It runs on every PR by default; this file tunes WHAT it reviews
+# so it focuses on real code rather than churn paths (lockfiles, snapshot
+# artifacts, generated files, etc.) that produce noise.
+#
+# Free for public repos.
+
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: en
+early_access: false
+
+reviews:
+  profile: chill           # "assertive" | "chill" — chill = less nit-picky
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false              # the poems are cute but spammy in a serious repo
+  review_status: true
+  collapse_walkthrough: true
+
+  auto_review:
+    enabled: true
+    drafts: false          # only review PRs marked Ready for review
+    base_branches:
+      - main
+      - develop
+
+  path_filters:
+    # Skip noise paths — generated artifacts, snapshots, lockfiles, large blobs.
+    - "!package-lock.json"
+    - "!**/package-lock.json"
+    - "!**/.next/**"
+    - "!**/dist/**"
+    - "!**/node_modules/**"
+    - "!**/coverage/**"
+    - "!**/test-results/**"
+    - "!**/playwright-report/**"
+    - "!**/*-snapshots/**"          # Playwright visual baselines
+    - "!**/__snapshots__/**"        # Jest snapshots
+    - "!**/migrations/*.sql"        # Prisma migrations are reviewed via schema.prisma diff
+    - "!graphify-out/**"
+    - "!tests/reports/**"
+    - "!**/*.lock"
+    - "!**/*.lockb"
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.webp"
+    - "!**/*.gif"
+
+  path_instructions:
+    # Per-path review priorities — tells CodeRabbit what to weigh extra heavily
+    # in specific tree areas. Keeps reviews focused on the right risks.
+    - path: "apps/api/src/auth/**"
+      instructions: >-
+        Authentication code. Check JWT handling, password storage (bcrypt
+        rounds, never plain), session lifecycle, refresh-token rotation,
+        rate-limit decorators on every endpoint, anti-enumeration on login
+        / forgot-password. No auth bypass paths via NODE_ENV checks.
+
+    - path: "apps/api/src/payment/**"
+      instructions: >-
+        Payment / PAY2M integration. Verify HMAC signatures on inbound
+        callbacks. Idempotency keys on charge / refund. No client-supplied
+        amounts trusted — recompute server-side. Transaction integrity
+        across booking + payment status updates ($transaction usage).
+
+    - path: "apps/api/src/bookings/**"
+      instructions: >-
+        Booking creation. Conflict prevention (Redis lock + DB transaction).
+        Capacity decrement is atomic. Coupon redemption is single-use.
+        Loyalty points awarded only on COMPLETED with pointsAwarded=false
+        guard.
+
+    - path: "apps/api/prisma/migrations/**"
+      instructions: >-
+        Schema migrations. Flag any DROP TABLE / DROP COLUMN — those are
+        breaking changes that need the 3-phase deploy (additive then
+        flip-write then drop). Prefer additive migrations.
+
+    - path: ".github/workflows/**"
+      instructions: >-
+        CI / CD pipeline. Verify least-privilege permissions block
+        (avoid `permissions: write-all`). OIDC trust policies must scope
+        to specific repo + branch. No long-lived AWS / npm tokens in
+        secrets — short-lived federated only.
+
+    - path: "infra/**"
+      instructions: >-
+        Infrastructure templates. Sanity-check IAM policies are scoped to
+        specific resources (no wildcards on production data buckets).
+        Security groups should chain by SG-ref, not by 0.0.0.0/0.
+
+    - path: "apps/web/src/middleware.ts"
+      instructions: >-
+        Next.js middleware. Verify CSP, HSTS gating, CORP headers are
+        in sync with the production deployment. No localhost fallbacks
+        in production paths.
+
+  tools:
+    # Keep CodeRabbit's built-in tools enabled — they complement our CI.
+    eslint:
+      enabled: true
+    semgrep:
+      enabled: true
+    languagetool:
+      enabled: false   # English grammar nits in code comments — too noisy
+
+chat:
+  auto_reply: true
