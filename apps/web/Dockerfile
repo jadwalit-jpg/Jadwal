@@ -47,8 +47,16 @@ COPY apps/web/package.json ./apps/web/
 COPY apps/api/package.json ./apps/api/
 
 # Full install (dev deps needed for next build + tailwind + postcss).
+# Scripts ENABLED in this builder stage so platform-specific native
+# binaries (notably `lightningcss-linux-x64-musl.node` used by Tailwind
+# v4 + Next.js's font subsystem) get installed via their postinstall
+# hooks. Without this, `next build` aborts with
+# "Cannot find module '../lightningcss.linux-x64-musl.node'".
+# Security posture: this is only the BUILDER stage, which is thrown
+# away after producing the standalone bundle. The runner stage at the
+# bottom still uses `--ignore-scripts` to harden the production image.
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --ignore-scripts --workspace=web
+    npm ci --workspace=web
 
 # Copy web sources + turbo manifest (Next.js outputFileTracingRoot needs
 # the monorepo root to correctly trace cross-workspace imports).
