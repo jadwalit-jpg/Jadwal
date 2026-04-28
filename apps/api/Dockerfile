@@ -15,7 +15,7 @@
 # arm64 and ECS Fargate would refuse to run it with "exec format error").
 
 # ── Stage 1: Install prod deps for the api workspace ──────────────
-FROM --platform=linux/amd64 node:22-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f AS deps
+FROM --platform=linux/amd64 node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS deps
 WORKDIR /app
 
 # Copy lockfile + both workspace manifests. npm needs the root manifest to
@@ -58,7 +58,7 @@ RUN --mount=type=cache,target=/root/.npm \
       \) -prune -exec rm -rf {} + 2>/dev/null || true
 
 # ── Stage 2: Build ────────────────────────────────────────────────
-FROM --platform=linux/amd64 node:22-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f AS builder
+FROM --platform=linux/amd64 node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -87,7 +87,7 @@ RUN npx prisma generate
 RUN npm run build
 
 # ── Stage 3: Production image ──────────────────────────────────────
-FROM --platform=linux/amd64 node:22-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f AS runner
+FROM --platform=linux/amd64 node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
