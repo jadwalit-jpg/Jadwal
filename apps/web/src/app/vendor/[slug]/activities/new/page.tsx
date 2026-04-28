@@ -13,7 +13,7 @@ import { ACTIVITY_WIZARD_ERR, wizardSteps, daysOfWeek } from '../../../_lib/vend
 import { getApiError } from '@/lib/api-error';
 import { sanitize, sanitizeObject } from '@/lib/validation';
 import { VendorSidebar } from '../../../_components/vendor-sidebar';
-import { Check, Loader2, Plus, X, BookmarkIcon, AlertCircle, ImagePlus } from 'lucide-react';
+import { Check, Loader2, X, BookmarkIcon, AlertCircle, ImagePlus } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import CustomSelect from '@/components/custom-select';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';

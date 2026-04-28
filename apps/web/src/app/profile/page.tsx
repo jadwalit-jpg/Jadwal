@@ -10,7 +10,6 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronRight,
-  Clock,
   Coins,
   DollarSign,
   Edit3,
