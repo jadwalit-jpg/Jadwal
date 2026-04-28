@@ -1,6 +1,12 @@
 version: 2
 updates:
-  # Root monorepo (turbo, devDependencies)
+  # ─── npm ──────────────────────────────────────────────────────────
+  # ONE entry for the whole monorepo. The root `package-lock.json`
+  # holds every workspace's resolved tree (npm workspaces stores
+  # transitively at the root, not per-app). Per-app Dependabot entries
+  # would only update the workspace manifest and leave the root
+  # lockfile out of sync — `npm ci` then fails on every CI run with
+  # "Missing: <pkg> from lock file". Keep this as a single root entry.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
@@ -8,28 +14,14 @@ updates:
       day: "monday"
       time: "08:00"
       timezone: "Asia/Qatar"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 15
     commit-message:
       prefix: "chore(deps)"
     groups:
+      # Bulk minor/patch into one PR — keeps the queue manageable.
       minor-and-patch:
         update-types: ["minor", "patch"]
-
-  # API (NestJS)
-  - package-ecosystem: "npm"
-    directory: "/apps/api"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "08:00"
-      timezone: "Asia/Qatar"
-    open-pull-requests-limit: 10
-    commit-message:
-      prefix: "chore(api-deps)"
-    groups:
-      minor-and-patch:
-        update-types: ["minor", "patch"]
-      # Group security-critical deps separately so humans review them
+      # Security-critical runtime deps reviewed individually.
       security-critical:
         patterns:
           - "bcrypt"
@@ -47,21 +39,7 @@ updates:
           - "@prisma/client"
           - "prisma"
           - "@aws-sdk/*"
-
-  # Web (Next.js)
-  - package-ecosystem: "npm"
-    directory: "/apps/web"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "08:00"
-      timezone: "Asia/Qatar"
-    open-pull-requests-limit: 10
-    commit-message:
-      prefix: "chore(web-deps)"
-    groups:
-      minor-and-patch:
-        update-types: ["minor", "patch"]
+      # Frontend framework grouped — Next + React always bumped together.
       next-react:
         patterns:
           - "next"
@@ -70,7 +48,7 @@ updates:
           - "eslint-config-next"
           - "@types/react*"
 
-  # GitHub Actions themselves (supply chain!)
+  # ─── GitHub Actions (supply chain) ────────────────────────────────
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -79,7 +57,12 @@ updates:
     commit-message:
       prefix: "chore(actions)"
 
-  # Docker base images
+  # ─── Docker base images ───────────────────────────────────────────
+  # Each Dockerfile is its own entry. Dependabot updates the FROM
+  # SHA pin (e.g. `node:22-alpine@sha256:...`) when a new digest
+  # publishes for the same tag — keeps the supply chain pinned but
+  # fresh. Major version bumps (node:22 -> node:25) come as separate
+  # PRs and are reviewed by hand.
   - package-ecosystem: "docker"
     directory: "/apps/api"
     schedule:
