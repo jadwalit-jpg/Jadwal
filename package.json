@@ -16,7 +16,6 @@
     "db:studio": "npx prisma studio --schema apps/api/prisma/schema.prisma",
     "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true"
   },
-  "packageManager": "npm@11.6.2",
   "devDependencies": {
     "turbo": "latest"
   },
