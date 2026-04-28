@@ -15,7 +15,7 @@
 # Apple Silicon Macs build locally; ECS Fargate runs amd64 by default.
 
 # ── Stage 1: Install prod deps for the web workspace ──────────────
-FROM --platform=linux/amd64 node:22-alpine AS deps
+FROM --platform=linux/amd64 node:22-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f AS deps
 WORKDIR /app
 
 # Copy lockfile + both workspace manifests. npm needs them all to resolve
@@ -29,7 +29,7 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --ignore-scripts --workspace=web --include-workspace-root=false
 
 # ── Stage 2: Build ────────────────────────────────────────────────
-FROM --platform=linux/amd64 node:22-alpine AS builder
+FROM --platform=linux/amd64 node:22-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f AS builder
 WORKDIR /app
 
 # node:22-alpine ships yarn 1.22.x. Next.js 15.5+'s lockfile-patching
@@ -81,7 +81,7 @@ RUN npm run build
 # ── Stage 3: Production image ──────────────────────────────────────
 # Next.js standalone output produces a minimal server.js + only the
 # node_modules files actually imported at runtime.
-FROM --platform=linux/amd64 node:22-alpine AS runner
+FROM --platform=linux/amd64 node:22-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
