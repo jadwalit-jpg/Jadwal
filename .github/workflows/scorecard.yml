@@ -41,7 +41,7 @@ jobs:
 
     steps:
       - name: Checkout (full history needed for some Scorecard checks)
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false   # Scorecard inspects the .git config
           fetch-depth: 0               # Scorecard's Branch-Protection /
@@ -50,7 +50,7 @@ jobs:
                                        # fetch (depth=1) silently skips them
 
       - name: Run analysis
-        uses: ossf/scorecard-action@v2.4.1
+        uses: ossf/scorecard-action@f49aabe0b5af0936a0987cfb85d86b75731b0186 # v2.4.1
         with:
           results_file: results.sarif
           results_format: sarif
@@ -60,14 +60,14 @@ jobs:
           publish_results: true
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: SARIF file
           path: results.sarif
           retention-days: 7
 
       - name: Upload SARIF to GitHub code-scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3
         with:
           sarif_file: results.sarif
           category: scorecard
