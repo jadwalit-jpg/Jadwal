@@ -40,8 +40,8 @@ concurrency:
                               # tasks in a half-transitioned state
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}            # e.g. me-central-1
-  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}        # e.g. 123456789012.dkr.ecr.me-central-1.amazonaws.com
+  AWS_REGION: ${{ vars.AWS_REGION }}            # e.g. eu-central-1
+  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}        # e.g. 123456789012.dkr.ecr.eu-central-1.amazonaws.com
   ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}          # e.g. jadwal-prod
   API_SERVICE: ${{ vars.API_SERVICE }}          # e.g. jadwal-api
   WEB_SERVICE: ${{ vars.WEB_SERVICE }}          # e.g. jadwal-web
@@ -205,7 +205,7 @@ jobs:
       # before register-task-definition:
       #   - IMAGE_TAG_PLACEHOLDER  → jadwal-migrations:<SHA> ECR image URI
       #   - <AWS_ACCOUNT_ID>       → 12-digit account id (from sts caller-id)
-      #   - <AWS_REGION>           → me-central-1 (from env)
+      #   - <AWS_REGION>           → eu-central-1 (from env)
       # Without all three the call fails with "Unable to parse ARN" or
       # "Role ARN not found" because literal "<AWS_ACCOUNT_ID>" strings
       # leak through to the IAM role / SSM parameter / log group ARNs.
