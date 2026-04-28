@@ -63,7 +63,7 @@ export class UploadService {
     this.driver = (config.get<string>('STORAGE_DRIVER', 'local')) as 'local' | 's3';
     this.apiUrl = config.getOrThrow<string>('API_URL');
     this.s3Bucket = config.get<string>('S3_BUCKET', '');
-    this.s3Region = config.get<string>('S3_REGION', 'me-central-1');
+    this.s3Region = config.get<string>('S3_REGION', 'eu-central-1');
     this.cdnUrl = config.get<string>('CDN_URL', '');
     this.maxFileSize = Number(config.get<string>('UPLOAD_MAX_SIZE_MB', '10')) * 1024 * 1024;
     this.maxDimension = Number(config.get<string>('UPLOAD_MAX_DIMENSION', '1920'));
