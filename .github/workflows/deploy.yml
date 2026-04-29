@@ -356,7 +356,7 @@ jobs:
     steps:
       - name: Probe /api/health with retry
         run: |
-          API_URL="${{ vars.PUBLIC_API_URL }}"   # e.g. https://api.jadwal.com
+          API_URL="${{ vars.PUBLIC_API_URL }}"   # e.g. https://api.jadwal.qa
           for i in 1 2 3 4 5 6; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/api/health" || true)
             if [ "$STATUS" = "200" ]; then
