@@ -33,7 +33,10 @@ permissions:
 
 jobs:
   auto-merge:
-    if: github.actor == 'dependabot[bot]'
+    # Use pull_request.user.login (the PR author) — NOT github.actor.
+    # On `labeled` events, github.actor is the labeller (a human maintainer),
+    # so checking github.actor would skip exactly the case we want to run for.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Dependabot metadata
