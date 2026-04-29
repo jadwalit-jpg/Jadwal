@@ -144,7 +144,7 @@ export class EmailService {
     subject: string;
     message: string;
   }) {
-    const adminEmail = this.config.get('ADMIN_EMAIL', 'admin@jadwal.qa');
+    const adminEmail = this.config.get('ADMIN_EMAIL', 'Jadwalqtr@gmail.com');
     return this.send(adminEmail, data.subject, 'admin-alert', data);
   }
 
