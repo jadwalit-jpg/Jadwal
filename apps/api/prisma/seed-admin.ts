@@ -76,7 +76,15 @@ async function main() {
     process.exit(1);
   }
 
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  // RDS enforces SSL (rds.force_ssl=1) but its cert is AWS-CA signed which
+  // isn't in node:22-alpine's default trust store. rejectUnauthorized:false
+  // keeps TLS on the wire but skips chain validation (acceptable: RDS is in
+  // a private subnet only reachable from inside the VPC). See prisma.service.ts
+  // for the same trade-off in the API runtime.
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: isProd ? { rejectUnauthorized: false } : undefined,
+  });
   const adapter = new PrismaPg(pool);
   const prisma = new PrismaClient({ adapter });
   await prisma.$connect();
