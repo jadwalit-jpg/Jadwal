@@ -24,7 +24,7 @@ export class EmailService {
   private readonly sesClient: SESClient | null;
 
   constructor(private config: ConfigService) {
-    this.from = this.config.get('EMAIL_FROM', 'noreply@jadwal.com');
+    this.from = this.config.get('EMAIL_FROM', 'noreply@jadwal.qa');
     this.enabled = this.config.get('EMAIL_ENABLED', 'false') === 'true';
     this.appUrl = this.config.getOrThrow<string>('APP_URL');
 
@@ -144,7 +144,7 @@ export class EmailService {
     subject: string;
     message: string;
   }) {
-    const adminEmail = this.config.get('ADMIN_EMAIL', 'admin@jadwal.com');
+    const adminEmail = this.config.get('ADMIN_EMAIL', 'Jadwalqtr@gmail.com');
     return this.send(adminEmail, data.subject, 'admin-alert', data);
   }
 

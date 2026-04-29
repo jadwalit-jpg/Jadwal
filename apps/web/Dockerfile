@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Build context MUST be the monorepo root (apps/web is an npm workspace).
 #   Build:   docker build -f apps/web/Dockerfile \
-#              --build-arg NEXT_PUBLIC_API_URL=https://api.jadwal.com/api \
+#              --build-arg NEXT_PUBLIC_API_URL=https://api.jadwal.qa/api \
 #              -t jadwal-web:latest .
 #   Run:     docker run -p 3000:3000 jadwal-web:latest
 #

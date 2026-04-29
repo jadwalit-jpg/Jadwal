@@ -415,7 +415,7 @@ jobs:
         run: |
           docker build \
             -f apps/web/Dockerfile \
-            --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL || 'https://api.jadwal.com/api' }} \
+            --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL || 'https://api.jadwal.qa/api' }} \
             --build-arg API_PROXY_TARGET=${{ secrets.API_PROXY_TARGET || 'https://api.placeholder.com/api' }} \
             -t jadwal-web:${{ github.sha }} .
 

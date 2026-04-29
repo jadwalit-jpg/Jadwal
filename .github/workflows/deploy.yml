@@ -348,25 +348,61 @@ jobs:
             --service ${{ matrix.service.name }} --task-definition <previous-revision>"
 
   # ───────────────────────────────────────────────────────────────────────
-  # 6. Smoke test — prove the public endpoint is healthy after deploy
+  # 6. Smoke test — prove the public endpoints are healthy after deploy.
+  # Strengthens Layer 5 of the auto-merge safety net: a Dependabot patch
+  # that builds, scans, migrates, and deploys cleanly but breaks runtime
+  # is caught here, and the ECS deployment circuit breaker rolls back.
+  #
+  # Hard gates (both must return 200 or the deploy fails):
+  #   - /api/health  → API target group health endpoint
+  #   - /            → Web target group homepage (Next.js)
+  #
+  # TODO: add /api/catalog/cities and /api/catalog/featured to this list
+  # once the DB seed is run on staging (currently returns 500 because the
+  # cities/categories tables are empty — adding those probes now would
+  # block every deploy until the seed lands).
   # ───────────────────────────────────────────────────────────────────────
   smoke:
     needs: deploy
     runs-on: ubuntu-latest
     steps:
-      - name: Probe /api/health with retry
+      - name: Probe public endpoints with retry
+        env:
+          PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
         run: |
-          API_URL="${{ vars.PUBLIC_API_URL }}"   # e.g. https://api.jadwal.com
-          for i in 1 2 3 4 5 6; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/api/health" || true)
-            if [ "$STATUS" = "200" ]; then
-              echo "Smoke test passed ($STATUS)"
-              exit 0
+          # Strip trailing slash so we never produce double-slashed URLs.
+          BASE="${PUBLIC_API_URL%/}"
+
+          # endpoint:expected_status — extend as more endpoints become smoke-safe.
+          PROBES=(
+            "/api/health:200"
+            "/:200"
+          )
+
+          OVERALL_FAIL=0
+          for PROBE in "${PROBES[@]}"; do
+            EP="${PROBE%:*}"
+            WANT="${PROBE##*:}"
+            STATUS=""
+            for i in 1 2 3 4 5 6; do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE$EP" || true)
+              if [ "$STATUS" = "$WANT" ]; then
+                echo "[PASS] $EP -> $STATUS"
+                break
+              fi
+              echo "[wait] $EP attempt $i returned $STATUS — retrying in 10s"
+              sleep 10
+            done
+            if [ "$STATUS" != "$WANT" ]; then
+              echo "::error::[FAIL] $EP expected $WANT, got $STATUS after 6 attempts"
+              OVERALL_FAIL=1
             fi
-            echo "Attempt $i returned $STATUS — retrying in 10s"
-            sleep 10
           done
-          echo "::error::Smoke test failed after 6 attempts"
-          exit 1
+
+          if [ "$OVERALL_FAIL" = "1" ]; then
+            echo "::error::Smoke test failed — ECS circuit breaker should be rolling back."
+            exit 1
+          fi
+          echo "All smoke probes passed."
 
 # Last successful end-to-end run: 2026-04-29 (verification)

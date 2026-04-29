@@ -25,7 +25,7 @@ export class WebPushService {
   ) {
     const publicKey = this.config.get('VAPID_PUBLIC_KEY', '');
     const privateKey = this.config.get('VAPID_PRIVATE_KEY', '');
-    const subject = this.config.get('VAPID_SUBJECT', 'mailto:support@jadwal.com');
+    const subject = this.config.get('VAPID_SUBJECT', 'mailto:Jadwalqtr@gmail.com');
     this.maxSubscriptionsPerUser = 5;
 
     this.enabled = !!(publicKey && privateKey);

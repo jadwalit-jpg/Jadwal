@@ -1,0 +1,63 @@
+name: Dependabot security auto-merge
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Level-1 auto-merge: SECURITY-only Dependabot PRs.
+#
+# Scope: only PRs labelled `security` AND opened by `dependabot[bot]`.
+# Version bumps (label `dependencies` only) are NOT auto-merged — a human
+# still reviews them.
+#
+# Safety net (cannot bypass):
+#   1. Branch protection on `main` requires every CI check to pass before
+#      a merge can complete (lint / typecheck / unit / int / e2e / Trivy).
+#   2. `gh pr merge --auto` queues the merge — it does not force it. If
+#      ANY required check fails, the merge is held indefinitely and the
+#      PR sits open for a human to triage.
+#   3. After merge, the existing `deploy.yml` runs build → Trivy gate →
+#      migrate → ECS rolling deploy with circuit breaker → smoke. The
+#      ECS deployment circuit breaker auto-rolls back on failure, so a
+#      bad image cannot stick.
+#
+# Trigger: pull_request_target so the workflow runs in the BASE-branch
+# context with a writable GITHUB_TOKEN. We never check out PR code,
+# so this is safe (no script-injection surface).
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    # Use pull_request.user.login (the PR author) — NOT github.actor.
+    # On `labeled` events, github.actor is the labeller (a human maintainer),
+    # so checking github.actor would skip exactly the case we want to run for.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7  # v2.3.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip non-security updates
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'security') }}
+        run: |
+          echo "Not a security advisory PR — leaving for human review."
+          echo "Labels: ${{ join(github.event.pull_request.labels.*.name, ', ') }}"
+          exit 0
+
+      - name: Approve and enable auto-merge
+        if: ${{ contains(github.event.pull_request.labels.*.name, 'security') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr review --approve "$PR_URL" \
+            --body "Auto-approving Dependabot security advisory. Merge will only complete after all required checks pass."
+          gh pr merge --auto --squash --delete-branch "$PR_URL"
