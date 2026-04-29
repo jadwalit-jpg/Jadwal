@@ -16,9 +16,11 @@
  *     app.listen(process.env.PORT ?? 4000)
  *       // SSM empty -> app.listen("") -> random port -> ALB health checks fail
  *
- * These helpers treat undefined and empty string identically as "fall back to
- * default", while still allowing an explicit "0" / "false" / "" to round-trip
- * for cases where that's a legitimate value.
+ * These helpers treat undefined AND empty string identically as "fall back
+ * to default" — closing the SSM-empty-value gap. Explicit "0" / "false" /
+ * "non-empty string" still round-trip, so e.g. `PARTIAL_REFUND_PERCENT=0`
+ * still means a real 0% refund. Empty string is the ONLY value that's
+ * treated as "missing" in the same way undefined is.
  */
 
 export function envNumber(key: string, fallback: number): number {
