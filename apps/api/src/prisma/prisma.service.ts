@@ -2,6 +2,28 @@ import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/commo
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// AWS RDS server certs are signed by AWS's private CA bundle, which is NOT
+// in node:22-alpine's default trust store. We vendor the global CA bundle
+// (apps/api/prisma/rds-ca-bundle.pem, sourced from
+// https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem) so we
+// can keep rejectUnauthorized: true and still successfully validate the
+// chain in prod. Update the bundle whenever AWS rotates the RDS root CA.
+function loadRdsCaBundle(): Buffer {
+  const candidates = [
+    '/app/apps/api/prisma/rds-ca-bundle.pem',                               // container absolute path
+    path.resolve(process.cwd(), 'prisma/rds-ca-bundle.pem'),                // running from apps/api/
+    path.resolve(process.cwd(), 'apps/api/prisma/rds-ca-bundle.pem'),       // running from repo root
+  ];
+  for (const p of candidates) {
+    try { return fs.readFileSync(p); } catch { /* try next */ }
+  }
+  throw new Error(
+    `[FATAL] RDS CA bundle not found in production. Searched: ${candidates.join(', ')}`,
+  );
+}
 
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
@@ -16,17 +38,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       max: Number(process.env.DB_POOL_MAX || (isProd ? 20 : 10)),
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
-      // RDS requires SSL (rds.force_ssl=1 on managed-master setups), but
-      // its server cert is signed by an AWS-private CA (rds-ca-rsa2048-g1)
-      // which isn't in node:22-alpine's default trust store. Verifying the
-      // chain would drop every connection. Setting rejectUnauthorized: false
-      // keeps the link encrypted (the wire is still TLS) but skips chain
-      // validation. Acceptable here because RDS is in a private subnet only
-      // reachable from inside our VPC — a MITM would require the attacker
-      // to already be inside the VPC, in which case they have larger holes
-      // to exploit. To tighten this later, vendor the AWS RDS global CA
-      // bundle into the image and pass `ca: <bundle>` instead.
-      ...(isProd ? { ssl: { rejectUnauthorized: false } } : {}),
+      ...(isProd ? { ssl: { ca: loadRdsCaBundle(), rejectUnauthorized: true } } : {}),
     });
 
     const adapter = new PrismaPg(this.pool);
