@@ -18,6 +18,7 @@ import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
+import { envNumber } from '../common/env';
 import { ConfigService } from '@nestjs/config';
 import { CreateBookingDto } from './dto/create-booking.dto';
 
@@ -1547,10 +1548,10 @@ export class BookingsService {
       // [0, 100] so a misconfiguration can never produce an over-refund or a
       // negative number. FREE_CANCELLATION stays hardcoded at 100% because it
       // IS the definition — and NON_REFUNDABLE stays at 0% for the same reason.
-      const partialRefundPercentRaw = Number(process.env.PARTIAL_REFUND_PERCENT ?? 50);
-      const partialRefundPercent = Number.isFinite(partialRefundPercentRaw)
-        ? Math.min(100, Math.max(0, partialRefundPercentRaw))
-        : 50;
+      // envNumber handles both undefined AND empty string (e.g. an empty SSM
+      // Parameter Store entry) — without it, `??` would pass "" through,
+      // Number("") = 0, and partial refunds would silently become 0%.
+      const partialRefundPercent = Math.min(100, Math.max(0, envNumber('PARTIAL_REFUND_PERCENT', 50)));
 
       let refundPercent = 0;
       let refundReason = '';

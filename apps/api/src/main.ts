@@ -14,6 +14,7 @@ import helmet from 'helmet';
 import * as cookieParser from 'cookie-parser';
 import { join } from 'path';
 import type { Request, Response, NextFunction } from 'express';
+import { envNumber } from './common/env';
 
 const REQUIRED_IN_PRODUCTION = [
   'DATABASE_URL',
@@ -209,6 +210,10 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(process.env.PORT ?? 4000);
+  // envNumber treats undefined AND empty string as "use default" — guards
+  // against a stray empty SSM Parameter Store entry that would otherwise
+  // pass through `??` and call app.listen("") (random port -> ALB health
+  // check fail -> deploy stalls).
+  await app.listen(envNumber('PORT', 4000));
 }
 bootstrap();
