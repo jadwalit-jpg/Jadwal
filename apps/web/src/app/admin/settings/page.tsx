@@ -74,7 +74,7 @@ export default function AdminSettingsPage() {
               </div>
               <div>
                 <label className={labelCls}>Support Email</label>
-                <input name="supportEmail" type="email" defaultValue={platformSettings?.supportEmail ?? ''} placeholder="support@jadwal.com" className={inputCls} />
+                <input name="supportEmail" type="email" defaultValue={platformSettings?.supportEmail ?? ''} placeholder="Jadwalqtr@gmail.com" className={inputCls} />
               </div>
               <div>
                 <label className={labelCls}>Support Phone</label>
