@@ -1,31 +1,32 @@
 # ═════════════════════════════════════════════════════════════════════════
-# EXAMPLE deploy workflow — NOT ACTIVE until AWS infrastructure exists.
+# Deploy workflow — eu-central-1 (Frankfurt).
+# Activated 2026-04-29 alongside the AWS infra bring-up.
 #
-# To activate:
-#   1. Provision the AWS resources referenced below (ECR repos, ECS cluster,
-#      task definitions, IAM role for GitHub OIDC, Secrets Manager entries).
-#   2. Fill in every `REPLACE_WITH_*` placeholder with the real ARN / name.
-#   3. Rename this file to `deploy.yml`.
-#   4. Never commit real AWS account IDs, ARNs, subnet IDs, or secret names
-#      here — use GitHub repo Variables (not Secrets) for non-sensitive
-#      identifiers like cluster name / ECR repo URL. Only the `role-to-assume`
-#      ARN appears in the file; it must be in a Variable, not committed.
+# Trigger:
+#   - push to main → build images, run migrations, roll api+web services
+#   - workflow_dispatch → manual smoke deploys for hotfixes or testing
 #
-# Why this file ships as `.example.yml`: committing a workflow with real
-# AWS ARNs before the infra is ready is a common foot-gun. CI fires on every
-# push, fails with obscure errors, and masks real CI failures. Activate once
-# and only once the target env is real.
+# All AWS-specific identifiers (account ID, ARNs, subnet IDs, etc.) live
+# in GitHub repo Variables (Settings → Secrets and variables → Variables),
+# not in this file. The only thing this file knows is which Variable
+# names to read.
+#
+# Gated on `vars.DEPLOY_ENABLED` so the workflow can be paused without
+# editing the file — flip the Variable to "false" during a freeze.
 # ═════════════════════════════════════════════════════════════════════════
 
 name: deploy
 
 on:
-  # Manual-only until AWS infra is provisioned. Once activated, switch
-  # to `push: branches: [main]`. Leaving an `on: push` trigger here
-  # while the file is still `.example.yml` makes the workflow fire on
-  # every commit and fail at the first AWS_REGION-required step,
-  # masking real CI failures and spamming the Actions tab.
-  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - ".github/dependabot.yml"
+      - ".coderabbit.yaml"
+      - "LICENSE"
+      - "SECURITY.md"
+  workflow_dispatch: {}
 
 # Default to read-only at workflow level — jobs that need write
 # permissions (id-token: write for OIDC, packages: write for ECR push)
