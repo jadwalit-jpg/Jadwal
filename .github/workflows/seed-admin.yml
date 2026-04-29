@@ -1,0 +1,142 @@
+# ═════════════════════════════════════════════════════════════════════════
+# Seed admin — one-off operational workflow.
+#
+# Bootstraps the single admin user in production by running
+# `node dist/prisma/seed-admin.js` as a Fargate one-shot task inside the
+# VPC. The script reads SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD /
+# SEED_ADMIN_NAME from SSM (SecureString for password). The plaintext
+# password never appears in CloudWatch logs (script-side echo removed) and
+# never appears in describe-tasks output (`secrets:` block, not `environment:`).
+#
+# Idempotent — re-running with the same email is a no-op unless
+# SEED_ADMIN_ALLOW_UPDATE=true is also set (not wired here on purpose).
+#
+# Pre-seed log line shows row counts for users / vendors / countries /
+# cities / categories / activities / bookings so the operator can audit
+# whether anything unexpected is in the DB.
+#
+# Trigger: workflow_dispatch only. Never on push.
+#
+# After successful run, log in at /login then immediately:
+#   1. Change password from /admin/settings (so SSM value is no longer live)
+#   2. Delete SSM password parameter:
+#        aws ssm delete-parameter --region eu-central-1 \
+#          --name '/jadwal/prod/SEED_ADMIN_PASSWORD'
+# ═════════════════════════════════════════════════════════════════════════
+
+name: seed-admin
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "jadwal-api image SHA in ECR (default: latest pushed tag)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seed-admin
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Resolve image SHA
+        id: img
+        run: |
+          if [ -n "${{ inputs.image_sha }}" ]; then
+            SHA="${{ inputs.image_sha }}"
+            echo "Using user-provided SHA: $SHA"
+          else
+            # Pick the most recently pushed tag on jadwal-api.
+            SHA=$(aws ecr describe-images \
+              --region "${{ vars.AWS_REGION }}" \
+              --repository-name jadwal-api \
+              --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags[0]' \
+              --output text)
+            echo "Auto-resolved latest jadwal-api SHA: $SHA"
+          fi
+          if [ -z "$SHA" ] || [ "$SHA" = "None" ]; then
+            echo "::error::Could not resolve image SHA"
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Register seed-admin task revision
+        id: register
+        run: |
+          IMG="${{ vars.ECR_REGISTRY }}/jadwal-api:${{ steps.img.outputs.sha }}"
+          ACCT=$(aws sts get-caller-identity --query Account --output text)
+          sed -i \
+            -e "s|IMAGE_TAG_PLACEHOLDER|$IMG|g" \
+            -e "s|<AWS_ACCOUNT_ID>|$ACCT|g" \
+            -e "s|<AWS_REGION>|${{ vars.AWS_REGION }}|g" \
+            infra/ecs/seed-admin-task.json
+          echo "--- Task definition (with substitutions applied) ---"
+          cat infra/ecs/seed-admin-task.json
+          REVISION=$(aws ecs register-task-definition \
+            --cli-input-json file://infra/ecs/seed-admin-task.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "Registered: $REVISION"
+
+      - name: Run seed-admin task and wait for exit
+        id: run
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ vars.ECS_CLUSTER }} \
+            --task-definition ${{ steps.register.outputs.revision }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=${{ vars.PRIVATE_SUBNETS }},securityGroups=${{ vars.MIGRATE_SG }},assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "::error::run-task did not return a task ARN"
+            exit 1
+          fi
+
+          echo "Started task: $TASK_ARN"
+          TASK_ID=$(echo "$TASK_ARN" | awk -F/ '{print $NF}')
+          echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
+          echo "Waiting for task to stop..."
+          aws ecs wait tasks-stopped \
+            --cluster ${{ vars.ECS_CLUSTER }} --tasks "$TASK_ARN"
+
+          EXIT=$(aws ecs describe-tasks \
+            --cluster ${{ vars.ECS_CLUSTER }} --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks \
+            --cluster ${{ vars.ECS_CLUSTER }} --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text)
+          echo "exit=$EXIT" >> "$GITHUB_OUTPUT"
+          echo "Task stopped — exit code: $EXIT, reason: $REASON"
+
+      - name: Print container logs
+        if: always()
+        run: |
+          # Stream the seed-admin log group for the last 10 minutes.
+          # awslogs-create-group=true means the group exists after first run.
+          echo "=== /ecs/jadwal-seed-admin (last 10 min) ==="
+          aws logs tail /ecs/jadwal-seed-admin \
+            --since 10m --format short || \
+            echo "(log group not found yet — task may have failed before logging)"
+
+      - name: Fail step if seed-admin exited non-zero
+        if: steps.run.outputs.exit != '0'
+        run: |
+          echo "::error::seed-admin task exited with ${{ steps.run.outputs.exit }} — see container logs above"
+          exit 1
