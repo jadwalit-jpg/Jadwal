@@ -12,14 +12,6 @@
 # never appear in production.
 apps/web/e2e/
 
-# Local seed scripts — populate the dev/test database with deterministic
-# test users (customer + vendor + admin). Hard-coded passwords here are
-# the *fixture* values, not real credentials, and the scripts are not
-# bundled into any production image (Dockerfile only copies src/, dist/).
-apps/api/prisma/seed-e2e-customer.ts
-apps/api/prisma/seed-e2e-vendor.ts
-apps/api/prisma/seed-e2e-data.ts
-
-# Manual one-off booking-creation script for local QA — same rationale
-# as the seed scripts above.
+# Manual one-off booking-creation script for local QA — fixture-only
+# script that hard-codes a test customer email; never bundled into prod.
 apps/api/scripts/create-test-booking.ts
