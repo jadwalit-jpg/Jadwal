@@ -368,3 +368,5 @@ jobs:
           done
           echo "::error::Smoke test failed after 6 attempts"
           exit 1
+
+# Last successful end-to-end run: 2026-04-29 (verification)
