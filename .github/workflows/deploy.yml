@@ -186,29 +186,33 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/amazon-ecr-login@19d944daaa35f0fa1d3f7f8af1d3f2e5de25c5b7 # v2
 
-      # Pass 1: TABLE — printed to stdout for visibility. Tells us in
-      # the workflow log exactly which CVEs trip the gate. Always runs;
-      # exit-code 0 so we can still see the table when the next pass
-      # decides to fail.
-      - name: Trivy scan (table for visibility)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          image-ref: ${{ env.ECR_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
-          severity: CRITICAL,HIGH
-          exit-code: 0
-          ignore-unfixed: true
-          vuln-type: os,library
-          format: table
-
-      # Pass 2: SARIF — uploads to GitHub Security tab. exit-code 1
-      # blocks the deploy on any HIGH or CRITICAL with an available fix.
-      - name: Trivy scan (sarif for Security tab + gate)
+      # Pass 1: GATE — table format respects the `severity` filter and
+      # exits 1 only on actual HIGH/CRITICAL fixable findings. This is
+      # the deploy gate.
+      #
+      # IMPORTANT: do NOT use `format: sarif` here. The trivy-action's
+      # SARIF builder ignores the severity filter (per SARIF spec, which
+      # wants every finding represented), so it would exit-code 1 on
+      # a single MEDIUM. The TABLE format respects severity correctly.
+      - name: Trivy gate (CRITICAL,HIGH; fail closed)
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ env.ECR_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
           severity: CRITICAL,HIGH
           exit-code: 1
           ignore-unfixed: true
+          vuln-type: os,library
+          format: table
+
+      # Pass 2: SARIF — comprehensive scan, ALL severities, uploads to
+      # GitHub Security tab. exit-code 0 because Pass 1 already gated.
+      - name: Trivy SARIF (all severities, advisory)
+        if: always()        # run even if gate fired, so Security tab updates
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
+          exit-code: 0
+          ignore-unfixed: false
           vuln-type: os,library
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
