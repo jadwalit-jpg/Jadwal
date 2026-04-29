@@ -3,6 +3,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
+import * as fs from 'fs';
 import * as path from 'path';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -76,7 +77,26 @@ async function main() {
     process.exit(1);
   }
 
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  // RDS enforces SSL and presents an AWS-CA-signed cert that isn't in
+  // node:22-alpine's default trust store. We vendor the AWS RDS global CA
+  // bundle alongside this script so chain validation succeeds. See
+  // src/prisma/prisma.service.ts for the same pattern in the API runtime.
+  const caBundlePath = (() => {
+    const candidates = [
+      '/app/apps/api/prisma/rds-ca-bundle.pem',
+      path.resolve(__dirname, 'rds-ca-bundle.pem'),
+      path.resolve(process.cwd(), 'prisma/rds-ca-bundle.pem'),
+      path.resolve(process.cwd(), 'apps/api/prisma/rds-ca-bundle.pem'),
+    ];
+    for (const p of candidates) {
+      try { fs.accessSync(p); return p; } catch { /* try next */ }
+    }
+    throw new Error(`[FATAL] RDS CA bundle not found. Searched: ${candidates.join(', ')}`);
+  })();
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: isProd ? { ca: fs.readFileSync(caBundlePath), rejectUnauthorized: true } : undefined,
+  });
   const adapter = new PrismaPg(pool);
   const prisma = new PrismaClient({ adapter });
   await prisma.$connect();
