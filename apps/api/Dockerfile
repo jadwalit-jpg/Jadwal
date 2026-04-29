@@ -131,4 +131,9 @@ EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD wget -qO- http://localhost:4000/api/health || exit 1
 
-CMD ["node", "dist/main.js"]
+# `nest build` (without a nest-cli.json) compiles via tsc which preserves
+# the src/ subdirectory in the output. So src/main.ts -> dist/src/main.js,
+# not dist/main.js. Add a nest-cli.json with `sourceRoot: src` to flatten,
+# or — as we do here — point CMD at the actual output path. Same path
+# used by package.json's start:prod (which has the same issue tracked).
+CMD ["node", "dist/src/main.js"]
