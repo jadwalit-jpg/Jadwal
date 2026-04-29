@@ -185,7 +185,25 @@ jobs:
           role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/amazon-ecr-login@19d944daaa35f0fa1d3f7f8af1d3f2e5de25c5b7 # v2
-      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+
+      # Pass 1: TABLE — printed to stdout for visibility. Tells us in
+      # the workflow log exactly which CVEs trip the gate. Always runs;
+      # exit-code 0 so we can still see the table when the next pass
+      # decides to fail.
+      - name: Trivy scan (table for visibility)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
+          severity: CRITICAL,HIGH
+          exit-code: 0
+          ignore-unfixed: true
+          vuln-type: os,library
+          format: table
+
+      # Pass 2: SARIF — uploads to GitHub Security tab. exit-code 1
+      # blocks the deploy on any HIGH or CRITICAL with an available fix.
+      - name: Trivy scan (sarif for Security tab + gate)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ env.ECR_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
           severity: CRITICAL,HIGH
@@ -194,6 +212,7 @@ jobs:
           vuln-type: os,library
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
+
       - uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3
         if: always()
         with:
