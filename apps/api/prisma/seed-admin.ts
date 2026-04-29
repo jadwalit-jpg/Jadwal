@@ -81,6 +81,32 @@ async function main() {
   const prisma = new PrismaClient({ adapter });
   await prisma.$connect();
 
+  // Pre-seed visibility — print row counts so an operator can audit the DB
+  // state via CloudWatch logs before any writes happen. If anything other
+  // than the admin row exists in `users`, you'll see it here and can decide
+  // whether to clean up.
+  const [
+    usersCount, vendorsCount, countriesCount, citiesCount,
+    categoriesCount, activitiesCount, bookingsCount,
+  ] = await Promise.all([
+    prisma.user.count(),
+    prisma.vendor.count(),
+    prisma.country.count(),
+    prisma.city.count(),
+    prisma.category.count(),
+    prisma.activity.count(),
+    prisma.booking.count(),
+  ]);
+  console.log('=== DB row counts (before seed) ===');
+  console.log(`  users:      ${usersCount}`);
+  console.log(`  vendors:    ${vendorsCount}`);
+  console.log(`  countries:  ${countriesCount}`);
+  console.log(`  cities:     ${citiesCount}`);
+  console.log(`  categories: ${categoriesCount}`);
+  console.log(`  activities: ${activitiesCount}`);
+  console.log(`  bookings:   ${bookingsCount}`);
+  console.log('');
+
   const existing = await prisma.user.findUnique({ where: { email } });
 
   if (existing && !allowUpdate) {
@@ -126,9 +152,11 @@ async function main() {
   console.log(existing ? 'Admin user updated:' : 'Admin user created:');
   console.log('  email: ', admin.email);
   console.log('  role:  ', admin.role);
-  if (!isProd) {
-    console.log('  password:', password);
-  }
+  // Password is intentionally NEVER echoed. The operator already knows it
+  // (they set it in SSM / env). Echoing here would leak the plaintext into
+  // CloudWatch Logs in any cloud-run context, including a single shared dev
+  // log group. The convenience of `npm run seed:admin` printing it locally
+  // is not worth the prod risk.
   console.log('\nLog in at /login, then manage countries, cities, categories,');
   console.log('vendors, platform settings, etc. from /admin.');
 

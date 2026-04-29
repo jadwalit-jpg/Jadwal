@@ -1,0 +1,55 @@
+{
+  "family": "jadwal-seed-admin",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+
+  "cpu": "256",
+  "memory": "512",
+
+  "executionRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/jadwal-ecs-task-execution",
+  "taskRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/jadwal-ecs-task-role",
+
+  "containerDefinitions": [
+    {
+      "name": "seed-admin",
+      "image": "IMAGE_TAG_PLACEHOLDER",
+      "essential": true,
+      "readonlyRootFilesystem": false,
+
+      "command": ["node", "dist/prisma/seed-admin.js"],
+
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" }
+      ],
+
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/DATABASE_URL"
+        },
+        {
+          "name": "SEED_ADMIN_EMAIL",
+          "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/SEED_ADMIN_EMAIL"
+        },
+        {
+          "name": "SEED_ADMIN_PASSWORD",
+          "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/SEED_ADMIN_PASSWORD"
+        },
+        {
+          "name": "SEED_ADMIN_NAME",
+          "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/SEED_ADMIN_NAME"
+        }
+      ],
+
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/jadwal-seed-admin",
+          "awslogs-region": "<AWS_REGION>",
+          "awslogs-stream-prefix": "seed-admin",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}
