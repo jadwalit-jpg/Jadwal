@@ -16,8 +16,15 @@ export class UpdateAdminProfileDto {
 }
 
 export class ChangeAdminPasswordDto {
+  // Old password is just compared via bcrypt — we don't need to enforce
+  // strength on it (it's whatever the user set previously). But we MUST
+  // bound the length so an attacker can't ship a multi-MB string and
+  // burn server CPU through bcrypt's input-handling. 128 matches the
+  // newPassword cap for symmetry; bcrypt itself silently truncates at
+  // 72 bytes anyway, so 128 is generous.
   @IsString()
   @MinLength(1)
+  @MaxLength(128)
   currentPassword!: string;
 
   @IsString()
