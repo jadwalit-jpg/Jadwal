@@ -93,7 +93,7 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: "https",
-        hostname: "cdn.jadwal.app",
+        hostname: "cdn.jadwal.qa",
       },
       // Dev-only: API serves uploads from localhost:4000/uploads/*
       ...(process.env.NODE_ENV === "development"

@@ -51,7 +51,7 @@ const IMG_HOSTS = [
   'https://unpkg.com',
   'https://jadwal-assets.s3.amazonaws.com',
   'https://jadwal-assets.s3.eu-central-1.amazonaws.com',
-  'https://cdn.jadwal.app',
+  'https://cdn.jadwal.qa',
   API_ORIGIN,
 ];
 
