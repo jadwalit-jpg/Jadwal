@@ -346,7 +346,12 @@ export class PaymentService {
     // If payment.status === 'FAILED' && isSuccess → fall through to process as new SUCCESS
     // (the optimistic lock below handles the update safely)
 
-    // 4. Verify SHA256 hash — required for successful payments, best-effort for failures
+    // 4. Verify SHA-256 hash — required for ALL callbacks regardless of
+    //    err_code. PAY2M sends a valid Response_Key on cancels and declines
+    //    too; the previous "best-effort for failures" was the only carve-out
+    //    and it's now closed (fixed PAY-1 — closes a forge-failure-IPN
+    //    attack vector where an attacker who knew a victim's basket_id
+    //    could mark their PENDING booking as FAILED → cron deletes it).
     const amount = Number(payment.amount).toFixed(2);
     const hashValid = this.verifyCallbackHash(
       params.basket_id,
