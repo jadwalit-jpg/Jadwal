@@ -2,8 +2,11 @@ import { IsString, MinLength, MaxLength, Matches } from 'class-validator';
 import { IsStrongPassword } from '../../common/validators/password-strength';
 
 export class ChangePasswordDto {
+  // See ChangeAdminPasswordDto — same MaxLength rationale (DoS guard
+  // around bcrypt.compare input). Cap mirrored across both flows.
   @IsString()
   @MinLength(1)
+  @MaxLength(128)
   currentPassword!: string;
 
   @IsString()
