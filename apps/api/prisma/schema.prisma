@@ -386,6 +386,14 @@ model Payment {
   status             PaymentStatus @default(PENDING)
   payoutStatus       PayoutStatus  @default(UNPAID)
   paidAt             DateTime?
+  // paymentFirstInitiatedAt: stamped ONCE on the first /payment/initiate
+  // call and never overwritten. Drives the cleanup-cron's expiry cutoff,
+  // so a customer cannot indefinitely extend their PENDING reservation by
+  // re-initiating payment from a stale tab.
+  paymentFirstInitiatedAt DateTime?
+  // paymentInitiatedAt: re-stamped on every /payment/initiate retry.
+  // Used for "abandoned at gateway" forensics — last time the customer
+  // tried to hand off to PAY2M.
   paymentInitiatedAt DateTime?
   method             String
   refundAmount       Decimal?      @db.Decimal(10, 2)
@@ -396,6 +404,7 @@ model Payment {
   @@index([payoutStatus])
   @@index([status, createdAt])
   @@index([status, paymentInitiatedAt])
+  @@index([status, paymentFirstInitiatedAt])
   @@map("payments")
 }
 
