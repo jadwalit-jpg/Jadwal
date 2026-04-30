@@ -205,8 +205,17 @@ export default function Page() {
         </div>
 
         {/* Hero content. Static markup; only the search bar + trust metrics
-            below are client islands. */}
-        <div className="relative z-20 flex-1 flex flex-col items-center justify-center max-w-6xl mx-auto w-full px-6 pb-56 md:pb-64 text-center">
+            below are client islands.
+            Mobile spacing: navbar (variant="transparent" by default on /)
+            sits over the hero, so without explicit pt- the eyebrow line
+            ("QATAR · LOCAL EXPERIENCES") collides with the bottom edge of
+            the navbar on small viewports. pt-16 / sm:pt-20 lifts the centered
+            content block clear of the navbar; md+ resets to pt-0 so larger
+            screens (where the navbar is shorter relative to the viewport)
+            keep the original visually-centered layout.
+            Boat / sun / moon / waves are positioned absolutely against the
+            section, NOT inside this content block, so they stay put. */}
+        <div className="relative z-20 flex-1 flex flex-col items-center justify-center max-w-6xl mx-auto w-full px-6 pt-16 sm:pt-20 md:pt-0 pb-56 md:pb-64 text-center">
           {/*
             Letter-spacing & text-balance modifiers are scoped to `ltr:` so
             they only apply on Latin layouts. Reasons:
