@@ -605,11 +605,26 @@ describe('AuthService.forgotPassword', () => {
     expect(ctx.email.sendPasswordReset).not.toHaveBeenCalled();
   });
 
-  test('vendor email → generic response, NO reset email (only customers)', async () => {
+  test('vendor email with password → reset email IS sent (recovery path opened in GAP-2)', async () => {
+    // Pre-GAP-2: vendors got generic response with NO email — they had
+    // zero in-app recovery if their password leaked. Post-GAP-2: vendors
+    // get the reset link just like customers. Admin remains excluded
+    // (covered by the next test).
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce({ id: 'v1', fullName: 'V', role: 'VENDOR' });
     ctx.prisma._client.user.count.mockResolvedValueOnce(1);
 
     await ctx.sut.forgotPassword('v@b.com');
+    expect(ctx.email.sendPasswordReset).toHaveBeenCalled();
+  });
+
+  test('admin email → generic response, NO reset email (admin recovery is out-of-band)', async () => {
+    // Admin password recovery is intentionally NOT via email link — it
+    // requires re-running the seed-admin task (out-of-band procedure for
+    // the highest-privilege role).
+    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({ id: 'a1', fullName: 'A', role: 'ADMIN' });
+    ctx.prisma._client.user.count.mockResolvedValueOnce(1);
+
+    await ctx.sut.forgotPassword('admin@b.com');
     expect(ctx.email.sendPasswordReset).not.toHaveBeenCalled();
   });
 
