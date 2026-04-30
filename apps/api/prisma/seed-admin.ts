@@ -81,11 +81,21 @@ async function main() {
   // node:22-alpine's default trust store. We vendor the AWS RDS global CA
   // bundle alongside this script so chain validation succeeds. See
   // src/prisma/prisma.service.ts for the same pattern in the API runtime.
-  // Gate is on hostname, not NODE_ENV — works across staging + prod.
+  //
+  // FAIL-SECURE: an unknown host gets SSL ON. Only the explicit local-dev
+  // allowlist below skips SSL. Mirrors the API runtime's gate.
+  const LOCAL_DEV_DB_HOSTS = new Set([
+    'localhost', '127.0.0.1', '::1',
+    'host.docker.internal', 'postgres', 'db',
+  ]);
   const dbUrl = process.env.DATABASE_URL ?? '';
   const useSsl = (() => {
-    try { return new URL(dbUrl).hostname.endsWith('.rds.amazonaws.com'); }
-    catch { return false; }
+    try {
+      const host = new URL(dbUrl).hostname.toLowerCase();
+      return !LOCAL_DEV_DB_HOSTS.has(host);
+    } catch {
+      return false;
+    }
   })();
   const caBundlePath = (() => {
     const candidates = [
