@@ -27,9 +27,13 @@ on:
   pull_request_target:
     types: [opened, reopened, synchronize, labeled]
 
+# OpenSSF Scorecard "Token-Permissions" rule wants the default GITHUB_TOKEN
+# to be read-only at workflow scope; jobs that need write permissions
+# elevate them per-job. This way an unrelated future job in this workflow
+# (or anything else that piggy-backs the GITHUB_TOKEN) can't accidentally
+# get write access to contents / PRs.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   auto-merge:
@@ -38,6 +42,11 @@ jobs:
     # so checking github.actor would skip exactly the case we want to run for.
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    # Job-scoped writes only — needed by `gh pr review --approve` and
+    # `gh pr merge`. Nothing else in this workflow gets these grants.
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Fetch Dependabot metadata
         id: meta
