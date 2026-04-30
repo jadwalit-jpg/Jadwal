@@ -60,11 +60,13 @@ export class AdminService {
     if (!valid) throw new ForbiddenException('Current password is incorrect');
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hash = await bcrypt.hash(newPassword, bcryptRounds);
-    await db.$transaction([
-      db.user.update({ where: { id: userId }, data: { password: hash } }),
+    // Interactive transaction (function form) — preferred over the array form
+    // with Prisma 7 driver adapters.
+    await db.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { password: hash } });
       // Invalidate all refresh tokens — forces re-login on all other sessions
-      db.refreshToken.deleteMany({ where: { userId } }),
-    ]);
+      await tx.refreshToken.deleteMany({ where: { userId } });
+    });
     return { message: 'Password updated successfully. Please log in again.' };
   }
 

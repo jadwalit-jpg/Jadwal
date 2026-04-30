@@ -390,8 +390,15 @@ export class AuthService {
     const db = this.prisma.client;
     const { ip, userAgent } = this.extractClientInfo(req);
 
+    // The DB stores SHA-256(token) — see sendVerificationEmail. The email
+    // link carries the plaintext, which we hash here to match. Anti-replay
+    // hardening identical to the password-reset flow: a DB dump cannot
+    // be replayed against /verify-email (which would auto-issue a session
+    // and effectively grant account takeover).
+    const tokenHash = this.hashToken(token);
+
     const user = await (db.user as any).findUnique({
-      where: { verificationToken: token },
+      where: { verificationToken: tokenHash },
       select: { id: true, email: true, verificationTokenExpiry: true },
     });
     if (!user) throw new BadRequestException('Invalid or expired verification link');
@@ -497,17 +504,21 @@ export class AuthService {
   // ─── Internal: generate + save + send verification email ───────────────────
 
   private async sendVerificationEmail(db: any, userId: string, email: string, fullName: string) {
-    const token = crypto.randomBytes(32).toString('hex');
+    // Plaintext token goes in the email URL; only its SHA-256 hash is
+    // persisted in the DB. This matches the password-reset hardening: a
+    // DB dump leaks no actionable verification tokens.
+    const plainToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = this.hashToken(plainToken);
     const verificationExpiryHours = Number(process.env.VERIFICATION_TOKEN_EXPIRY_HOURS || 24);
     const expiry = new Date(Date.now() + verificationExpiryHours * 60 * 60 * 1000);
 
     await db.user.update({
       where: { id: userId },
-      data: { verificationToken: token, verificationTokenExpiry: expiry },
+      data: { verificationToken: tokenHash, verificationTokenExpiry: expiry },
     });
 
     const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
-    const verificationLink = `${frontendUrl}/verify-email?token=${token}`;
+    const verificationLink = `${frontendUrl}/verify-email?token=${plainToken}`;
 
     await this.emailService.sendEmailVerification(email, { userName: fullName, verificationLink });
   }
@@ -601,22 +612,29 @@ export class AuthService {
       ? await db.user.count({ where: { id: user.id, password: { not: null } } }) > 0
       : false;
 
-    // Only allow reset for customers with passwords (not OAuth-only). Vendors/admins change password from settings.
-    if (user && hasPassword && user.role === 'CUSTOMER') {
-      const token = crypto.randomBytes(32).toString('hex');
+    // Allow reset for password-bearing CUSTOMER and VENDOR accounts. Admins
+    // are deliberately excluded — admin password recovery requires manual
+    // out-of-band procedure (re-run the seed-admin task) for stronger
+    // defense-in-depth on the highest-privilege role.
+    if (user && hasPassword && (user.role === 'CUSTOMER' || user.role === 'VENDOR')) {
+      // Generate a high-entropy plaintext token (256 bits) — this goes in
+      // the email URL. We store ONLY its SHA-256 hash so a DB dump cannot
+      // be replayed against /reset-password.
+      const plainToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = this.hashToken(plainToken);
       const resetExpiryHours = Number(process.env.PASSWORD_RESET_EXPIRY_HOURS || 1);
       const expiry = new Date(Date.now() + resetExpiryHours * 60 * 60 * 1000);
 
       await db.user.update({
         where: { id: user.id },
         data: {
-          passwordResetToken: token,
+          passwordResetToken: tokenHash,
           passwordResetExpiry: expiry,
         },
       });
 
       const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
-      const resetLink = `${frontendUrl}/reset-password?token=${token}`;
+      const resetLink = `${frontendUrl}/reset-password?token=${plainToken}`;
 
       this.emailService.sendPasswordReset(email, {
         userName: user.fullName,
@@ -627,7 +645,7 @@ export class AuthService {
       this.securityLogger.log({
         event: 'PASSWORD_RESET_REQUESTED',
         userId: user.id,
-        details: 'Reset email sent',
+        details: `Reset email sent (role=${user.role})`,
       });
     }
 
@@ -642,26 +660,44 @@ export class AuthService {
     // Bounded literal character class with a fixed `{64}` quantifier — no
     // alternation, no nested quantifiers, no catastrophic-backtracking risk.
     if (!/^[a-f0-9]{64}$/.test(token)) {
+      // Audit failed attempts so an attacker probing reset URLs leaves a
+      // trace beyond rate-limit denials. Brute-force against a 256-bit
+      // token is computationally infeasible, but targeted reconnaissance
+      // (e.g. malformed token in a known-victim's email link) is detectable.
+      this.securityLogger.log({
+        event: 'PASSWORD_RESET_FAILED',
+        details: 'Token format invalid (not 64 hex chars)',
+      });
       throw new BadRequestException('Invalid or expired reset link');
     }
 
+    // Look up by the hash of the supplied token — DB stores only the hash
+    // (anti-replay if the DB is compromised).
+    const tokenHash = this.hashToken(token);
+
     const user = await db.user.findFirst({
       where: {
-        passwordResetToken: token,
+        passwordResetToken: tokenHash,
         passwordResetExpiry: { gt: new Date() },
       },
       select: { id: true },
     });
 
     if (!user) {
+      this.securityLogger.log({
+        event: 'PASSWORD_RESET_FAILED',
+        details: 'Token not found in DB or expired',
+      });
       throw new BadRequestException('Invalid or expired reset link');
     }
 
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hash = await bcrypt.hash(newPassword, bcryptRounds);
 
-    await db.$transaction([
-      db.user.update({
+    // Interactive transaction (function form) — preferred over the array
+    // form with Prisma 7 driver adapters.
+    await db.$transaction(async (tx) => {
+      await tx.user.update({
         where: { id: user.id },
         data: {
           password: hash,
@@ -670,10 +706,10 @@ export class AuthService {
           failedLoginAttempts: 0,
           lockedUntil: null,
         },
-      }),
+      });
       // Invalidate all sessions — forces re-login everywhere
-      db.refreshToken.deleteMany({ where: { userId: user.id } }),
-    ]);
+      await tx.refreshToken.deleteMany({ where: { userId: user.id } });
+    });
 
     this.securityLogger.log({
       event: 'PASSWORD_RESET_COMPLETED',
