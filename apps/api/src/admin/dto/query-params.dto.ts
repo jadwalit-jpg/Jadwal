@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsInt, Min, Max, IsIn } from 'class-validator';
+import { IsOptional, IsString, IsInt, Min, Max, IsIn, MaxLength, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 
 const PAYMENT_STATUSES = [
@@ -19,12 +19,24 @@ export class PaginationDto {
   @Max(100)
   limit?: number = 20;
 
+  // Bound search-string length so a flooded query string cannot turn into a
+  // DB-level pattern-match cost spike. 200 chars is generous for a user
+  // searching by activity title or vendor name.
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   search?: string;
 
+  // PaginationDto is shared across vendors / activities / users / bookings /
+  // payouts / coupons / reviews — each context has its own status enum
+  // (VendorStatus, ActivityStatus, BookingStatus, etc.). Per-call IsEnum
+  // would be ideal but breaks the shared shape, so we use a permissive
+  // enum-shape pattern: UPPERCASE_SNAKE_CASE, max 50 chars. Bounds DoS +
+  // rejects garbage input without coupling the DTO to a specific domain.
   @IsOptional()
   @IsString()
+  @MaxLength(50)
+  @Matches(/^[A-Z_]+$/, { message: 'status must be UPPERCASE_SNAKE_CASE' })
   status?: string;
 
   // Filter by Payment.status — used by the admin refund queue page to show
