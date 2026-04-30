@@ -41,7 +41,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       // BusinessException (see common/exceptions/business-exception.ts)
       // attaches `errorCode` + optional `params` so the client can render
       // a localised string instead of falling back to the English message.
-      const payload =
+      let payload =
         typeof body === 'string'
           ? { statusCode: status, message: body }
           : {
@@ -53,6 +53,28 @@ export class AllExceptionsFilter implements ExceptionFilter {
               ...((body as any)?.errorCode ? { errorCode: (body as any).errorCode } : {}),
               ...((body as any)?.params ? { params: (body as any).params } : {}),
             };
+
+      // Fallback for body-parser JSON syntax errors that get wrapped into
+      // a BadRequestException before our @Catch(SyntaxError) filter sees
+      // them. Detect the parser-identifying message pattern and replace
+      // with a generic one so we don't leak which JSON parser we use.
+      // Caught patterns:
+      //   "Unexpected token 'x', \"...\" is not valid JSON"   (modern Node)
+      //   "Unexpected end of JSON input"
+      //   "Unexpected number / string / character in JSON"
+      if (
+        status === 400 &&
+        typeof (payload as any).message === 'string' &&
+        /(unexpected (token|number|string|character|end)\b|is not valid json|in json\b)/i.test(
+          (payload as any).message,
+        )
+      ) {
+        payload = {
+          statusCode: 400,
+          message: 'Invalid request body',
+          error: 'Bad Request',
+        };
+      }
 
       response.status(status).json(payload);
 
