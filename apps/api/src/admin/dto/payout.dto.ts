@@ -1,8 +1,10 @@
-import { IsArray, IsString } from 'class-validator';
+import { IsArray, IsUUID, ArrayMinSize, ArrayMaxSize } from 'class-validator';
 
 export class MarkPayoutPaidDto {
   @IsArray()
-  @IsString({ each: true })
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)  // generous batch ceiling — admin marks a settlement run
+  @IsUUID('4', { each: true })
   paymentIds!: string[];
 }
 
@@ -13,6 +15,6 @@ export class MarkPayoutPaidDto {
  * already spells out the impact.
  */
 export class MarkPayoutUnpaidDto {
-  @IsString()
+  @IsUUID('4')
   paymentId!: string;
 }

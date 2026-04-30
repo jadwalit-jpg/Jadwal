@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches, IsUUID } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { IsStrongPassword } from '../../common/validators/password-strength';
 
@@ -51,7 +51,7 @@ export class RegisterVendorDto {
   @Matches(/^\+?[0-9]{7,15}$/, { message: 'Phone must be 7–15 digits, optionally starting with +' })
   phone?: string;
 
-  @IsString()
+  @IsUUID('4', { message: 'Invalid country' })
   @IsNotEmpty({ message: 'Country is required' })
   countryId!: string;
 }
