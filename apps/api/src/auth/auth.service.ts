@@ -390,8 +390,15 @@ export class AuthService {
     const db = this.prisma.client;
     const { ip, userAgent } = this.extractClientInfo(req);
 
+    // The DB stores SHA-256(token) — see sendVerificationEmail. The email
+    // link carries the plaintext, which we hash here to match. Anti-replay
+    // hardening identical to the password-reset flow: a DB dump cannot
+    // be replayed against /verify-email (which would auto-issue a session
+    // and effectively grant account takeover).
+    const tokenHash = this.hashToken(token);
+
     const user = await (db.user as any).findUnique({
-      where: { verificationToken: token },
+      where: { verificationToken: tokenHash },
       select: { id: true, email: true, verificationTokenExpiry: true },
     });
     if (!user) throw new BadRequestException('Invalid or expired verification link');
@@ -497,17 +504,21 @@ export class AuthService {
   // ─── Internal: generate + save + send verification email ───────────────────
 
   private async sendVerificationEmail(db: any, userId: string, email: string, fullName: string) {
-    const token = crypto.randomBytes(32).toString('hex');
+    // Plaintext token goes in the email URL; only its SHA-256 hash is
+    // persisted in the DB. This matches the password-reset hardening: a
+    // DB dump leaks no actionable verification tokens.
+    const plainToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = this.hashToken(plainToken);
     const verificationExpiryHours = Number(process.env.VERIFICATION_TOKEN_EXPIRY_HOURS || 24);
     const expiry = new Date(Date.now() + verificationExpiryHours * 60 * 60 * 1000);
 
     await db.user.update({
       where: { id: userId },
-      data: { verificationToken: token, verificationTokenExpiry: expiry },
+      data: { verificationToken: tokenHash, verificationTokenExpiry: expiry },
     });
 
     const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
-    const verificationLink = `${frontendUrl}/verify-email?token=${token}`;
+    const verificationLink = `${frontendUrl}/verify-email?token=${plainToken}`;
 
     await this.emailService.sendEmailVerification(email, { userName: fullName, verificationLink });
   }
