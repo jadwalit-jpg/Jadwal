@@ -311,20 +311,27 @@ describe('PaymentService.handleCallback', () => {
     );
   });
 
-  test('FAILURE callback with invalid hash → still processes (no security risk)', async () => {
+  test('FAILURE callback with invalid hash → REJECTS (PAY-1 always-verify)', async () => {
+    // Pre-PAY-1 behavior: invalid hash on a failure callback was let through
+    // (the rationale was 'we're marking it FAILED anyway, no security risk').
+    // PAY-1 closed that gap — an attacker who knew a victim's basket_id
+    // could forge a failure IPN to delete the victim's PENDING booking.
+    // Hash verification now applies to every callback regardless of err_code.
     const ctx = await buildSut();
     ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
       id: 'p1', bookingId: 'b1', amount: 100, status: 'PENDING',
     });
-    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({ id: 'b1', status: 'PENDING' });
 
-    // Invalid hash but err_code is a failure code — should NOT throw
-    const r = await ctx.sut.handleCallback({
-      err_code: '42', basket_id: 'B1', Response_Key: 'invalid',
-    });
-    // Status may be failed or success depending on tx result — just assert no throw
-    expect(r.bookingId).toBe('b1');
+    await expect(
+      ctx.sut.handleCallback({
+        err_code: '42', basket_id: 'B1', Response_Key: 'invalid',
+      }),
+    ).rejects.toThrow(/Payment verification failed/);
+
+    // Audit trail of the rejection — same event as the SUCCESS-with-bad-hash path
+    expect(ctx.audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_HASH_MISMATCH' }),
+    );
   });
 
   test('err_code 00 vs 000 both recognised as success', async () => {
