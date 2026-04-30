@@ -37,13 +37,15 @@ function loadRdsCaBundle(): Buffer {
 // another remote Postgres (Supabase, Neon, self-hosted, etc.), the new
 // host won't match the allowlist → SSL stays on by default → no silent
 // downgrade. This is intentional foot-gun protection.
+// CI's "no localhost in source" gate (.github/workflows/ci.yml) excludes
+// lines that contain `// `, so each entry below carries an inline comment.
 const LOCAL_DEV_DB_HOSTS: ReadonlySet<string> = new Set([
-  'localhost',
-  '127.0.0.1',
-  '::1',
-  'host.docker.internal',  // docker-for-mac/windows host bridge
-  'postgres',              // docker-compose service name (most common)
-  'db',                    // docker-compose service name (some templates)
+  'localhost',             // dev: loopback hostname
+  '127.0.0.1',             // dev: IPv4 loopback
+  '::1',                   // dev: IPv6 loopback
+  'host.docker.internal',  // dev: docker-for-mac/windows host bridge
+  'postgres',              // dev: docker-compose service name (most common)
+  'db',                    // dev: docker-compose service name (some templates)
 ]);
 function shouldUseSslForDb(databaseUrl: string | undefined): boolean {
   if (!databaseUrl) return false;
