@@ -390,36 +390,32 @@ jobs:
       - name: Probe public endpoints with retry
         env:
           PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
-          # ALB DNS is stable per environment. New cluster → update the
-          # ALB_HOST repo Variable. Resolved through standard public DNS,
-          # never through Cloudflare's CNAME for jadwal.qa.
-          ALB_HOST: ${{ vars.ALB_HOST || 'jadwal-alb-957710002.eu-central-1.elb.amazonaws.com' }}
         run: |
-          # The smoke step verifies the ECS-rolled origin (api + web
-          # target groups) is healthy after the rolling deploy. It is NOT
-          # a Cloudflare-edge check.
+          # The smoke step verifies the deployed origin is reachable and
+          # healthy after the ECS rolling deploy. It probes through
+          # Cloudflare so it exercises the full real-world path that an
+          # actual user takes (DNS → CF edge → ALB → ECS task).
           #
-          # Probing through https://jadwal.qa would route through
-          # Cloudflare, whose Bot Fight Mode flags GitHub Actions runner
-          # IPs and returns 403 — false-failing every deploy.
+          # Direct-to-ALB probing was used briefly (PR #87) to bypass
+          # Cloudflare's Bot Fight Mode. That stopped working when the
+          # ALB security group was locked down to Cloudflare IPs only —
+          # GitHub Actions runner IPs are no longer in scope.
           #
-          # Fix: keep the SNI hostname as PUBLIC_API_URL (so the ALB's
-          # ACM cert validates and host-based listener rules match), but
-          # use `curl --resolve` to point directly at the ALB IP. Bypasses
-          # Cloudflare's edge entirely while still exercising the full
-          # TLS + ALB + ECS path.
+          # New approach: probe via Cloudflare with a custom User-Agent.
+          # On the Cloudflare side, a Configuration Rule already exempts
+          # /api/health + / from Browser Integrity Check. If a future
+          # Bot Fight Mode false-positive returns, add a WAF Custom Rule
+          # (Cloudflare → Security → WAF → Custom rules) with action
+          # "Skip" and filter:
+          #   (http.user_agent contains "Jadwal-Deploy-Smoke")
+          # to bypass managed bot rules for the smoke UA.
 
           BASE="${PUBLIC_API_URL%/}"
-          HOSTNAME="${BASE#https://}"
-          HOSTNAME="${HOSTNAME#http://}"
 
-          ALB_IP=$(getent hosts "$ALB_HOST" | awk '{print $1}' | head -1)
-          if [ -z "$ALB_IP" ]; then
-            echo "::error::Failed to resolve ALB hostname: $ALB_HOST"
-            exit 1
-          fi
-          echo "ALB resolved to $ALB_IP — probing $HOSTNAME via direct TLS to ALB (bypassing Cloudflare)"
-          RESOLVE_FLAG="--resolve ${HOSTNAME}:443:${ALB_IP}"
+          # Identifiable, parseable, traceable — and looks legitimate
+          # enough for Cloudflare's heuristic checks. Update the version
+          # if we ever need to filter on it more granularly.
+          SMOKE_UA="Mozilla/5.0 (compatible; Jadwal-Deploy-Smoke/1.0; +https://jadwal.qa)"
 
           # endpoint:expected_status — extend as more endpoints become smoke-safe.
           PROBES=(
@@ -433,7 +429,7 @@ jobs:
             WANT="${PROBE##*:}"
             STATUS=""
             for i in 1 2 3 4 5 6; do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" $RESOLVE_FLAG "$BASE$EP" || true)
+              STATUS=$(curl -s -o /dev/null -A "$SMOKE_UA" -w "%{http_code}" "$BASE$EP" || true)
               if [ "$STATUS" = "$WANT" ]; then
                 echo "[PASS] $EP -> $STATUS"
                 break

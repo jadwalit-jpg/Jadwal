@@ -8,6 +8,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { SanitizePipe } from './common/pipes/sanitize.pipe';
 import { ThrottlerExceptionFilter } from './common/filters/throttler-exception.filter';
+import { JsonSyntaxFilter } from './common/filters/json-syntax.filter';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
 import helmet from 'helmet';
@@ -187,6 +188,7 @@ async function bootstrap() {
 
   // ─── Global exception filters ──────────────────────────────────────────
   // Nest routes exceptions to the most specific @Catch filter that matches.
+  //   - SyntaxError             → JsonSyntaxFilter (generic 400 — hides parser identity)
   //   - ThrottlerException      → ThrottlerExceptionFilter (custom 429 shape)
   //   - PrismaClientKnownRequestError → PrismaExceptionFilter (maps P2002→409, etc.)
   //   - Everything else         → AllExceptionsFilter (HttpException passthrough + generic 500)
@@ -194,6 +196,7 @@ async function bootstrap() {
     new AllExceptionsFilter(),
     new PrismaExceptionFilter(),
     new ThrottlerExceptionFilter(),
+    new JsonSyntaxFilter(),
   );
 
   // ─── Global Pipes ───────────────────────────────────────────────────────
