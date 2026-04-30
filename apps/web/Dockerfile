@@ -68,6 +68,15 @@ COPY turbo.json ./
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# VAPID public key — published to the browser so it can register a
+# pushManager subscription. NOT a secret (it's the public half of the
+# keypair); the corresponding private key stays in the API's SSM
+# SecureString and is never exposed to the client. Empty value at build
+# time = push UI silently disables (push-notifications.ts returns
+# 'unsupported').
+ARG NEXT_PUBLIC_VAPID_KEY
+ENV NEXT_PUBLIC_VAPID_KEY=$NEXT_PUBLIC_VAPID_KEY
+
 # API_PROXY_TARGET — required by next.config.ts in production. Server-side
 # only (not baked into the client bundle); used at runtime by Next.js's
 # rewrite() to forward /api/* to the API container. Build still needs it
