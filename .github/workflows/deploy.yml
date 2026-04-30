@@ -390,9 +390,36 @@ jobs:
       - name: Probe public endpoints with retry
         env:
           PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
+          # ALB DNS is stable per environment. New cluster → update the
+          # ALB_HOST repo Variable. Resolved through standard public DNS,
+          # never through Cloudflare's CNAME for jadwal.qa.
+          ALB_HOST: ${{ vars.ALB_HOST || 'jadwal-alb-957710002.eu-central-1.elb.amazonaws.com' }}
         run: |
-          # Strip trailing slash so we never produce double-slashed URLs.
+          # The smoke step verifies the ECS-rolled origin (api + web
+          # target groups) is healthy after the rolling deploy. It is NOT
+          # a Cloudflare-edge check.
+          #
+          # Probing through https://jadwal.qa would route through
+          # Cloudflare, whose Bot Fight Mode flags GitHub Actions runner
+          # IPs and returns 403 — false-failing every deploy.
+          #
+          # Fix: keep the SNI hostname as PUBLIC_API_URL (so the ALB's
+          # ACM cert validates and host-based listener rules match), but
+          # use `curl --resolve` to point directly at the ALB IP. Bypasses
+          # Cloudflare's edge entirely while still exercising the full
+          # TLS + ALB + ECS path.
+
           BASE="${PUBLIC_API_URL%/}"
+          HOSTNAME="${BASE#https://}"
+          HOSTNAME="${HOSTNAME#http://}"
+
+          ALB_IP=$(getent hosts "$ALB_HOST" | awk '{print $1}' | head -1)
+          if [ -z "$ALB_IP" ]; then
+            echo "::error::Failed to resolve ALB hostname: $ALB_HOST"
+            exit 1
+          fi
+          echo "ALB resolved to $ALB_IP — probing $HOSTNAME via direct TLS to ALB (bypassing Cloudflare)"
+          RESOLVE_FLAG="--resolve ${HOSTNAME}:443:${ALB_IP}"
 
           # endpoint:expected_status — extend as more endpoints become smoke-safe.
           PROBES=(
@@ -406,7 +433,7 @@ jobs:
             WANT="${PROBE##*:}"
             STATUS=""
             for i in 1 2 3 4 5 6; do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE$EP" || true)
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" $RESOLVE_FLAG "$BASE$EP" || true)
               if [ "$STATUS" = "$WANT" ]; then
                 echo "[PASS] $EP -> $STATUS"
                 break
