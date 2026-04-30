@@ -66,16 +66,24 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     // ── Unknown / unexpected errors ───────────────────────────────────────
-    // Never leak details to the client. Log internally with minimal context.
+    // Never leak details to the client. Log internally with full context so
+    // CloudWatch ERROR-grep finds the actual cause, not just the class name.
     const errorName =
       exception instanceof Error ? exception.constructor.name : 'UnknownError';
+    const errorMessage =
+      exception instanceof Error ? exception.message : String(exception);
+    const stack = exception instanceof Error ? exception.stack : undefined;
 
     // Sanitized path: strip query string (may contain tokens, emails)
     const safePath = request.path || 'unknown';
 
+    // Put the error MESSAGE on the main log line so a single-line CloudWatch
+    // search like `ERROR /api/admin/profile/password` returns something
+    // actionable. The stack trace follows as the trace argument; the default
+    // NestJS ConsoleLogger prints it on a subsequent line.
     this.logger.error(
-      `${request.method} ${safePath} → 500 (${errorName})`,
-      exception instanceof Error ? exception.stack : undefined,
+      `${request.method} ${safePath} → 500 (${errorName}: ${errorMessage})`,
+      stack,
     );
 
     // Unexpected errors are ALWAYS 5xx — report to Sentry. No-op without DSN.

@@ -24,7 +24,17 @@ import {
   ValidatorConstraintInterface,
   ValidationArguments,
 } from 'class-validator';
-import zxcvbn from 'zxcvbn';
+// IMPORTANT: zxcvbn is a CJS module that exports the function as
+// `module.exports = function() {...}`, NOT `module.exports.default = ...`.
+// With our tsconfig (module: commonjs, esModuleInterop NOT enabled), an
+// `import zxcvbn from 'zxcvbn'` compiles to `zxcvbn_1.default(...)` which
+// resolves to `undefined` at runtime → 'TypeError: ... is not a function'
+// the moment the validator runs (caught in production after seed-admin's
+// first password change attempt). The TS `import = require` form below
+// produces `zxcvbn_1(...)` directly and is the canonical way to consume a
+// function-export CJS module without esModuleInterop.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import zxcvbn = require('zxcvbn');
 
 const MIN_SCORE = 3; // 0..4 zxcvbn scale; 3 = "very strong"
 
