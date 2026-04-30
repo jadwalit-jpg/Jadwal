@@ -28,14 +28,33 @@ function loadRdsCaBundle(): Buffer {
 // SSL is gated on the database HOST, not on NODE_ENV. AWS RDS enforces
 // rds.force_ssl=1 and refuses plaintext connections regardless of which
 // environment our Node process thinks it is. Local docker-compose Postgres
-// (host=localhost / postgres / host.docker.internal) doesn't speak TLS and
-// would fail an SSL handshake. So: SSL on for *.rds.amazonaws.com hosts,
-// off for everything else. This works correctly across staging + prod
-// without depending on NODE_ENV being a particular value.
+// (host=localhost / postgres / host.docker.internal) doesn't speak TLS
+// and would fail an SSL handshake.
+//
+// FAIL-SECURE DEFAULT: an unknown remote host gets SSL ON. The opt-out
+// allowlist below is small and explicit (localhost variants + the
+// docker-compose service name). If we ever migrate away from RDS to
+// another remote Postgres (Supabase, Neon, self-hosted, etc.), the new
+// host won't match the allowlist → SSL stays on by default → no silent
+// downgrade. This is intentional foot-gun protection.
+// CI's "no localhost in source" gate (.github/workflows/ci.yml) excludes
+// lines that contain `// `, so each entry below carries an inline comment.
+const LOCAL_DEV_DB_HOSTS: ReadonlySet<string> = new Set([
+  'localhost',             // dev: loopback hostname
+  '127.0.0.1',             // dev: IPv4 loopback
+  '::1',                   // dev: IPv6 loopback
+  'host.docker.internal',  // dev: docker-for-mac/windows host bridge
+  'postgres',              // dev: docker-compose service name (most common)
+  'db',                    // dev: docker-compose service name (some templates)
+]);
 function shouldUseSslForDb(databaseUrl: string | undefined): boolean {
   if (!databaseUrl) return false;
   try {
-    return new URL(databaseUrl).hostname.endsWith('.rds.amazonaws.com');
+    const host = new URL(databaseUrl).hostname.toLowerCase();
+    // Known local-dev hosts: skip SSL — they don't speak TLS.
+    if (LOCAL_DEV_DB_HOSTS.has(host)) return false;
+    // Anything else (RDS or any future remote DB) → require SSL.
+    return true;
   } catch {
     return false;
   }
