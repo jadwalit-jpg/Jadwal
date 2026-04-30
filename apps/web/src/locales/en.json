@@ -1192,12 +1192,17 @@
       "title": "10. Governing Law",
       "p1": "These Terms are governed by the laws of the State of Qatar. Any disputes shall be resolved in the courts of Doha, Qatar."
     },
+    "loyalty": {
+      "title": "11. Wanasa Loyalty Points",
+      "p1": "Customers earn Wanasa loyalty points on completed bookings according to the rate published in the Loyalty section of the Platform. Points have no cash value, are non-transferable, and cannot be exchanged for currency outside of the Platform's redemption flow.",
+      "p2": "Jadwal reserves the right to adjust the earning rate, redemption rate, minimum redemption threshold, and expiry policy at any time, with reasonable notice posted on the Platform. Points obtained through fraud, refunded bookings, or violation of these Terms may be revoked without notice."
+    },
     "changes": {
-      "title": "11. Changes to Terms",
+      "title": "12. Changes to Terms",
       "p1": "We may update these Terms from time to time. Continued use of the Platform after changes constitutes acceptance of the updated Terms. We will notify registered users of significant changes via email."
     },
     "contact": {
-      "title": "12. Contact",
+      "title": "13. Contact",
       "p1": "For questions about these Terms, contact us at Jadwalqtr@gmail.com."
     }
   },
@@ -1225,6 +1230,14 @@
       "vendor": {
         "label": "Vendor Information:",
         "text": "Business name, description, bank details (for payouts), and activity listings."
+      },
+      "loyalty": {
+        "label": "Loyalty (Wanasa) Points:",
+        "text": "Points earned from completed bookings, the redemption history, and the timestamp of each ledger entry. Points have no monetary value and cannot be transferred or exchanged for cash."
+      },
+      "push": {
+        "label": "Push Notifications:",
+        "text": "If you enable browser notifications, we store the push subscription endpoint your browser provides (via Apple, Google, or Mozilla push services) so we can deliver booking and account alerts. We use a VAPID keypair to authenticate our service to the push provider — the keypair identifies us, not you."
       }
     },
     "use": {
@@ -1297,12 +1310,16 @@
       "title": "9. Children's Privacy",
       "p1": "Jadwal is not intended for users under the age of 18. We do not knowingly collect data from minors. If we discover that we have collected data from a child, we will delete it promptly."
     },
+    "intlTransfer": {
+      "title": "10. International Data Transfers",
+      "p1": "Jadwal is a Qatar-based platform, but for technical reasons our infrastructure runs on cloud providers outside Qatar. Specifically: (a) our database, application servers, and backups are hosted in Amazon Web Services Frankfurt (Germany) region; (b) our content delivery network and DNS are operated by Cloudflare globally; (c) push notifications are routed through Apple, Google, or Mozilla push services depending on your browser. By using the Platform, you acknowledge that your personal data is transferred and processed outside of Qatar. We rely on contractual safeguards (AWS Data Processing Addendum, Cloudflare Data Processing Addendum) to maintain confidentiality and integrity in transit and at rest."
+    },
     "changes": {
-      "title": "10. Changes to This Policy",
+      "title": "11. Changes to This Policy",
       "p1": "We may update this Privacy Policy from time to time. We will notify registered users of material changes via email. Continued use of the Platform constitutes acceptance of the updated policy."
     },
     "contact": {
-      "title": "11. Contact Us",
+      "title": "12. Contact Us",
       "p1": "For privacy-related inquiries, contact our Data Protection team at Jadwalqtr@gmail.com."
     }
   },

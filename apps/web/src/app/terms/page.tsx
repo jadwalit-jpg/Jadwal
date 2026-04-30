@@ -6,7 +6,7 @@ import { ScrollText } from 'lucide-react';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 
-const LAST_UPDATED = '2026-04-21';
+const LAST_UPDATED = '2026-04-30';
 
 export default function TermsPage() {
   const { t } = useTranslation();
@@ -22,6 +22,7 @@ export default function TermsPage() {
     { key: 'ip', paragraphs: ['terms.ip.p1'] },
     { key: 'liability', paragraphs: ['terms.liability.p1'] },
     { key: 'law', paragraphs: ['terms.law.p1'] },
+    { key: 'loyalty', paragraphs: ['terms.loyalty.p1', 'terms.loyalty.p2'] },
     { key: 'changes', paragraphs: ['terms.changes.p1'] },
     { key: 'contact', paragraphs: ['terms.contact.p1'] },
   ] as const;
