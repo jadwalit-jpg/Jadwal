@@ -21,8 +21,24 @@ function loadRdsCaBundle(): Buffer {
     try { return fs.readFileSync(p); } catch { /* try next */ }
   }
   throw new Error(
-    `[FATAL] RDS CA bundle not found in production. Searched: ${candidates.join(', ')}`,
+    `[FATAL] RDS CA bundle not found. Searched: ${candidates.join(', ')}`,
   );
+}
+
+// SSL is gated on the database HOST, not on NODE_ENV. AWS RDS enforces
+// rds.force_ssl=1 and refuses plaintext connections regardless of which
+// environment our Node process thinks it is. Local docker-compose Postgres
+// (host=localhost / postgres / host.docker.internal) doesn't speak TLS and
+// would fail an SSL handshake. So: SSL on for *.rds.amazonaws.com hosts,
+// off for everything else. This works correctly across staging + prod
+// without depending on NODE_ENV being a particular value.
+function shouldUseSslForDb(databaseUrl: string | undefined): boolean {
+  if (!databaseUrl) return false;
+  try {
+    return new URL(databaseUrl).hostname.endsWith('.rds.amazonaws.com');
+  } catch {
+    return false;
+  }
 }
 
 @Injectable()
@@ -33,12 +49,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   constructor() {
     const isProd = process.env.NODE_ENV === 'production';
+    const useSsl = shouldUseSslForDb(process.env.DATABASE_URL);
     this.pool = new Pool({
       connectionString: process.env.DATABASE_URL,
       max: Number(process.env.DB_POOL_MAX || (isProd ? 20 : 10)),
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
-      ...(isProd ? { ssl: { ca: loadRdsCaBundle(), rejectUnauthorized: true } } : {}),
+      ...(useSsl ? { ssl: { ca: loadRdsCaBundle(), rejectUnauthorized: true } } : {}),
     });
 
     const adapter = new PrismaPg(this.pool);
