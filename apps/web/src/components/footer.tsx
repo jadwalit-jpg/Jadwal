@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Mail, Phone } from 'lucide-react';
+import { Mail, Phone, Instagram } from 'lucide-react';
 import api from '@/lib/api';
 
 interface PlatformInfo {
@@ -121,6 +121,20 @@ export default function Footer() {
                   </a>
                 </li>
               )}
+              <li>
+                {/* target=_blank with rel=noopener noreferrer to prevent
+                    reverse-tabnabbing (the Instagram tab can't access
+                    window.opener and re-navigate this site). */}
+                <a
+                  href="https://www.instagram.com/jadwal.qtr/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 hover:text-pink-600 dark:hover:text-pink-400 transition-colors"
+                >
+                  <Instagram className="h-3.5 w-3.5 shrink-0" />
+                  @jadwal.qtr
+                </a>
+              </li>
               {platform?.supportPhone && (
                 <li>
                   <a href={`tel:${platform.supportPhone.replace(/\s/g, '')}`} className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
@@ -128,9 +142,6 @@ export default function Footer() {
                     {platform.supportPhone}
                   </a>
                 </li>
-              )}
-              {!platform?.supportEmail && !platform?.supportPhone && (
-                <li className="text-sm text-gray-500 dark:text-slate-400">Contact info coming soon</li>
               )}
             </ul>
           </div>
