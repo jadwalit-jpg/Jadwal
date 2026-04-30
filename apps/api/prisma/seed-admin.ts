@@ -81,6 +81,12 @@ async function main() {
   // node:22-alpine's default trust store. We vendor the AWS RDS global CA
   // bundle alongside this script so chain validation succeeds. See
   // src/prisma/prisma.service.ts for the same pattern in the API runtime.
+  // Gate is on hostname, not NODE_ENV — works across staging + prod.
+  const dbUrl = process.env.DATABASE_URL ?? '';
+  const useSsl = (() => {
+    try { return new URL(dbUrl).hostname.endsWith('.rds.amazonaws.com'); }
+    catch { return false; }
+  })();
   const caBundlePath = (() => {
     const candidates = [
       '/app/apps/api/prisma/rds-ca-bundle.pem',
@@ -94,8 +100,8 @@ async function main() {
     throw new Error(`[FATAL] RDS CA bundle not found. Searched: ${candidates.join(', ')}`);
   })();
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: isProd ? { ca: fs.readFileSync(caBundlePath), rejectUnauthorized: true } : undefined,
+    connectionString: dbUrl,
+    ssl: useSsl ? { ca: fs.readFileSync(caBundlePath), rejectUnauthorized: true } : undefined,
   });
   const adapter = new PrismaPg(pool);
   const prisma = new PrismaClient({ adapter });
