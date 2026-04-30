@@ -6,7 +6,7 @@ import { ShieldCheck } from 'lucide-react';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 
-const LAST_UPDATED = '2026-04-21';
+const LAST_UPDATED = '2026-04-30';
 
 type SectionDef =
   | { key: string; paragraphs: string[] }
@@ -24,6 +24,8 @@ export default function PrivacyPage() {
       { labelKey: 'privacy.collect.device.label', textKey: 'privacy.collect.device.text' },
       { labelKey: 'privacy.collect.session.label', textKey: 'privacy.collect.session.text' },
       { labelKey: 'privacy.collect.vendor.label', textKey: 'privacy.collect.vendor.text' },
+      { labelKey: 'privacy.collect.loyalty.label', textKey: 'privacy.collect.loyalty.text' },
+      { labelKey: 'privacy.collect.push.label', textKey: 'privacy.collect.push.text' },
     ]},
     { key: 'use', intro: 'privacy.use.intro', bulletsKey: 'privacy.use.items' },
     { key: 'payment', paragraphs: ['privacy.payment.p1'] },
@@ -37,6 +39,7 @@ export default function PrivacyPage() {
     { key: 'cookies', paragraphs: ['privacy.cookies.p1'] },
     { key: 'rights', intro: 'privacy.rights.intro', bulletsKey: 'privacy.rights.items', paragraphs: ['privacy.rights.contact'] },
     { key: 'children', paragraphs: ['privacy.children.p1'] },
+    { key: 'intlTransfer', paragraphs: ['privacy.intlTransfer.p1'] },
     { key: 'changes', paragraphs: ['privacy.changes.p1'] },
     { key: 'contact', paragraphs: ['privacy.contact.p1'] },
   ] as const;
