@@ -110,13 +110,26 @@ export class CleanupService {
 
           // Case 3: Payment sent to PAY2M (has basket ID) but no callback after 30 min
           // Customer closed PAY2M tab or lost internet — PAY2M callback never arrived.
-          // Use payment.paymentInitiatedAt so a customer who waited an hour in
-          // the booking form before clicking pay still gets the full 30-min
-          // gateway window, not a window measured from booking.createdAt.
+          // Cutoff uses paymentFirstInitiatedAt (immutable, stamped once on
+          // first /payment/initiate) so a customer cannot indefinitely
+          // extend their PENDING reservation by hammering /payment/initiate
+          // from a stale tab — each retry only updates paymentInitiatedAt
+          // (forensics), never paymentFirstInitiatedAt (cutoff anchor).
+          //
+          // Backward-compat: rows that predate the paymentFirstInitiatedAt
+          // column may have a NULL value. The migration backfills from
+          // paymentInitiatedAt; this OR is the runtime fallback for
+          // edge-case rows still in flight during the deploy window.
           {
             payment: {
               gatewayBasketId: { not: null },
-              paymentInitiatedAt: { lt: paymentInitiatedCutoff },
+              OR: [
+                { paymentFirstInitiatedAt: { lt: paymentInitiatedCutoff } },
+                {
+                  paymentFirstInitiatedAt: null,
+                  paymentInitiatedAt: { lt: paymentInitiatedCutoff },
+                },
+              ],
             },
           },
 

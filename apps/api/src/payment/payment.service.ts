@@ -53,6 +53,12 @@ export class PaymentService {
 
   // ─── Get PAY2M Access Token ─────────────────────────────────────────────
 
+  // Hard cap on PAY2M response payload. Genuine token responses are ~200
+  // bytes; 16 KiB is generous future-proofing without exposing us to a
+  // memory-DoS scenario where an upstream (compromised or misbehaving)
+  // returns a huge body that response.json() would buffer in full.
+  private static readonly PAY2M_MAX_RESPONSE_BYTES = 16 * 1024;
+
   private async getAccessToken(basketId: string, amount: string): Promise<string> {
     const url = `${this.apiUrl}/GetAccessToken`;
     const body = new URLSearchParams({
@@ -88,7 +94,29 @@ export class PaymentService {
       throw new BadRequestException('Payment gateway is temporarily unavailable');
     }
 
-    const data: Pay2mTokenResponse = await response.json();
+    // Two-step size guard:
+    //   1. If PAY2M sends Content-Length, reject before buffering the body.
+    //   2. Read as text, length-check, then JSON.parse. Catches chunked
+    //      transfers where Content-Length is absent.
+    const contentLength = Number(response.headers.get('content-length') ?? '0');
+    if (contentLength > PaymentService.PAY2M_MAX_RESPONSE_BYTES) {
+      this.logger.error(`PAY2M response too large (${contentLength} bytes)`);
+      throw new BadRequestException('Payment gateway is temporarily unavailable');
+    }
+    const responseText = await response.text();
+    if (responseText.length > PaymentService.PAY2M_MAX_RESPONSE_BYTES) {
+      this.logger.error(`PAY2M response body too large (${responseText.length} bytes after read)`);
+      throw new BadRequestException('Payment gateway is temporarily unavailable');
+    }
+
+    let data: Pay2mTokenResponse;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      this.logger.error('PAY2M returned non-JSON response');
+      throw new BadRequestException('Payment gateway is temporarily unavailable');
+    }
+
     if (!data.ACCESS_TOKEN) {
       this.logger.error('PAY2M returned empty access token');
       throw new BadRequestException('Payment gateway is temporarily unavailable');
@@ -117,6 +145,13 @@ export class PaymentService {
       TXNAMT: params.amount,
       CUSTOMER_MOBILE_NO: params.customerPhone || '',
       CUSTOMER_EMAIL_ADDRESS: params.customerEmail,
+      // PAY2M docs (section 3.2) require a SIGNATURE field but state it is
+      // "a random string value" — PAY2M does not validate its content. The
+      // hash that actually authenticates the payment is Response_Key (sent
+      // by PAY2M to us in the callback), computed as
+      // SHA256(merchant_id + basket_id + secret_word + amount + err_code).
+      // crypto.randomUUID() satisfies the "random string" requirement
+      // without exposing any internal state.
       SIGNATURE: crypto.randomUUID(),
       VERSION: 'Jadwal-1.0',
       TXNDESC: params.description,
@@ -204,11 +239,20 @@ export class PaymentService {
       // most recent attempt, even if the customer retries from a stale tab.
       const existingBasket = payment.gatewayBasketId;
       const basketId: string = existingBasket ?? `JDWL-${crypto.randomUUID().slice(0, 12)}`;
+      const now = new Date();
       await db.payment.update({
         where: { id: payment.id },
         data: {
-          ...(existingBasket ? {} : { gatewayBasketId: basketId }),
-          paymentInitiatedAt: new Date(),
+          // gatewayBasketId + paymentFirstInitiatedAt are set ONCE on the
+          // first initiate. The cleanup cron uses paymentFirstInitiatedAt
+          // for the abandonment-cutoff so a customer cannot keep their
+          // PENDING reservation alive by re-hitting /payment/initiate.
+          ...(existingBasket
+            ? {}
+            : { gatewayBasketId: basketId, paymentFirstInitiatedAt: now }),
+          // paymentInitiatedAt re-stamps every retry — useful for forensics
+          // ("when did the customer last try to hand off to PAY2M?").
+          paymentInitiatedAt: now,
         },
       });
 
@@ -311,23 +355,26 @@ export class PaymentService {
       params.Response_Key,
     );
 
+    // Always require a valid hash — both for SUCCESS (an invalid hash on
+    // success = tampering attempt to confirm an unpaid booking) and for
+    // FAILURE (an invalid hash on failure = a forged callback by an
+    // attacker who knows the basket_id, used to cancel a victim's PENDING
+    // booking). Industry norm: webhook signatures are verified on every
+    // event, regardless of outcome. PAY2M sends a valid Response_Key for
+    // legitimate cancels and declines too — the previous "be lenient on
+    // failures" was the only deviation, and it's now closed.
     if (!hashValid) {
-      if (isSuccess) {
-        // SUCCESS with invalid hash = potential tampering — reject and log
-        this.logger.warn(`Invalid Response_Key for payment ${payment.id}`);
-        await this.auditLogger.log({
-          actorType: 'SYSTEM',
-          actorId: 'pay2m-callback',
-          actorName: 'PAY2M Gateway',
-          action: 'PAYMENT_HASH_MISMATCH',
-          entity: 'Payment',
-          entityId: payment.id,
-          details: `err_code: ${params.err_code}, basket: ${params.basket_id}`,
-        });
-        throw new BadRequestException('Payment verification failed');
-      }
-      // FAILURE/CANCEL with invalid hash — proceed anyway (customer cancelled or bank declined)
-      // No security risk: we're marking it as FAILED, not SUCCESS
+      this.logger.warn(`Invalid Response_Key for payment ${payment.id} (err_code=${params.err_code})`);
+      await this.auditLogger.log({
+        actorType: 'SYSTEM',
+        actorId: 'pay2m-callback',
+        actorName: 'PAY2M Gateway',
+        action: 'PAYMENT_HASH_MISMATCH',
+        entity: 'Payment',
+        entityId: payment.id,
+        details: `err_code: ${params.err_code}, basket: ${params.basket_id}, isSuccess: ${isSuccess}`,
+      });
+      throw new BadRequestException('Payment verification failed');
     }
 
     // 5. Update payment + booking in transaction (optimistic lock)
