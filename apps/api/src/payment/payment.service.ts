@@ -95,23 +95,54 @@ export class PaymentService {
     }
 
     // Two-step size guard:
-    //   1. If PAY2M sends Content-Length, reject before buffering the body.
-    //   2. Read as text, length-check, then JSON.parse. Catches chunked
-    //      transfers where Content-Length is absent.
+    //   1. If PAY2M sends Content-Length, reject before reading any body.
+    //   2. Otherwise (chunked transfer, no header), stream the body and
+    //      abort the stream the moment the byte count exceeds the cap.
+    //
+    // We CAN'T use `await response.text()` then check text.length:
+    //   - text() reads the entire stream to completion before resolving,
+    //     so by the time we'd check the length we'd already have buffered
+    //     the full payload in memory (defeats the purpose).
+    //   - JS string.length counts UTF-16 code units, not UTF-8 bytes —
+    //     comparing it to a byte cap is off by 1–4× depending on input.
+    // Manual stream reading + byteLength accounting fixes both.
     const contentLength = Number(response.headers.get('content-length') ?? '0');
     if (contentLength > PaymentService.PAY2M_MAX_RESPONSE_BYTES) {
       this.logger.error(`PAY2M response too large (${contentLength} bytes)`);
       throw new BadRequestException('Payment gateway is temporarily unavailable');
     }
-    const responseText = await response.text();
-    if (responseText.length > PaymentService.PAY2M_MAX_RESPONSE_BYTES) {
-      this.logger.error(`PAY2M response body too large (${responseText.length} bytes after read)`);
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      this.logger.error('PAY2M response has no readable body');
       throw new BadRequestException('Payment gateway is temporarily unavailable');
+    }
+
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > PaymentService.PAY2M_MAX_RESPONSE_BYTES) {
+          // Cancel the stream so we don't keep pulling bytes — frees memory
+          // immediately and signals upstream we're done.
+          await reader.cancel();
+          this.logger.error(`PAY2M streamed response exceeded cap (>${PaymentService.PAY2M_MAX_RESPONSE_BYTES} bytes)`);
+          throw new BadRequestException('Payment gateway is temporarily unavailable');
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
     }
 
     let data: Pay2mTokenResponse;
     try {
-      data = JSON.parse(responseText);
+      const text = Buffer.concat(chunks).toString('utf-8');
+      data = JSON.parse(text);
     } catch {
       this.logger.error('PAY2M returned non-JSON response');
       throw new BadRequestException('Payment gateway is temporarily unavailable');
