@@ -238,7 +238,8 @@ describe('AuthService.forgotPassword + resetPassword', () => {
 
   test('resetPassword with valid token → bcrypt hash updated + all refresh tokens wiped', async () => {
     const seed = await seedReference(ctx.prisma);
-    const { svc } = makeAuth();
+    const emailMock = makeEmailMock();
+    const { svc } = makeAuth(emailMock);
 
     // Seed some refresh tokens for the customer (simulate active sessions)
     await ctx.prisma.refreshToken.create({
@@ -256,8 +257,17 @@ describe('AuthService.forgotPassword + resetPassword', () => {
     expect(await ctx.prisma.refreshToken.count({ where: { userId: seed.customer.id } })).toBe(2);
 
     await svc.forgotPassword(seed.customer.email);
-    const u = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
-    const token = (u as any).passwordResetToken as string;
+
+    // The DB now stores ONLY the SHA-256 hash of the token (anti-replay
+    // hardening). The plaintext is sent in the email link — extract it
+    // from the email mock's call args, exactly as a real user would
+    // receive it via email and click through.
+    const calls = (emailMock.sendPasswordReset as jest.Mock).mock.calls;
+    expect(calls.length).toBe(1);
+    const resetLink = calls[0][1].resetLink as string;
+    const tokenMatch = resetLink.match(/[?&]token=([a-f0-9]+)/);
+    expect(tokenMatch).toBeTruthy();
+    const token = tokenMatch![1];
 
     const newPwd = 'NewS3cure!Pass';
     const out = await svc.resetPassword(token, newPwd);

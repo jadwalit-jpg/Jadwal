@@ -807,18 +807,26 @@ export class VendorService {
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
     const db = this.prisma.client;
-    const user = await db.user.findUnique({ where: { id: userId } });
+    // Opt back into password (globally omitted in PrismaService) for bcrypt compare.
+    // Without this opt-in, user.password is undefined and the !user.password check
+    // below always trips → every legit vendor password change returned 403.
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      omit: { password: false },
+    } as any) as { id: string; password: string | null } | null;
     if (!user) throw new NotFoundException('User not found');
     if (!user.password) throw new ForbiddenException('This account uses Google sign-in and has no password.');
     const valid = await bcrypt.compare(currentPassword, user.password);
     if (!valid) throw new ForbiddenException('Current password is incorrect');
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hash = await bcrypt.hash(newPassword, bcryptRounds);
-    await db.$transaction([
-      db.user.update({ where: { id: userId }, data: { password: hash } }),
+    // Interactive transaction (function form) — preferred over the array form
+    // with Prisma 7 driver adapters; consistent with the rest of the codebase.
+    await db.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { password: hash } });
       // Invalidate all refresh tokens — forces re-login on all other sessions
-      db.refreshToken.deleteMany({ where: { userId } }),
-    ]);
+      await tx.refreshToken.deleteMany({ where: { userId } });
+    });
     return { message: 'Password changed successfully. Please log in again.' };
   }
 
