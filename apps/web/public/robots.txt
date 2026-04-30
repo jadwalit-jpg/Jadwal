@@ -9,4 +9,4 @@ Disallow: /forgot-password
 Disallow: /reset-password
 Disallow: /verify-email
 
-Sitemap: https://jadwal.app/sitemap.xml
+Sitemap: https://jadwal.qa/sitemap.xml
