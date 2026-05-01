@@ -67,24 +67,29 @@ const pastDate   = () => new Date(Date.now() - 60 * 60 * 1000);
 describe('BookingsService.getBookingById', () => {
   test('404 when booking does not exist', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce(null);
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce(null);
     await expect(ctx.sut.getBookingById('u1', 'b-missing'))
       .rejects.toThrow(NotFoundException);
   });
 
-  test('403 when booking belongs to another customer (IDOR guard)', async () => {
+  test('404 when booking belongs to another customer (IDOR collapsed to 404)', async () => {
+    // Ownership is in the where clause now, so a foreign-customer booking
+    // never makes it through findFirst — the mock returns null and the
+    // service throws NotFoundException, identical to "booking does not
+    // exist". No 403 oracle.
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'SOMEONE_ELSE',
-    });
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce(null);
     await expect(ctx.sut.getBookingById('u1', 'b1'))
-      .rejects.toThrow(ForbiddenException);
+      .rejects.toThrow(NotFoundException);
+    expect(ctx.prisma._client.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: 'b1', customerId: 'u1' }) }),
+    );
   });
 
   test('returns the booking row when owned by the caller', async () => {
     const ctx = await buildSut();
     const row = { id: 'b1', customerId: 'u1', ref: 'JDWL-ABC', status: 'CONFIRMED' };
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce(row);
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce(row);
     const r = await ctx.sut.getBookingById('u1', 'b1');
     expect(r).toBe(row);
   });
@@ -103,25 +108,25 @@ describe('BookingsService.cancelBooking', () => {
 
   test('404 when booking does not exist', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce(null);
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce(null);
     await expect(ctx.sut.cancelBooking('u1', 'b-missing'))
       .rejects.toThrow(NotFoundException);
   });
 
-  test('403 when booking belongs to another customer', async () => {
+  test('404 when booking belongs to another customer (IDOR collapsed to 404)', async () => {
+    // Ownership in where → foreign booking never reaches the service body.
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'OTHER', status: 'CONFIRMED',
-      startDatetime: futureDate(),
-      activity: baseActivity, payment: null,
-    });
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce(null);
     await expect(ctx.sut.cancelBooking('u1', 'b1'))
-      .rejects.toThrow(ForbiddenException);
+      .rejects.toThrow(NotFoundException);
+    expect(ctx.prisma._client.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: 'b1', customerId: 'u1' }) }),
+    );
   });
 
   test('400 when booking is already CANCELLED (idempotent guard)', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
       id: 'b1', customerId: 'u1', status: 'CANCELLED',
       startDatetime: futureDate(),
       activity: baseActivity, payment: null,
@@ -132,7 +137,7 @@ describe('BookingsService.cancelBooking', () => {
 
   test('400 when booking is COMPLETED (past-activity guard)', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
       id: 'b1', customerId: 'u1', status: 'COMPLETED',
       startDatetime: pastDate(),
       activity: baseActivity, payment: null,
@@ -143,7 +148,7 @@ describe('BookingsService.cancelBooking', () => {
 
   test('400 when booking start has already passed (late-cancel guard)', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
       id: 'b1', customerId: 'u1', status: 'CONFIRMED',
       startDatetime: pastDate(),
       activity: baseActivity, payment: null,
