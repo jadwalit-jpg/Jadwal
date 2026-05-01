@@ -97,6 +97,25 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger: logLevels });
 
+  // ─── Trust proxy (real client IP) ───────────────────────────────────────
+  // Tells Express how many proxy hops sit in front of us so req.ip resolves
+  // to the real client IP from X-Forwarded-For instead of the immediate
+  // socket address. Behind Cloudflare → ALB → ECS that's 2 hops in prod.
+  //
+  // Without this, req.ip is the ALB private IP (one bucket for the whole
+  // platform — rate limits effectively shared across all users). Combined
+  // with RealIpThrottlerGuard's cf-connecting-ip preference, this is
+  // defense in depth: throttler reads cf-connecting-ip first, but other
+  // code paths that consume req.ip (security logger, audit interceptors)
+  // also see the right value.
+  //
+  // Default 0 so dev / local / test environments (no proxy) behave normally.
+  // Production sets TRUST_PROXY_HOPS=2.
+  const trustProxyHops = envNumber('TRUST_PROXY_HOPS', 0);
+  if (trustProxyHops > 0) {
+    app.set('trust proxy', trustProxyHops);
+  }
+
   app.setGlobalPrefix('api');
 
   // ─── Security Headers (Helmet) ──────────────────────────────────────────
