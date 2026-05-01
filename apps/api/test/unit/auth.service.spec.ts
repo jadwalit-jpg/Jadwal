@@ -308,20 +308,21 @@ describe('AuthService.refreshTokens', () => {
     expect(ctx.sec.log).toHaveBeenCalledWith(expect.objectContaining({ event: 'TOKEN_REFRESH' }));
   });
 
-  test('unknown refresh token → 401', async () => {
+  test('unknown refresh token → 401 (generic session-expired message)', async () => {
     ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce(null);
+    // Unified message — never confirms which specific token-state failed.
     await expect(ctx.sut.refreshTokens('x'.repeat(64), makeResponseMock() as any))
-      .rejects.toThrow('Invalid refresh token');
+      .rejects.toThrow('Session expired');
   });
 
-  test('expired refresh token → deletes row + 401', async () => {
+  test('expired refresh token → deletes row + 401 (generic message)', async () => {
     const rawToken = 'a'.repeat(64);
     ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce({
       id: 'rt1', userId: 'u1', tokenHash: 'h', expiresAt: pastDate(), sessionStartedAt: new Date(),
     });
 
     await expect(ctx.sut.refreshTokens(rawToken, makeResponseMock() as any))
-      .rejects.toThrow('Refresh token expired');
+      .rejects.toThrow('Session expired');
     expect(ctx.prisma._client.refreshToken.delete).toHaveBeenCalledWith({ where: { id: 'rt1' } });
   });
 
@@ -370,8 +371,10 @@ describe('AuthService.refreshTokens', () => {
 
   test('token reuse after rotation (replay attack) → row is already deleted → 401', async () => {
     ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce(null); // rotated away
+    // Same generic "Session expired" — replay attempts can't be distinguished
+    // from any other invalid-token state by inspecting the response.
     await expect(ctx.sut.refreshTokens('a'.repeat(64), makeResponseMock() as any))
-      .rejects.toThrow('Invalid refresh token');
+      .rejects.toThrow('Session expired');
   });
 });
 

@@ -13,10 +13,13 @@ export function PhonePrompt() {
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) return;
-    if (user.role !== 'CUSTOMER') return;
-    if (user.phoneVerified) return;
+    // Reset stale `show` if eligibility fails (e.g. user logged out
+    // after the timer fired). Without this, a flag from a previous
+    // session can carry into the next eligible mount.
+    if (loading || !user || user.role !== 'CUSTOMER' || user.phoneVerified) {
+      setShow(false);
+      return;
+    }
 
     // Check if already dismissed this session
     try {
@@ -27,21 +30,36 @@ export function PhonePrompt() {
     return () => clearTimeout(timer);
   }, [user, loading]);
 
-  if (!show) return null;
+  // Belt-and-suspenders render guard: even if `show` is true (e.g. timer
+  // fired while user was authenticated), the modal must NOT render unless
+  // the user is a logged-in CUSTOMER who hasn't verified their phone.
+  // Without this, a logged-in customer who toggles `show=true` and then
+  // logs out would still see a stale modal that posts to /auth/phone/*
+  // and would fail with a "Session expired" 401 — confusing UX, mild
+  // info disclosure ("Unauthorized" tells the user the endpoint exists).
+  if (
+    !show ||
+    loading ||
+    !user ||
+    user.role !== 'CUSTOMER' ||
+    user.phoneVerified
+  ) {
+    return null;
+  }
 
   return (
     <PhoneVerificationModal
       isOpen={show}
       onClose={() => {
         setShow(false);
-        try { sessionStorage.setItem(DISMISS_KEY, user?.id || 'dismissed'); } catch {}
+        try { sessionStorage.setItem(DISMISS_KEY, user.id); } catch {}
       }}
       onVerified={() => {
         setShow(false);
         try { sessionStorage.removeItem(DISMISS_KEY); } catch {}
         checkAuth();
       }}
-      initialPhone={user?.phone || ''}
+      initialPhone={user.phone || ''}
       detectedCountryIso={country?.isoCode}
       allowSkip
     />
