@@ -285,12 +285,16 @@ export class AuthService {
 
     const storedToken = await db.refreshToken.findUnique({ where: { tokenHash } });
     if (!storedToken) {
-      throw new UnauthorizedException('Invalid refresh token');
+      // Unified generic message — same string returned whether the token
+      // is missing, malformed, expired, or already rotated. This avoids
+      // confirming any specific token-state to an attacker probing the
+      // refresh endpoint with stolen / guessed tokens.
+      throw new UnauthorizedException('Session expired — please log in again');
     }
 
     if (storedToken.expiresAt < new Date()) {
       await db.refreshToken.delete({ where: { id: storedToken.id } });
-      throw new UnauthorizedException('Refresh token expired');
+      throw new UnauthorizedException('Session expired — please log in again');
     }
 
     // Absolute session-age cap. Even though refresh-token rotation

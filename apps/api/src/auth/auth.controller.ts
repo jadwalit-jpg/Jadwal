@@ -85,7 +85,9 @@ export class AuthController {
   ) {
     const refreshToken = req.cookies?.RefreshToken;
     if (!refreshToken) {
-      throw new UnauthorizedException('No refresh token');
+      // Generic "session expired" — never confirm which specific
+      // refresh-token state failed (missing / invalid / expired / rotated).
+      throw new UnauthorizedException('Session expired — please log in again');
     }
     return this.authService.refreshTokens(refreshToken, response, req);
   }
