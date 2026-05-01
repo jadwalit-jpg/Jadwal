@@ -12,6 +12,7 @@
  */
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
@@ -166,13 +167,21 @@ export default function HomeBelowFold() {
                   className="group w-[280px] sm:w-[320px] shrink-0 flex flex-col overflow-hidden rounded-[20px] border border-jadwal-border-subtle bg-jadwal-surface shadow-jadwal transition-shadow hover:shadow-jadwal-lg"
                 >
                   {event.image ? (
-                    <div className="h-[200px] overflow-hidden">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
+                    <div className="relative h-[200px] overflow-hidden">
+                      <Image
                         src={event.image}
                         alt={localized(event, 'title')}
+                        fill
+                        sizes="(max-width: 640px) 280px, 320px"
                         loading="lazy"
-                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        // In dev the API serves uploads from a private
+                        // hostname the in-container Next.js image
+                        // optimizer cannot reach, so we bypass it. In
+                        // prod, S3 / CDN URLs are public and the full
+                        // AVIF/WebP negotiation + responsive srcset
+                        // pipeline runs. Mirrors ActivityCard.
+                        unoptimized={process.env.NODE_ENV !== 'production'}
+                        className="object-cover transition-transform duration-500 group-hover:scale-105"
                       />
                     </div>
                   ) : null}
