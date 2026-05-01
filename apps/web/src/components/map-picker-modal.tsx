@@ -1,5 +1,11 @@
 'use client';
 
+// Leaflet CSS lives next to the only component that renders a leaflet
+// map. Pulling it in here (instead of globals.css) means the ~14 KB of
+// map styles are downloaded only when this modal is mounted — not on
+// every homepage / catalog page that never touches a map.
+import 'leaflet/dist/leaflet.css';
+
 import { useEffect, useRef, useState } from 'react';
 import { MapPin, Loader2, CheckCircle2, X } from 'lucide-react';
 

@@ -1,5 +1,8 @@
 @import "tailwindcss";
-@import "leaflet/dist/leaflet.css";
+
+/* Leaflet CSS is now imported by map-picker-modal.tsx instead of
+   globally — keeps the ~14 KB of map styles off the homepage and every
+   other route that never renders a leaflet map. */
 
 @custom-variant dark (&:where(.dark, .dark *));
 
