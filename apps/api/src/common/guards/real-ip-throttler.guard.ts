@@ -27,8 +27,14 @@ import type { Request } from 'express';
 export class RealIpThrottlerGuard extends ThrottlerGuard {
   protected async getTracker(req: Request): Promise<string> {
     const cfIp = req.headers['cf-connecting-ip'];
-    if (typeof cfIp === 'string' && cfIp.length > 0) {
-      return cfIp;
+    if (typeof cfIp === 'string') {
+      // Normalise: trim leading/trailing whitespace so identical client IPs
+      // can't end up in separate buckets just because one request had a
+      // stray space (e.g. a logging proxy that pretty-prints headers).
+      const trimmed = cfIp.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
     }
     return req.ip ?? 'unknown';
   }

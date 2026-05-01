@@ -110,8 +110,14 @@ async function bootstrap() {
   // also see the right value.
   //
   // Default 0 so dev / local / test environments (no proxy) behave normally.
-  // Production sets TRUST_PROXY_HOPS=2.
+  // Production MUST set TRUST_PROXY_HOPS=2 — fail-fast below catches a
+  // missing / typo'd value at startup so throttling can't silently revert
+  // to the pre-fix shared-bucket behaviour.
   const trustProxyHops = envNumber('TRUST_PROXY_HOPS', 0);
+  if (process.env.NODE_ENV === 'production' && trustProxyHops <= 0) {
+    console.error('\n[FATAL] TRUST_PROXY_HOPS must be a positive integer in production (set to 2 for Cloudflare → ALB → ECS).\n');
+    process.exit(1);
+  }
   if (trustProxyHops > 0) {
     app.set('trust proxy', trustProxyHops);
   }
