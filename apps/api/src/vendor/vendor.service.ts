@@ -144,8 +144,10 @@ export class VendorService {
   async getActivity(userId: string, activityId: string) {
     const vendor = await this.resolveVendor(userId);
 
-    const activity = await this.prisma.client.activity.findUnique({
-      where: { id: activityId },
+    // Ownership in the where — same 404 for "doesn't exist" and "exists
+    // but belongs to another vendor". No cross-tenant probing oracle.
+    const activity = await this.prisma.client.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
       include: {
         category: { select: { nameEn: true, nameAr: true } },
         city: { select: { nameEn: true, nameAr: true } },
@@ -165,18 +167,16 @@ export class VendorService {
     });
 
     if (!activity) throw new NotFoundException('Activity not found');
-    if (activity.vendorId !== vendor.id) {
-      throw new ForbiddenException('You do not own this activity');
-    }
-
     return activity;
   }
 
   async getActivityBySlug(userId: string, slug: string) {
     const vendor = await this.resolveVendor(userId);
 
-    const activity = await this.prisma.client.activity.findUnique({
-      where: { slug },
+    // Slug is unique platform-wide so include vendorId in the where to
+    // collapse "wrong vendor" into the same 404 as "no such slug".
+    const activity = await this.prisma.client.activity.findFirst({
+      where: { slug, vendorId: vendor.id },
       include: {
         category: { select: { nameEn: true, nameAr: true } },
         city: { select: { nameEn: true, nameAr: true } },
@@ -196,10 +196,6 @@ export class VendorService {
     });
 
     if (!activity) throw new NotFoundException('Activity not found');
-    if (activity.vendorId !== vendor.id) {
-      throw new ForbiddenException('You do not own this activity');
-    }
-
     return activity;
   }
 
@@ -271,11 +267,10 @@ export class VendorService {
     const vendor = await this.resolveVendor(userId);
     const db = this.prisma.client;
 
-    const activity = await db.activity.findUnique({ where: { id: activityId } });
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+    });
     if (!activity) throw new NotFoundException('Activity not found');
-    if (activity.vendorId !== vendor.id) {
-      throw new ForbiddenException('You do not own this activity');
-    }
 
     // If slug is being changed, check uniqueness
     if (dto.slug && dto.slug !== activity.slug) {
@@ -347,17 +342,14 @@ export class VendorService {
     const vendor = await this.resolveVendor(userId);
     const db = this.prisma.client;
 
-    const activity = await db.activity.findUnique({
-      where: { id: activityId },
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
       // Non-cancelled count is informational here; the hard gate below is
       // the `activeBookings` query which inspects PENDING + CONFIRMED only.
       include: { _count: { select: { bookings: { where: { status: { not: 'CANCELLED' } } } } } },
     });
 
     if (!activity) throw new NotFoundException('Activity not found');
-    if (activity.vendorId !== vendor.id) {
-      throw new ForbiddenException('You do not own this activity');
-    }
 
     // Don't allow deletion if there are active bookings
     const activeBookings = await db.booking.count({
@@ -424,8 +416,8 @@ export class VendorService {
     const vendor = await this.resolveVendor(userId);
     const db = this.prisma.client;
 
-    const booking = await db.booking.findUnique({
-      where: { id: bookingId },
+    const booking = await db.booking.findFirst({
+      where: { id: bookingId, vendorId: vendor.id },
       select: {
         id: true, ref: true, vendorId: true, activityId: true, customerId: true, status: true, totalPrice: true, pointsRedeemed: true, pointsAwarded: true, endDatetime: true, couponCode: true,
         activity: { select: { titleEn: true } },
@@ -433,7 +425,6 @@ export class VendorService {
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
-    if (booking.vendorId !== vendor.id) throw new ForbiddenException('Not your booking');
 
     const allowed = ['CONFIRMED', 'COMPLETED', 'CANCELLED'];
     if (!allowed.includes(newStatus)) {
@@ -614,12 +605,13 @@ export class VendorService {
     const vendor = await this.resolveVendor(userId);
     const db = this.prisma.client;
 
-    const review = await db.review.findUnique({
-      where: { id: reviewId },
+    // Vendor scope is on the related activity row — collapse cross-vendor
+    // 403 into the same 404 as "review doesn't exist".
+    const review = await db.review.findFirst({
+      where: { id: reviewId, activity: { vendorId: vendor.id } },
       include: { activity: { select: { vendorId: true } } },
     });
     if (!review) throw new NotFoundException('Review not found');
-    if (review.activity.vendorId !== vendor.id) throw new ForbiddenException('Not your review');
 
     return db.review.update({ where: { id: reviewId }, data: { vendorReply: reply } });
   }
@@ -758,12 +750,11 @@ export class VendorService {
   async toggleActivityStatus(userId: string, activityId: string) {
     const vendor = await this.resolveVendor(userId);
     const db = this.prisma.client;
-    const activity = await db.activity.findUnique({
-      where: { id: activityId },
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
       select: { id: true, status: true, vendorId: true, titleEn: true },
     });
     if (!activity) throw new NotFoundException('Activity not found');
-    if (activity.vendorId !== vendor.id) throw new ForbiddenException('Not your activity');
     if (!['ACTIVE', 'INACTIVE'].includes(activity.status)) {
       throw new ForbiddenException('Only active or inactive activities can be toggled');
     }

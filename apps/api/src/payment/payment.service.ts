@@ -2,7 +2,6 @@ import {
   Injectable,
   Logger,
   BadRequestException,
-  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -228,11 +227,13 @@ export class PaymentService {
     const db = this.prisma.client;
 
     // 1. Load booking + payment
-    const booking = await db.booking.findUnique({
-      where: { id: bookingId },
+    // Ownership is baked into the where clause so a guessed UUID returns
+    // the same 404 whether the booking doesn't exist or belongs to someone
+    // else — no IDOR oracle.
+    const booking = await db.booking.findFirst({
+      where: { id: bookingId, customerId: userId },
       select: {
         id: true,
-        customerId: true,
         status: true,
         reservedUntil: true,
         paymentId: true,
@@ -241,7 +242,6 @@ export class PaymentService {
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
-    if (booking.customerId !== userId) throw new ForbiddenException('Not your booking');
     if (booking.status !== 'PENDING') throw new BadRequestException('Booking is not in a payable state');
 
     // Check reservation hasn't expired (with 1-minute buffer)
@@ -249,19 +249,24 @@ export class PaymentService {
       throw new BadRequestException('Reservation has expired. Please create a new booking.');
     }
 
-    if (!booking.paymentId) throw new BadRequestException('No payment record for this booking');
+    // Generic "not in a payable state" — collapses three internal paths
+    // (no paymentId FK, payment row missing, payment already processed)
+    // into one client message so a probing attacker can't fingerprint
+    // payment internals. Server-side log retains the actual reason.
+    const NOT_PAYABLE = 'This booking is not in a payable state.';
+    if (!booking.paymentId) throw new BadRequestException(NOT_PAYABLE);
 
     const payment = await db.payment.findUnique({
       where: { id: booking.paymentId },
       select: { id: true, amount: true, currency: true, status: true, gatewayBasketId: true },
     });
-    if (!payment) throw new BadRequestException('Payment record not found');
-    if (payment.status !== 'PENDING') throw new BadRequestException('Payment already processed');
+    if (!payment) throw new BadRequestException(NOT_PAYABLE);
+    if (payment.status !== 'PENDING') throw new BadRequestException(NOT_PAYABLE);
 
     // 2. Redis lock to prevent double-pay from multiple tabs
     const lockKey = `payment_lock:${payment.id}`;
     const lockToken = await this.redisLock.acquire(lockKey, 30000);
-    if (!lockToken) throw new BadRequestException('Payment is already being processed');
+    if (!lockToken) throw new BadRequestException(NOT_PAYABLE);
 
     try {
       // 3. Generate basket ID if not already set, and stamp the moment we hand
@@ -617,17 +622,17 @@ export class PaymentService {
 
   async getPaymentStatus(bookingId: string, userId: string) {
     const db = this.prisma.client;
-    const booking = await db.booking.findUnique({
-      where: { id: bookingId },
+    // Ownership in the where clause — same 404 for "not yours" and
+    // "doesn't exist", no enumeration oracle.
+    const booking = await db.booking.findFirst({
+      where: { id: bookingId, customerId: userId },
       select: {
         id: true,
-        customerId: true,
         status: true,
         paymentId: true,
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
-    if (booking.customerId !== userId) throw new ForbiddenException('Not your booking');
     if (!booking.paymentId) return { status: 'NO_PAYMENT' };
 
     const payment = await db.payment.findUnique({

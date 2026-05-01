@@ -1502,29 +1502,45 @@ webDescribe('REGRESSION: FE — all pages route API errors through getApiError',
 // verification enumeration guard, security header depth.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('REGRESSION: IDOR — vendor.service ownership checks on every write path', () => {
-  test('HIGH: every vendor write surface throws "You do not own this activity"', () => {
+describe('REGRESSION: IDOR — ownership baked into Prisma `where` clause (collapsed to 404)', () => {
+  // Updated 2026-05-01: ownership is no longer asserted via post-fetch
+  // `customerId !== userId` / `vendorId !== vendor.id` checks (which leaked
+  // a 403 vs 404 distinction). It now lives inside the `findFirst({ where })`
+  // so a foreign row returns null and the service throws NotFoundException
+  // identical to "no such row". These tests verify the new pattern.
+
+  test('HIGH: vendor.service every activity-scoped read uses { vendorId: vendor.id } in where', () => {
     const src = readSrc('src/vendor/vendor.service.ts');
-    // Each method that mutates activity-scoped data must gate on ownership.
-    // We grep the canonical guard string to prove every write site has one.
-    const matches = src.match(/do not own this activity/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(4);
-    // And vendor-booking writes must reject foreign bookings
-    expect(src).toContain('Not your booking');
+    // Count occurrences of the ownership-scoped where pattern across the file
+    const ownedActivityLookups = src.match(/findFirst\([\s\S]{0,200}?vendorId:\s*vendor\.id/g) ?? [];
+    expect(ownedActivityLookups.length).toBeGreaterThanOrEqual(5);
+    // Review path uses the nested-relation form
+    expect(src).toMatch(/findFirst\([\s\S]{0,200}?activity:\s*\{\s*vendorId:\s*vendor\.id/);
+    // Old leak strings must be gone
+    expect(src).not.toMatch(/throw new ForbiddenException\(['"]You do not own/);
+    expect(src).not.toMatch(/throw new ForbiddenException\(['"]Not your (booking|activity|review)/);
   });
 
-  test('HIGH: bookings.service gates cancel/status on ownership (customer OR vendor)', () => {
+  test('HIGH: bookings.service customer-side ownership baked into where, not post-checked', () => {
     const src = readSrc('src/bookings/bookings.service.ts');
-    // Customer path — must reject if booking isn't theirs
-    expect(src).toContain("ForbiddenException('Not your booking')");
+    // cancelBooking + getBookingById must scope by customerId in the lookup
+    const customerScoped = src.match(/findFirst\([\s\S]{0,200}?customerId:\s*userId/g) ?? [];
+    expect(customerScoped.length).toBeGreaterThanOrEqual(2);
+    // No "Not your booking" leak left on customer path
+    expect(src).not.toContain("ForbiddenException('Not your booking')");
     // Vendor path — verifies vendor.userId linkage to the authed user
+    // (this remains a post-fetch check; vendor role context is different)
     expect(src).toMatch(/booking\.vendor\.userId\s*===?\s*userId/);
   });
 
-  test('HIGH: payment.service rejects bookings the authed user does not own', () => {
+  test('HIGH: payment.service customer-side ownership baked into where', () => {
     const src = readSrc('src/payment/payment.service.ts');
-    expect(src).toMatch(/customerId\s*!==?\s*userId/);
-    expect(src).toContain('Not your booking');
+    // initiatePayment + getPaymentStatus must scope by customerId in the lookup
+    const customerScoped = src.match(/findFirst\([\s\S]{0,200}?customerId:\s*userId/g) ?? [];
+    expect(customerScoped.length).toBeGreaterThanOrEqual(2);
+    // The old explicit-check leak path must be gone
+    expect(src).not.toMatch(/customerId\s*!==?\s*userId/);
+    expect(src).not.toContain('Not your booking');
   });
 });
 

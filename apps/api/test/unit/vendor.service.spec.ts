@@ -269,27 +269,29 @@ describe('VendorService.toggleActivityStatus', () => {
   test('404 when activity does not exist', async () => {
     const ctx = await buildSut();
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
-    ctx.prisma._client.activity.findUnique.mockResolvedValueOnce(null);
+    ctx.prisma._client.activity.findFirst.mockResolvedValueOnce(null);
 
     await expect(ctx.sut.toggleActivityStatus('u1', 'a-missing'))
       .rejects.toThrow(NotFoundException);
   });
 
-  test('403 when activity belongs to another vendor (IDOR)', async () => {
+  test('404 when activity belongs to another vendor (IDOR collapsed to 404)', async () => {
+    // Ownership baked into where → cross-vendor activities never returned.
     const ctx = await buildSut();
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
-    ctx.prisma._client.activity.findUnique.mockResolvedValueOnce({
-      id: 'a1', vendorId: 'OTHER', status: 'ACTIVE', titleEn: 'Tour',
-    });
+    ctx.prisma._client.activity.findFirst.mockResolvedValueOnce(null);
 
     await expect(ctx.sut.toggleActivityStatus('u1', 'a1'))
-      .rejects.toThrow(ForbiddenException);
+      .rejects.toThrow(NotFoundException);
+    expect(ctx.prisma._client.activity.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: 'a1', vendorId: 'v1' }) }),
+    );
   });
 
   test('ACTIVE → INACTIVE triggers admin notification', async () => {
     const ctx = await buildSut();
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
-    ctx.prisma._client.activity.findUnique.mockResolvedValueOnce({
+    ctx.prisma._client.activity.findFirst.mockResolvedValueOnce({
       id: 'a1', vendorId: 'v1', status: 'ACTIVE', titleEn: 'Tour',
     });
     ctx.prisma._client.activity.update.mockResolvedValueOnce({
@@ -306,7 +308,7 @@ describe('VendorService.toggleActivityStatus', () => {
   test('INACTIVE → ACTIVE does NOT trigger admin notification', async () => {
     const ctx = await buildSut();
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
-    ctx.prisma._client.activity.findUnique.mockResolvedValueOnce({
+    ctx.prisma._client.activity.findFirst.mockResolvedValueOnce({
       id: 'a1', vendorId: 'v1', status: 'INACTIVE', titleEn: 'Tour',
     });
     ctx.prisma._client.activity.update.mockResolvedValueOnce({
@@ -320,7 +322,7 @@ describe('VendorService.toggleActivityStatus', () => {
   test('deactivation blocked when future bookings exist (no data loss)', async () => {
     const ctx = await buildSut();
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
-    ctx.prisma._client.activity.findUnique.mockResolvedValueOnce({
+    ctx.prisma._client.activity.findFirst.mockResolvedValueOnce({
       id: 'a1', vendorId: 'v1', status: 'ACTIVE', titleEn: 'Tour',
     });
     ctx.prisma._client.booking.count.mockResolvedValueOnce(3);
@@ -341,21 +343,26 @@ describe('VendorService.replyToReview', () => {
   test('404 when review does not exist', async () => {
     const ctx = await buildSut();
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
-    ctx.prisma._client.review.findUnique.mockResolvedValueOnce(null);
+    ctx.prisma._client.review.findFirst.mockResolvedValueOnce(null);
 
     await expect(ctx.sut.replyToReview('u1', 'rv-missing', 'Thanks!'))
       .rejects.toThrow(NotFoundException);
   });
 
-  test('403 when review is on another vendor\'s activity', async () => {
+  test('404 when review is on another vendor\'s activity (IDOR collapsed to 404)', async () => {
+    // Ownership scope is `activity.vendorId` baked into the where clause —
+    // foreign-vendor reviews never reach the service body.
     const ctx = await buildSut();
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
-    ctx.prisma._client.review.findUnique.mockResolvedValueOnce({
-      id: 'rv1', activity: { vendorId: 'OTHER' },
-    });
+    ctx.prisma._client.review.findFirst.mockResolvedValueOnce(null);
 
     await expect(ctx.sut.replyToReview('u1', 'rv1', 'Thanks!'))
-      .rejects.toThrow(ForbiddenException);
+      .rejects.toThrow(NotFoundException);
+    expect(ctx.prisma._client.review.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'rv1', activity: { vendorId: 'v1' } }),
+      }),
+    );
   });
 });
 
@@ -401,7 +408,7 @@ describe('VendorService.updateBookingStatus — Complete guard', () => {
     // so we attach a spy locally to assert it was NOT called by the guard path.
     (ctx.loyalty as any).earn = jest.fn().mockResolvedValue(undefined);
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
       id: 'b1', ref: 'JDWL-FUT', vendorId: 'v1', activityId: 'a1',
       customerId: 'c1', status: 'CONFIRMED',
       totalPrice: 100, pointsRedeemed: 0, pointsAwarded: false,
@@ -424,7 +431,7 @@ describe('VendorService.updateBookingStatus — Complete guard', () => {
     const ctx = await buildSut();
     (ctx.loyalty as any).earn = jest.fn().mockResolvedValue(undefined);
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
       id: 'b1', ref: 'JDWL-PAST', vendorId: 'v1', activityId: 'a1',
       customerId: 'c1', status: 'CONFIRMED',
       totalPrice: 100, pointsRedeemed: 0, pointsAwarded: false,
@@ -444,7 +451,7 @@ describe('VendorService.updateBookingStatus — Complete guard', () => {
   test('CANCELLED is NOT gated by endDatetime (vendor can cancel future bookings)', async () => {
     const ctx = await buildSut();
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
       id: 'b1', ref: 'JDWL-FUT', vendorId: 'v1', activityId: 'a1',
       customerId: 'c1', status: 'CONFIRMED',
       totalPrice: 100, pointsRedeemed: 0, pointsAwarded: false,

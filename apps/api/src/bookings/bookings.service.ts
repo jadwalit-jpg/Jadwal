@@ -610,19 +610,23 @@ export class BookingsService {
 
     // Idempotency: if the client already sent this key and a booking was created,
     // return that booking immediately — prevents double-booking on network retry.
+    //
+    // Scope the lookup by customerId so a foreign-customer's key behaves
+    // identically to a never-seen key — both fall through to the normal
+    // create path. If a real foreign-key collision exists, the DB unique
+    // constraint will fire on insert and the global PrismaExceptionFilter
+    // maps P2002 → generic 409 ("A record with one of the provided values
+    // already exists"). No timing or response oracle remains for guessing
+    // another user's idempotency key.
     if (dto.idempotencyKey) {
-      const existing = await db.booking.findUnique({
-        where: { idempotencyKey: dto.idempotencyKey },
+      const existing = await db.booking.findFirst({
+        where: { idempotencyKey: dto.idempotencyKey, customerId: userId },
         include: {
           activity: { select: { titleEn: true, titleAr: true } },
           payment: { select: { id: true, amount: true, status: true } },
         },
       });
       if (existing) {
-        if (existing.customerId !== userId) {
-          // Someone else's key — reject silently to avoid enumeration
-          throw new ConflictException('This booking reference is not yours');
-        }
         return { booking: existing, seatsRemaining: null, idempotent: true };
       }
     }
@@ -1422,8 +1426,10 @@ export class BookingsService {
   async cancelBooking(userId: string, bookingId: string) {
     const db = this.prisma.client;
 
-    const booking = await db.booking.findUnique({
-      where: { id: bookingId },
+    // Bake ownership into the where so a guessed bookingId returns 404
+    // whether the booking doesn't exist or belongs to another customer.
+    const booking = await db.booking.findFirst({
+      where: { id: bookingId, customerId: userId },
       include: {
         activity: {
           select: {
@@ -1438,7 +1444,6 @@ export class BookingsService {
     if (!booking) throw new NotFoundException('Booking not found');
     // Use couponCode from the booking row (frozen at booking time); not from the activity.
     const appliedCoupon = booking.couponCode;
-    if (booking.customerId !== userId) throw new ForbiddenException('Not your booking');
     if (booking.status === 'CANCELLED') throw new BadRequestException('Booking is already cancelled');
     if (booking.status === 'COMPLETED') throw new BadRequestException('Cannot cancel a completed booking');
 
@@ -1998,8 +2003,9 @@ export class BookingsService {
   }
 
   async getBookingById(userId: string, bookingId: string) {
-    const booking = await this.prisma.client.booking.findUnique({
-      where: { id: bookingId },
+    // Ownership baked into where — same 404 for non-existent and not-yours.
+    const booking = await this.prisma.client.booking.findFirst({
+      where: { id: bookingId, customerId: userId },
       include: {
         activity: {
           select: {
@@ -2013,7 +2019,6 @@ export class BookingsService {
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
-    if (booking.customerId !== userId) throw new ForbiddenException('Not your booking');
     return booking;
   }
 
