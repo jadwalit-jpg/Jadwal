@@ -35,7 +35,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     if (!user || user.isDeactivated) {
-      throw new UnauthorizedException('Account is no longer active');
+      // Match the refresh-flow wording so an expired access token, a
+      // deleted user, and a deactivated user all produce the same client
+      // message. Server logs retain the actual reason.
+      throw new UnauthorizedException('Session expired — please log in again');
     }
 
     return { id: payload.sub, email: payload.email, role: payload.role, fullName: user.fullName };
