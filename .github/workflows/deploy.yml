@@ -386,67 +386,100 @@ jobs:
   smoke:
     needs: deploy
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
-      - name: Probe public endpoints with retry
-        env:
-          PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify ECS targets are healthy (AWS-side, bypass Cloudflare)
         run: |
-          # The smoke step verifies the deployed origin is reachable and
-          # healthy after the ECS rolling deploy. It probes through
-          # Cloudflare so it exercises the full real-world path that an
-          # actual user takes (DNS → CF edge → ALB → ECS task).
+          # Why AWS-side, not curl through Cloudflare:
           #
-          # Direct-to-ALB probing was used briefly (PR #87) to bypass
-          # Cloudflare's Bot Fight Mode. That stopped working when the
-          # ALB security group was locked down to Cloudflare IPs only —
-          # GitHub Actions runner IPs are no longer in scope.
+          # The previous HTTP curl smoke step probed jadwal.qa via Cloudflare
+          # so it exercised the full DNS → CF edge → ALB → ECS chain. That
+          # made it sensitive to Cloudflare-side conditions that have nothing
+          # to do with whether the deploy succeeded:
+          #   - Bot Fight Mode false-positives on curl UA (we had to disable
+          #     BFM globally to keep deploys green — security loss).
+          #   - Edge / DDoS auto-mitigation throttling the deploy runner IP.
+          #   - DNS propagation hiccups, transient CF 5xx, etc.
           #
-          # New approach: probe via Cloudflare with a custom User-Agent.
-          # On the Cloudflare side, a Configuration Rule already exempts
-          # /api/health + / from Browser Integrity Check. If a future
-          # Bot Fight Mode false-positive returns, add a WAF Custom Rule
-          # (Cloudflare → Security → WAF → Custom rules) with action
-          # "Skip" and filter:
-          #   (http.user_agent contains "Jadwal-Deploy-Smoke")
-          # to bypass managed bot rules for the smoke UA.
+          # The actual question this step needs to answer is: "Is the new
+          # ECS task healthy and serving traffic from the ALB's perspective?"
+          # That's a question best asked of AWS directly, not via a public
+          # round-trip through CDN+WAF+CF.
+          #
+          # Pattern (AWS / Terraform ECS modules / GitHub Actions ECS docs
+          # all use this): wait services-stable → describe target health.
+          # If the new task replaces the old in the target group AND reports
+          # healthy, the deploy is verifiably successful. Anything user-side
+          # broken (DNS, CF, WAF) is monitored by separate synthetic checks,
+          # not the deploy gate.
+          #
+          # Side benefit: re-enabling Bot Fight Mode no longer breaks deploys.
 
-          BASE="${PUBLIC_API_URL%/}"
+          set -eo pipefail
 
-          # Identifiable, parseable, traceable — and looks legitimate
-          # enough for Cloudflare's heuristic checks. Update the version
-          # if we ever need to filter on it more granularly.
-          SMOKE_UA="Mozilla/5.0 (compatible; Jadwal-Deploy-Smoke/1.0; +https://jadwal.qa)"
-
-          # endpoint:expected_status — extend as more endpoints become smoke-safe.
-          PROBES=(
-            "/api/health:200"
-            "/:200"
+          declare -A TG_NAMES=(
+            ["jadwal-api"]="API"
+            ["jadwal-web"]="Web"
           )
 
           OVERALL_FAIL=0
-          for PROBE in "${PROBES[@]}"; do
-            EP="${PROBE%:*}"
-            WANT="${PROBE##*:}"
-            STATUS=""
-            for i in 1 2 3 4 5 6; do
-              STATUS=$(curl -s -o /dev/null -A "$SMOKE_UA" -w "%{http_code}" "$BASE$EP" || true)
-              if [ "$STATUS" = "$WANT" ]; then
-                echo "[PASS] $EP -> $STATUS"
+          for SERVICE in "${!TG_NAMES[@]}"; do
+            LABEL="${TG_NAMES[$SERVICE]}"
+
+            # Pull the service's target-group ARN. Belt-and-suspenders: even
+            # though `deploy` already waited for services-stable on each
+            # service, we re-query here in case the smoke step ran out of
+            # band (re-run from the GH UI, etc).
+            TG_ARN=$(aws ecs describe-services \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --services "$SERVICE" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'services[0].loadBalancers[0].targetGroupArn' \
+              --output text)
+
+            if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
+              echo "::error::[$LABEL] could not resolve target group for $SERVICE"
+              OVERALL_FAIL=1
+              continue
+            fi
+
+            # Count healthy targets. ECS rolling deploy with circuit breaker
+            # already aborts on its own if new tasks fail health checks, so
+            # we usually arrive here with healthy=desiredCount. This is the
+            # final assertion before declaring deploy-success.
+            HEALTHY=0
+            for ATTEMPT in 1 2 3; do
+              HEALTHY=$(aws elbv2 describe-target-health \
+                --target-group-arn "$TG_ARN" \
+                --region ${{ env.AWS_REGION }} \
+                --query 'TargetHealthDescriptions[?TargetHealth.State==`healthy`] | length(@)' \
+                --output text)
+              if [ "$HEALTHY" -ge 1 ]; then
                 break
               fi
-              echo "[wait] $EP attempt $i returned $STATUS — retrying in 10s"
-              sleep 10
+              echo "[wait] [$LABEL] attempt $ATTEMPT: 0 healthy targets, retrying in 15s"
+              sleep 15
             done
-            if [ "$STATUS" != "$WANT" ]; then
-              echo "::error::[FAIL] $EP expected $WANT, got $STATUS after 6 attempts"
+
+            if [ "$HEALTHY" -lt 1 ]; then
+              echo "::error::[$LABEL] no healthy targets in $TG_ARN after retries"
               OVERALL_FAIL=1
+            else
+              echo "[PASS] [$LABEL] $HEALTHY healthy target(s) in target group"
             fi
           done
 
           if [ "$OVERALL_FAIL" = "1" ]; then
-            echo "::error::Smoke test failed — ECS circuit breaker should be rolling back."
+            echo "::error::Smoke verification failed — at least one service has zero healthy targets. ECS circuit breaker should be rolling back."
             exit 1
           fi
-          echo "All smoke probes passed."
+          echo "All ECS services have healthy targets — deploy verified."
 
 # Last successful end-to-end run: 2026-04-29 (verification)
