@@ -168,17 +168,18 @@ export default function HomeBelowFold() {
                 >
                   {event.image ? (
                     <div className="relative h-[200px] overflow-hidden">
-                      {/* next/image: AVIF/WebP negotiation + responsive
-                          srcset + native lazy below the fold. unoptimized
-                          in dev only — the API serves /uploads off
-                          localhost:4000 which the optimizer-in-container
-                          can't reach. Same pattern as ActivityCard. */}
                       <Image
                         src={event.image}
                         alt={localized(event, 'title')}
                         fill
                         sizes="(max-width: 640px) 280px, 320px"
                         loading="lazy"
+                        // In dev the API serves uploads from a private
+                        // hostname the in-container Next.js image
+                        // optimizer cannot reach, so we bypass it. In
+                        // prod, S3 / CDN URLs are public and the full
+                        // AVIF/WebP negotiation + responsive srcset
+                        // pipeline runs. Mirrors ActivityCard.
                         unoptimized={process.env.NODE_ENV !== 'production'}
                         className="object-cover transition-transform duration-500 group-hover:scale-105"
                       />
