@@ -13,10 +13,13 @@ export function PhonePrompt() {
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) return;
-    if (user.role !== 'CUSTOMER') return;
-    if (user.phoneVerified) return;
+    // Reset stale `show` if eligibility fails (e.g. user logged out
+    // after the timer fired). Without this, a flag from a previous
+    // session can carry into the next eligible mount.
+    if (loading || !user || user.role !== 'CUSTOMER' || user.phoneVerified) {
+      setShow(false);
+      return;
+    }
 
     // Check if already dismissed this session
     try {
