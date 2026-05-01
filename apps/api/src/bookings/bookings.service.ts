@@ -610,21 +610,23 @@ export class BookingsService {
 
     // Idempotency: if the client already sent this key and a booking was created,
     // return that booking immediately — prevents double-booking on network retry.
+    //
+    // Scope the lookup by customerId so a foreign-customer's key behaves
+    // identically to a never-seen key — both fall through to the normal
+    // create path. If a real foreign-key collision exists, the DB unique
+    // constraint will fire on insert and the global PrismaExceptionFilter
+    // maps P2002 → generic 409 ("A record with one of the provided values
+    // already exists"). No timing or response oracle remains for guessing
+    // another user's idempotency key.
     if (dto.idempotencyKey) {
-      const existing = await db.booking.findUnique({
-        where: { idempotencyKey: dto.idempotencyKey },
+      const existing = await db.booking.findFirst({
+        where: { idempotencyKey: dto.idempotencyKey, customerId: userId },
         include: {
           activity: { select: { titleEn: true, titleAr: true } },
           payment: { select: { id: true, amount: true, status: true } },
         },
       });
       if (existing) {
-        if (existing.customerId !== userId) {
-          // Someone else's idempotency key — return generic conflict, no
-          // detail about whose. The client message hides the existence
-          // of the foreign booking entirely.
-          throw new ConflictException('Invalid booking reference.');
-        }
         return { booking: existing, seatsRemaining: null, idempotent: true };
       }
     }
