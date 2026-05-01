@@ -1,43 +1,28 @@
 import { Controller, Get, Req } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import { RATE_LIMIT_CALLBACK } from '../common/throttle-config';
 import { Request } from 'express';
-import { isIP } from 'net';
 import { GeoService } from './geo.service';
-
-// Private/loopback IP patterns
-const PRIVATE_IP = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1|fc|fd|fe80)/;
 
 @Controller('geo')
 @Throttle(RATE_LIMIT_CALLBACK)
 export class GeoController {
-  private trustProxy: boolean;
-
-  constructor(
-    private geoService: GeoService,
-    private config: ConfigService,
-  ) {
-    this.trustProxy = this.config.get('TRUST_PROXY', 'false') === 'true';
-  }
+  constructor(private geoService: GeoService) {}
 
   @Get('detect')
   detect(@Req() req: Request) {
-    let ip = req.ip ?? req.socket.remoteAddress ?? '';
+    // Single source of truth for proxy trust lives in main.ts via
+    // TRUST_PROXY_HOPS. After that, req.ip is the real client IP and
+    // cf-connecting-ip is the more authoritative source (single-valued,
+    // signed by Cloudflare's SG-locked edge). Don't roll our own XFF
+    // parser here — that would silently bypass the hop-count check.
+    const cfIp = req.headers['cf-connecting-ip'];
+    let ip = (typeof cfIp === 'string' && cfIp.trim().length > 0)
+      ? cfIp.trim()
+      : (req.ip ?? req.socket.remoteAddress ?? '');
 
-    // Only trust X-Forwarded-For behind a verified proxy (Cloudflare, ALB)
-    if (this.trustProxy) {
-      const forwarded = req.headers['x-forwarded-for'];
-      if (typeof forwarded === 'string') {
-        const candidate = forwarded.split(',')[0].trim();
-        // Validate: must be a real IP and not private/loopback
-        if (isIP(candidate) && !PRIVATE_IP.test(candidate)) {
-          ip = candidate;
-        }
-      }
-    }
-
-    // Strip IPv6 prefix if needed (::ffff:127.0.0.1 → 127.0.0.1)
+    // Strip IPv4-mapped IPv6 prefix (::ffff:127.0.0.1 → 127.0.0.1) for
+    // GeoIP lookups that expect bare IPv4.
     ip = ip.replace(/^::ffff:/, '');
 
     return this.geoService.detectLocation(ip);
