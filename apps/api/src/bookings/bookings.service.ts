@@ -620,8 +620,10 @@ export class BookingsService {
       });
       if (existing) {
         if (existing.customerId !== userId) {
-          // Someone else's key — reject silently to avoid enumeration
-          throw new ConflictException('This booking reference is not yours');
+          // Someone else's idempotency key — return generic conflict, no
+          // detail about whose. The client message hides the existence
+          // of the foreign booking entirely.
+          throw new ConflictException('Invalid booking reference.');
         }
         return { booking: existing, seatsRemaining: null, idempotent: true };
       }
@@ -1422,8 +1424,10 @@ export class BookingsService {
   async cancelBooking(userId: string, bookingId: string) {
     const db = this.prisma.client;
 
-    const booking = await db.booking.findUnique({
-      where: { id: bookingId },
+    // Bake ownership into the where so a guessed bookingId returns 404
+    // whether the booking doesn't exist or belongs to another customer.
+    const booking = await db.booking.findFirst({
+      where: { id: bookingId, customerId: userId },
       include: {
         activity: {
           select: {
@@ -1438,7 +1442,6 @@ export class BookingsService {
     if (!booking) throw new NotFoundException('Booking not found');
     // Use couponCode from the booking row (frozen at booking time); not from the activity.
     const appliedCoupon = booking.couponCode;
-    if (booking.customerId !== userId) throw new ForbiddenException('Not your booking');
     if (booking.status === 'CANCELLED') throw new BadRequestException('Booking is already cancelled');
     if (booking.status === 'COMPLETED') throw new BadRequestException('Cannot cancel a completed booking');
 
@@ -1998,8 +2001,9 @@ export class BookingsService {
   }
 
   async getBookingById(userId: string, bookingId: string) {
-    const booking = await this.prisma.client.booking.findUnique({
-      where: { id: bookingId },
+    // Ownership baked into where — same 404 for non-existent and not-yours.
+    const booking = await this.prisma.client.booking.findFirst({
+      where: { id: bookingId, customerId: userId },
       include: {
         activity: {
           select: {
@@ -2013,7 +2017,6 @@ export class BookingsService {
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
-    if (booking.customerId !== userId) throw new ForbiddenException('Not your booking');
     return booking;
   }
 

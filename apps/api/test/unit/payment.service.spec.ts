@@ -167,31 +167,31 @@ describe('PaymentService.initiatePayment — guards', () => {
     const ctx = await buildSut(false);
     await expect(ctx.sut.initiatePayment('b1', 'u1'))
       .rejects.toThrow(/not available/i);
-    expect(ctx.prisma._client.booking.findUnique).not.toHaveBeenCalled();
+    expect(ctx.prisma._client.booking.findFirst).not.toHaveBeenCalled();
   });
 
   test('404 when booking does not exist', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce(null);
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce(null);
     await expect(ctx.sut.initiatePayment('b-missing', 'u1'))
       .rejects.toThrow(NotFoundException);
   });
 
-  test('403 when booking belongs to another user (IDOR)', async () => {
+  test('404 when booking belongs to another user (IDOR collapsed to 404)', async () => {
+    // Ownership baked into where → foreign-customer rows never returned.
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'OTHER', status: 'PENDING',
-      reservedUntil: new Date(Date.now() + 10 * 60 * 1000),
-      paymentId: 'p1', ref: 'JDWL-1', activity: { titleEn: 'T' },
-    });
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce(null);
     await expect(ctx.sut.initiatePayment('b1', 'u1'))
-      .rejects.toThrow(ForbiddenException);
+      .rejects.toThrow(NotFoundException);
+    expect(ctx.prisma._client.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: 'b1', customerId: 'u1' }) }),
+    );
   });
 
   test('400 when booking is not PENDING', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'u1', status: 'CONFIRMED',
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', status: 'CONFIRMED',
       reservedUntil: new Date(Date.now() + 10 * 60 * 1000),
       paymentId: 'p1', ref: 'JDWL-1', activity: { titleEn: 'T' },
     });
@@ -201,8 +201,8 @@ describe('PaymentService.initiatePayment — guards', () => {
 
   test('400 when reservation expired (within 1-minute buffer)', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'u1', status: 'PENDING',
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', status: 'PENDING',
       reservedUntil: new Date(Date.now() + 30 * 1000), // 30s from now → within buffer
       paymentId: 'p1', ref: 'JDWL-1', activity: { titleEn: 'T' },
     });
@@ -212,19 +212,19 @@ describe('PaymentService.initiatePayment — guards', () => {
 
   test('400 when booking has no payment record', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'u1', status: 'PENDING',
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', status: 'PENDING',
       reservedUntil: new Date(Date.now() + 10 * 60 * 1000),
       paymentId: null, ref: 'JDWL-1', activity: { titleEn: 'T' },
     });
     await expect(ctx.sut.initiatePayment('b1', 'u1'))
-      .rejects.toThrow(/no payment record/i);
+      .rejects.toThrow(/not in a payable state/i);
   });
 
   test('400 when payment already SUCCESS (double-pay guard)', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'u1', status: 'PENDING',
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', status: 'PENDING',
       reservedUntil: new Date(Date.now() + 10 * 60 * 1000),
       paymentId: 'p1', ref: 'JDWL-1', activity: { titleEn: 'T' },
     });
@@ -232,13 +232,13 @@ describe('PaymentService.initiatePayment — guards', () => {
       id: 'p1', amount: 100, currency: 'QAR', status: 'SUCCESS', gatewayBasketId: 'B1',
     });
     await expect(ctx.sut.initiatePayment('b1', 'u1'))
-      .rejects.toThrow(/already processed/i);
+      .rejects.toThrow(/not in a payable state/i);
   });
 
   test('400 when Redis lock taken (concurrent initiate from another tab)', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'u1', status: 'PENDING',
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', status: 'PENDING',
       reservedUntil: new Date(Date.now() + 10 * 60 * 1000),
       paymentId: 'p1', ref: 'JDWL-1', activity: { titleEn: 'T' },
     });
@@ -248,7 +248,7 @@ describe('PaymentService.initiatePayment — guards', () => {
     ctx.lock.acquire.mockResolvedValueOnce(null); // lock taken
 
     await expect(ctx.sut.initiatePayment('b1', 'u1'))
-      .rejects.toThrow(/already being processed/i);
+      .rejects.toThrow(/not in a payable state/i);
   });
 });
 
@@ -358,24 +358,25 @@ describe('PaymentService.handleCallback', () => {
 describe('PaymentService.getPaymentStatus', () => {
   test('404 when booking missing', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce(null);
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce(null);
     await expect(ctx.sut.getPaymentStatus('b-missing', 'u1'))
       .rejects.toThrow(NotFoundException);
   });
 
-  test('403 when booking belongs to someone else', async () => {
+  test('404 when booking belongs to someone else (IDOR collapsed to 404)', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'OTHER', status: 'PENDING', paymentId: 'p1',
-    });
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce(null);
     await expect(ctx.sut.getPaymentStatus('b1', 'u1'))
-      .rejects.toThrow(ForbiddenException);
+      .rejects.toThrow(NotFoundException);
+    expect(ctx.prisma._client.booking.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: 'b1', customerId: 'u1' }) }),
+    );
   });
 
   test('returns NO_PAYMENT shape when booking has no paymentId', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'u1', status: 'PENDING', paymentId: null,
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', status: 'PENDING', paymentId: null,
     });
     const r = await ctx.sut.getPaymentStatus('b1', 'u1');
     expect(r).toEqual({ status: 'NO_PAYMENT' });
@@ -383,8 +384,8 @@ describe('PaymentService.getPaymentStatus', () => {
 
   test('returns payment status + mapped error message for known err_code', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'u1', status: 'PENDING', paymentId: 'p1',
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', status: 'PENDING', paymentId: 'p1',
     });
     ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
       status: 'FAILED', method: 'PAY2M', paidAt: null, gatewayErrCode: '54',
@@ -396,8 +397,8 @@ describe('PaymentService.getPaymentStatus', () => {
 
   test('unknown err_code → falls back to generic friendly message', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'u1', status: 'PENDING', paymentId: 'p1',
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', status: 'PENDING', paymentId: 'p1',
     });
     ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
       status: 'FAILED', method: 'PAY2M', paidAt: null, gatewayErrCode: '99999',
@@ -410,8 +411,8 @@ describe('PaymentService.getPaymentStatus', () => {
 
   test('no err_code → errorMessage undefined (not "undefined" string)', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', customerId: 'u1', status: 'PENDING', paymentId: 'p1',
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', status: 'PENDING', paymentId: 'p1',
     });
     ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
       status: 'SUCCESS', method: 'PAY2M', paidAt: new Date(), gatewayErrCode: null,
