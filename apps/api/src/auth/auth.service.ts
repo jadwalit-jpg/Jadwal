@@ -322,7 +322,9 @@ export class AuthService {
     if (!user || user.isDeactivated) {
       await db.refreshToken.deleteMany({ where: { userId: storedToken.userId } });
       this.clearAllCookies(response);
-      throw new UnauthorizedException('Account is no longer active');
+      // Unified with the other refresh-flow exceptions to avoid leaking
+      // the difference between "user gone" / "deactivated" / "expired".
+      throw new UnauthorizedException('Session expired — please log in again');
     }
 
     // Check vendor status on each refresh (session invalidation on role change)
@@ -405,10 +407,15 @@ export class AuthService {
       where: { verificationToken: tokenHash },
       select: { id: true, email: true, verificationTokenExpiry: true },
     });
-    if (!user) throw new BadRequestException('Invalid or expired verification link');
+    // Unified message — both "no record" and "expired" must look identical
+    // to the client to prevent token-state enumeration (an attacker probing
+    // a leaked token list could otherwise distinguish "never existed" from
+    // "existed but expired"). Server-side log retains the distinction.
+    const VERIFY_LINK_INVALID = 'Invalid or expired verification link. Please request a new one.';
+    if (!user) throw new BadRequestException(VERIFY_LINK_INVALID);
 
     if (!user.verificationTokenExpiry || user.verificationTokenExpiry < new Date()) {
-      throw new BadRequestException('Verification link has expired. Please request a new one.');
+      throw new BadRequestException(VERIFY_LINK_INVALID);
     }
 
     // Clear token, mark verified, and select only the fields issueTokens needs
@@ -779,7 +786,10 @@ export class AuthService {
       select: { id: true },
     });
     if (existing) {
-      throw new ConflictException('Phone number already verified by another account');
+      // Generic message — telling the user "another account has this number"
+      // confirms whether a given phone number is registered, which lets a
+      // logged-in attacker enumerate phone numbers across the platform.
+      throw new ConflictException('This phone number cannot be used for verification. Please try a different number.');
     }
 
     // Generate 6-digit OTP
@@ -819,8 +829,16 @@ export class AuthService {
       select: { phoneOtpHash: true, phoneOtpExpiry: true, phoneOtpAttempts: true, phone: true },
     });
 
+    // Unified failure message — all four "fail" paths (no pending OTP,
+    // expired, exhausted attempts, wrong code) return the same string so
+    // that an attacker holding a stolen access token can't distinguish
+    // between "victim has no pending OTP" / "OTP expired" / "we just
+    // locked them out" / "wrong code". Server-side counters still enforce
+    // the max-attempt rule; the client just gets a uniform error.
+    const OTP_INVALID = 'Invalid or expired verification code. Please request a new one.';
+
     if (!user?.phoneOtpHash || !user.phoneOtpExpiry) {
-      throw new BadRequestException('No pending verification. Please request a new code.');
+      throw new BadRequestException(OTP_INVALID);
     }
 
     if (user.phoneOtpExpiry < new Date()) {
@@ -828,7 +846,7 @@ export class AuthService {
         where: { id: userId },
         data: { phoneOtpHash: null, phoneOtpExpiry: null, phoneOtpAttempts: 0 },
       });
-      throw new BadRequestException('Verification code expired. Please request a new one.');
+      throw new BadRequestException(OTP_INVALID);
     }
 
     const maxOtpAttempts = Number(process.env.OTP_MAX_ATTEMPTS || 5);
@@ -837,7 +855,7 @@ export class AuthService {
         where: { id: userId },
         data: { phoneOtpHash: null, phoneOtpExpiry: null, phoneOtpAttempts: 0 },
       });
-      throw new BadRequestException('Too many attempts. Please request a new code.');
+      throw new BadRequestException(OTP_INVALID);
     }
 
     // Increment attempts before checking (costs an attempt even on failure)
@@ -848,7 +866,7 @@ export class AuthService {
 
     const codeHash = this.hashToken(code);
     if (codeHash !== user.phoneOtpHash) {
-      throw new BadRequestException('Invalid verification code');
+      throw new BadRequestException(OTP_INVALID);
     }
 
     // Success — mark phone as verified, clear OTP fields

@@ -336,7 +336,7 @@ describe('AuthService.refreshTokens', () => {
     const res = makeResponseMock();
 
     await expect(ctx.sut.refreshTokens('a'.repeat(64), res as any))
-      .rejects.toThrow('Account is no longer active');
+      .rejects.toThrow('Session expired');
     expect(ctx.prisma._client.refreshToken.deleteMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { userId: 'u1' } }),
     );
@@ -352,7 +352,7 @@ describe('AuthService.refreshTokens', () => {
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce(null);
 
     await expect(ctx.sut.refreshTokens('a'.repeat(64), makeResponseMock() as any))
-      .rejects.toThrow('Account is no longer active');
+      .rejects.toThrow('Session expired');
   });
 
   test('suspended vendor on refresh → revokes all sessions + 403', async () => {

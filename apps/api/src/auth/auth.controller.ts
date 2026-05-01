@@ -47,7 +47,10 @@ export class AuthController {
     // nosemgrep: ajinabraham.njsscan.dos.regex_dos.regex_dos
     // Bounded literal character class, fixed `{64}` quantifier — safe.
     if (!token || !/^[a-f0-9]{64}$/.test(token)) {
-      throw new BadRequestException('Invalid verification token');
+      // Match auth.service wording so attackers can't distinguish a malformed
+      // token (rejected here) from a non-existent / expired one (rejected
+      // downstream). Single message for the whole verify-link failure mode.
+      throw new BadRequestException('Invalid or expired verification link. Please request a new one.');
     }
     return this.authService.verifyEmail(token, response, req);
   }

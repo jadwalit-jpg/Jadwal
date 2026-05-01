@@ -225,7 +225,9 @@ describe('Phone OTP Security', () => {
     // Per check-security skill: prefer env var over magic number.
     expect(authService).toContain('OTP_MAX_ATTEMPTS');
     expect(authService).toMatch(/phoneOtpAttempts\s*>=\s*maxOtpAttempts/);
-    expect(authService).toContain('Too many attempts');
+    // Lockout branch must throw — wording is intentionally generic so the
+    // client can't distinguish lockout from "wrong code" / "no pending".
+    expect(authService).toMatch(/phoneOtpAttempts\s*>=\s*maxOtpAttempts[\s\S]{0,400}throw new BadRequestException/);
   });
 
   test('HIGH: attempt counter incremented BEFORE comparing', () => {
@@ -243,7 +245,10 @@ describe('Phone OTP Security', () => {
   });
 
   test('HIGH: phone uniqueness check before OTP send', () => {
-    expect(authService).toContain('Phone number already verified by another account');
+    // Verify the uniqueness lookup (no enumeration via the "already verified
+    // by another account" message — message itself is now generic).
+    expect(authService).toMatch(/findFirst\([\s\S]*?phoneVerified:\s*true/);
+    expect(authService).toContain('This phone number cannot be used for verification');
   });
 
   test('MEDIUM: OTP is exactly 6 digits', () => {
