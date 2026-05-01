@@ -1,7 +1,37 @@
-import { Controller, Get, Param, Query, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Header, Param, Query, NotFoundException } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { PrismaService } from '../prisma/prisma.service';
 import { RATE_LIMIT_VENDOR } from '../common/throttle-config';
+
+/**
+ * Cache-Control values for public catalog GETs (Stream D, perf sprint).
+ *
+ *   public          — Cloudflare may cache (no auth needed).
+ *   s-maxage=N      — CF edge cache for N seconds (origin sees fewer hits).
+ *   stale-while-revalidate=M — CF serves stale up to M seconds after expiry
+ *                              while it asynchronously refreshes from origin.
+ *                              No cache-miss latency for the user during the
+ *                              SWR window — the perceived TTFB is the cache
+ *                              hit, not the origin round-trip.
+ *
+ * Tier choice driven by data volatility, not request volume:
+ *
+ *   STATIC_LONG  (1 h + 24 h SWR)  — reference data that changes ~yearly.
+ *                                    Countries, categories, cities, platform
+ *                                    settings.
+ *   LIVE_SHORT   (5 m + 1 h SWR)   — content that admins edit, but stale-up-to-5
+ *                                    -minutes is acceptable for browse paths.
+ *                                    Trending, activity detail.
+ *   LISTING      (2 m + 10 m SWR)  — catalog listing that includes
+ *                                    inventory/availability — fresher.
+ *
+ * Admin mutations that need instant invalidation can call CF cache-purge
+ * via the API token if precise freshness ever matters; for the launch we
+ * accept up to 1 h staleness on reference data.
+ */
+const CACHE_STATIC_LONG = 'public, s-maxage=3600, stale-while-revalidate=86400';
+const CACHE_LIVE_SHORT  = 'public, s-maxage=300,  stale-while-revalidate=3600';
+const CACHE_LISTING     = 'public, s-maxage=120,  stale-while-revalidate=600';
 
 /**
  * Catalog — public, unauthenticated endpoints.
@@ -16,6 +46,7 @@ export class CatalogController {
 
   @Get('countries')
   @Throttle(RATE_LIMIT_VENDOR)
+  @Header('Cache-Control', CACHE_STATIC_LONG)
   getCountries() {
     return this.prisma.client.country.findMany({
       where: { status: 'ACTIVE' },
@@ -26,6 +57,7 @@ export class CatalogController {
 
   @Get('categories')
   @Throttle(RATE_LIMIT_VENDOR)
+  @Header('Cache-Control', CACHE_STATIC_LONG)
   getCategories() {
     return this.prisma.client.category.findMany({
       where: { parentId: null },
@@ -40,6 +72,7 @@ export class CatalogController {
 
   @Get('cities')
   @Throttle(RATE_LIMIT_VENDOR)
+  @Header('Cache-Control', CACHE_STATIC_LONG)
   getAllCities() {
     return this.prisma.client.city.findMany({
       select: { id: true, nameEn: true, nameAr: true, lat: true, lng: true, countryId: true },
@@ -49,6 +82,7 @@ export class CatalogController {
 
   @Get('cities/:countryId')
   @Throttle(RATE_LIMIT_VENDOR)
+  @Header('Cache-Control', CACHE_STATIC_LONG)
   getCitiesByCountry(@Param('countryId') countryId: string) {
     return this.prisma.client.city.findMany({
       where: { countryId },
@@ -59,6 +93,7 @@ export class CatalogController {
 
   @Get('trending')
   @Throttle(RATE_LIMIT_VENDOR)
+  @Header('Cache-Control', CACHE_LIVE_SHORT)
   getTrending(@Query('countryId') countryId?: string) {
     // Return events for the given country + global events (countryId = null)
     const where: any = { isActive: true };
@@ -86,6 +121,7 @@ export class CatalogController {
    */
   @Get('activities')
   @Throttle(RATE_LIMIT_VENDOR)
+  @Header('Cache-Control', CACHE_LISTING)
   async getActivities(
     @Query('page') page = '1',
     @Query('limit') limit = '20',
@@ -298,6 +334,7 @@ export class CatalogController {
   /** Related activities — "You might also like" section */
   @Get('activities/:slug/related')
   @Throttle(RATE_LIMIT_VENDOR)
+  @Header('Cache-Control', CACHE_LIVE_SHORT)
   async getRelatedActivities(
     @Param('slug') slug: string,
     @Query('limit') limitParam = '4',
@@ -348,6 +385,7 @@ export class CatalogController {
   /** Single activity detail page — includes reviews, units summary, vendor info */
   @Get('activities/:slug')
   @Throttle(RATE_LIMIT_VENDOR)
+  @Header('Cache-Control', CACHE_LIVE_SHORT)
   async getActivityBySlug(@Param('slug') slug: string) {
     const activity = await this.prisma.client.activity.findUnique({
       where: { slug },
@@ -388,6 +426,7 @@ export class CatalogController {
   // ─── Platform Info (public) ────────────────────────────────
   @Get('platform-info')
   @Throttle(RATE_LIMIT_VENDOR)
+  @Header('Cache-Control', CACHE_STATIC_LONG)
   async getPlatformInfo() {
     const settings = await this.prisma.client.platformSettings.findUnique({
       where: { id: 'default' },
