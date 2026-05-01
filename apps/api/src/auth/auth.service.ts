@@ -58,7 +58,18 @@ export class AuthService {
 
   private extractClientInfo(req?: Request) {
     if (!req) return { ip: undefined, userAgent: undefined };
-    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
+    // Trust the proxy chain via Express (configured by TRUST_PROXY_HOPS in
+    // main.ts). Don't parse X-Forwarded-For ourselves — that bypasses the
+    // hop-count validation and would write a forged IP into refreshToken
+    // sessions if anything upstream ever let a fake header through.
+    //
+    // Prefer cf-connecting-ip when present: single-valued, signed by the
+    // edge, and the ALB SG locked to Cloudflare ranges makes it spoof-proof.
+    // Fall back to req.ip which Express resolves correctly via trust-proxy.
+    const cfIp = req.headers['cf-connecting-ip'];
+    const ip = (typeof cfIp === 'string' && cfIp.trim().length > 0)
+      ? cfIp.trim()
+      : req.ip;
     const userAgent = req.headers['user-agent'];
     return { ip, userAgent };
   }
