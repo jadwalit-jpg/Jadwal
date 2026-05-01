@@ -7,11 +7,14 @@ import {
   Param,
   Body,
   Query,
+  Req,
   UseGuards,
   UseInterceptors,
   UploadedFile,
   ParseUUIDPipe,
+  NotFoundException,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AdminService } from './admin.service';
 import { UploadService } from '../common/services/upload.service';
@@ -59,6 +62,38 @@ export class AdminController {
     private readonly uploadService: UploadService,
     private readonly cleanupService: CleanupService,
   ) {}
+
+  // ─── Diagnostic: real-IP verification ───────────────────────
+  //
+  // Returns what Express sees vs what Cloudflare set. Used ONCE post-deploy
+  // to verify the trust-proxy + RealIpThrottlerGuard wiring. Gated behind
+  // env flag DIAG_IP_CHECK so it returns 404 when the flag is anything
+  // other than 'true' — keeps the endpoint dormant in production by default.
+  //
+  // Use:
+  //   1. Set DIAG_IP_CHECK=true in ECS task definition env (separate revision).
+  //   2. curl from your laptop (admin auth required):
+  //        curl -H 'Cookie: Authentication=...' https://jadwal.qa/api/admin/diag/whoami
+  //   3. Verify reqIp === cfConnectingIp === your real IP (e.g. ifconfig.me).
+  //   4. Set DIAG_IP_CHECK=false (or unset) and roll a new task revision.
+  @Get('diag/whoami')
+  @Throttle(RATE_LIMIT_STRICT)
+  diagWhoAmI(@Req() req: Request) {
+    if (process.env.DIAG_IP_CHECK !== 'true') {
+      // Hide the endpoint completely when disabled — same response as a
+      // route that doesn't exist, no "feature not enabled" hint.
+      throw new NotFoundException();
+    }
+    return {
+      reqIp: req.ip ?? null,
+      reqIps: req.ips ?? [],
+      cfConnectingIp: req.headers['cf-connecting-ip'] ?? null,
+      xForwardedFor: req.headers['x-forwarded-for'] ?? null,
+      xForwardedProto: req.headers['x-forwarded-proto'] ?? null,
+      socketRemote: req.socket?.remoteAddress ?? null,
+      trustProxyHops: Number(process.env.TRUST_PROXY_HOPS ?? 0),
+    };
+  }
 
   // ─── Admin Profile ──────────────────────────────────────────
   @Get('profile')

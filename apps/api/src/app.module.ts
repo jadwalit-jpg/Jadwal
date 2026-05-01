@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { RealIpThrottlerGuard } from './common/guards/real-ip-throttler.guard';
 import { APP_GUARD } from '@nestjs/core';
 import { SentryModule } from '@sentry/nestjs/setup';
 import { AppController } from './app.controller';
@@ -80,7 +81,9 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
   controllers: [AppController],
   providers: [
     AppService,
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Custom throttler that keys on cf-connecting-ip (real client IP) so
+    // per-IP rate limits actually fire per user — see real-ip-throttler.guard.ts.
+    { provide: APP_GUARD, useClass: RealIpThrottlerGuard },
   ],
 })
 export class AppModule implements NestModule {
