@@ -14,7 +14,7 @@
  * All payment data is `page.route`-mocked so the spec is deterministic and
  * does not depend on the dev DB having a specific UNPAID payment seeded.
  */
-import { test, expect, type Route } from '@playwright/test';
+import { test, expect, type Page, type Route } from '@playwright/test';
 
 const ADMIN_STATE = 'e2e/.auth/admin.json';
 
@@ -55,7 +55,7 @@ const MOCK_PAYOUTS_RESPONSE = {
   totalPages: 1,
 };
 
-async function setupRoutes(page: Parameters<Parameters<typeof test>[1]>[0]['page']) {
+async function setupRoutes(page: Page) {
   // GET /admin/payouts — return our single UNPAID row.
   await page.route('**/api/admin/payouts**', async (route: Route) => {
     if (route.request().method() === 'GET' && !route.request().url().includes('/export')) {
