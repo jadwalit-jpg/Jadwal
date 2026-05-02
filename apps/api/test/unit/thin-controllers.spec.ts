@@ -117,9 +117,65 @@ describe('PushController', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('AppController', () => {
+  const mkPrisma = (impl: () => Promise<unknown>) =>
+    ({ client: { $queryRawUnsafe: jest.fn(impl) } } as any);
+  const mkRedis = (impl: () => Promise<unknown>) =>
+    ({ getClient: jest.fn().mockReturnValue({ ping: jest.fn(impl) }) } as any);
+
   test('getHello / root endpoint exists and returns a value', () => {
-    const ctrl = new AppController({ getHello: jest.fn().mockReturnValue('Hello Jadwal') } as any);
+    const ctrl = new AppController(
+      { getHello: jest.fn().mockReturnValue('Hello Jadwal') } as any,
+      mkPrisma(async () => [{ '?column?': 1 }]),
+      mkRedis(async () => 'PONG'),
+    );
     // The minimal contract: methods exist and don't throw
     expect(() => (ctrl as any).getHello?.()).not.toThrow();
+  });
+
+  describe('/health/ready', () => {
+    test('returns ok when DB + Redis both respond', async () => {
+      const ctrl = new AppController(
+        {} as any,
+        mkPrisma(async () => [{ '?column?': 1 }]),
+        mkRedis(async () => 'PONG'),
+      );
+      await expect(ctrl.getReady()).resolves.toEqual({ status: 'ok', db: 'up', redis: 'up' });
+    });
+
+    test('throws 503 when DB ping rejects', async () => {
+      const ctrl = new AppController(
+        {} as any,
+        mkPrisma(() => Promise.reject(new Error('ECONNREFUSED'))),
+        mkRedis(async () => 'PONG'),
+      );
+      await expect(ctrl.getReady()).rejects.toMatchObject({
+        status: 503,
+        response: { db: 'down', redis: 'up' },
+      });
+    });
+
+    test('throws 503 when Redis ping rejects', async () => {
+      const ctrl = new AppController(
+        {} as any,
+        mkPrisma(async () => [{ '?column?': 1 }]),
+        mkRedis(() => Promise.reject(new Error('ETIMEDOUT'))),
+      );
+      await expect(ctrl.getReady()).rejects.toMatchObject({
+        status: 503,
+        response: { db: 'up', redis: 'down' },
+      });
+    });
+
+    test('throws 503 when DB exceeds 1s timeout', async () => {
+      const ctrl = new AppController(
+        {} as any,
+        mkPrisma(() => new Promise(() => {})), // hangs forever
+        mkRedis(async () => 'PONG'),
+      );
+      await expect(ctrl.getReady()).rejects.toMatchObject({
+        status: 503,
+        response: { db: 'down', redis: 'up' },
+      });
+    }, 3000);
   });
 });

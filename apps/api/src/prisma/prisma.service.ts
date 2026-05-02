@@ -77,6 +77,31 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       ...(useSsl ? { ssl: { ca: loadRdsCaBundle(), rejectUnauthorized: true } } : {}),
     });
 
+    // Per-connection statement_timeout. Postgres has no pool-level setting
+    // for this — it has to be applied as a SQL statement on each new
+    // backend connection. Without it, one runaway query (missing index,
+    // accidental cross join, slow report) holds a pool slot indefinitely
+    // → at scale the 20-slot pool fills with stuck queries → entire API
+    // returns 503 even though only one tenant misbehaved.
+    //
+    // 15 s is generous for a transactional API. Long-running cron work
+    // (cleanup, reconciliation) can lift it per-transaction with
+    // `SET LOCAL statement_timeout = '60s'` inside its `$transaction`.
+    // Set DB_STATEMENT_TIMEOUT_MS=0 to disable (don't — only for
+    // emergency hot-fixes if a real workload genuinely needs longer).
+    const STATEMENT_TIMEOUT_MS = Number(process.env.DB_STATEMENT_TIMEOUT_MS ?? 15000);
+    this.pool.on('connect', (client) => {
+      // Fire-and-forget: pg's `connect` event handler is sync but
+      // client.query returns a promise. Errors here surface on the
+      // first user query that lands on this client (which would also
+      // fail), so logging only is sufficient.
+      client
+        .query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`)
+        .catch((err: Error) =>
+          this.logger.error(`SET statement_timeout failed (${err.name})`),
+        );
+    });
+
     const adapter = new PrismaPg(this.pool);
     this.client = new PrismaClient({
       adapter,

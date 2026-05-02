@@ -146,6 +146,15 @@ export class CleanupService {
     // abandoned reservation attempts, not real bookings. Keeping them would
     // clutter vendor/admin/customer views with ghost entries.
     await this.prisma.client.$transaction(async (tx) => {
+      // Pool-level statement_timeout (15s, see prisma.service.ts) is
+      // tight for this transaction: it runs a per-row refundCouponUsage
+      // loop over every stale booking, and at end-of-weekend / payment-
+      // gateway-flap spikes the loop can hit dozens of rows. Lift the
+      // ceiling locally to 60s so the cron completes cleanly while the
+      // request path keeps its 15s safety net. SET LOCAL is scoped to
+      // this transaction — auto-reverts at COMMIT/ROLLBACK.
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '60s'`);
+
       const bookingIds = staleBookings.map(b => b.id);
       const paymentIds = staleBookings.map(b => b.paymentId).filter(Boolean) as string[];
 
