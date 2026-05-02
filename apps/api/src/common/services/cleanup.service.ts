@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditLoggerService } from './audit-logger.service';
 import { LoyaltyService } from './loyalty.service';
 import { AvailabilityCacheService } from '../../redis/availability-cache.service';
+import { RedisLockService } from '../../redis/redis-lock.service';
 import { refundCouponUsage } from '../../bookings/bookings.service';
 
 /**
@@ -40,6 +41,7 @@ export class CleanupService {
     private configService: ConfigService,
     private loyalty: LoyaltyService,
     private availabilityCache: AvailabilityCacheService,
+    private lock: RedisLockService,
   ) {
     this.REFRESH_TOKEN_RETENTION = Number(this.configService.get('RETENTION_REFRESH_TOKEN_DAYS', '0'));
     this.SECURITY_LOG_RETENTION = Number(this.configService.get('RETENTION_SECURITY_LOG_DAYS', '90'));
@@ -57,29 +59,39 @@ export class CleanupService {
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async handleDailyCleanup() {
-    this.logger.log('Starting daily cleanup...');
+    // Leader-election: when ECS auto-scaling lifts the API service to N
+    // tasks, all N would otherwise fire this cron simultaneously and
+    // race on the same DELETE FROM SecurityLog/AuditLog rows. The locks
+    // collide cleanly (no double-delete), but each non-leader pod still
+    // burns a connection for ~30s of redundant work. Leader-election
+    // limits the work to exactly one pod per iteration. TTL = 60 min
+    // (24× safety vs typical 30s run, but auto-expires before next
+    // 24-hour iteration so a crashed leader doesn't permanently silence).
+    await this.lock.withLeaderLock('cron:daily-cleanup', 60 * 60_000, async () => {
+      this.logger.log('Starting daily cleanup...');
 
-    const results = await Promise.allSettled([
-      this.cleanExpiredRefreshTokens(),
-      this.cleanOldSecurityLogs(),
-      this.cleanOldAuditLogs(),
-      this.cleanOldExpiredCoupons(),
-    ]);
+      const results = await Promise.allSettled([
+        this.cleanExpiredRefreshTokens(),
+        this.cleanOldSecurityLogs(),
+        this.cleanOldAuditLogs(),
+        this.cleanOldExpiredCoupons(),
+      ]);
 
-    const names = ['RefreshTokens', 'SecurityLogs', 'AuditLogs', 'Coupons'];
-    results.forEach((result, i) => {
-      if (result.status === 'fulfilled') {
-        this.logger.log(`  ${names[i]}: ${result.value} rows deleted`);
-      } else {
-        // Don't interpolate the raw rejection reason — Prisma errors can
-        // include query fragments, column values, and connection strings.
-        const reasonName =
-          result.reason instanceof Error ? result.reason.name : 'UnknownError';
-        this.logger.error(`  ${names[i]}: failed (${reasonName})`);
-      }
+      const names = ['RefreshTokens', 'SecurityLogs', 'AuditLogs', 'Coupons'];
+      results.forEach((result, i) => {
+        if (result.status === 'fulfilled') {
+          this.logger.log(`  ${names[i]}: ${result.value} rows deleted`);
+        } else {
+          // Don't interpolate the raw rejection reason — Prisma errors can
+          // include query fragments, column values, and connection strings.
+          const reasonName =
+            result.reason instanceof Error ? result.reason.name : 'UnknownError';
+          this.logger.error(`  ${names[i]}: failed (${reasonName})`);
+        }
+      });
+
+      this.logger.log('Daily cleanup complete.');
     });
-
-    this.logger.log('Daily cleanup complete.');
   }
 
   // ─── Auto-cancel Expired Reservations (every 5 min) ──────────────────────
@@ -89,6 +101,16 @@ export class CleanupService {
 
   @Cron('*/5 * * * *')
   async autoCancelStalePendingBookings() {
+    // Leader-election TTL = 10 min (2× the 5-min cron interval). If a leader
+    // crashes mid-cron, the lock auto-expires by the NEXT iteration so a
+    // surviving pod can take over. Without dedup, duplicate-delete races
+    // would emit duplicate audit logs and refund the same coupon usage twice.
+    await this.lock.withLeaderLock('cron:cancel-stale-pending', 10 * 60_000, async () => {
+      await this.runAutoCancelStalePendingBookings();
+    });
+  }
+
+  private async runAutoCancelStalePendingBookings() {
     const now = new Date();
     const fallbackCutoff = new Date(now.getTime() - this.PENDING_BOOKING_FALLBACK_HOURS * 60 * 60 * 1000);
 
@@ -210,6 +232,17 @@ export class CleanupService {
 
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async autoCompletePastBookings() {
+    // Leader-election TTL = 60 min. The per-booking loyalty-points loop
+    // can take a while if hundreds of bookings completed yesterday, but
+    // duplicate execution would call loyalty.earn() twice for each booking
+    // — pointsAwarded flag would prevent the double-credit, but the audit
+    // log line would still be duplicated. Lock keeps the picture clean.
+    await this.lock.withLeaderLock('cron:auto-complete-bookings', 60 * 60_000, async () => {
+      await this.runAutoCompletePastBookings();
+    });
+  }
+
+  private async runAutoCompletePastBookings() {
     const now = new Date();
 
     // Fetch individual bookings so we can award points per-booking
@@ -300,6 +333,15 @@ export class CleanupService {
 
   @Cron(CronExpression.EVERY_DAY_AT_2AM)
   async autoExpireCoupons() {
+    // Leader-election TTL = 30 min. updateMany is fast (single query),
+    // so 30 min is generous; the lock just stops two pods both writing
+    // the same audit log entry.
+    await this.lock.withLeaderLock('cron:auto-expire-coupons', 30 * 60_000, async () => {
+      await this.runAutoExpireCoupons();
+    });
+  }
+
+  private async runAutoExpireCoupons() {
     const now = new Date();
 
     const { count } = await this.prisma.client.coupon.updateMany({

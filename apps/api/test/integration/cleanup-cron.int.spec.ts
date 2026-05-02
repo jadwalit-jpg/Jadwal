@@ -50,9 +50,18 @@ function makeCleanup(configOverrides: Record<string, string> = {}) {
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
   const loyalty = new LoyaltyService(prismaSvc);
+  // Pass-through lock for tests: always wins leader election so cron bodies
+  // run as expected. Real prod uses Redis SET NX PX; integration tests don't
+  // run a Redis server, and we already cover the lock-loses path in the
+  // unit suite (test/unit/redis-lock.service.spec.ts).
+  const lock = {
+    withLeaderLock: <T,>(_key: string, _ttl: number, fn: () => Promise<T>) => fn(),
+    acquire: jest.fn(),
+    release: jest.fn(),
+  } as any;
 
   return {
-    svc: new CleanupService(prismaSvc, auditLogger, configShim(configOverrides) as any, loyalty, availabilityCache),
+    svc: new CleanupService(prismaSvc, auditLogger, configShim(configOverrides) as any, loyalty, availabilityCache, lock),
     auditLogger,
     availabilityCache,
   };
