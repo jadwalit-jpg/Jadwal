@@ -119,6 +119,12 @@ export default function PaymentsTab() {
   // Pending "revert to unpaid" confirmation. Holds the full payment so the
   // modal can show ref/amount/vendor without re-fetching.
   const [revertTarget, setRevertTarget] = useState<Payment | null>(null);
+  // §M4 — mark-paid confirmation modal. Captures the bank-side wire
+  // confirmation number that the server now requires on every mark-paid
+  // call (forensic / dispute resolution: every system-PAID row links to
+  // a real bank transaction).
+  const [markPaidOpen, setMarkPaidOpen] = useState(false);
+  const [bankTransferRef, setBankTransferRef] = useState('');
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -136,12 +142,17 @@ export default function PaymentsTab() {
   });
 
   const markPaidMutation = useMutation({
-    mutationFn: async (paymentIds: string[]) => {
-      await api.post('/admin/payouts/mark-paid', { paymentIds });
+    mutationFn: async (args: { paymentIds: string[]; bankTransferRef: string }) => {
+      // §M4 — bankTransferRef is REQUIRED on the server side. Sending it
+      // on every call (with the trimmed ref captured from the modal) keeps
+      // the audit row populated with the real wire confirmation number.
+      await api.post('/admin/payouts/mark-paid', args);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'payouts'] });
       setSelected(new Set());
+      setMarkPaidOpen(false);
+      setBankTransferRef('');
       toast('Payouts marked as paid');
     },
     // Surface the server's typed blocker message so admin sees "Vendor X has
@@ -345,7 +356,7 @@ export default function PaymentsTab() {
           {selected.size > 0 && (
             <button
               type="button"
-              onClick={() => markPaidMutation.mutate(Array.from(selected))}
+              onClick={() => setMarkPaidOpen(true)}
               disabled={markPaidMutation.isPending}
               className="flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition-all"
             >
@@ -695,6 +706,94 @@ export default function PaymentsTab() {
                 >
                   <Undo2 className="h-4 w-4" aria-hidden="true" />
                   {markUnpaidMutation.isPending ? 'Reverting...' : 'Revert to Unpaid'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* §M4 — Mark-paid confirmation modal. Captures the bank-side wire
+          confirmation number so the admin can never click "Mark as Paid"
+          on a settlement without recording how the cash actually moved. */}
+      {markPaidOpen && (() => {
+        const trimmedRef = bankTransferRef.trim();
+        const refValid = trimmedRef.length >= 3 && trimmedRef.length <= 120;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+            onClick={() => !markPaidMutation.isPending && setMarkPaidOpen(false)}
+          >
+            <div
+              className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl max-w-md w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between p-6 pb-4">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="h-11 w-11 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                    <CreditCard className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                      Mark {selected.size} payout{selected.size === 1 ? '' : 's'} as paid?
+                    </h3>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-slate-400 leading-relaxed">
+                      Confirm only after the bank transfer has actually settled. The vendor will
+                      be notified and these rows will move to <span className="font-semibold text-gray-700 dark:text-slate-200">Paid</span>.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !markPaidMutation.isPending && setMarkPaidOpen(false)}
+                  className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="px-6 pb-3">
+                <label className="block">
+                  <span className="text-sm font-medium text-gray-700 dark:text-slate-300">
+                    Bank transfer reference
+                  </span>
+                  <span className="ms-1 text-red-500">*</span>
+                  <input
+                    type="text"
+                    value={bankTransferRef}
+                    onChange={(e) => setBankTransferRef(e.target.value)}
+                    placeholder="e.g. SWIFT-MT103-XYZ-0099"
+                    minLength={3}
+                    maxLength={120}
+                    autoFocus
+                    disabled={markPaidMutation.isPending}
+                    className="mt-1.5 block w-full rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/40 px-4 py-2.5 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 disabled:opacity-50"
+                  />
+                </label>
+                <p className="mt-2 text-[11px] text-gray-400 dark:text-slate-500">
+                  Required. Stored on every flipped payment row + audit log so disputes can
+                  trace each PAID record back to a real bank transaction.
+                </p>
+              </div>
+              <div className="px-6 pb-6 pt-2 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setMarkPaidOpen(false)}
+                  disabled={markPaidMutation.isPending}
+                  className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-xl transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => markPaidMutation.mutate({
+                    paymentIds: Array.from(selected),
+                    bankTransferRef: trimmedRef,
+                  })}
+                  disabled={markPaidMutation.isPending || !refValid}
+                  className="px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                >
+                  <CreditCard className="h-4 w-4" aria-hidden="true" />
+                  {markPaidMutation.isPending ? 'Marking...' : 'Mark as Paid'}
                 </button>
               </div>
             </div>

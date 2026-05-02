@@ -669,6 +669,36 @@ export class AdminService {
       );
     }
 
+    // §B9 follow-up — block on owed-but-unpaid earnings. Soft-delete sets
+    // vendor.status=SUSPENDED, which §M3's mark-paid guard will then
+    // reject permanently. Without this check, legitimate vendor earnings
+    // on COMPLETED bookings would get stranded with no recovery path.
+    // Admin must process those payouts first (via the Payout Requests
+    // page or bulk Mark Paid) before deletion is allowed.
+    const blockingPayouts = await db.payment.count({
+      where: {
+        status: 'SUCCESS',
+        payoutStatus: 'UNPAID',
+        booking: { vendorId },
+      },
+    });
+    if (blockingPayouts > 0) {
+      throw new ForbiddenException(
+        `Cannot delete vendor: ${blockingPayouts} completed payment(s) still owe payout. Process those payouts first (Payments tab → Mark as Paid), then delete.`,
+      );
+    }
+    // Also refuse if any non-rejected payout request is still in flight —
+    // approving/completing it after deletion would create an audit-log
+    // entry against an anonymised vendor identity.
+    const blockingPayoutRequests = await db.payoutRequest.count({
+      where: { vendorId, status: { in: ['PENDING', 'APPROVED'] } },
+    });
+    if (blockingPayoutRequests > 0) {
+      throw new ForbiddenException(
+        `Cannot delete vendor: ${blockingPayoutRequests} payout request(s) still in flight. Approve / reject / complete those first, then delete.`,
+      );
+    }
+
     const activityIdsTouched = await db.$transaction(async (tx: any) => {
       // Soft-delete every active activity, freeing each slug.
       const activities = await tx.activity.findMany({

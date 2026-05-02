@@ -259,13 +259,17 @@ describe('§B9 — deleteVendor cascade soft-deletes activities + anonymises use
     expect(userAfter!.isDeactivated).toBe(true);
   });
 
-  test('past Booking + Payment rows on this vendor survive', async () => {
+  test('past Booking + Payment rows on this vendor survive (clean books)', async () => {
     const seed = await seedReference(ctx.prisma);
     const customer = await ctx.prisma.user.create({
       data: { fullName: 'Cust', email: 'c2@x.test', password: '$2b$10$d' },
     });
+    // payoutStatus=PAID — vendor's books are clean; deletion is allowed.
     const payment = await ctx.prisma.payment.create({
-      data: { amount: 100, currency: 'QAR', status: 'SUCCESS', method: 'PAY2M', paidAt: new Date() },
+      data: {
+        amount: 100, currency: 'QAR', status: 'SUCCESS', method: 'PAY2M',
+        paidAt: new Date(), payoutStatus: 'PAID',
+      },
     });
     const booking = await ctx.prisma.booking.create({
       data: {
@@ -284,6 +288,51 @@ describe('§B9 — deleteVendor cascade soft-deletes activities + anonymises use
 
     expect(await ctx.prisma.booking.findUnique({ where: { id: booking.id } })).not.toBeNull();
     expect(await ctx.prisma.payment.findUnique({ where: { id: payment.id } })).not.toBeNull();
+  });
+
+  test('§B9 follow-up F3 — refuses while UNPAID payouts exist (no stranded earnings)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const customer = await ctx.prisma.user.create({
+      data: { fullName: 'Cust', email: 'c3@x.test', password: '$2b$10$d' },
+    });
+    // SUCCESS + UNPAID — vendor has owed earnings still in the system.
+    const payment = await ctx.prisma.payment.create({
+      data: {
+        amount: 100, currency: 'QAR', status: 'SUCCESS', method: 'PAY2M',
+        paidAt: new Date(), payoutStatus: 'UNPAID',
+      },
+    });
+    await ctx.prisma.booking.create({
+      data: {
+        ref: 'JDWL-V-OWED',
+        activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: customer.id,
+        guests: 1, guestBreakdown: {},
+        startDatetime: new Date(Date.now() - 86400_000),
+        endDatetime: new Date(Date.now() - 86400_000 + 2 * 3600_000),
+        totalPrice: 100, currencyCode: 'QAR',
+        commissionPct: 10, commissionAmount: 10, serviceFee: 5,
+        status: 'COMPLETED', paymentId: payment.id,
+      },
+    });
+
+    await expect(makeAdmin().deleteVendor(seed.vendor.id))
+      .rejects.toThrow(/owe payout|process those payouts/i);
+
+    const v = await ctx.prisma.vendor.findUnique({ where: { id: seed.vendor.id } });
+    expect(v!.deletedAt).toBeNull();
+  });
+
+  test('§B9 follow-up F3 — refuses while in-flight payout requests exist', async () => {
+    const seed = await seedReference(ctx.prisma);
+    await ctx.prisma.payoutRequest.create({
+      data: {
+        vendorId: seed.vendor.id,
+        amount: 50, currency: 'QAR', status: 'PENDING',
+      },
+    });
+
+    await expect(makeAdmin().deleteVendor(seed.vendor.id))
+      .rejects.toThrow(/payout request.*still in flight|approve.*reject/i);
   });
 
   test('refuses while there are PENDING / CONFIRMED bookings', async () => {
