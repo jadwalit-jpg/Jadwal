@@ -28,7 +28,14 @@ const REQUIRED_IN_PRODUCTION = [
   'GOOGLE_CALLBACK_URL',
   'API_URL',
   'APP_URL',
-  'CSP_CONNECT_SRC',
+  // CSP_CONNECT_SRC was deliberately removed from this list (and from the
+  // task def + SSM) in PR #96 — its sole previous purpose was to surface
+  // the ALB private DNS in the public CSP header, which leaked our origin
+  // through Cloudflare. The Helmet directive at line 142 now treats it as
+  // optional (empty array fallback) — having it in REQUIRED_IN_PRODUCTION
+  // would refuse to start every prod task because the secret no longer
+  // exists. Do NOT re-add without simultaneously recreating the SSM
+  // parameter + adding it back to infra/ecs/api-task.json.
   'PAY2M_MERCHANT_ID',
   'PAY2M_SECURED_KEY',
   'PAY2M_SECRET_WORD',
