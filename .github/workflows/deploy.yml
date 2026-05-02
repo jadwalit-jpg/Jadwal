@@ -323,8 +323,8 @@ jobs:
       fail-fast: false
       matrix:
         service:
-          - { name: jadwal-api, img: jadwal-api }
-          - { name: jadwal-web, img: jadwal-web }
+          - { name: jadwal-api, img: jadwal-api, taskdef: api-task.json }
+          - { name: jadwal-web, img: jadwal-web, taskdef: web-task.json }
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -332,25 +332,51 @@ jobs:
           role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Update task-def image tag, register new revision, update service.
-      # Keeps previousDefinitionArn so rollback is one API call away.
+      # Register a new task-def revision from the COMMITTED IaC source-of-truth
+      # (infra/ecs/<service>-task.json), then update the service to point at it.
+      #
+      # Pattern matches the existing migrate-task.json flow (see job 4 above):
+      # the JSON has three placeholder tokens which are substituted at deploy
+      # time so the committed file stays portable / account-agnostic:
+      #   IMAGE_TAG_PLACEHOLDER → <ECR_REGISTRY>/<img>:<git-sha>
+      #   <AWS_ACCOUNT_ID>      → 12-digit account id (from sts caller-id)
+      #   <AWS_REGION>          → eu-central-1 (from env)
+      #
+      # Why register from committed JSON instead of `aws ecs describe`:
+      #   - Manual console edits to the task def get OVERWRITTEN on next deploy
+      #     → infra/ecs/*.json is the only source of truth (IaC discipline)
+      #   - PR review on infra/ecs/*.json catches risky changes (CPU/memory
+      #     bumps, secret renames, IAM role changes) before they ship
+      #   - Onboarding: read the JSON to know exactly what runs in prod, no
+      #     console crawling
+      #   - Recovery: a wiped task family can be rebuilt by re-running deploy
+      #
+      # Rollback: previous-revision ARN is still active in ECS; switching back
+      # is `aws ecs update-service --task-definition jadwal-api:<prev-rev>`.
       - name: Deploy ${{ matrix.service.name }}
         run: |
-          CURRENT=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER }} --services ${{ matrix.service.name }} \
-            --query 'services[0].taskDefinition' --output text)
+          IMG="${{ env.ECR_REGISTRY }}/${{ matrix.service.img }}:${{ github.sha }}"
+          ACCT="$(aws sts get-caller-identity --query Account --output text)"
 
-          aws ecs describe-task-definition --task-definition "$CURRENT" \
-            --query 'taskDefinition' > td.json
+          # Defensive copy — never sed-edit the committed file in place.
+          cp infra/ecs/${{ matrix.service.taskdef }} /tmp/td.json
+          sed -i \
+            -e "s|IMAGE_TAG_PLACEHOLDER|$IMG|g" \
+            -e "s|<AWS_ACCOUNT_ID>|$ACCT|g" \
+            -e "s|<AWS_REGION>|${AWS_REGION}|g" \
+            /tmp/td.json
 
-          # Strip fields AWS doesn't accept on register
-          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
-                 .compatibilities, .registeredAt, .registeredBy)
-              | .containerDefinitions[0].image = "${{ env.ECR_REGISTRY }}/${{ matrix.service.img }}:${{ github.sha }}"' \
-              td.json > td-new.json
+          # Fail loud if any placeholder didn't get substituted — this catches
+          # a forgotten placeholder before AWS rejects the register call with
+          # a less obvious "Unable to parse ARN" error.
+          if grep -q '<AWS_ACCOUNT_ID>\|<AWS_REGION>\|IMAGE_TAG_PLACEHOLDER' /tmp/td.json; then
+            echo "::error::Unsubstituted placeholder remains in /tmp/td.json"
+            grep -n '<AWS_ACCOUNT_ID>\|<AWS_REGION>\|IMAGE_TAG_PLACEHOLDER' /tmp/td.json
+            exit 1
+          fi
 
           NEW_TD=$(aws ecs register-task-definition \
-            --cli-input-json file://td-new.json \
+            --cli-input-json file:///tmp/td.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
 
           aws ecs update-service \
