@@ -1,0 +1,76 @@
+{
+  "family": "jadwal-api",
+  "taskRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/jadwal-ecs-task-role",
+  "executionRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/jadwal-ecs-task-execution",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "volumes": [],
+  "placementConstraints": [],
+  "containerDefinitions": [
+    {
+      "name": "api",
+      "image": "IMAGE_TAG_PLACEHOLDER",
+      "cpu": 0,
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 4000, "hostPort": 4000, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "PORT", "value": "4000" },
+        { "name": "DIAG_IP_CHECK", "value": "false" },
+        { "name": "TRUST_PROXY_HOPS", "value": "2" }
+      ],
+      "secrets": [
+        { "name": "NODE_ENV",                     "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/NODE_ENV" },
+        { "name": "DATABASE_URL",                 "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/DATABASE_URL" },
+        { "name": "REDIS_URL",                    "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/REDIS_URL" },
+        { "name": "JWT_SECRET",                   "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/JWT_SECRET" },
+        { "name": "JWT_REFRESH_SECRET",           "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/JWT_REFRESH_SECRET" },
+        { "name": "COOKIE_SECRET",                "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/COOKIE_SECRET" },
+        { "name": "FRONTEND_URL",                 "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/FRONTEND_URL" },
+        { "name": "API_URL",                      "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/API_URL" },
+        { "name": "APP_URL",                      "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/APP_URL" },
+        { "name": "CORS_ORIGIN",                  "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/CORS_ORIGIN" },
+        { "name": "CDN_URL",                      "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/CDN_URL" },
+        { "name": "AWS_REGION",                   "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/AWS_REGION" },
+        { "name": "S3_BUCKET",                    "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/S3_BUCKET" },
+        { "name": "S3_REGION",                    "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/S3_REGION" },
+        { "name": "STORAGE_DRIVER",               "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/STORAGE_DRIVER" },
+        { "name": "ENABLE_HSTS",                  "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/ENABLE_HSTS" },
+        { "name": "LOG_LEVEL",                    "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/LOG_LEVEL" },
+        { "name": "THROTTLE_ENABLED",             "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/THROTTLE_ENABLED" },
+        { "name": "EMAIL_ENABLED",                "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/EMAIL_ENABLED" },
+        { "name": "SMS_ENABLED",                  "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/SMS_ENABLED" },
+        { "name": "PAYMENT_ENABLED",              "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/PAYMENT_ENABLED" },
+        { "name": "RETENTION_REFRESH_TOKEN_DAYS", "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/RETENTION_REFRESH_TOKEN_DAYS" },
+        { "name": "GOOGLE_CLIENT_ID",             "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/GOOGLE_CLIENT_ID" },
+        { "name": "GOOGLE_CLIENT_SECRET",         "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/GOOGLE_CLIENT_SECRET" },
+        { "name": "GOOGLE_CALLBACK_URL",          "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/GOOGLE_CALLBACK_URL" },
+        { "name": "VAPID_SUBJECT",                "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/VAPID_SUBJECT" },
+        { "name": "VAPID_PUBLIC_KEY",             "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/VAPID_PUBLIC_KEY" },
+        { "name": "VAPID_PRIVATE_KEY",            "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/VAPID_PRIVATE_KEY" },
+        { "name": "PAY2M_RETURN_URL",             "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/PAY2M_RETURN_URL" },
+        { "name": "PAY2M_API_URL",                "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/PAY2M_API_URL" },
+        { "name": "PAY2M_MERCHANT_NAME",          "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/PAY2M_MERCHANT_NAME" },
+        { "name": "PAY2M_MERCHANT_ID",            "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/PAY2M_MERCHANT_ID" },
+        { "name": "PAY2M_SECURED_KEY",            "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/PAY2M_SECURED_KEY" },
+        { "name": "PAY2M_SECRET_WORD",            "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/PAY2M_SECRET_WORD" },
+        { "name": "EMAIL_FROM",                   "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/EMAIL_FROM" },
+        { "name": "ADMIN_EMAIL",                  "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/ADMIN_EMAIL" }
+      ],
+      "mountPoints": [],
+      "volumesFrom": [],
+      "systemControls": [],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/jadwal-api",
+          "awslogs-region": "<AWS_REGION>",
+          "awslogs-stream-prefix": "api"
+        }
+      }
+    }
+  ]
+}

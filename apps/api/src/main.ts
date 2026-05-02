@@ -28,7 +28,14 @@ const REQUIRED_IN_PRODUCTION = [
   'GOOGLE_CALLBACK_URL',
   'API_URL',
   'APP_URL',
-  'CSP_CONNECT_SRC',
+  // CSP_CONNECT_SRC was deliberately removed from this list (and from the
+  // task def + SSM) in PR #96 — its sole previous purpose was to surface
+  // the ALB private DNS in the public CSP header, which leaked our origin
+  // through Cloudflare. The Helmet directive at line 142 now treats it as
+  // optional (empty array fallback) — having it in REQUIRED_IN_PRODUCTION
+  // would refuse to start every prod task because the secret no longer
+  // exists. Do NOT re-add without simultaneously recreating the SSM
+  // parameter + adding it back to infra/ecs/api-task.json.
   'PAY2M_MERCHANT_ID',
   'PAY2M_SECURED_KEY',
   'PAY2M_SECRET_WORD',
@@ -237,6 +244,41 @@ async function bootstrap() {
       disableErrorMessages: process.env.NODE_ENV === 'production',
     }),
   );
+
+  // ─── Graceful shutdown ──────────────────────────────────────────────────
+  // ECS Fargate sends SIGTERM, waits 30 s, then sends SIGKILL. ALB target
+  // deregistration drains for 30 s by default. Without these hooks a rolling
+  // deploy can SIGKILL an API task mid-booking / mid-payment and orphan the
+  // in-flight request (no DB cleanup, Redis lock left behind, customer sees
+  // 502 from the ALB).
+  //
+  // enableShutdownHooks() makes Nest:
+  //   1. Stop the HTTP server (refuse new connections; existing in-flight
+  //      requests keep running until they finish).
+  //   2. Fire onModuleDestroy on every provider → PrismaService.$disconnect
+  //      (releases the pg pool cleanly) and RedisService.client.quit
+  //      (closes the ioredis connection without losing in-flight pipelines).
+  //   3. Exit with 0.
+  //
+  // Belt-and-suspenders deadline: if a single request hangs (e.g. PAY2M
+  // gateway delay past its 15 s AbortSignal, or a slow Prisma transaction
+  // that beat the new statement_timeout), we MUST exit before ECS sends
+  // SIGKILL or the container is killed mid-cleanup. 25 s gives 5 s of margin
+  // inside the 30 s ALB / ECS window for the orderly close to win the race.
+  app.enableShutdownHooks();
+
+  const SHUTDOWN_DEADLINE_MS = 25_000;
+  const armDeadline = (signal: string) => {
+    const t = setTimeout(() => {
+      console.error(`[FATAL] ${signal} shutdown exceeded ${SHUTDOWN_DEADLINE_MS}ms — forcing exit`);
+      process.exit(1);
+    }, SHUTDOWN_DEADLINE_MS);
+    // unref so the timer itself doesn't keep the event loop alive past a
+    // clean shutdown — only fires if we're still running at the deadline.
+    t.unref();
+  };
+  process.on('SIGTERM', () => armDeadline('SIGTERM'));
+  process.on('SIGINT', () => armDeadline('SIGINT'));
 
   // envNumber treats undefined AND empty string as "use default" — guards
   // against a stray empty SSM Parameter Store entry that would otherwise
