@@ -428,10 +428,15 @@ describe('PaymentService.handleCallback — cron-race recovery', () => {
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).not.toBeNull();
   });
 
-  test('booking was deleted by cron + SUCCESS callback → orphan audit row, no throw', async () => {
+  test('booking was deleted by cron + SUCCESS callback (no snapshot) → REFUND_PENDING + audit', async () => {
     // Edge case: cron fully cancelled+deleted the booking but the payment row
-    // remains (under its prior PENDING status). PAY2M confirms SUCCESS. The
-    // service MUST NOT crash; it logs PAYMENT_ORPHANED for manual refund.
+    // remains under its prior PENDING status with NO bookingSnapshot (legacy
+    // pre-§B2 row, or one created via a path that didn't stamp the snapshot).
+    // §B2 contract: with no snapshot to recreate from, the recovery path
+    // queues a refund and emits PAYMENT_RECOVERY_REFUND_QUEUED. Payment
+    // flips to REFUND_PENDING (NOT SUCCESS — we cannot keep money for a
+    // booking we can't recreate). When a snapshot IS present, the recovery
+    // re-inserts the booking; that path is covered by the wave3 spec.
     const { svc, auditLogger } = makePaymentService();
     const { basketId, bookingId, paymentId, amountStr } = await seedPendingPayment(200);
 
@@ -444,12 +449,15 @@ describe('PaymentService.handleCallback — cron-race recovery', () => {
       transaction_id: 'ORPHAN-TX', Response_Key: signCallback(basketId, amountStr, '00'),
     });
 
-    // Orphan audit row written
+    // Refund queued via the §B2 fallback path
     expect(auditLogger.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'PAYMENT_ORPHANED' }),
+      expect.objectContaining({
+        action: 'PAYMENT_RECOVERY_REFUND_QUEUED',
+        actionCategory: 'FINANCIAL',
+      }),
     );
-    // Payment row still present and SUCCESS (so finance can refund manually)
     const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    expect(p.status).toBe('SUCCESS');
+    expect(p.status).toBe('REFUND_PENDING');
+    expect(p.refundAmount?.toString()).toBe('200');
   });
 });

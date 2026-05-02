@@ -190,7 +190,7 @@ describe('AdminService.markPayoutsPaid — in-flight guard (DB-backed)', () => {
     // Vendor requests payout → PENDING. Now bulk mark-paid must refuse.
     await vendor.requestPayout(seed.vendorUser.id);
 
-    await expect(svc.markPayoutsPaid([paymentId]))
+    await expect(svc.markPayoutsPaid([paymentId], 'TEST-WIRE-REF'))
       .rejects.toThrow(/in-flight payout request.*Payout Requests page/i);
 
     const row = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });

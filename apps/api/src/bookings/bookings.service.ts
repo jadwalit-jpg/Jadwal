@@ -74,6 +74,100 @@ export async function refundCouponUsage(
   });
 }
 
+/**
+ * Server-derived JSON snapshot of a booking row, written into
+ * `payment.bookingSnapshot` at booking-creation time so the PAY2M
+ * callback's B2 orphan-recovery branch can re-insert the booking when
+ * the cleanup cron deleted it before the success callback arrived.
+ *
+ * The shape is the SUBSET of Booking columns we need to recreate the
+ * row plus a couple of forensic-only fields (`originalCreatedAt`) that
+ * make sure the customer doesn't lose their cancellation window when
+ * the row is re-inserted hours after the original.
+ *
+ * Critically — every value here comes from `booking` (the row that
+ * Prisma JUST inserted), never from the request DTO. A tampered DTO
+ * that somehow bypassed validation cannot poison the recovery price.
+ */
+export type BookingSnapshot = {
+  ref: string;
+  activityId: string;
+  vendorId: string;
+  customerId: string;
+  unitNumber: number | null;
+  startDatetime: string;        // ISO string — Json field can't hold Date
+  endDatetime: string;
+  guests: number;
+  guestBreakdown: any | null;
+  selectedExtras: any | null;
+  totalPrice: string;           // Decimal serialised as string to avoid float drift
+  serviceFee: string;
+  commissionPct: string;
+  commissionAmount: string;
+  couponCode: string | null;
+  couponDiscount: string;
+  pointsRedeemed: number;
+  pointsDiscount: string;
+  currencyCode: string;
+  idempotencyKey: string | null;
+  originalCreatedAt: string;
+  /// Snapshot version — bump when the shape changes so the callback
+  /// branch can fall back to the refund path on an unrecognised shape
+  /// rather than recreating with stale assumptions.
+  v: 1;
+};
+
+export function buildBookingSnapshot(booking: {
+  ref: string;
+  activityId: string;
+  vendorId: string;
+  customerId: string;
+  unitNumber: number | null;
+  startDatetime: Date;
+  endDatetime: Date;
+  guests: number;
+  guestBreakdown: any;
+  selectedExtras: any;
+  totalPrice: any;            // Prisma.Decimal
+  serviceFee: any;
+  commissionPct: any;
+  commissionAmount: any;
+  couponCode: string | null;
+  couponDiscount: any;
+  pointsRedeemed: number;
+  pointsDiscount: any;
+  currencyCode: string;
+  idempotencyKey: string | null;
+  createdAt: Date;
+}): BookingSnapshot {
+  const dec = (d: any): string =>
+    d === null || d === undefined ? '0' : (typeof d === 'string' ? d : d.toString());
+  return {
+    ref: booking.ref,
+    activityId: booking.activityId,
+    vendorId: booking.vendorId,
+    customerId: booking.customerId,
+    unitNumber: booking.unitNumber ?? null,
+    startDatetime: booking.startDatetime.toISOString(),
+    endDatetime: booking.endDatetime.toISOString(),
+    guests: booking.guests,
+    guestBreakdown: booking.guestBreakdown ?? null,
+    selectedExtras: booking.selectedExtras ?? null,
+    totalPrice: dec(booking.totalPrice),
+    serviceFee: dec(booking.serviceFee),
+    commissionPct: dec(booking.commissionPct),
+    commissionAmount: dec(booking.commissionAmount),
+    couponCode: booking.couponCode ?? null,
+    couponDiscount: dec(booking.couponDiscount),
+    pointsRedeemed: booking.pointsRedeemed,
+    pointsDiscount: dec(booking.pointsDiscount),
+    currencyCode: booking.currencyCode,
+    idempotencyKey: booking.idempotencyKey ?? null,
+    originalCreatedAt: booking.createdAt.toISOString(),
+    v: 1,
+  };
+}
+
 /** Minutes → "HH:MM" */
 function fromMinutes(mins: number): string {
   return `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
@@ -1305,9 +1399,20 @@ export class BookingsService {
         // is owned by bookings.paymentId). The prior absence of this write
         // meant any real PAY2M callback would reject with
         // "Argument `id` must not be null" — a latent prod bug.
+        //
+        // Also stamp `bookingSnapshot` (§B2 plan) — a server-derived JSON
+        // copy of the booking row we just inserted. The PAY2M callback's
+        // orphan-recovery branch uses this to atomically re-insert the
+        // booking when the cleanup cron deleted it before the success
+        // callback arrived. The snapshot is taken from the PERSISTED row
+        // (`createdBooking`), never from `dto`, so a malicious DTO that
+        // somehow bypassed validation cannot poison the recovery price.
         await tx.payment.update({
           where: { id: payment.id },
-          data: { bookingId: createdBooking.id },
+          data: {
+            bookingId: createdBooking.id,
+            bookingSnapshot: buildBookingSnapshot(createdBooking),
+          },
         });
         // Atomic debit — see comment on the CONFIRMED branch above.
         if (pointsRedeemed > 0) {

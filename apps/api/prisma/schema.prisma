@@ -408,6 +408,26 @@ model Payment {
   method             String
   refundAmount       Decimal?      @db.Decimal(10, 2)
   refundedAt         DateTime?
+  /// Server-derived JSON copy of the booking row written ONCE at booking
+  /// creation. Never sourced from request body; never updateable. The
+  /// callback's B2 orphan-recovery path uses this to re-insert the booking
+  /// when the cleanup cron deleted it before PAY2M's success callback
+  /// arrived. Snapshot fields: activityId, vendorId, customerId,
+  /// unitNumber, startDatetime, endDatetime, guests, guestBreakdown,
+  /// selectedExtras, totalPrice, serviceFee, commissionPct, commissionAmount,
+  /// couponCode, couponDiscount, pointsRedeemed, pointsDiscount,
+  /// currencyCode, idempotencyKey, ref, originalCreatedAt.
+  bookingSnapshot    Json?
+  /// Idempotency marker for the orphan-recovery path. Set inside the same
+  /// transaction that re-inserts the booking from bookingSnapshot, so a
+  /// replayed/retried PAY2M callback cannot create a second copy.
+  bookingRecreatedAt DateTime?
+  /// §M4 — bank-side wire-confirmation number captured at mark-paid time.
+  /// Required by the MarkPayoutPaidDto so every PAID row links to a real
+  /// bank transaction for forensic / dispute resolution. Free-form (banks
+  /// vary). Nullable in schema for backwards-compat with legacy rows that
+  /// were marked PAID before this column existed.
+  bankTransferRef    String?       @db.VarChar(120)
   createdAt          DateTime      @default(now())
 
   @@index([status])
