@@ -272,7 +272,17 @@ describe('BookingsService.createBooking — idempotency', () => {
     expect(await ctx.prisma.booking.count()).toBe(1);
   });
 
-  test('same idempotencyKey from DIFFERENT user → ConflictException (anti-enumeration)', async () => {
+  test('same idempotencyKey from DIFFERENT user → rejected (IDOR-hardened, post-PR-#94)', async () => {
+    // Updated 2026-05-02. Predates PR #94 (commit 101d018). Originally
+    // surfaced a custom "Not yours" message; the IDOR fix scopes the
+    // idempotency lookup by `customerId: userId`, so the foreign key
+    // is "not found" for the second user, the create proceeds, and the
+    // DB unique constraint catches the real collision (P2002 → mapped
+    // to generic 409 by PrismaExceptionFilter at the HTTP layer; in
+    // service-level tests it bubbles as a PrismaClientKnownRequestError).
+    // The CONTRACT we test now is just "second user is blocked", not
+    // any specific message — both branches return identical responses
+    // to collapse the enumeration oracle.
     const seed = await seedReference(ctx.prisma);
     const { svc } = makeBookingsService();
     const key = crypto.randomUUID();
@@ -301,7 +311,8 @@ describe('BookingsService.createBooking — idempotency', () => {
         guests: 1,
         idempotencyKey: key,
       }),
-    ).rejects.toThrow(/not yours/i);
+    ).rejects.toThrow(); // P2002 / unique-constraint conflict; specific
+                        // message is intentionally generic per IDOR rule.
   });
 });
 
