@@ -142,7 +142,12 @@ export class CatalogController {
 
     const where: any = {
       status: 'ACTIVE',
-      vendor: { status: 'ACTIVE' },
+      // §B9 — exclude soft-deleted activities AND activities whose vendor
+      // was soft-deleted. Without this filter, a deleted vendor's old
+      // activities would still appear in public listings even though
+      // the vendor row is gone for any practical purpose.
+      deletedAt: null,
+      vendor: { status: 'ACTIVE', deletedAt: null },
     };
     if (countryId) where.countryId = countryId;
     if (categoryId) {
@@ -341,8 +346,13 @@ export class CatalogController {
   ) {
     const limit = Math.min(Math.max(Number(limitParam) || 4, 1), 8);
 
-    const current = await this.prisma.client.activity.findUnique({
-      where: { slug },
+    // §B9 — soft-deleted activities have their slug rewritten to
+    // `deleted-<id>`, so a public lookup by the original slug is a
+    // 404. The findFirst+deletedAt filter below is defence in depth
+    // against any future code path that might somehow bypass the
+    // slug rename.
+    const current = await this.prisma.client.activity.findFirst({
+      where: { slug, deletedAt: null },
       select: { id: true, categoryId: true, subCategoryId: true, countryId: true },
     });
 
@@ -352,7 +362,8 @@ export class CatalogController {
       where: {
         id: { not: current.id },
         status: 'ACTIVE',
-        vendor: { status: 'ACTIVE' },
+        deletedAt: null,
+        vendor: { status: 'ACTIVE', deletedAt: null },
         OR: [
           { categoryId: current.categoryId },
           ...(current.subCategoryId ? [{ subCategoryId: current.subCategoryId }] : []),
@@ -387,8 +398,11 @@ export class CatalogController {
   @Throttle(RATE_LIMIT_VENDOR)
   @Header('Cache-Control', CACHE_LIVE_SHORT)
   async getActivityBySlug(@Param('slug') slug: string) {
-    const activity = await this.prisma.client.activity.findUnique({
-      where: { slug },
+    // §B9 — soft-deleted activities have slugs rewritten to
+    // `deleted-<id>`, so the original public slug returns 404 here.
+    // findFirst lets us re-assert the deletedAt filter as belt-and-braces.
+    const activity = await this.prisma.client.activity.findFirst({
+      where: { slug, deletedAt: null },
       include: {
         category: { select: { nameEn: true, nameAr: true } },
         city: { select: { nameEn: true, nameAr: true } },

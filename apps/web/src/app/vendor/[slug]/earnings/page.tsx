@@ -275,9 +275,10 @@ export default function VendorEarningsPage() {
                   <th className="text-start px-6 py-3 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                     {t('vendor.earnings.payoutRequests.thProcessed')}
                   </th>
-                  <th className="text-start px-6 py-3 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
-                    {t('vendor.earnings.payoutRequests.thAdminNote')}
-                  </th>
+                  {/* §B6 — adminNote is intentionally omitted from the
+                      vendor-side payout-requests select on the API. The
+                      column would always render the dash placeholder, so
+                      it's gone from the UI too. */}
                   <th className="text-end px-6 py-3 w-12"></th>
                 </tr>
               </thead>
@@ -306,13 +307,6 @@ export default function VendorEarningsPage() {
                         {req.processedAt
                           ? new Date(req.processedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
                           : t('vendor.earnings.dash')}
-                      </td>
-                      <td className="px-6 py-4 text-xs text-gray-600 dark:text-slate-400 max-w-[240px]">
-                        {req.adminNote ? (
-                          <span className="italic">“{req.adminNote.split('\n')[0]}”</span>
-                        ) : (
-                          <span className="text-gray-400 dark:text-slate-500">{t('vendor.earnings.dash')}</span>
-                        )}
                       </td>
                       <td className="px-6 py-4 text-end">
                         {req.status === 'REJECTED' ? (

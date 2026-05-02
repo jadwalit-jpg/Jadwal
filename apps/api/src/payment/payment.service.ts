@@ -680,7 +680,14 @@ export class PaymentService {
         ? `https://maps.google.com/maps?q=${bookingForNotify.activity.locationLat},${bookingForNotify.activity.locationLng}`
         : undefined;
 
-      this.emailService.sendBookingConfirmation(bookingForNotify.customer.email, {
+      // §B9 follow-up — skip the SES send to anonymised addresses. The
+      // booking row may have been recreated by the §B2 path while the
+      // customer was being soft-deleted in another tab; the customer
+      // email is then `<id>@deleted.local`, a non-routable sentinel that
+      // would bounce at SES and degrade our sender-reputation score.
+      const customerEmail = bookingForNotify.customer.email;
+      if (!customerEmail.endsWith('@deleted.local')) {
+        this.emailService.sendBookingConfirmation(customerEmail, {
         customerName: bookingForNotify.customer.fullName,
         activityTitle: bookingForNotify.activity?.titleEn ?? 'Activity',
         date: dateStr,
@@ -699,6 +706,7 @@ export class PaymentService {
         const kind = err instanceof Error ? err.name : 'UnknownError';
         this.logger.error(`Booking confirmation email failed (${kind}) for booking ${payment.bookingId}`);
       });
+      } // close `if (!customerEmail.endsWith('@deleted.local'))`
     }
 
     return { bookingId: savedBookingId!, status: 'success' as const };
@@ -766,6 +774,22 @@ export class PaymentService {
     if (endDt < now) {
       // Activity already ended — not deliverable. Refund.
       await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'ACTIVITY_ALREADY_ENDED');
+      return;
+    }
+
+    // §B9 follow-up — customer may have been soft-deleted between the
+    // PENDING booking creation and PAY2M's success callback (the
+    // cleanup-cron's hard-delete of the booking removes the count-based
+    // guard in `deleteUser`, so the user CAN be soft-deleted in this
+    // window). Recreating the booking now would point its customerId
+    // at an anonymised user the customer can't access — a ghost booking.
+    // Refund instead.
+    const customer = await db.user.findUnique({
+      where: { id: snapshot.customerId },
+      select: { deletedAt: true },
+    });
+    if (!customer || customer.deletedAt) {
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'CUSTOMER_DELETED');
       return;
     }
 
