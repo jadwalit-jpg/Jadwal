@@ -54,11 +54,18 @@ export const options = {
   tags: { scenario: 'mixed-realistic' },
 };
 
+// Real catalog paths exposed by CatalogController (not /featured or
+// /vendors — those don't exist; PR #106 fixed catalog-browse.js similarly).
+// /activities?featured=true is the closest equivalent to "featured" since
+// the listing endpoint accepts that query flag.
 const CATALOG_PATHS = [
-  '/api/catalog/cities',
+  '/api/catalog/countries',
   '/api/catalog/categories',
-  '/api/catalog/featured',
-  '/api/catalog/vendors?city=doha',
+  '/api/catalog/cities',
+  '/api/catalog/trending',
+  '/api/catalog/activities',
+  '/api/catalog/activities?featured=true',
+  '/api/catalog/platform-info',
 ];
 
 export function setup() {
@@ -83,8 +90,8 @@ function checkAvailability(activityId) {
   d.setUTCDate(d.getUTCDate() + 1 + Math.floor(Math.random() * 60));
   const date = d.toISOString().slice(0, 10);
   const res = http.get(
-    `${baseUrl()}/api/availability?activityId=${activityId}&date=${date}`,
-    { tags: { endpoint: 'availability' } },
+    `${baseUrl()}/api/availability/hourly/${activityId}?date=${date}`,
+    { tags: { endpoint: 'availability/hourly' } },
   );
   errorRate.add(res.status >= 400);
   availCount.add(1);
@@ -98,16 +105,17 @@ function attemptBooking(data) {
 
   const d = new Date();
   d.setUTCDate(d.getUTCDate() + 1 + Math.floor(Math.random() * 60));
-  d.setUTCHours(10 + Math.floor(Math.random() * 8), 0, 0, 0);
-  const start = d.toISOString();
-  const end = new Date(d.getTime() + 2 * 60 * 60 * 1000).toISOString();
+  const checkInDate = d.toISOString().slice(0, 10);
+  // Hour in [08..19] — leaves 2-hour slot headroom before 22:00 close.
+  const hour = 8 + Math.floor(Math.random() * 12);
+  const slotTime = `${String(hour).padStart(2, '0')}:00`;
 
   const res = http.post(
     `${baseUrl()}/api/bookings`,
     JSON.stringify({
       activityId: data.activityId,
-      startDatetime: start,
-      endDatetime: end,
+      checkInDate,
+      slotTime,
       guests: 1,
       idempotencyKey: idempotencyKey(),
     }),

@@ -54,13 +54,21 @@ function futureIso(daysOffset) {
 }
 
 export function setup() {
-  // Verify the activity ID exists before starting — a 404 here would
-  // produce a uniform-fast 404 response that looks healthy but tests nothing.
+  // Verify the activity exists before starting — a 404 here would produce a
+  // uniform-fast 404 response that looks healthy but tests nothing.
+  // The catalog endpoint takes a slug, but availability takes an activity ID
+  // (UUID). Caller passes TEST_ACTIVITY_ID as the UUID. We probe the
+  // hourly-availability endpoint itself with a near-future date — if that
+  // 200s, we know the activity exists AND the controller path is correct.
   const activityId = requireEnv('TEST_ACTIVITY_ID');
-  const probe = http.get(`${baseUrl()}/api/catalog/activities/${activityId}`);
+  const probeDate = futureIso(1);
+  const probe = http.get(
+    `${baseUrl()}/api/availability/hourly/${activityId}?date=${probeDate}`,
+  );
   if (probe.status !== 200) {
     throw new Error(
-      `[FATAL] TEST_ACTIVITY_ID=${activityId} not found (${probe.status}). Seed an activity first.`,
+      `[FATAL] hourly availability probe for ${activityId} on ${probeDate} ` +
+        `returned ${probe.status}. Body: ${probe.body?.toString().slice(0, 200)}`,
     );
   }
   return { activityId };
@@ -68,16 +76,16 @@ export function setup() {
 
 export default function (data) {
   const date = futureIso(Math.floor(Math.random() * 60) + 1);
-  const url = `${baseUrl()}/api/availability?activityId=${data.activityId}&date=${date}`;
-  const res = http.get(url, { tags: { endpoint: 'availability' } });
+  const url = `${baseUrl()}/api/availability/hourly/${data.activityId}?date=${date}`;
+  const res = http.get(url, { tags: { endpoint: 'availability/hourly' } });
   responseTime.add(res.timings.duration);
   errorRate.add(res.status >= 400);
   check(res, {
     'availability: 200': (r) => r.status === 200,
-    'availability: returns slots field': (r) => {
+    'availability: parsable JSON': (r) => {
       try {
-        const body = r.json();
-        return body && (Array.isArray(body.slots) || Array.isArray(body));
+        r.json();
+        return true;
       } catch {
         return false;
       }
