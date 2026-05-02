@@ -253,7 +253,12 @@ describe('VendorService.toggleActivityStatus — future-booking guard', () => {
     expect(res.status).toBe('INACTIVE');
   });
 
-  test('vendor cannot toggle other vendor\'s activity → ForbiddenException', async () => {
+  test('vendor cannot toggle other vendor\'s activity → NotFoundException (IDOR-hardened)', async () => {
+    // Updated 2026-05-02. Same IDOR-fix story as the other vendor
+    // tests (PR #94, commit 101d018). Activity-status toggle now
+    // scopes by `vendorId: vendor.id` in the where; a foreign
+    // activity is "not found" rather than triggering a "not your
+    // activity" Forbidden — collapses the enumeration oracle.
     const seed = await seedReference(ctx.prisma);
     // Second vendor user
     const otherVendorUser = await ctx.prisma.user.create({
@@ -274,7 +279,7 @@ describe('VendorService.toggleActivityStatus — future-booking guard', () => {
     const { vendor } = makeVendorService();
     await expect(
       vendor.toggleActivityStatus(otherVendorUser.id, seed.activity.id),
-    ).rejects.toThrow(/not your activity/i);
+    ).rejects.toThrow(/not found/i);
   });
 
   test('cannot toggle a BLOCKED activity (only ACTIVE ↔ INACTIVE allowed)', async () => {

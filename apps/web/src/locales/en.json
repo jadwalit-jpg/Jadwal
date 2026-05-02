@@ -567,6 +567,7 @@
         "NO_BANK_DETAILS": "Add your bank details in Settings before you can request a payout.",
         "NO_BALANCE": "You have no eligible cash balance to withdraw right now.",
         "BELOW_MINIMUM": "Your available balance is below the minimum payout amount.",
+        "BANK_DETAILS_RECENTLY_CHANGED": "Bank details were updated recently. Payouts are paused for a short security review period — please try again in a few days.",
         "generic": "You cannot request a payout right now."
       },
       "payoutRequests": {

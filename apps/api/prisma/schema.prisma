@@ -121,6 +121,16 @@ model Vendor {
   whatsapp        String?
   website         String?
   bankDetails     Json?
+  // Timestamp of the last bankDetails mutation. Used by
+  // evaluatePayoutEligibility() to enforce a configurable cool-down
+  // (default 7 days, env: PAYOUT_BANK_DETAILS_COOLDOWN_DAYS) between a
+  // bank-details change and the next allowed payout request — closes
+  // the "vendor-account-takeover → instant payout to attacker bank"
+  // window. NULL on existing vendors who have never updated bankDetails
+  // since this column landed; eligibility treats NULL as "no recent
+  // change", which is correct for accounts that haven't touched this
+  // field.
+  bankDetailsChangedAt DateTime?
   countryId       String
   country         Country    @relation(fields: [countryId], references: [id], onDelete: Restrict)
   status          VendorStatus @default(PENDING)
@@ -560,6 +570,7 @@ enum LoyaltyLedgerSource {
   BOOKING_EARN              // earned on booking COMPLETED (positive)
   CANCEL_REFUND_UNPAID      // customer cancelled before paying, points returned (positive)
   CANCEL_REFUND_PAID        // customer cancel of paid booking — original redeemed points returned (positive)
+  CANCEL_REVERSE_AWARDED    // booking COMPLETED → points awarded → booking later cancelled (admin/vendor) → awarded points debited back (negative)
   VENDOR_REFUND_APPROVED    // vendor approved a refund, converted to points (positive)
   ADMIN_REFUND_APPROVED     // admin approved a refund, converted to points (positive)
   ADMIN_ADJUST              // admin manual adjustment (positive or negative)

@@ -282,7 +282,13 @@ describe('BookingsService.cancelBooking — points-only booking', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('BookingsService.cancelBooking — guards', () => {
-  test('not the booking owner → ForbiddenException', async () => {
+  test('not the booking owner → NotFoundException (IDOR-hardened, post-PR-#94)', async () => {
+    // Updated 2026-05-02. Test predates PR #94 (commit 101d018) which
+    // moved ownership into the Prisma `where` clause —
+    // `findFirst({ where: { id, customerId: userId } })` simply doesn't
+    // return foreign rows for the caller, so the response is now a
+    // generic "Booking not found" instead of "Not your booking". This
+    // collapses the 404/403 oracle (see check-security skill IDOR section).
     const { booking } = await seedPaidBooking({ policy: 'FREE_CANCELLATION' });
     const other = await ctx.prisma.user.create({
       data: {
@@ -291,7 +297,7 @@ describe('BookingsService.cancelBooking — guards', () => {
       },
     });
     const { svc } = makeBookingsService();
-    await expect(svc.cancelBooking(other.id, booking.id)).rejects.toThrow(/not your booking/i);
+    await expect(svc.cancelBooking(other.id, booking.id)).rejects.toThrow(/not found/i);
   });
 
   test('already CANCELLED → BadRequestException (idempotent guard)', async () => {

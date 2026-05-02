@@ -155,7 +155,13 @@ describe('VendorService.updateActivity', () => {
     expect(Number(updated.pricePerPerson)).toBe(150);
   });
 
-  test('other vendor cannot update → ForbiddenException', async () => {
+  test('other vendor cannot update → NotFoundException (IDOR-hardened, post-PR-#94)', async () => {
+    // Updated 2026-05-02. Predates PR #94 (commit 101d018). Originally
+    // expected "you do not own this activity"; the IDOR fix scopes
+    // vendor lookups by `vendorId: vendor.id` in the `where` clause,
+    // so a foreign activity is "not found" for this caller. Unifies
+    // 404 and 403 responses to remove the activity-id enumeration
+    // oracle. See check-security skill IDOR section.
     const seed = await seedReference(ctx.prisma);
     const otherUser = await ctx.prisma.user.create({
       data: {
@@ -174,7 +180,7 @@ describe('VendorService.updateActivity', () => {
     const { vendor } = makeServices();
     await expect(
       vendor.updateActivity(otherUser.id, seed.activity.id, { titleEn: 'X' } as any),
-    ).rejects.toThrow(/do not own/i);
+    ).rejects.toThrow(/not found/i);
   });
 
   test('unknown activity id → NotFoundException', async () => {
@@ -214,7 +220,12 @@ describe('Review flow — vendor reply + admin delete', () => {
     expect(replied.vendorReply).toBe('Thanks for visiting!');
   });
 
-  test('other vendor cannot reply to someone else\'s review → ForbiddenException', async () => {
+  test('other vendor cannot reply to someone else\'s review → NotFoundException (IDOR-hardened)', async () => {
+    // Updated 2026-05-02. Same IDOR-fix story as the activity-update
+    // test above (PR #94, commit 101d018) — the review lookup is now
+    // scoped by `activity: { vendorId: vendor.id }` in the where, so
+    // a foreign review returns "not found" instead of leaking via
+    // "not your review". Collapses the 404/403 oracle.
     const seed = await seedReference(ctx.prisma);
     const review = await seedReview(seed);
 
@@ -236,7 +247,7 @@ describe('Review flow — vendor reply + admin delete', () => {
 
     const { vendor } = makeServices();
     await expect(vendor.replyToReview(ov.id, review.id, 'hi'))
-      .rejects.toThrow(/not your review/i);
+      .rejects.toThrow(/not found/i);
   });
 
   test('admin deleteReview removes the row', async () => {

@@ -246,19 +246,30 @@ describe('PaymentService.handleCallback — tamper detection', () => {
     );
   });
 
-  test('FAILURE with invalid hash → still processed (no tamper risk on a declined tx)', async () => {
+  test('FAILURE with invalid hash → REJECTED (closes forge-failure-IPN attack)', async () => {
+    // Updated 2026-05-02 to match the security-audit hardening from
+    // PR #80 (commit 6518b87). Previously the hash check was lenient
+    // on failure-coded callbacks ("there's no money at risk if it's
+    // declined anyway"), but that left a forge-failure-IPN attack
+    // vector: an attacker who knew a victim's basket_id could send a
+    // forged FAILED callback to mark the victim's PENDING booking as
+    // FAILED → cron deletes it → spot freed/lost. Now ALL callbacks
+    // require a valid hash regardless of err_code; the booking +
+    // payment stay PENDING so the legitimate gateway IPN can still
+    // arrive and complete.
     const { svc } = makePaymentService();
     const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
 
-    const res = await svc.handleCallback({
-      err_code: '99', basket_id: basketId,
-      Response_Key: 'z'.repeat(64), // wrong hash
-    });
-    expect(res.status).toBe('failed');
+    await expect(
+      svc.handleCallback({
+        err_code: '99', basket_id: basketId,
+        Response_Key: 'z'.repeat(64), // wrong hash
+      }),
+    ).rejects.toThrow('Payment verification failed');
 
-    // Booking + payment are GONE (failure deletes them)
-    expect(await ctx.prisma.payment.findUnique({ where: { id: paymentId } })).toBeNull();
-    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+    // Booking + payment intact — bad hash never gets to mutate state
+    expect(await ctx.prisma.payment.findUnique({ where: { id: paymentId } })).not.toBeNull();
+    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).not.toBeNull();
   });
 
   test('Response_Key of wrong length → verify returns false (no crash)', async () => {
@@ -296,11 +307,15 @@ describe('PaymentService.handleCallback — FAILURE path', () => {
   });
 
   test('availabilityCache invalidate called for the deleted booking\'s activity', async () => {
+    // Updated 2026-05-02 — must use a VALID hash now that all callbacks
+    // (including failures) require hash verification per PR #80.
     const { svc, availabilityCache } = makePaymentService();
-    const { basketId, seed } = await seedPendingPayment(200);
+    const { basketId, seed, amountStr } = await seedPendingPayment(200);
 
     await svc.handleCallback({
-      err_code: '01', basket_id: basketId, Response_Key: 'bad',
+      err_code: '01',
+      basket_id: basketId,
+      Response_Key: signCallback(basketId, amountStr, '01'),
     });
 
     expect(availabilityCache.invalidate).toHaveBeenCalledWith(seed.activity.id);
