@@ -103,6 +103,17 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     });
 
     const adapter = new PrismaPg(this.pool);
+    // Note: no `log:` config is intentional. Prisma query logging in
+    // production prints user emails / phones / IDs — every WHERE clause
+    // is PII. Keep this off; prefer `pg_stat_statements` + Performance
+    // Insights for slow-query analysis.
+    //
+    // The `omit` block below is filtered-by-default, NOT enforced —
+    // a future `select: { password: true }` will still return the value.
+    // Treat any explicit selection of these fields as a code-review red
+    // flag. Auth flows that legitimately need them (login bcrypt compare,
+    // OTP/refresh-token verify) live in auth.service.ts and access them
+    // through narrow helpers, not directly from feature controllers.
     this.client = new PrismaClient({
       adapter,
       omit: {
