@@ -26,10 +26,23 @@ export function baseUrl() {
 // The opt-in exists for the launch-QA window only: SES + PAY2M are still
 // behind feature flags, so a test booking writes a Booking row without
 // emailing or charging anything. A pre-launch DELETE on bookings owned by
-// the test customer cleans up. See tests/load/README.md for the runbook.
+// the test customer cleans up. See k6-launch-qa-runbook.md for the runbook.
+//
+// Classify by HOSTNAME only, not the full URL — a path or query that
+// happens to contain `dev` or `staging` (e.g. `/api/devtools`) must NOT
+// cause a real prod target to be classified as non-prod and silently
+// bypass the gate.
 export function refuseProductionForWrites() {
   const url = baseUrl();
-  const looksProd = /jadwal\.qa(?!\.staging)/.test(url) && !/staging|dev/i.test(url);
+  let hostname;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    fail(`[FATAL] BASE_URL is not a valid URL: ${url}`);
+  }
+  const isJadwalQa = hostname === 'jadwal.qa' || hostname.endsWith('.jadwal.qa');
+  const isStagingOrDev = /(^|\.)(staging|dev)(\.|$)/i.test(hostname);
+  const looksProd = isJadwalQa && !isStagingOrDev;
   if (!looksProd) return;
   if (__ENV.K6_ALLOW_PROD === 'true') {
     console.warn(

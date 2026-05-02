@@ -86,7 +86,20 @@ export function setup() {
     // Each VU books this many guests. Set to the activity's capacity so
     // the first successful booking saturates the slot and the remaining
     // 19 must 409. Default 20 matches the e2e seed activity.
-    guestsPerVu: Number(__ENV.TEST_ACTIVITY_CAPACITY || 20),
+    // Strict-validate the env override: `Number('abc')` is NaN and
+    // `JSON.stringify({guests: NaN})` emits `guests: null`, which would
+    // turn this integrity test into a payload-validation failure.
+    guestsPerVu: (() => {
+      const raw = __ENV.TEST_ACTIVITY_CAPACITY;
+      if (raw === undefined || raw === '') return 20;
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n <= 0) {
+        throw new Error(
+          `[FATAL] TEST_ACTIVITY_CAPACITY must be a positive integer, got: ${raw}`,
+        );
+      }
+      return n;
+    })(),
     targetCheckInDate: d.toISOString().slice(0, 10),
     targetSlotTime: '10:00',
   };
