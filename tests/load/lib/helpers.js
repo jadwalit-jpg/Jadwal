@@ -19,13 +19,43 @@ export function baseUrl() {
   return requireEnv('BASE_URL').replace(/\/+$/, '');
 }
 
-// Production guard — k6 has no business creating bookings against jadwal.qa.
-// catalog-browse is read-only and safe; booking scripts MUST refuse a prod URL.
+// Production guard — k6 has no business creating bookings against jadwal.qa
+// without an explicit opt-in. catalog-browse is read-only and safe; booking
+// scripts default to refusing prod and require K6_ALLOW_PROD=true to override.
+//
+// The opt-in exists for the launch-QA window only: SES + PAY2M are still
+// behind feature flags, so a test booking writes a Booking row without
+// emailing or charging anything. A pre-launch DELETE on bookings owned by
+// the test customer cleans up. See k6-launch-qa-runbook.md for the runbook.
+//
+// Classify by HOSTNAME only, not the full URL — a path or query that
+// happens to contain `dev` or `staging` (e.g. `/api/devtools`) must NOT
+// cause a real prod target to be classified as non-prod and silently
+// bypass the gate.
 export function refuseProductionForWrites() {
   const url = baseUrl();
-  if (/jadwal\.qa(?!\.staging)/.test(url) && !/staging|dev/i.test(url)) {
-    fail(`[FATAL] write-path script pointed at production URL: ${url}. Refusing.`);
+  let hostname;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    fail(`[FATAL] BASE_URL is not a valid URL: ${url}`);
   }
+  const isJadwalQa = hostname === 'jadwal.qa' || hostname.endsWith('.jadwal.qa');
+  const isStagingOrDev = /(^|\.)(staging|dev)(\.|$)/i.test(hostname);
+  const looksProd = isJadwalQa && !isStagingOrDev;
+  if (!looksProd) return;
+  if (__ENV.K6_ALLOW_PROD === 'true') {
+    console.warn(
+      `[K6_ALLOW_PROD] Running write-path script against ${url}. ` +
+        `This writes real DB rows owned by TEST_USER_EMAIL. Clean up after the run.`,
+    );
+    return;
+  }
+  fail(
+    `[FATAL] write-path script pointed at production URL: ${url}. ` +
+      `If this is the launch QA window, set K6_ALLOW_PROD=true and confirm ` +
+      `SES + PAY2M are NOT yet live (so test bookings don't email or charge).`,
+  );
 }
 
 // Login helper — exchanges email/password for the auth cookies the API
