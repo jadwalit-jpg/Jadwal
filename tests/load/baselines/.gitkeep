@@ -1,0 +1,1 @@
+Baseline runs land here, one directory per date (YYYY-MM-DD). Commit them — the PR comparison logic in CI compares new runs against the most recent baseline, and regressions block merge. See ../README.md for the run command.
