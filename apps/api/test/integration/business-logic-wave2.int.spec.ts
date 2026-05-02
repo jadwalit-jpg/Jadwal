@@ -16,7 +16,6 @@ import { AuditLoggerService } from '../../src/common/services/audit-logger.servi
 import { CleanupService } from '../../src/common/services/cleanup.service';
 import { ReconciliationService } from '../../src/common/services/reconciliation.service';
 import { NotificationService } from '../../src/common/services/notification.service';
-import { LoyaltyService } from '../../src/common/services/loyalty.service';
 
 const ctx = getTestContext();
 
