@@ -49,11 +49,22 @@ model User {
   loyaltyLedger      LoyaltyLedger[]
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  /// §B9 — soft-delete marker. NULL = active user; non-NULL = anonymised
+  /// account preserved so referenced Booking / Payment / LoyaltyLedger /
+  /// Review rows survive (Qatar PDPL §14, GDPR Art.30, financial-records
+  /// retention). PII fields (email, fullName, phone, profilePicture,
+  /// password, googleId, *Token, *Hash) are nulled out at delete time;
+  /// email is reassigned to `<userId>@deleted.local` so the original
+  /// address is freed for re-registration without losing uniqueness.
+  /// Every customer-facing query MUST filter `deletedAt: null` —
+  /// admin endpoints opt back in via an explicit flag.
+  deletedAt          DateTime?
 
   // email, phone, googleId, verificationToken are @unique — no separate @@index needed
   @@index([role])
   @@index([role, createdAt])
   @@index([preferredCountryId])
+  @@index([deletedAt])
   @@map("users")
 }
 
@@ -142,10 +153,18 @@ model Vendor {
   payoutRequests  PayoutRequest[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+  /// §B9 — soft-delete marker. Same contract as User.deletedAt: keeps
+  /// the row so historical Booking / Payment / PayoutRequest / Coupon
+  /// rows that reference this vendor remain queryable for audit. PII
+  /// (phone, whatsapp, bankDetails) is nulled out and slug is reassigned
+  /// to `deleted-<vendorId>` so the public URL is freed for a future
+  /// vendor to reclaim.
+  deletedAt       DateTime?
 
   // businessId, slug, userId are @unique — no separate @@index needed
   @@index([countryId])
   @@index([status])
+  @@index([deletedAt])
   @@map("vendors")
 }
 
@@ -265,6 +284,12 @@ model Activity {
   likes             Like[]
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
+  /// §B9 — soft-delete marker. Cascade-set when the parent Vendor is
+  /// soft-deleted, OR set directly when an Activity is removed
+  /// individually. Slug is anonymised to `deleted-<activityId>` at the
+  /// same moment so the public URL frees up. Past Booking + Review rows
+  /// stay attached for audit / customer history.
+  deletedAt         DateTime?
 
   @@index([vendorId])
   @@index([countryId])
@@ -275,6 +300,7 @@ model Activity {
   @@index([isFeatured, status])
   @@index([slug])
   @@index([status, createdAt])
+  @@index([deletedAt])
   @@map("activities")
 }
 

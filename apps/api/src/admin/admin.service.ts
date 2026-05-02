@@ -327,17 +327,51 @@ export class AdminService {
     return result;
   }
 
+  /**
+   * §B9 — soft-delete + PII anonymisation. Replaces the prior hard-delete
+   * cascade that wiped Booking + Payment + Review + LoyaltyLedger rows.
+   *
+   * What happens:
+   *   1. Refuse if any PENDING / CONFIRMED booking still references this
+   *      user (existing money-loss guard, preserved).
+   *   2. Refuse if already soft-deleted (idempotent — no double-anonymise).
+   *   3. If the user is a vendor, soft-delete the vendor profile + every
+   *      activity (slug renamed to `deleted-<id>` so URLs free up).
+   *   4. Anonymise PII on the user row: email → `<id>@deleted.local`,
+   *      fullName → 'Deleted User', phone / profilePicture / password /
+   *      googleId / *Token / *Hash → null. emailVerified → false and
+   *      isDeactivated → true so the row can never be a login target.
+   *   5. Hard-delete ephemerals (RefreshToken, PushSubscription,
+   *      Notification, ClaimedCoupon, Like) — these are NOT financial /
+   *      audit records.
+   *   6. KEEP intact: Booking, Payment, LoyaltyLedger, Review, Coupon,
+   *      PayoutRequest, AuditLog (Qatar PDPL §14, GDPR Art.30 financial
+   *      retention).
+   *
+   * The customer-facing experience: bookings / reviews / loyalty history
+   * tied to this user remain visible to admin under "Deleted User", but
+   * the user can no longer log in, no PII is left in the row, and the
+   * email / phone / slug they used are freed up for re-registration.
+   */
   async deleteUser(userId: string) {
     const db = this.prisma.client;
-    const user = await db.user.findUnique({ where: { id: userId }, select: { id: true, fullName: true, role: true } });
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, fullName: true, role: true, deletedAt: true },
+    });
     if (!user) throw new NotFoundException('User not found');
     if (user.role === 'ADMIN') throw new ForbiddenException('Cannot delete admin users');
+    if (user.deletedAt) {
+      // Idempotent: re-deletion is a no-op so a flaky admin click can't
+      // re-anonymise (which would do nothing) or worse, reset emailVerified
+      // / isDeactivated mid-flight. Return the same shape as a fresh delete.
+      return { message: `User "${user.fullName}" has been deleted` };
+    }
 
-    // Refuse to hard-delete while any paid/pending booking still references
-    // this user — either as the paying customer or (if they're a vendor) as
-    // the fulfiller. The cascade below would drop bookings + payments and
-    // cost the real customer their refund. Use the cancel flows first, or
-    // suspend the vendor to trigger the automatic refund cascade.
+    // Refuse soft-delete while any unresolved booking exists — preserved
+    // money-loss guard. Either side of the booking (customer or vendor)
+    // counts as blocking. Cancel / refund those first via the standard
+    // flows, OR suspend the vendor to trigger the auto-refund cascade.
     const [asCustomer, asVendor] = await Promise.all([
       db.booking.count({
         where: { customerId: userId, status: { in: ['PENDING', 'CONFIRMED'] } },
@@ -357,51 +391,107 @@ export class AdminService {
     }
 
     const affectedActivityIds = await db.$transaction(async (tx: any) => {
-      // If user is a vendor, cascade delete vendor data
-      const vendor = await tx.vendor.findUnique({ where: { userId }, select: { id: true } });
-      if (vendor) {
-        const activities = await tx.activity.findMany({ where: { vendorId: vendor.id }, select: { id: true } });
+      let activityIdsTouched: string[] = [];
+
+      // Vendor profile cascade: soft-delete vendor + all activities. Past
+      // bookings + payments + reviews stay attached so the audit trail
+      // remains queryable.
+      const vendor = await tx.vendor.findUnique({
+        where: { userId },
+        select: { id: true, slug: true, deletedAt: true },
+      });
+      if (vendor && !vendor.deletedAt) {
+        const activities = await tx.activity.findMany({
+          where: { vendorId: vendor.id, deletedAt: null },
+          select: { id: true },
+        });
         const activityIds = activities.map((a: any) => a.id);
-        if (activityIds.length > 0) {
-          await tx.review.deleteMany({ where: { activityId: { in: activityIds } } });
+        activityIdsTouched = activityIds;
+        for (const aId of activityIds) {
+          // Set status=INACTIVE alongside deletedAt so every existing
+          // status-based filter (`status: 'ACTIVE'`) naturally hides this
+          // row without needing a code change. Slug rename frees the URL.
+          await tx.activity.update({
+            where: { id: aId },
+            data: { deletedAt: new Date(), status: 'INACTIVE', slug: `deleted-${aId}` },
+          });
         }
-        const bookings = await tx.booking.findMany({ where: { vendorId: vendor.id }, select: { paymentId: true } });
-        const paymentIds = bookings.map((b: any) => b.paymentId).filter(Boolean);
-        await tx.booking.deleteMany({ where: { vendorId: vendor.id } });
-        if (paymentIds.length > 0) {
-          await tx.payment.deleteMany({ where: { id: { in: paymentIds } } });
-        }
-        await tx.activity.deleteMany({ where: { vendorId: vendor.id } });
-        await tx.coupon.deleteMany({ where: { vendorId: vendor.id } });
-        await tx.payoutRequest.deleteMany({ where: { vendorId: vendor.id } });
-        await tx.vendor.delete({ where: { id: vendor.id } });
+        await tx.vendor.update({
+          where: { id: vendor.id },
+          data: {
+            deletedAt: new Date(),
+            // status=SUSPENDED ensures existing `vendor.status === 'ACTIVE'`
+            // checks across booking-create / payout-flow / catalog reject
+            // this vendor without needing per-site deletedAt audits.
+            status: 'SUSPENDED',
+            slug: `deleted-${vendor.id}`,
+            phone: null,
+            whatsapp: null,
+            bankDetails: null as any, // Prisma.JsonNull would also work; null clears the column
+          },
+        });
       }
 
-      // Delete customer data: likes, reviews, bookings, payments, claimed coupons
-      await tx.like.deleteMany({ where: { userId } });
-      await tx.claimedCoupon.deleteMany({ where: { userId } });
-      await tx.notification.deleteMany({ where: { userId } });
-      await tx.pushSubscription.deleteMany({ where: { userId } });
+      // Hard-delete ephemerals — these are session / UX state, NOT
+      // financial or audit-trail records:
+      //   • RefreshToken / PushSubscription — security-critical: the
+      //     soft-deleted account must not retain any active session or
+      //     push channel.
+      //   • Notification — UX inbox; admin actions are independently
+      //     logged via AuditLog.
+      //   • ClaimedCoupon / Like — preference / discovery state with no
+      //     accounting impact.
+      // Booking, Payment, LoyaltyLedger, Review stay attached and
+      // continue to reference this user via FK (the row still exists).
       await tx.refreshToken.deleteMany({ where: { userId } });
-      const customerBookings = await tx.booking.findMany({ where: { customerId: userId }, select: { paymentId: true, activityId: true } });
-      const custPaymentIds = customerBookings.map((b: any) => b.paymentId).filter(Boolean);
-      const affectedActivityIds = customerBookings.map((b: any) => b.activityId as string);
-      await tx.review.deleteMany({ where: { userId } });
-      await tx.booking.deleteMany({ where: { customerId: userId } });
-      if (custPaymentIds.length > 0) {
-        await tx.payment.deleteMany({ where: { id: { in: custPaymentIds } } });
-      }
+      await tx.pushSubscription.deleteMany({ where: { userId } });
+      await tx.notification.deleteMany({ where: { userId } });
+      await tx.claimedCoupon.deleteMany({ where: { userId } });
+      await tx.like.deleteMany({ where: { userId } });
 
-      await tx.user.delete({ where: { id: userId } });
-      return affectedActivityIds;
+      // Anonymise PII + mark soft-deleted in one update. Email gets
+      // reassigned to a unique sentinel (`<userId>@deleted.local`) so
+      // the original address is freed for re-registration without
+      // breaking the @unique constraint. Phone / googleId / verification
+      // / reset / OTP fields are nulled — Postgres treats multiple NULLs
+      // as distinct under @unique so this is safe.
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          email: `${userId}@deleted.local`,
+          fullName: 'Deleted User',
+          phone: null,
+          profilePicture: null,
+          password: null,
+          googleId: null,
+          verificationToken: null,
+          verificationTokenExpiry: null,
+          passwordResetToken: null,
+          passwordResetExpiry: null,
+          phoneOtpHash: null,
+          phoneOtpExpiry: null,
+          phoneOtpAttempts: 0,
+          // Defence in depth — even if a future bug ever surfaces a
+          // soft-deleted account in a query that forgot the deletedAt
+          // filter, the deactivation flag is a second guard against
+          // accidental login.
+          isDeactivated: true,
+          emailVerified: false,
+          deletedAt: new Date(),
+        },
+      });
+
+      // Customer-side activity-cache invalidation: cancellations on the
+      // customer's bookings have already happened earlier in their own
+      // flows (this method refuses to run while any are PENDING /
+      // CONFIRMED). Past COMPLETED / CANCELLED bookings don't free
+      // capacity. Vendor-side: every activity we just soft-deleted
+      // needs cache invalidation so in-flight catalog reads see them
+      // disappear.
+      return activityIdsTouched;
     });
 
-    // If the user was a pure customer (no vendor profile), their activities
-    // survive and their cancelled bookings freed capacity — bump cache so
-    // in-flight calendar reads see it. For vendor users, the activities were
-    // deleted inside the tx so cached entries are already unreachable via the
-    // NotFound guard in getCalendarAvailability and will expire on TTL.
-    if (affectedActivityIds && affectedActivityIds.length > 0) {
+    if (affectedActivityIds.length > 0) {
       void this.availabilityCache.invalidateMany(affectedActivityIds);
     }
 
@@ -540,19 +630,33 @@ export class AdminService {
     });
   }
 
+  /**
+   * §B9 — soft-delete vendor + cascade-soft-delete activities + anonymise
+   * the underlying user account. Past Booking / Payment / Review /
+   * PayoutRequest / Coupon rows stay intact for the 7-year audit window.
+   *
+   * Slugs (vendor + every activity) are reassigned to `deleted-<id>` so
+   * a future vendor signup can reclaim the original public URL. Vendor
+   * PII (phone, whatsapp, bankDetails) is nulled out; corporate fields
+   * (businessNameEn / businessNameAr / businessId) stay so historical
+   * audit records show "this paid booking was on Acme Tours, deleted on
+   * 2026-08-11" rather than a dangling FK.
+   */
   async deleteVendor(vendorId: string) {
     const db = this.prisma.client;
 
     const vendor = await db.vendor.findUnique({
       where: { id: vendorId },
-      select: { id: true, userId: true, businessNameEn: true },
+      select: { id: true, userId: true, businessNameEn: true, deletedAt: true },
     });
     if (!vendor) throw new NotFoundException('Vendor not found');
+    if (vendor.deletedAt) {
+      // Idempotent — same as deleteUser.
+      return { message: `Vendor "${vendor.businessNameEn}" and associated user have been deleted` };
+    }
 
-    // Refuse to hard-delete while there are unresolved paid / pending bookings.
-    // A cascade delete here would wipe bookings + payments — customers would
-    // silently lose their money. Admin must first suspend the vendor (which
-    // now cascades refunds) or cancel bookings individually.
+    // Money-loss guard preserved: refuse while unresolved bookings exist.
+    // Suspending the vendor first triggers the existing refund cascade.
     const blockingBookings = await db.booking.count({
       where: {
         vendorId,
@@ -565,37 +669,72 @@ export class AdminService {
       );
     }
 
-    // Delete in transaction: vendor → user (cascading approach)
-    await db.$transaction(async (tx: any) => {
-      // Delete all activities' bookings, reviews first
+    const activityIdsTouched = await db.$transaction(async (tx: any) => {
+      // Soft-delete every active activity, freeing each slug.
       const activities = await tx.activity.findMany({
-        where: { vendorId },
+        where: { vendorId, deletedAt: null },
         select: { id: true },
       });
-      const activityIds = activities.map((a: any) => a.id);
-
-      if (activityIds.length > 0) {
-        await tx.review.deleteMany({ where: { activityId: { in: activityIds } } });
-        // Delete payments linked to bookings
-        const bookings = await tx.booking.findMany({
-          where: { vendorId },
-          select: { paymentId: true },
+      const activityIds: string[] = activities.map((a: any) => a.id);
+      for (const aId of activityIds) {
+        await tx.activity.update({
+          where: { id: aId },
+          data: { deletedAt: new Date(), status: 'INACTIVE', slug: `deleted-${aId}` },
         });
-        const paymentIds = bookings.map((b: any) => b.paymentId).filter(Boolean);
-        await tx.booking.deleteMany({ where: { vendorId } });
-        if (paymentIds.length > 0) {
-          await tx.payment.deleteMany({ where: { id: { in: paymentIds } } });
-        }
-        await tx.activity.deleteMany({ where: { vendorId } });
       }
 
-      // Delete coupons
-      await tx.coupon.deleteMany({ where: { vendorId } });
+      // Soft-delete the vendor row, free the slug, null PII. Setting
+      // status=SUSPENDED makes every existing `vendor.status === 'ACTIVE'`
+      // check across the codebase (booking-create / payout-flow / catalog)
+      // naturally reject this vendor without needing per-site audits.
+      await tx.vendor.update({
+        where: { id: vendorId },
+        data: {
+          deletedAt: new Date(),
+          status: 'SUSPENDED',
+          slug: `deleted-${vendorId}`,
+          phone: null,
+          whatsapp: null,
+          bankDetails: null as any,
+        },
+      });
 
-      // Delete vendor, then user
-      await tx.vendor.delete({ where: { id: vendorId } });
-      await tx.user.delete({ where: { id: vendor.userId } });
+      // Anonymise the underlying user via the same logic as deleteUser
+      // (inlined to avoid recursive-cascade ambiguity — the vendor we
+      // just soft-deleted would otherwise be touched twice).
+      await tx.refreshToken.deleteMany({ where: { userId: vendor.userId } });
+      await tx.pushSubscription.deleteMany({ where: { userId: vendor.userId } });
+      await tx.notification.deleteMany({ where: { userId: vendor.userId } });
+      await tx.claimedCoupon.deleteMany({ where: { userId: vendor.userId } });
+      await tx.like.deleteMany({ where: { userId: vendor.userId } });
+      await tx.user.update({
+        where: { id: vendor.userId },
+        data: {
+          email: `${vendor.userId}@deleted.local`,
+          fullName: 'Deleted User',
+          phone: null,
+          profilePicture: null,
+          password: null,
+          googleId: null,
+          verificationToken: null,
+          verificationTokenExpiry: null,
+          passwordResetToken: null,
+          passwordResetExpiry: null,
+          phoneOtpHash: null,
+          phoneOtpExpiry: null,
+          phoneOtpAttempts: 0,
+          isDeactivated: true,
+          emailVerified: false,
+          deletedAt: new Date(),
+        },
+      });
+
+      return activityIds;
     });
+
+    if (activityIdsTouched.length > 0) {
+      void this.availabilityCache.invalidateMany(activityIdsTouched);
+    }
 
     return { message: `Vendor "${vendor.businessNameEn}" and associated user have been deleted` };
   }
