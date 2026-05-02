@@ -36,6 +36,7 @@ const TRUNCATE_TABLES_ORDER = [
   'notifications',
   'push_subscriptions',
   'audit_logs',
+  'reconciliation_logs',
   'security_logs',
   'refresh_tokens',
   'payout_requests',

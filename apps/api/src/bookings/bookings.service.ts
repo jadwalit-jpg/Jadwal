@@ -1523,6 +1523,7 @@ export class BookingsService {
           activityTitle: booking.activity.titleEn,
           pointsRefunded: refundedPoints,
         }),
+        actionCategory: 'FINANCIAL',
       });
 
       this.notificationService.send({
@@ -1647,6 +1648,7 @@ export class BookingsService {
           suggestedRefundAmount: suggestedRefund,
           refundReason,
         }),
+        actionCategory: 'FINANCIAL',
       });
       const cancelVendor = await db.vendor.findUnique({ where: { id: booking.vendorId }, select: { userId: true, slug: true } });
       // Vendor gets REFUND_REQUESTED so it's distinguishable from other
@@ -2102,6 +2104,7 @@ export class BookingsService {
         totalPrice: Number(booking.totalPrice),
         pointsPerQar: config.pointsPerQar.toNumber(),
       }),
+      actionCategory: 'FINANCIAL',
     });
 
     return { pointsAwarded: points };
