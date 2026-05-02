@@ -19,13 +19,30 @@ export function baseUrl() {
   return requireEnv('BASE_URL').replace(/\/+$/, '');
 }
 
-// Production guard — k6 has no business creating bookings against jadwal.qa.
-// catalog-browse is read-only and safe; booking scripts MUST refuse a prod URL.
+// Production guard — k6 has no business creating bookings against jadwal.qa
+// without an explicit opt-in. catalog-browse is read-only and safe; booking
+// scripts default to refusing prod and require K6_ALLOW_PROD=true to override.
+//
+// The opt-in exists for the launch-QA window only: SES + PAY2M are still
+// behind feature flags, so a test booking writes a Booking row without
+// emailing or charging anything. A pre-launch DELETE on bookings owned by
+// the test customer cleans up. See tests/load/README.md for the runbook.
 export function refuseProductionForWrites() {
   const url = baseUrl();
-  if (/jadwal\.qa(?!\.staging)/.test(url) && !/staging|dev/i.test(url)) {
-    fail(`[FATAL] write-path script pointed at production URL: ${url}. Refusing.`);
+  const looksProd = /jadwal\.qa(?!\.staging)/.test(url) && !/staging|dev/i.test(url);
+  if (!looksProd) return;
+  if (__ENV.K6_ALLOW_PROD === 'true') {
+    console.warn(
+      `[K6_ALLOW_PROD] Running write-path script against ${url}. ` +
+        `This writes real DB rows owned by TEST_USER_EMAIL. Clean up after the run.`,
+    );
+    return;
   }
+  fail(
+    `[FATAL] write-path script pointed at production URL: ${url}. ` +
+      `If this is the launch QA window, set K6_ALLOW_PROD=true and confirm ` +
+      `SES + PAY2M are NOT yet live (so test bookings don't email or charge).`,
+  );
 }
 
 // Login helper — exchanges email/password for the auth cookies the API
