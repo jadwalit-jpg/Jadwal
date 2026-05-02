@@ -145,6 +145,15 @@ export class CleanupService {
     // Hard-delete stale PENDING bookings — customer never paid, these are
     // abandoned reservation attempts, not real bookings. Keeping them would
     // clutter vendor/admin/customer views with ghost entries.
+    //
+    // Pool-level statement_timeout (15s, see prisma.service.ts) is the
+    // safety net here. The per-row refundCouponUsage loop is bounded
+    // ("usually < 20 stale reservations" — comment below) and each
+    // iteration is a small UPDATE on an indexed coupon row, so the whole
+    // transaction comfortably finishes inside 15s. If a busy spike ever
+    // blows past, Postgres rolls back cleanly and the next cron run
+    // (5 min later) picks up the same set and retries. No per-tx SET
+    // LOCAL override — repo enforces a hard no-raw-SQL gate.
     await this.prisma.client.$transaction(async (tx) => {
       const bookingIds = staleBookings.map(b => b.id);
       const paymentIds = staleBookings.map(b => b.paymentId).filter(Boolean) as string[];
