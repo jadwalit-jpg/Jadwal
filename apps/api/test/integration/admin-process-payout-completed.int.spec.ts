@@ -100,8 +100,18 @@ describe('AdminService.processPayoutRequest — two-step settlement', () => {
       data: { payoutStatus: 'PAID' },
     });
 
+    // §M2 contract — when locked payments drift, COMPLETE auto-reverts the
+    // request to PENDING with a system note (instead of leaving it stuck
+    // in APPROVED). Caller still gets an error so the admin sees what
+    // happened, but the request is in a re-actionable state.
     await expect(admin.processPayoutRequest(req.id, 'COMPLETED'))
       .rejects.toThrow(/no longer eligible/i);
+
+    const reverted = await ctx.prisma.payoutRequest.findUnique({ where: { id: req.id } });
+    expect(reverted?.status).toBe('PENDING');
+    expect(reverted?.adminNote).toMatch(/auto-reverted|no longer eligible|re-evaluate/i);
+    expect(reverted?.paymentIds ?? []).toEqual([]);
+    expect(reverted?.processedAt).toBeNull();
   });
 
   test('after COMPLETE, admin.getPayouts marks those rows as actionable again (inflightRequest=null)', async () => {

@@ -1,4 +1,4 @@
-import { IsArray, IsUUID, ArrayMinSize, ArrayMaxSize } from 'class-validator';
+import { IsArray, IsUUID, ArrayMinSize, ArrayMaxSize, IsString, MinLength, MaxLength } from 'class-validator';
 
 export class MarkPayoutPaidDto {
   @IsArray()
@@ -6,6 +6,15 @@ export class MarkPayoutPaidDto {
   @ArrayMaxSize(500)  // generous batch ceiling — admin marks a settlement run
   @IsUUID('4', { each: true })
   paymentIds!: string[];
+
+  /// §M4 — bank-side wire confirmation number. Required so every PAID
+  /// payment row links to a real bank transaction, which forensic / dispute
+  /// resolution depends on. Free-form (banks vary) but bounded to keep
+  /// pathological inputs out of audit logs.
+  @IsString()
+  @MinLength(3)
+  @MaxLength(120)
+  bankTransferRef!: string;
 }
 
 /**
