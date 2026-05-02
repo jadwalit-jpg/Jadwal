@@ -49,11 +49,22 @@ model User {
   loyaltyLedger      LoyaltyLedger[]
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  /// §B9 — soft-delete marker. NULL = active user; non-NULL = anonymised
+  /// account preserved so referenced Booking / Payment / LoyaltyLedger /
+  /// Review rows survive (Qatar PDPL §14, GDPR Art.30, financial-records
+  /// retention). PII fields (email, fullName, phone, profilePicture,
+  /// password, googleId, *Token, *Hash) are nulled out at delete time;
+  /// email is reassigned to `<userId>@deleted.local` so the original
+  /// address is freed for re-registration without losing uniqueness.
+  /// Every customer-facing query MUST filter `deletedAt: null` —
+  /// admin endpoints opt back in via an explicit flag.
+  deletedAt          DateTime?
 
   // email, phone, googleId, verificationToken are @unique — no separate @@index needed
   @@index([role])
   @@index([role, createdAt])
   @@index([preferredCountryId])
+  @@index([deletedAt])
   @@map("users")
 }
 
@@ -142,10 +153,18 @@ model Vendor {
   payoutRequests  PayoutRequest[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+  /// §B9 — soft-delete marker. Same contract as User.deletedAt: keeps
+  /// the row so historical Booking / Payment / PayoutRequest / Coupon
+  /// rows that reference this vendor remain queryable for audit. PII
+  /// (phone, whatsapp, bankDetails) is nulled out and slug is reassigned
+  /// to `deleted-<vendorId>` so the public URL is freed for a future
+  /// vendor to reclaim.
+  deletedAt       DateTime?
 
   // businessId, slug, userId are @unique — no separate @@index needed
   @@index([countryId])
   @@index([status])
+  @@index([deletedAt])
   @@map("vendors")
 }
 
@@ -265,6 +284,12 @@ model Activity {
   likes             Like[]
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
+  /// §B9 — soft-delete marker. Cascade-set when the parent Vendor is
+  /// soft-deleted, OR set directly when an Activity is removed
+  /// individually. Slug is anonymised to `deleted-<activityId>` at the
+  /// same moment so the public URL frees up. Past Booking + Review rows
+  /// stay attached for audit / customer history.
+  deletedAt         DateTime?
 
   @@index([vendorId])
   @@index([countryId])
@@ -275,6 +300,7 @@ model Activity {
   @@index([isFeatured, status])
   @@index([slug])
   @@index([status, createdAt])
+  @@index([deletedAt])
   @@map("activities")
 }
 
@@ -408,6 +434,26 @@ model Payment {
   method             String
   refundAmount       Decimal?      @db.Decimal(10, 2)
   refundedAt         DateTime?
+  /// Server-derived JSON copy of the booking row written ONCE at booking
+  /// creation. Never sourced from request body; never updateable. The
+  /// callback's B2 orphan-recovery path uses this to re-insert the booking
+  /// when the cleanup cron deleted it before PAY2M's success callback
+  /// arrived. Snapshot fields: activityId, vendorId, customerId,
+  /// unitNumber, startDatetime, endDatetime, guests, guestBreakdown,
+  /// selectedExtras, totalPrice, serviceFee, commissionPct, commissionAmount,
+  /// couponCode, couponDiscount, pointsRedeemed, pointsDiscount,
+  /// currencyCode, idempotencyKey, ref, originalCreatedAt.
+  bookingSnapshot    Json?
+  /// Idempotency marker for the orphan-recovery path. Set inside the same
+  /// transaction that re-inserts the booking from bookingSnapshot, so a
+  /// replayed/retried PAY2M callback cannot create a second copy.
+  bookingRecreatedAt DateTime?
+  /// §M4 — bank-side wire-confirmation number captured at mark-paid time.
+  /// Required by the MarkPayoutPaidDto so every PAID row links to a real
+  /// bank transaction for forensic / dispute resolution. Free-form (banks
+  /// vary). Nullable in schema for backwards-compat with legacy rows that
+  /// were marked PAID before this column existed.
+  bankTransferRef    String?       @db.VarChar(120)
   createdAt          DateTime      @default(now())
 
   @@index([status])
@@ -670,16 +716,37 @@ enum PayoutRequestStatus {
   COMPLETED
 }
 
+/// Differentiates retention policy. FINANCIAL entries (payments,
+/// payouts, refunds, commission/loyalty config, vendor delete) are
+/// retained 7 years per Qatar PDPL §14 + GDPR Art.30 + standard
+/// financial-records regulation. OPERATIONAL entries (settings tweaks,
+/// trending updates, vendor approvals) age out per
+/// RETENTION_AUDIT_LOG_DAYS (default 180 d). Default is OPERATIONAL —
+/// callers MUST set FINANCIAL explicitly when applicable so
+/// reconciliation never relies on a default fallback.
+enum AuditActionCategory {
+  FINANCIAL
+  OPERATIONAL
+}
+
 model AuditLog {
-  id          String    @id @default(uuid())
-  actorType   ActorType @default(ADMIN)
+  id          String              @id @default(uuid())
+  actorType   ActorType           @default(ADMIN)
   actorId     String
   actorName   String
   action      String
   entity      String
   entityId    String?
   details     String?
-  createdAt   DateTime  @default(now())
+  /// Drives retention — see AuditActionCategory for the rule.
+  actionCategory AuditActionCategory @default(OPERATIONAL)
+  /// Soft-delete marker. Cleanup cron sets this instead of physically
+  /// deleting rows so the audit trail stays append-only and historical
+  /// queries (compliance audits, drift reconciliation) can opt to
+  /// include archived entries. Old archived rows can be moved to S3
+  /// Glacier in a future migration if storage cost becomes meaningful.
+  archivedAt  DateTime?
+  createdAt   DateTime            @default(now())
 
   @@index([actorId])
   @@index([actorType])
@@ -687,6 +754,8 @@ model AuditLog {
   @@index([createdAt])
   @@index([createdAt, actorType])
   @@index([actorId, createdAt])
+  @@index([actionCategory, createdAt])
+  @@index([archivedAt])
   @@map("audit_logs")
 }
 
@@ -708,4 +777,31 @@ enum ActorType {
   VENDOR
   CUSTOMER
   SYSTEM
+}
+
+/// Persisted output of the daily reconciliation cron (B10).
+/// Each row is a snapshot for one day's totals so finance / ops can
+/// chart drift over time and so an alert can compare today's totals
+/// against the previous run for sudden discrepancies.
+///
+/// Invariant the cron checks per row:
+///   totalPayments ≈ vendorEarnings + platformFees + totalRefunded
+/// If `|drift| > 0.01 QAR` the cron fires an admin alert AND records
+/// `passed = false` so the dashboard shows the streak.
+model ReconciliationLog {
+  id              String   @id @default(uuid())
+  /// Day boundary the snapshot represents (00:00 UTC of the run day).
+  /// One row per day per environment; unique constraint enforces it.
+  runDate         DateTime @unique
+  totalPayments   Decimal  @db.Decimal(14, 2)  // SUM(payment.amount) WHERE status=SUCCESS
+  vendorEarnings  Decimal  @db.Decimal(14, 2)  // SUM(booking.totalPrice - booking.commissionAmount) WHERE payment.payoutStatus IN ('PAID', 'UNPAID')
+  platformFees    Decimal  @db.Decimal(14, 2)  // SUM(booking.commissionAmount) for SUCCESS payments
+  totalRefunded   Decimal  @db.Decimal(14, 2)  // SUM(payment.refundAmount) WHERE status=REFUNDED
+  drift           Decimal  @db.Decimal(14, 2)  // totalPayments - (vendorEarnings + platformFees + totalRefunded)
+  passed          Boolean  @default(false)     // true iff |drift| <= 0.01
+  createdAt       DateTime @default(now())
+
+  @@index([runDate])
+  @@index([passed, runDate])
+  @@map("reconciliation_logs")
 }

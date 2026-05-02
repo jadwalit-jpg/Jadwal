@@ -324,6 +324,7 @@ export class PaymentService {
         entity: 'Payment',
         entityId: payment.id,
         details: `Amount: ${amount} ${payment.currency}, Basket: ${basketId}`,
+        actionCategory: 'FINANCIAL',
       });
 
       return {
@@ -358,11 +359,18 @@ export class PaymentService {
       where: { gatewayBasketId: params.basket_id },
       select: {
         id: true, bookingId: true, amount: true, status: true,
+        // §B2 — bookingSnapshot + bookingRecreatedAt feed the orphan-recovery
+        // branch when the cleanup cron hard-deleted the booking before the
+        // success callback arrived. Snapshot was frozen at booking creation;
+        // recreatedAt is the idempotency marker so a replayed callback can't
+        // insert a second copy.
+        bookingSnapshot: true,
+        bookingRecreatedAt: true,
         // Pull the booking's coupon snapshot too so we can detect (and
         // forensically audit) the coupon-expiry race below — see the
         // PAYMENT_COUPON_INVALID_AT_CONFIRMATION audit emission. Cheap
         // single-query addition; no extra round-trip vs the existing find.
-        booking: { select: { couponCode: true, couponDiscount: true } },
+        booking: { select: { couponCode: true, couponDiscount: true, status: true, cancelledBy: true } },
       },
     });
 
@@ -421,6 +429,7 @@ export class PaymentService {
         entity: 'Payment',
         entityId: payment.id,
         details: `err_code: ${params.err_code}, basket: ${params.basket_id}, isSuccess: ${isSuccess}`,
+        actionCategory: 'FINANCIAL',
       });
       throw new BadRequestException('Payment verification failed');
     }
@@ -457,6 +466,7 @@ export class PaymentService {
           entity: 'Payment',
           entityId: payment.id,
           details: `couponCode: ${payment.booking.couponCode}, discount: ${payment.booking.couponDiscount}, status: ${liveCoupon?.status ?? 'NOT_FOUND'}, validTo: ${liveCoupon?.validTo?.toISOString() ?? 'N/A'}, usedCount/limit: ${liveCoupon?.usedCount ?? 'N/A'}/${liveCoupon?.usageLimit ?? '∞'}`,
+          actionCategory: 'FINANCIAL',
         });
         this.logger.warn(`Coupon ${payment.booking.couponCode} no longer valid at payment confirmation for payment ${payment.id} — honoring price as charged; audit emitted for reconciliation`);
       }
@@ -465,6 +475,15 @@ export class PaymentService {
     // 5. Update payment + booking in transaction (optimistic lock)
     const savedBookingId = payment.bookingId;
     let deletedActivityId: string | null = null;
+    /// After-commit recovery dispatch. We deliberately do NOT recreate the
+    /// booking inside this same tx: a slot-conflict during recreate would
+    /// roll back the payment-status flip too, which is wrong (the
+    /// customer's money is real, the payment SHOULD show SUCCESS).
+    /// Instead, the inner tx flips payment to SUCCESS unconditionally and
+    /// raises a flag; a separate tx below tries the booking recovery and
+    /// falls back to REFUND_PENDING + audit + customer notification if
+    /// recovery isn't safe.
+    let recoveryMode: 'B2_ORPHAN' | 'M6_SYSTEM_CANCELLED' | null = null;
     const updated = await db.$transaction(async (tx: any) => {
       if (isSuccess) {
         // Accept SUCCESS from PENDING or FAILED (recovery from cron race condition)
@@ -482,26 +501,38 @@ export class PaymentService {
         if (result.count === 0) return false; // Already SUCCESS (duplicate callback)
 
         // Check if booking still exists (cron may have deleted it)
-        const booking = await tx.booking.findUnique({ where: { id: payment.bookingId! }, select: { id: true, status: true } });
+        const booking = await tx.booking.findUnique({
+          where: { id: payment.bookingId! },
+          select: { id: true, status: true, cancelledBy: true },
+        });
         if (booking) {
-          // Booking exists — confirm it (could be PENDING or CANCELLED from cron)
-          await tx.booking.update({
-            where: { id: payment.bookingId },
-            data: { status: 'CONFIRMED' },
-          });
+          if (booking.status === 'CANCELLED' && booking.cancelledBy === 'SYSTEM') {
+            // §M6 — cron flipped the booking to CANCELLED-by-SYSTEM (e.g. the
+            // reservation window expired) but PAY2M's success callback now
+            // arrives. We can't blindly un-cancel: another customer may have
+            // booked the slot in the meantime. Flag for after-commit recovery
+            // (slot-conflict + activity-status + vendor-status checks);
+            // recovery either un-cancels safely or queues a refund.
+            recoveryMode = 'M6_SYSTEM_CANCELLED';
+          } else {
+            // Booking exists in a recoverable state — confirm it (PENDING is
+            // the normal happy path; an already-CONFIRMED booking is a
+            // duplicate-callback edge case we tolerate; CANCELLED-by-anyone-
+            // other-than-SYSTEM means the customer/vendor/admin cancelled
+            // post-payment-init, which the existing flow handles via
+            // refund-decision recording).
+            await tx.booking.update({
+              where: { id: payment.bookingId },
+              data: { status: 'CONFIRMED' },
+            });
+          }
         } else {
-          // Booking was deleted by cron — this means customer paid but booking is gone
-          // Log as critical alert so admin can manually process the refund
-          this.logger.error(`CRITICAL: Payment ${payment.id} succeeded but booking ${payment.bookingId} was already deleted. Customer was charged. Manual refund required.`);
-          await this.auditLogger.log({
-            actorType: 'SYSTEM',
-            actorId: 'pay2m-callback',
-            actorName: 'PAY2M Gateway',
-            action: 'PAYMENT_ORPHANED',
-            entity: 'Payment',
-            entityId: payment.id,
-            details: `Payment succeeded but booking was deleted by cleanup cron. Manual refund required. basket: ${params.basket_id}`,
-          });
+          // §B2 — booking was deleted by cron. Customer's money is real; we
+          // need to either re-insert the booking from the snapshot we froze
+          // at creation time or queue a refund. Cannot do either in this tx
+          // (slot-conflict during recreate would roll back the payment-success
+          // flip). Hand off to after-commit recovery.
+          recoveryMode = 'B2_ORPHAN';
         }
       } else {
         // Verify still PENDING before deleting
@@ -547,6 +578,18 @@ export class PaymentService {
     // free. Bump the availability cache so in-flight calendar reads see it.
     if (deletedActivityId) {
       void this.availabilityCache.invalidate(deletedActivityId);
+    }
+
+    // §B2 / §M6 — booking-recovery dispatch. Runs in its own tx outside
+    // the payment-status flip so a slot-conflict during recreate cannot
+    // roll back the SUCCESS update. The recovery helper writes its own
+    // FINANCIAL audit row in every branch (recreated / un-cancelled /
+    // refund-queued) so reconciliation has a forensic trail regardless
+    // of outcome.
+    if (recoveryMode === 'B2_ORPHAN') {
+      await this.attemptB2OrphanRecovery(payment.id, params.basket_id);
+    } else if (recoveryMode === 'M6_SYSTEM_CANCELLED') {
+      await this.attemptM6UnCancel(payment.id, payment.bookingId!, params.basket_id);
     }
 
     // 6. Audit log (use saved bookingId since record may be deleted for failures)
@@ -637,7 +680,14 @@ export class PaymentService {
         ? `https://maps.google.com/maps?q=${bookingForNotify.activity.locationLat},${bookingForNotify.activity.locationLng}`
         : undefined;
 
-      this.emailService.sendBookingConfirmation(bookingForNotify.customer.email, {
+      // §B9 follow-up — skip the SES send to anonymised addresses. The
+      // booking row may have been recreated by the §B2 path while the
+      // customer was being soft-deleted in another tab; the customer
+      // email is then `<id>@deleted.local`, a non-routable sentinel that
+      // would bounce at SES and degrade our sender-reputation score.
+      const customerEmail = bookingForNotify.customer.email;
+      if (!customerEmail.endsWith('@deleted.local')) {
+        this.emailService.sendBookingConfirmation(customerEmail, {
         customerName: bookingForNotify.customer.fullName,
         activityTitle: bookingForNotify.activity?.titleEn ?? 'Activity',
         date: dateStr,
@@ -656,9 +706,393 @@ export class PaymentService {
         const kind = err instanceof Error ? err.name : 'UnknownError';
         this.logger.error(`Booking confirmation email failed (${kind}) for booking ${payment.bookingId}`);
       });
+      } // close `if (!customerEmail.endsWith('@deleted.local'))`
     }
 
     return { bookingId: savedBookingId!, status: 'success' as const };
+  }
+
+  // ─── §B2 / §M6 — booking-recovery helpers ────────────────────────────────
+
+  /**
+   * §B2 — orphan-recovery. The cleanup cron deleted the booking row before
+   * PAY2M's success callback arrived. We hold a server-derived snapshot
+   * (`payment.bookingSnapshot`, frozen at booking-creation time) so the
+   * primary path is to re-insert the booking. Refund is the rare fallback
+   * for cases where re-insertion isn't safe (slot taken, activity ended,
+   * activity/vendor deleted, snapshot version unrecognised).
+   *
+   * Runs OUTSIDE the payment-status flip's transaction so a slot-conflict
+   * during recreate can't roll back the SUCCESS update — the customer's
+   * money is real, payment.status MUST stay SUCCESS regardless of
+   * recovery outcome.
+   *
+   * Idempotency: `bookingRecreatedAt` is set inside the same Serializable
+   * tx that inserts the booking row, with a count-checked updateMany so
+   * a replayed callback (or a concurrent recovery attempt) cannot create
+   * a second copy.
+   */
+  private async attemptB2OrphanRecovery(paymentId: string, basketId: string): Promise<void> {
+    const db = this.prisma.client;
+
+    // Re-fetch with the snapshot — idempotency check must read the latest
+    // bookingRecreatedAt from inside the recovery tx, but we need the
+    // snapshot (and a quick "already recovered" short-circuit) up front.
+    const fresh = await db.payment.findUnique({
+      where: { id: paymentId },
+      select: { id: true, amount: true, currency: true, bookingSnapshot: true, bookingRecreatedAt: true },
+    });
+    if (!fresh) return;
+    if (fresh.bookingRecreatedAt) {
+      // A prior callback already recreated the booking. The current
+      // callback is a duplicate / replay. The payment-status flip in the
+      // outer tx idempotently moved status to SUCCESS again; nothing
+      // else to do.
+      return;
+    }
+    if (!fresh.bookingSnapshot) {
+      // Legacy payment created before §B2 schema landed — no snapshot to
+      // recreate from. Fall back to refund + audit so admin can deal.
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'NO_SNAPSHOT');
+      return;
+    }
+
+    const snapshot = fresh.bookingSnapshot as any;
+    if (snapshot.v !== 1) {
+      // Unknown snapshot version — be conservative, refund.
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, `UNKNOWN_SNAPSHOT_VERSION:${snapshot.v}`);
+      return;
+    }
+
+    // Pre-flight checks (cheap reads, no locks). These determine whether
+    // recreate is safe at all; if any fails, refund. The actual conflict
+    // detection runs INSIDE the Serializable tx below.
+    const startDt = new Date(snapshot.startDatetime);
+    const endDt = new Date(snapshot.endDatetime);
+    const now = new Date();
+
+    if (endDt < now) {
+      // Activity already ended — not deliverable. Refund.
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'ACTIVITY_ALREADY_ENDED');
+      return;
+    }
+
+    // §B9 follow-up — customer may have been soft-deleted between the
+    // PENDING booking creation and PAY2M's success callback (the
+    // cleanup-cron's hard-delete of the booking removes the count-based
+    // guard in `deleteUser`, so the user CAN be soft-deleted in this
+    // window). Recreating the booking now would point its customerId
+    // at an anonymised user the customer can't access — a ghost booking.
+    // Refund instead.
+    const customer = await db.user.findUnique({
+      where: { id: snapshot.customerId },
+      select: { deletedAt: true },
+    });
+    if (!customer || customer.deletedAt) {
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'CUSTOMER_DELETED');
+      return;
+    }
+
+    const activity = await db.activity.findUnique({
+      where: { id: snapshot.activityId },
+      select: { id: true, status: true, vendor: { select: { id: true, status: true } } },
+    });
+    if (!activity) {
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'ACTIVITY_DELETED');
+      return;
+    }
+    // Vendor suspended/inactive: still recreate the booking (customer paid in
+    // good faith), but the booking lands flagged for admin review via the
+    // FINANCIAL audit row below. We do NOT short-circuit to refund here —
+    // that would let a fraud-detection suspension cascade into involuntary
+    // refunds for paid customers. Activity status, however: if the activity
+    // was hard-deleted (above) or marked DRAFT/REJECTED, treat that as
+    // "vendor took down the listing" → refund.
+    // Activity not currently bookable (admin/vendor changed state during the
+    // PAY2M handoff) — vendor "took down" the listing, refund is correct.
+    if (activity.status !== 'ACTIVE') {
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, `ACTIVITY_STATUS:${activity.status}`);
+      return;
+    }
+
+    // Recreate inside Serializable tx with the same conflict-check pattern
+    // createBooking uses. P2034 (serialization failure) is treated as a
+    // slot-conflict → refund fallback.
+    try {
+      const result = await db.$transaction(async (tx: any) => {
+        // Idempotency: only one recovery attempt may stamp bookingRecreatedAt.
+        const stamp = await tx.payment.updateMany({
+          where: { id: paymentId, bookingRecreatedAt: null },
+          data: { bookingRecreatedAt: new Date() },
+        });
+        if (stamp.count === 0) return { kind: 'already-recovered' as const };
+
+        // Slot-conflict detection — same shape as createBooking's
+        // pre-insert aggregate. Counts only non-CANCELLED bookings that
+        // overlap the same activity/unit/window.
+        const overlap = await tx.booking.aggregate({
+          where: {
+            activityId: snapshot.activityId,
+            unitNumber: snapshot.unitNumber ?? undefined,
+            status: { notIn: ['CANCELLED'] },
+            startDatetime: { lt: endDt },
+            endDatetime: { gt: startDt },
+          },
+          _sum: { guests: true },
+        });
+        const taken = overlap._sum.guests ?? 0;
+        const activityCapacity = await tx.activity.findUnique({
+          where: { id: snapshot.activityId },
+          select: { capacity: true },
+        });
+        const cap = activityCapacity?.capacity ?? 0;
+        if (taken + snapshot.guests > cap) {
+          return { kind: 'slot-conflict' as const };
+        }
+
+        const recreated = await tx.booking.create({
+          data: {
+            ref: snapshot.ref,
+            activityId: snapshot.activityId,
+            vendorId: snapshot.vendorId,
+            customerId: snapshot.customerId,
+            unitNumber: snapshot.unitNumber,
+            startDatetime: startDt,
+            endDatetime: endDt,
+            guests: snapshot.guests,
+            guestBreakdown: snapshot.guestBreakdown ?? undefined,
+            selectedExtras: snapshot.selectedExtras ?? undefined,
+            totalPrice: snapshot.totalPrice,
+            serviceFee: snapshot.serviceFee,
+            commissionPct: snapshot.commissionPct,
+            commissionAmount: snapshot.commissionAmount,
+            couponCode: snapshot.couponCode ?? undefined,
+            couponDiscount: snapshot.couponDiscount,
+            pointsRedeemed: snapshot.pointsRedeemed,
+            pointsDiscount: snapshot.pointsDiscount,
+            currencyCode: snapshot.currencyCode,
+            idempotencyKey: snapshot.idempotencyKey ?? undefined,
+            status: 'CONFIRMED',
+            paymentId,
+            // Preserve the customer's original cancellation window —
+            // createdAt anchors free-cancellation policies.
+            createdAt: new Date(snapshot.originalCreatedAt),
+          },
+          select: { id: true, activityId: true },
+        });
+        await tx.payment.update({ where: { id: paymentId }, data: { bookingId: recreated.id } });
+
+        // Coupon usage roll-forward — the cleanup cron's `refundCouponUsage`
+        // ran when it deleted the original booking (decrementing
+        // coupon.usedCount and clearing claimedCoupon.used). Now that we're
+        // re-inserting the booking, the customer IS using the coupon
+        // again, so the counter has to climb back up. Mirrors the bookkeeping
+        // that bookings.service.createBooking does at original booking time.
+        // Loyalty points: cleanup does NOT refund redeemed points (existing
+        // behaviour), so the customer's balance is already correct — no
+        // re-debit needed here.
+        if (snapshot.couponCode) {
+          const coupon = await tx.coupon.findUnique({
+            where: { code: snapshot.couponCode },
+            select: { id: true },
+          });
+          if (coupon) {
+            await tx.coupon.update({
+              where: { id: coupon.id },
+              data: { usedCount: { increment: 1 } },
+            });
+            // Re-mark the per-user claim used (was unset by refundCouponUsage)
+            await tx.claimedCoupon.updateMany({
+              where: { userId: snapshot.customerId, couponId: coupon.id, used: false },
+              data: { used: true },
+            });
+          }
+        }
+
+        return { kind: 'recreated' as const, bookingId: recreated.id, activityId: recreated.activityId };
+      }, { isolationLevel: 'Serializable' });
+
+      if (result.kind === 'recreated') {
+        void this.availabilityCache.invalidate(result.activityId);
+        const flagged = activity.vendor.status !== 'ACTIVE';
+        await this.auditLogger.log({
+          actorType: 'SYSTEM',
+          actorId: 'pay2m-callback',
+          actorName: 'PAY2M Gateway',
+          action: 'PAYMENT_RECOVERED_VIA_RECREATE',
+          entity: 'Payment',
+          entityId: paymentId,
+          details: `Booking ${snapshot.ref} re-inserted from snapshot. basket: ${basketId}${flagged ? ' | VENDOR_NOT_ACTIVE_FLAG_FOR_REVIEW' : ''}`,
+          actionCategory: 'FINANCIAL',
+        });
+        return;
+      }
+
+      if (result.kind === 'already-recovered') {
+        // Concurrent recovery won the race. Nothing to do.
+        return;
+      }
+
+      // Slot-conflict path. Recovery tx already committed (with stamp set);
+      // we can't undo the stamp without another tx, but a refund is now
+      // the right outcome. The stamp prevents a future replay from
+      // re-trying recreate, which is what we want.
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'SLOT_CONFLICT');
+    } catch (err: any) {
+      if (err?.code === 'P2034') {
+        await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'SLOT_CONFLICT_P2034');
+        return;
+      }
+      // Any other failure: log + queue refund. We never silently swallow.
+      const kind = err instanceof Error ? err.name : 'UnknownError';
+      this.logger.error(`B2 orphan recovery failed for payment ${paymentId} (${kind})`);
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, `RECOVERY_ERROR:${kind}`);
+    }
+  }
+
+  /**
+   * §M6 — un-cancel a booking that the cleanup cron flipped to
+   * CANCELLED-by-SYSTEM right before PAY2M's success callback arrived.
+   * Same safety contract as B2: validate the slot is still free, the
+   * activity is still ACTIVE, the activity hasn't already ended.
+   * Otherwise queue a refund.
+   */
+  private async attemptM6UnCancel(paymentId: string, bookingId: string, basketId: string): Promise<void> {
+    const db = this.prisma.client;
+
+    const booking = await db.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        id: true, activityId: true, unitNumber: true, guests: true,
+        startDatetime: true, endDatetime: true, status: true, cancelledBy: true,
+      },
+    });
+    if (!booking) {
+      // Should never happen — the outer tx confirmed booking exists. Treat
+      // as an orphan-recovery scenario and refund.
+      const fresh = await db.payment.findUnique({
+        where: { id: paymentId },
+        select: { amount: true, currency: true },
+      });
+      if (fresh) await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'BOOKING_DISAPPEARED_MID_FLIGHT');
+      return;
+    }
+    if (booking.status !== 'CANCELLED' || booking.cancelledBy !== 'SYSTEM') {
+      // Concurrent recovery already un-cancelled it. Nothing to do.
+      return;
+    }
+    if (booking.endDatetime < new Date()) {
+      const fresh = await db.payment.findUnique({
+        where: { id: paymentId },
+        select: { amount: true, currency: true },
+      });
+      if (fresh) await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'ACTIVITY_ALREADY_ENDED');
+      return;
+    }
+
+    try {
+      const result = await db.$transaction(async (tx: any) => {
+        // Re-check status inside tx (idempotency).
+        const flip = await tx.booking.updateMany({
+          where: { id: bookingId, status: 'CANCELLED', cancelledBy: 'SYSTEM' },
+          data: { status: 'CONFIRMED', cancelledAt: null, cancelledBy: null },
+        });
+        if (flip.count === 0) return { kind: 'already-recovered' as const };
+
+        // Slot-conflict re-check — another customer may have grabbed the
+        // slot while this one was CANCELLED. We use the same overlap
+        // aggregate as createBooking, EXCLUDING this booking itself.
+        const overlap = await tx.booking.aggregate({
+          where: {
+            id: { not: bookingId },
+            activityId: booking.activityId,
+            unitNumber: booking.unitNumber ?? undefined,
+            status: { notIn: ['CANCELLED'] },
+            startDatetime: { lt: booking.endDatetime },
+            endDatetime: { gt: booking.startDatetime },
+          },
+          _sum: { guests: true },
+        });
+        const taken = overlap._sum.guests ?? 0;
+        const activityCapacity = await tx.activity.findUnique({
+          where: { id: booking.activityId },
+          select: { capacity: true, status: true },
+        });
+        const cap = activityCapacity?.capacity ?? 0;
+        if (taken + booking.guests > cap || activityCapacity?.status === 'INACTIVE') {
+          // Roll back the un-cancel by throwing — Serializable tx rollback
+          // restores the CANCELLED row, preserving the slot for whoever
+          // owns it now.
+          throw new Error('SLOT_CONFLICT');
+        }
+
+        return { kind: 'reconfirmed' as const, activityId: booking.activityId };
+      }, { isolationLevel: 'Serializable' });
+
+      if (result.kind === 'reconfirmed') {
+        void this.availabilityCache.invalidate(result.activityId);
+        await this.auditLogger.log({
+          actorType: 'SYSTEM',
+          actorId: 'pay2m-callback',
+          actorName: 'PAY2M Gateway',
+          action: 'PAYMENT_RECOVERED_VIA_UNCANCEL',
+          entity: 'Booking',
+          entityId: bookingId,
+          details: `Booking un-cancelled (was CANCELLED-by-SYSTEM). basket: ${basketId}`,
+          actionCategory: 'FINANCIAL',
+        });
+        return;
+      }
+      // already-recovered: nothing to do
+    } catch (err: any) {
+      const reason =
+        err?.message === 'SLOT_CONFLICT' ? 'SLOT_CONFLICT' :
+        err?.code === 'P2034' ? 'SLOT_CONFLICT_P2034' :
+        `RECOVERY_ERROR:${err?.name || 'Unknown'}`;
+      const fresh = await db.payment.findUnique({
+        where: { id: paymentId },
+        select: { amount: true, currency: true },
+      });
+      if (fresh) await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, reason);
+    }
+  }
+
+  /**
+   * Queue a full refund for a recovery-failure case. Marks the payment
+   * REFUND_PENDING with refundAmount = amount, writes a FINANCIAL audit
+   * row tagging the failure reason, notifies the customer, and pings
+   * admin via the existing notification channel. The actual bank-side
+   * refund happens when admin clicks Approve in the refund-decisions UI.
+   */
+  private async queueB2Refund(
+    paymentId: string,
+    amount: any,
+    currency: string,
+    basketId: string,
+    reason: string,
+  ): Promise<void> {
+    const db = this.prisma.client;
+    // updateMany so a duplicate recovery call doesn't double-mark.
+    const flip = await db.payment.updateMany({
+      where: { id: paymentId, status: 'SUCCESS' },
+      data: { status: 'REFUND_PENDING', refundAmount: amount },
+    });
+    await this.auditLogger.log({
+      actorType: 'SYSTEM',
+      actorId: 'pay2m-callback',
+      actorName: 'PAY2M Gateway',
+      action: 'PAYMENT_RECOVERY_REFUND_QUEUED',
+      entity: 'Payment',
+      entityId: paymentId,
+      details: `Recovery failed (${reason}); refund of ${amount} ${currency} queued for admin approval. basket: ${basketId} | flipped: ${flip.count}`,
+      actionCategory: 'FINANCIAL',
+    });
+    void this.notificationService.notifyAdmins({
+      type: 'SYSTEM',
+      title: 'Payment recovery failed — refund queued',
+      message: `Payment ${paymentId.slice(0, 8)} recovered but the booking could not be re-created (${reason}). Approve refund in /admin.`,
+      link: '/admin',
+    }).catch(() => undefined);
   }
 
 

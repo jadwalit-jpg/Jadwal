@@ -11,21 +11,28 @@ export class UsersService {
   /**
    * Internal auth use ONLY — opts back into password (omitted globally).
    * NEVER return this directly in an API response.
+   *
+   * §B9 — soft-deleted users have their email reassigned to
+   * `<id>@deleted.local`, so a login attempt with the original address
+   * naturally finds nothing. The explicit `deletedAt: null` filter is
+   * defence in depth: if anonymisation ever skipped a row (race / bug)
+   * the deleted user still cannot authenticate.
    */
   async findOneForAuth(email: string): Promise<User | null> {
-    return this.prisma.client.user.findUnique({
-      where: { email },
+    return this.prisma.client.user.findFirst({
+      where: { email, deletedAt: null },
       omit: { password: false },
     } as any) as Promise<User | null>;
   }
 
   /**
    * Internal auth use ONLY — opts back into password (omitted globally).
-   * NEVER return this directly in an API response.
+   * NEVER return this directly in an API response. §B9 — refuses to
+   * return a soft-deleted user even if their id is known.
    */
   async findByIdForAuth(id: string): Promise<User | null> {
-    return this.prisma.client.user.findUnique({
-      where: { id },
+    return this.prisma.client.user.findFirst({
+      where: { id, deletedAt: null },
       omit: { password: false },
     } as any) as Promise<User | null>;
   }

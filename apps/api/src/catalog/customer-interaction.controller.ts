@@ -35,9 +35,9 @@ export class CustomerInteractionController {
   ) {
     if (user.role !== 'CUSTOMER') throw new ForbiddenException('Only customers can like activities');
 
-    // Verify activity exists and is active
-    const activity = await this.prisma.client.activity.findUnique({
-      where: { id: dto.activityId },
+    // Verify activity exists, is active, and not soft-deleted (§B9)
+    const activity = await this.prisma.client.activity.findFirst({
+      where: { id: dto.activityId, deletedAt: null },
       select: { id: true, status: true },
     });
     if (!activity || activity.status !== 'ACTIVE') throw new NotFoundException('Activity not found');
@@ -113,9 +113,11 @@ export class CustomerInteractionController {
   ) {
     if (user.role !== 'CUSTOMER') throw new ForbiddenException('Only customers can write reviews');
 
-    // Verify the activity exists
-    const activity = await this.prisma.client.activity.findUnique({
-      where: { id: dto.activityId },
+    // §B9 — exclude soft-deleted activities (a deleted activity can't
+    // accept new reviews even if the customer's old completed booking
+    // would otherwise authorise it).
+    const activity = await this.prisma.client.activity.findFirst({
+      where: { id: dto.activityId, deletedAt: null },
       select: { id: true, status: true },
     });
     if (!activity || activity.status !== 'ACTIVE') throw new NotFoundException('Activity not found');

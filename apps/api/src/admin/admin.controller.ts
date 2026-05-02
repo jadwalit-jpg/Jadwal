@@ -270,7 +270,7 @@ export class AdminController {
   @Post('payouts/mark-paid')
   @Throttle(RATE_LIMIT_WRITE)
   markPayoutsPaid(@Body() dto: MarkPayoutPaidDto) {
-    return this.adminService.markPayoutsPaid(dto.paymentIds);
+    return this.adminService.markPayoutsPaid(dto.paymentIds, dto.bankTransferRef);
   }
 
   // Revert a single PAID payment back to UNPAID. Destructive financial action
