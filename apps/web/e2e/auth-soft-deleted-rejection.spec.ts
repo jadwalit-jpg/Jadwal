@@ -18,8 +18,6 @@
  */
 import { test, expect, type Route } from '@playwright/test';
 
-const ADMIN_STATE = 'e2e/.auth/admin.json';
-
 test.describe('Auth — soft-deleted user is rejected (§B9)', () => {
   test('admin-side: 401 from /auth/me redirects authenticated user to /admin/login', async ({ page }) => {
     await page.context().storageState({ path: 'e2e/.auth/admin.json' }).catch(() => undefined);
