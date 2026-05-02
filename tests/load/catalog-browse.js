@@ -42,11 +42,17 @@ export const options = {
   tags: { scenario: 'catalog-browse' },
 };
 
+// Verified-existing public catalog endpoints (apps/api/src/catalog/catalog.controller.ts).
+// Earlier draft used `/featured` and `/vendors?city=doha` — both 404s. Fixed
+// 2026-05-02 after a baseline run revealed the script was hammering paths
+// that never existed.
 const PATHS = [
-  '/api/catalog/cities',
+  '/api/catalog/countries',
   '/api/catalog/categories',
-  '/api/catalog/featured',
-  '/api/catalog/vendors?city=doha',
+  '/api/catalog/cities',
+  '/api/catalog/trending',
+  '/api/catalog/activities',
+  '/api/catalog/platform-info',
 ];
 
 export default function () {
