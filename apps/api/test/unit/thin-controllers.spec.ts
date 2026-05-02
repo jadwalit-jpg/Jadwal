@@ -118,14 +118,14 @@ describe('PushController', () => {
 
 describe('AppController', () => {
   const mkPrisma = (impl: () => Promise<unknown>) =>
-    ({ client: { $queryRawUnsafe: jest.fn(impl) } } as any);
+    ({ client: { user: { count: jest.fn(impl) } } } as any);
   const mkRedis = (impl: () => Promise<unknown>) =>
     ({ getClient: jest.fn().mockReturnValue({ ping: jest.fn(impl) }) } as any);
 
   test('getHello / root endpoint exists and returns a value', () => {
     const ctrl = new AppController(
       { getHello: jest.fn().mockReturnValue('Hello Jadwal') } as any,
-      mkPrisma(async () => [{ '?column?': 1 }]),
+      mkPrisma(async () => 0),
       mkRedis(async () => 'PONG'),
     );
     // The minimal contract: methods exist and don't throw
@@ -136,7 +136,7 @@ describe('AppController', () => {
     test('returns ok when DB + Redis both respond', async () => {
       const ctrl = new AppController(
         {} as any,
-        mkPrisma(async () => [{ '?column?': 1 }]),
+        mkPrisma(async () => 0),
         mkRedis(async () => 'PONG'),
       );
       await expect(ctrl.getReady()).resolves.toEqual({ status: 'ok', db: 'up', redis: 'up' });
@@ -157,7 +157,7 @@ describe('AppController', () => {
     test('throws 503 when Redis ping rejects', async () => {
       const ctrl = new AppController(
         {} as any,
-        mkPrisma(async () => [{ '?column?': 1 }]),
+        mkPrisma(async () => 0),
         mkRedis(() => Promise.reject(new Error('ETIMEDOUT'))),
       );
       await expect(ctrl.getReady()).rejects.toMatchObject({

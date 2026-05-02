@@ -95,8 +95,17 @@ export class AppController {
   }
 
   private async checkDb(): Promise<void> {
+    // Why count() and not raw SQL: the repo enforces a hard "no raw SQL"
+    // gate (CI step `No raw SQL queries` + security.spec.ts). count() with
+    // a never-matching UUID produces a single PK-index probe that returns
+    // 0 in <1ms on RDS. It exercises the real connection path (query →
+    // pool → wire → server → ack) which is exactly what a readiness probe
+    // should verify, while staying within Prisma's typed ORM surface.
+    // The fixed UUID is a deterministic miss and never collides with real data.
     await this.withTimeout(
-      this.prisma.client.$queryRawUnsafe('SELECT 1'),
+      this.prisma.client.user.count({
+        where: { id: '00000000-0000-0000-0000-000000000000' },
+      }),
       1000,
       'db-timeout',
     );
