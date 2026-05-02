@@ -711,6 +711,19 @@ export class VendorService {
       if (body[key] !== undefined) data[key] = body[key];
     }
 
+    // Bank-details mutation stamp — drives the payout cool-down in
+    // evaluatePayoutEligibility(). We set this whenever `bankDetails`
+    // appears in the request body, even if the value is identical to the
+    // existing one (we don't have the prior value cheaply available, and
+    // a write that "happens to match" still represents a vendor-initiated
+    // touch on the field worth pausing on). Optional re-evaluation: only
+    // bump when the JSON value actually differs — would require loading
+    // the existing row first; the trade-off (one extra read per settings
+    // update vs occasional zero-change cool-down resets) isn't worth it.
+    if (body.bankDetails !== undefined) {
+      data.bankDetailsChangedAt = new Date();
+    }
+
     return this.prisma.client.vendor.update({
       where: { id: vendor.id },
       data,
@@ -723,6 +736,7 @@ export class VendorService {
         whatsapp: true,
         website: true,
         bankDetails: true,
+        bankDetailsChangedAt: true,
       },
     });
   }
@@ -892,6 +906,23 @@ export class VendorService {
     const [requests, total] = await Promise.all([
       db.payoutRequest.findMany({
         where: { vendorId: vendor.id },
+        // Explicit select — DO NOT add adminNote or paymentIds here. adminNote
+        // is internal admin commentary (e.g., "vendor flagged for slow
+        // response — investigate before next payout"); paymentIds reveals the
+        // exact payment rows the platform considered eligible at approval
+        // time, which is platform-internal accounting state. Both stay on
+        // the admin side. If a future feature wants to surface a rejection
+        // reason to the vendor, copy it into a customer-safe `vendorMessage`
+        // field rather than exposing adminNote directly.
+        select: {
+          id: true,
+          vendorId: true,
+          amount: true,
+          currency: true,
+          status: true,
+          processedAt: true,
+          createdAt: true,
+        },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
@@ -920,6 +951,7 @@ export class VendorService {
    *   NO_BANK_DETAILS    — vendor has not configured bank account
    *   NO_BALANCE         — all eligible payments already paid out
    *   BELOW_MINIMUM      — balance > 0 but under minimum payout threshold
+   *   BANK_DETAILS_RECENTLY_CHANGED — bankDetails edited within cool-down window
    */
   private async evaluatePayoutEligibility(vendorId: string): Promise<
     | { ok: true; available: number; currency: string; minimum: number }
@@ -935,6 +967,7 @@ export class VendorService {
       select: {
         status: true,
         bankDetails: true,
+        bankDetailsChangedAt: true,
         country: { select: { currencyCode: true } },
       },
     });
@@ -963,6 +996,30 @@ export class VendorService {
 
     if (!vendorRow.bankDetails) {
       return { ok: false, code: 'NO_BANK_DETAILS', message: 'Add your bank details in Settings before requesting a payout.', available: 0, currency, minimum };
+    }
+
+    // Bank-details cool-down — closes the "vendor account compromise →
+    // change bank details → instant payout to attacker" window. If the
+    // vendor edited bankDetails within the configured cool-down (default
+    // 7 days, env PAYOUT_BANK_DETAILS_COOLDOWN_DAYS), block payout
+    // requests until the window passes. Existing vendors who never
+    // touched the field since the column landed have NULL, which is
+    // treated as "no recent change" — correct behaviour.
+    const cooldownDays = Math.max(0, Number(process.env.PAYOUT_BANK_DETAILS_COOLDOWN_DAYS ?? 7));
+    if (cooldownDays > 0 && vendorRow.bankDetailsChangedAt) {
+      const cooldownMs = cooldownDays * 24 * 60 * 60 * 1000;
+      const elapsedMs = Date.now() - vendorRow.bankDetailsChangedAt.getTime();
+      if (elapsedMs < cooldownMs) {
+        const remainingHours = Math.ceil((cooldownMs - elapsedMs) / (60 * 60 * 1000));
+        return {
+          ok: false,
+          code: 'BANK_DETAILS_RECENTLY_CHANGED',
+          message: `Bank details were updated recently. Payout requests are paused for ~${remainingHours}h as a security precaution.`,
+          available: 0,
+          currency,
+          minimum,
+        };
+      }
     }
 
     // Exclude payments locked into an APPROVED/COMPLETED request — even if the

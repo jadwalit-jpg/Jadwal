@@ -34,6 +34,15 @@ export interface EarnArgs {
   note: string;
 }
 
+export interface ReverseAwardedArgs {
+  userId: string;
+  amount: number;           // positive number of points to debit (the award amount)
+  bookingId: string;
+  actorType: LoyaltyActorType;
+  actorId?: string | null;
+  note: string;
+}
+
 export interface AdjustArgs {
   userId: string;
   delta: number;            // positive or negative; never zero
@@ -167,6 +176,58 @@ export class LoyaltyService {
     });
 
     return { balanceAfter: user.loyaltyPoints };
+  }
+
+  /**
+   * Debit points that were previously earned (BOOKING_EARN) when the
+   * booking is later cancelled. Used by admin/vendor cancel paths in
+   * bookings.service.ts when `booking.pointsAwarded === true`. Closes
+   * the "earn 100 points then cancel and keep them" double-dip.
+   *
+   * Behaviour mirrors `adjust()` for the clamp: if the user's current
+   * balance is lower than the awarded amount (because they spent the
+   * points elsewhere), we debit only what's available rather than
+   * driving the balance negative. The ledger reason captures the
+   * clamp for reconciliation.
+   */
+  async reverseAwarded(tx: Tx, args: ReverseAwardedArgs): Promise<{ balanceAfter: number; appliedDelta: number }> {
+    this.assertPositive(args.amount, 'amount');
+
+    const current = await tx.user.findUniqueOrThrow({
+      where: { id: args.userId },
+      select: { loyaltyPoints: true },
+    });
+
+    // Negative delta — clamp magnitude to current balance so the row
+    // never drives the balance below zero (balance constraint at
+    // user.loyaltyPoints column would otherwise reject the update).
+    const requestedDebit = args.amount;
+    const actualDebit = Math.min(requestedDebit, current.loyaltyPoints);
+    const appliedDelta = -actualDebit;
+
+    const clampNote =
+      actualDebit !== requestedDebit
+        ? ` (clamped from -${requestedDebit} — balance was ${current.loyaltyPoints})`
+        : '';
+
+    const user = await tx.user.update({
+      where: { id: args.userId },
+      data: { loyaltyPoints: { increment: appliedDelta } },
+      select: { loyaltyPoints: true },
+    });
+
+    await this.writeLedger(tx, {
+      userId: args.userId,
+      delta: appliedDelta,
+      balanceAfter: user.loyaltyPoints,
+      source: 'CANCEL_REVERSE_AWARDED',
+      bookingId: args.bookingId,
+      actorType: args.actorType,
+      actorId: args.actorId ?? null,
+      reason: `${args.note}${clampNote}`,
+    });
+
+    return { balanceAfter: user.loyaltyPoints, appliedDelta };
   }
 
   /**

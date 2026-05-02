@@ -939,6 +939,19 @@ export class AdminService {
     });
     if (!booking) throw new NotFoundException('Booking not found');
 
+    // Reject CONFIRMED transitions when no successful payment exists.
+    // Without this guard, an admin (or compromised admin JWT) could
+    // PATCH any PENDING booking to CONFIRMED — vendor sees a paid
+    // reservation, customer never paid, platform/vendor lose revenue
+    // with no audit signal beyond the generic UPDATE_BOOKING_STATUS
+    // entry. The full-points (WANASA_POINTS) path also satisfies this
+    // because that synthetic payment is created with status=SUCCESS.
+    if (status === 'CONFIRMED' && booking.payment?.status !== 'SUCCESS') {
+      throw new BadRequestException(
+        'Cannot confirm a booking without a successful payment',
+      );
+    }
+
     const updated = await db.$transaction(async (tx: any) => {
       // Admin-initiated cancel stamps cancelledAt/By for history. Admin does
       // NOT go through the refund queue — admin is final arbiter and refund
@@ -1014,6 +1027,42 @@ export class AdminService {
             actorId: null,
             note: `Admin cancel returned redeemed points on booking ${booking.ref}`,
           });
+        }
+
+        // Reverse points that were AWARDED on a COMPLETED booking that the
+        // admin is now cancelling. Without this, the customer keeps the
+        // earned points (8+ QAR per 100 in store credit) plus gets a
+        // cash refund — repeatable double-dip exploit. Computed using the
+        // same earn-rate formula as awardLoyaltyPoints so reversal mirrors
+        // exactly what was credited. Idempotent — `pointsAwarded` is
+        // flipped to false alongside the debit so re-cancel attempts (which
+        // shouldn't happen because of the double-cancel guard, but defence
+        // in depth) don't double-reverse.
+        if (booking.pointsAwarded === true) {
+          let loyaltyConfigForReverse = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
+          if (!loyaltyConfigForReverse) loyaltyConfigForReverse = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
+          // Mirrors the formula in bookings.service.ts awardLoyaltyPoints —
+          // floor(totalPrice × pointsPerQar). Same config, same totalPrice
+          // (frozen on the booking row at creation), so the reversal
+          // exactly matches what the cron credited.
+          const pointsPerQar = loyaltyConfigForReverse.pointsPerQar.toNumber();
+          const awardedPoints = pointsPerQar > 0
+            ? Math.floor(Number(booking.totalPrice) * pointsPerQar)
+            : 0;
+          if (awardedPoints > 0) {
+            await this.loyalty.reverseAwarded(tx, {
+              userId: booking.customerId,
+              amount: awardedPoints,
+              bookingId,
+              actorType: 'ADMIN',
+              actorId: null,
+              note: `Admin cancel of COMPLETED booking ${booking.ref} — debiting ${awardedPoints} previously-awarded points`,
+            });
+            await tx.booking.update({
+              where: { id: bookingId },
+              data: { pointsAwarded: false },
+            });
+          }
         }
       }
 

@@ -356,7 +356,14 @@ export class PaymentService {
     // 1. Find payment by basket ID
     const payment = await db.payment.findUnique({
       where: { gatewayBasketId: params.basket_id },
-      select: { id: true, bookingId: true, amount: true, status: true },
+      select: {
+        id: true, bookingId: true, amount: true, status: true,
+        // Pull the booking's coupon snapshot too so we can detect (and
+        // forensically audit) the coupon-expiry race below — see the
+        // PAYMENT_COUPON_INVALID_AT_CONFIRMATION audit emission. Cheap
+        // single-query addition; no extra round-trip vs the existing find.
+        booking: { select: { couponCode: true, couponDiscount: true } },
+      },
     });
 
     if (!payment) {
@@ -416,6 +423,43 @@ export class PaymentService {
         details: `err_code: ${params.err_code}, basket: ${params.basket_id}, isSuccess: ${isSuccess}`,
       });
       throw new BadRequestException('Payment verification failed');
+    }
+
+    // 4b. Coupon expiry-race detection. The customer may have created the
+    //     PENDING booking with a valid coupon, then sat on the PAY2M
+    //     hosted-checkout page long enough that the coupon's validTo
+    //     passed (or admin un-approved it, or another customer's booking
+    //     pushed it past usageLimit). The discount was frozen into
+    //     payment.amount at booking creation and the customer was charged
+    //     that discounted amount on PAY2M's page — we honor the price the
+    //     customer was quoted (customer-friendly + payment.amount already
+    //     verified by hash above). What we DON'T do silently is let the
+    //     forensic signal vanish: emit a PAYMENT_COUPON_INVALID_AT_CONFIRMATION
+    //     audit row so admin/finance can reconcile if the rate of these
+    //     events suggests a coupon-policy problem.
+    if (isSuccess && payment.booking?.couponCode) {
+      const liveCoupon = await db.coupon.findUnique({
+        where: { code: payment.booking.couponCode },
+        select: { status: true, validTo: true, usageLimit: true, usedCount: true },
+      });
+      const now = new Date();
+      const couponInvalid =
+        !liveCoupon ||
+        liveCoupon.status !== 'APPROVED' ||
+        liveCoupon.validTo < now ||
+        (liveCoupon.usageLimit !== null && liveCoupon.usedCount > liveCoupon.usageLimit);
+      if (couponInvalid) {
+        await this.auditLogger.log({
+          actorType: 'SYSTEM',
+          actorId: 'pay2m-callback',
+          actorName: 'PAY2M Gateway',
+          action: 'PAYMENT_COUPON_INVALID_AT_CONFIRMATION',
+          entity: 'Payment',
+          entityId: payment.id,
+          details: `couponCode: ${payment.booking.couponCode}, discount: ${payment.booking.couponDiscount}, status: ${liveCoupon?.status ?? 'NOT_FOUND'}, validTo: ${liveCoupon?.validTo?.toISOString() ?? 'N/A'}, usedCount/limit: ${liveCoupon?.usedCount ?? 'N/A'}/${liveCoupon?.usageLimit ?? '∞'}`,
+        });
+        this.logger.warn(`Coupon ${payment.booking.couponCode} no longer valid at payment confirmation for payment ${payment.id} — honoring price as charged; audit emitted for reconciliation`);
+      }
     }
 
     // 5. Update payment + booking in transaction (optimistic lock)
