@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NestInterceptor,
   ExecutionContext,
   CallHandler,
@@ -17,6 +18,8 @@ import { PrismaService } from '../../prisma/prisma.service';
  */
 @Injectable()
 export class AdminAuditInterceptor implements NestInterceptor {
+  private readonly logger = new Logger(AdminAuditInterceptor.name);
+
   constructor(private prisma: PrismaService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
@@ -31,12 +34,42 @@ export class AdminAuditInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap({
         next: () => {
-          // Log after successful execution (fire-and-forget)
-          this.logAction(req, method, null).catch(() => {});
+          // Audit DB write is async w.r.t. the response (we don't want a
+          // slow audit-log INSERT to block the admin's HTTP roundtrip),
+          // BUT failures must NOT be silently swallowed. The previous
+          // `.catch(() => {})` form hid every audit-write failure: a DB
+          // hiccup, table-lock, or transient connection-pool exhaustion
+          // would let the admin action complete with no audit row, and
+          // the regulator-facing trail would silently grow holes.
+          //
+          // New form: fire-and-forget for latency, but route any error
+          // to a structured logger. CloudWatch then carries an explicit
+          // signal we can alert on (`AdminAuditInterceptor` ERROR
+          // count > 0 in last 5 min). The admin action still succeeds —
+          // we deliberately don't roll back here because the interceptor
+          // runs AFTER the business mutation and failing the response
+          // would mislead the admin into thinking the action didn't
+          // happen. The right place for transactional rollback is
+          // *inside* services that already use $transaction (B7
+          // service-level pattern). The interceptor stays as the
+          // belt-and-braces backstop with loud failure-logging.
+          this.logAction(req, method, null).catch((auditErr) => {
+            const kind = auditErr instanceof Error ? auditErr.name : 'UnknownError';
+            this.logger.error(
+              `Audit write failed for ${method} ${req.route?.path || req.url} (${kind})`,
+            );
+          });
         },
         error: (err) => {
-          // Also log failed mutations (helps detect abuse)
-          this.logAction(req, method, err?.message || 'Unknown error').catch(() => {});
+          // Also log failed mutations (helps detect abuse). Same loud
+          // failure-handling rule applies if the audit write itself
+          // fails — never swallow.
+          this.logAction(req, method, err?.message || 'Unknown error').catch((auditErr) => {
+            const kind = auditErr instanceof Error ? auditErr.name : 'UnknownError';
+            this.logger.error(
+              `Audit-failure write failed for ${method} ${req.route?.path || req.url} (${kind})`,
+            );
+          });
         },
       }),
     );
@@ -66,8 +99,46 @@ export class AdminAuditInterceptor implements NestInterceptor {
         entity,
         entityId: entityId || undefined,
         details: details.slice(0, 1000),
+        actionCategory: this.classifyCategory(action),
       },
     });
+  }
+
+  /**
+   * Classify an admin action as FINANCIAL or OPERATIONAL for retention.
+   * FINANCIAL events are kept 7 years per Qatar PDPL + GDPR + standard
+   * financial-records regulation; OPERATIONAL events age out per
+   * RETENTION_AUDIT_LOG_DAYS (default 180 d). New action codes default
+   * to OPERATIONAL — explicitly add FINANCIAL ones here so the next
+   * reviewer sees the intent and reconciliation never relies on a
+   * fallback misclassifying real money flows.
+   */
+  private classifyCategory(action: string): 'FINANCIAL' | 'OPERATIONAL' {
+    const FINANCIAL_PREFIXES = [
+      'PAYMENT_',          // PAYMENT_HASH_MISMATCH, PAYMENT_COUPON_INVALID_AT_CONFIRMATION
+      'PAYOUT_',           // (any service-emitted payout audits)
+      'LOYALTY_',          // LOYALTY_POINTS_AWARDED, etc.
+      'BOOKING_CANCELLED', // refund-bearing cancels emit BOOKING_CANCELLED_*
+      'REFUND_',           // (any refund-decision audits)
+    ];
+    const FINANCIAL_EXACT = new Set([
+      'MARK_PAYOUT_PAID',
+      'REVERT_PAYOUT_TO_UNPAID',
+      'PROCESS_PAYOUT_REQUEST',
+      'REVERT_PAYOUT_REQUEST',
+      'UPDATE_VENDOR_COMMISSION',
+      'UPDATE_LOYALTY_CONFIG',
+      'ADJUST_USER_POINTS',
+      'UPDATE_BOOKING_STATUS', // can flip a paid booking to CANCELLED → refund
+      'DELETE_VENDOR',         // affects payouts of past bookings
+      'DELETE_USER',           // affects past payments / financial records
+      'BULK_DELETE_USERS',
+    ]);
+    if (FINANCIAL_EXACT.has(action)) return 'FINANCIAL';
+    for (const prefix of FINANCIAL_PREFIXES) {
+      if (action.startsWith(prefix)) return 'FINANCIAL';
+    }
+    return 'OPERATIONAL';
   }
 
   /** Map HTTP method + route to a human-readable action */

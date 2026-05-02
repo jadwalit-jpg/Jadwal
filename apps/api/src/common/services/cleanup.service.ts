@@ -29,7 +29,15 @@ export class CleanupService {
   // Retention periods (in days) — configurable via env for compliance tuning
   private readonly REFRESH_TOKEN_RETENTION: number;
   private readonly SECURITY_LOG_RETENTION: number;
+  /// OPERATIONAL audit-log retention. FINANCIAL entries use the
+  /// dedicated 7-year window below (§B8 — Qatar PDPL §14, GDPR Art.30,
+  /// standard financial-records regulation).
   private readonly AUDIT_LOG_RETENTION: number;
+  /// FINANCIAL audit-log retention. Default 2555 days = 7 years.
+  /// Setting via env (RETENTION_AUDIT_LOG_FINANCIAL_DAYS) is allowed
+  /// for jurisdictions with stricter rules but the default already
+  /// satisfies the major regulatory regimes.
+  private readonly AUDIT_LOG_FINANCIAL_RETENTION: number;
   private readonly EXPIRED_COUPON_RETENTION: number;
 
   // Business rules — all read from env so ops can tune without a code deploy
@@ -46,6 +54,9 @@ export class CleanupService {
     this.REFRESH_TOKEN_RETENTION = Number(this.configService.get('RETENTION_REFRESH_TOKEN_DAYS', '0'));
     this.SECURITY_LOG_RETENTION = Number(this.configService.get('RETENTION_SECURITY_LOG_DAYS', '90'));
     this.AUDIT_LOG_RETENTION = Number(this.configService.get('RETENTION_AUDIT_LOG_DAYS', '180'));
+    this.AUDIT_LOG_FINANCIAL_RETENTION = Number(
+      this.configService.get('RETENTION_AUDIT_LOG_FINANCIAL_DAYS', '2555'), // 7 years
+    );
     this.EXPIRED_COUPON_RETENTION = Number(this.configService.get('RETENTION_EXPIRED_COUPON_DAYS', '30'));
 
     // Primary: cancel PENDING bookings whose reservedUntil has passed (set at booking creation)
@@ -384,12 +395,40 @@ export class CleanupService {
   }
 
   async cleanOldAuditLogs(): Promise<number> {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - this.AUDIT_LOG_RETENTION);
-    const { count } = await this.prisma.client.auditLog.deleteMany({
-      where: { createdAt: { lt: cutoff } },
-    });
-    return count;
+    // Soft-delete (set archivedAt) instead of physical DELETE — keeps
+    // the audit trail append-only so compliance investigators can opt
+    // to include archived rows. Two retention windows:
+    //   - OPERATIONAL: AUDIT_LOG_RETENTION days (default 180)
+    //   - FINANCIAL  : AUDIT_LOG_FINANCIAL_RETENTION days (default
+    //     2555 = 7 yr) per Qatar PDPL §14, GDPR Art.30, standard
+    //     financial-records regulation.
+    // Skip rows already archived (idempotent).
+    const now = new Date();
+    const operationalCutoff = new Date(now);
+    operationalCutoff.setDate(operationalCutoff.getDate() - this.AUDIT_LOG_RETENTION);
+    const financialCutoff = new Date(now);
+    financialCutoff.setDate(financialCutoff.getDate() - this.AUDIT_LOG_FINANCIAL_RETENTION);
+
+    const [operational, financial] = await Promise.all([
+      this.prisma.client.auditLog.updateMany({
+        where: {
+          actionCategory: 'OPERATIONAL',
+          createdAt: { lt: operationalCutoff },
+          archivedAt: null,
+        },
+        data: { archivedAt: now },
+      }),
+      this.prisma.client.auditLog.updateMany({
+        where: {
+          actionCategory: 'FINANCIAL',
+          createdAt: { lt: financialCutoff },
+          archivedAt: null,
+        },
+        data: { archivedAt: now },
+      }),
+    ]);
+
+    return operational.count + financial.count;
   }
 
   async cleanOldExpiredCoupons(): Promise<number> {

@@ -324,6 +324,7 @@ export class PaymentService {
         entity: 'Payment',
         entityId: payment.id,
         details: `Amount: ${amount} ${payment.currency}, Basket: ${basketId}`,
+        actionCategory: 'FINANCIAL',
       });
 
       return {
@@ -421,6 +422,7 @@ export class PaymentService {
         entity: 'Payment',
         entityId: payment.id,
         details: `err_code: ${params.err_code}, basket: ${params.basket_id}, isSuccess: ${isSuccess}`,
+        actionCategory: 'FINANCIAL',
       });
       throw new BadRequestException('Payment verification failed');
     }
@@ -457,6 +459,7 @@ export class PaymentService {
           entity: 'Payment',
           entityId: payment.id,
           details: `couponCode: ${payment.booking.couponCode}, discount: ${payment.booking.couponDiscount}, status: ${liveCoupon?.status ?? 'NOT_FOUND'}, validTo: ${liveCoupon?.validTo?.toISOString() ?? 'N/A'}, usedCount/limit: ${liveCoupon?.usedCount ?? 'N/A'}/${liveCoupon?.usageLimit ?? '∞'}`,
+          actionCategory: 'FINANCIAL',
         });
         this.logger.warn(`Coupon ${payment.booking.couponCode} no longer valid at payment confirmation for payment ${payment.id} — honoring price as charged; audit emitted for reconciliation`);
       }
@@ -501,6 +504,7 @@ export class PaymentService {
             entity: 'Payment',
             entityId: payment.id,
             details: `Payment succeeded but booking was deleted by cleanup cron. Manual refund required. basket: ${params.basket_id}`,
+            actionCategory: 'FINANCIAL',
           });
         }
       } else {
