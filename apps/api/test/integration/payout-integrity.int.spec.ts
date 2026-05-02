@@ -207,7 +207,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
     const { payment } = await seedBooking('SUCCESS');
     const { admin } = makeServices();
 
-    await admin.markPayoutsPaid([payment.id]);
+    await admin.markPayoutsPaid([payment.id], 'TEST-WIRE-REF');
     const after = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(after.payoutStatus).toBe('PAID');
   });
@@ -216,7 +216,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
     const { payment } = await seedBooking('REFUNDED');
     const { admin } = makeServices();
 
-    await admin.markPayoutsPaid([payment.id]);
+    await admin.markPayoutsPaid([payment.id], 'TEST-WIRE-REF');
     const after = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     // Must remain UNPAID — the status:'SUCCESS' guard in the WHERE blocks the update.
     expect(after.payoutStatus).toBe('UNPAID');
@@ -227,7 +227,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
     const { payment } = await seedBooking('REFUND_PENDING');
     const { admin } = makeServices();
 
-    await admin.markPayoutsPaid([payment.id]);
+    await admin.markPayoutsPaid([payment.id], 'TEST-WIRE-REF');
     const after = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(after.payoutStatus).toBe('UNPAID');
   });
@@ -236,7 +236,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
     const { payment } = await seedBooking('REJECTED');
     const { admin } = makeServices();
 
-    await admin.markPayoutsPaid([payment.id]);
+    await admin.markPayoutsPaid([payment.id], 'TEST-WIRE-REF');
     const after = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(after.payoutStatus).toBe('UNPAID');
   });
@@ -366,9 +366,14 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
     await expect(admin.processPayoutRequest(req.id, 'COMPLETED', 'Wired'))
       .rejects.toThrow(/no longer eligible/i);
 
-    // Request stays APPROVED so admin can audit + decide manually.
+    // §M2 contract — request auto-reverts to PENDING with a system note so
+    // admin can re-run eligibility and complete a fresh approve cycle
+    // (was APPROVED-stuck-limbo before §M2).
     const after = await ctx.prisma.payoutRequest.findUniqueOrThrow({ where: { id: req.id } });
-    expect(after.status).toBe('APPROVED');
+    expect(after.status).toBe('PENDING');
+    expect(after.adminNote ?? '').toMatch(/no longer eligible|re-evaluate|auto-reverted/i);
+    expect(after.paymentIds ?? []).toEqual([]);
+    expect(after.processedAt).toBeNull();
   });
 
   test('processPayoutRequest(APPROVED) — SCAM BLOCKER: refund before approve throws', async () => {
@@ -582,7 +587,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
     });
 
     const { admin } = makeServices();
-    await admin.markPayoutsPaid([success.payment.id, refundedPayment.id]);
+    await admin.markPayoutsPaid([success.payment.id, refundedPayment.id], 'TEST-WIRE-REF');
 
     const successAfter = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: success.payment.id } });
     const refundedAfter = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: refundedPayment.id } });

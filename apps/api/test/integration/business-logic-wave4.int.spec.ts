@@ -123,10 +123,10 @@ describe('§M2 — COMPLETE auto-reverts to PENDING when locked payments drift',
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('§M3 — markPayoutsPaid blocks suspended vendor', () => {
-  test('vendor BLOCKED → mark-paid throws, no rows flipped', async () => {
+  test('vendor SUSPENDED → mark-paid throws, no rows flipped', async () => {
     const seed = await seedReference(ctx.prisma);
     const [paymentId] = await seedEligibleBookings(seed.vendor.id, seed.customer.id, seed.activity.id, 1);
-    await ctx.prisma.vendor.update({ where: { id: seed.vendor.id }, data: { status: 'BLOCKED' } });
+    await ctx.prisma.vendor.update({ where: { id: seed.vendor.id }, data: { status: 'SUSPENDED' } });
 
     const { admin } = makeServices();
     await expect(admin.markPayoutsPaid([paymentId], 'WIRE-001'))

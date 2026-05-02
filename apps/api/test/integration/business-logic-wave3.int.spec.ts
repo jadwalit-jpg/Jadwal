@@ -385,7 +385,7 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     const coupon = await ctx.prisma.coupon.create({
       data: {
         code: 'SUMMER10', vendorId: seed.vendor.id,
-        discountType: 'PERCENT', discountValue: 10,
+        discountType: 'PERCENTAGE', discountValue: 10,
         validFrom: new Date(Date.now() - 24 * 3600_000),
         validTo: new Date(Date.now() + 24 * 3600_000),
         usageLimit: 100, usedCount: 0,           // cleanup already decremented to 0
@@ -449,13 +449,13 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     void payment;
   });
 
-  test('vendor BLOCKED but activity ACTIVE → recreate AND flag for admin', async () => {
+  test('vendor SUSPENDED but activity ACTIVE → recreate AND flag for admin', async () => {
     const { svc, auditLogger } = makePaymentService();
     const { basketId, paymentId, amountStr, snapshot, seed } = await seedOrphanedPayment();
     // Vendor suspended after customer paid in good faith
     await ctx.prisma.vendor.update({
       where: { id: seed.vendor.id },
-      data: { status: 'BLOCKED' },
+      data: { status: 'SUSPENDED' },
     });
 
     await svc.handleCallback({
@@ -487,7 +487,7 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
       data: {
         amount: 150, currency: 'QAR', status: 'PENDING',
         method: 'PAY2M', gatewayBasketId: basketId,
-        bookingSnapshot: null,                        // explicitly null
+        // Don't set bookingSnapshot at all — legacy row has null by default
       },
     });
     // Don't even need to seed a booking — handleCallback's FAILED-status
@@ -576,7 +576,10 @@ describe('§M6 — callback un-cancels SYSTEM-cancelled booking when safe', () =
         cancelledBy: 'SYSTEM',
       },
     });
-    const snapshot = buildBookingSnapshot({ ...booking, status: 'PENDING' as any });
+    // buildBookingSnapshot ignores status; we just need the row's
+    // shape (it was a real CANCELLED row, but the snapshot the recreate
+    // path will read should look like a normal pending booking).
+    const snapshot = buildBookingSnapshot(booking);
     const payment = await ctx.prisma.payment.create({
       data: {
         amount: 200, currency: 'QAR', status: 'PENDING',

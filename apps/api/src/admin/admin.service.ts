@@ -1980,50 +1980,68 @@ export class AdminService {
     // refunds can't silently settle a request against missing money.
     if (action === 'COMPLETED' && request.status === 'APPROVED') {
       const paymentIds = request.paymentIds ?? [];
-      const updated = await db.$transaction(async (tx) => {
-        if (paymentIds.length === 0) {
-          throw new BadRequestException('This approved request has no locked payments. Contact engineering — data looks inconsistent.');
-        }
+      if (paymentIds.length === 0) {
+        throw new BadRequestException('This approved request has no locked payments. Contact engineering — data looks inconsistent.');
+      }
 
-        // Confirm the locked payments are still in the expected SUCCESS+UNPAID
-        // state. §M2 — if a parallel markPayoutsPaid or a cascade refund
-        // moved any of them, the previous behaviour was to abort with a
-        // BadRequestException, which left the request stuck in APPROVED
-        // (no path forward without manual SQL). New behaviour: auto-revert
-        // the request to PENDING with a system-generated note explaining
-        // why, so admin re-runs eligibility, picks up the still-eligible
-        // payments, and completes a fresh approve/complete cycle.
-        const stillEligible = await tx.payment.count({
+      // §M2 — pre-flight eligibility check outside the COMPLETED tx. If a
+      // parallel markPayoutsPaid or a cascade refund moved any of the
+      // locked payments, the previous behaviour aborted with a
+      // BadRequestException, leaving the request stuck in APPROVED with
+      // no path forward without manual SQL. New behaviour: auto-revert
+      // to PENDING with a system note in its OWN tx (so the revert
+      // commits even though we throw afterwards), then surface a clear
+      // error so admin re-runs eligibility and completes a fresh cycle.
+      // Doing the revert in the SAME tx as the throw would roll back
+      // the revert — that was the original bug.
+      const stillEligible = await db.payment.count({
+        where: {
+          id: { in: paymentIds },
+          status: 'SUCCESS',
+          payoutStatus: 'UNPAID',
+        },
+      });
+      if (stillEligible !== paymentIds.length) {
+        const drift = paymentIds.length - stillEligible;
+        const baseNote = (adminNote ?? request.adminNote ?? '').trim();
+        const systemNote = `[System: payments no longer eligible (${drift} of ${paymentIds.length} refunded after approval). Re-evaluate.]`;
+        const finalNote = baseNote ? `${baseNote}\n${systemNote}` : systemNote;
+        // Optimistic-lock revert in its own tx — commits before we throw.
+        const revertCount = await db.payoutRequest.updateMany({
+          where: { id: requestId, status: 'APPROVED' },
+          data: {
+            status: 'PENDING',
+            adminNote: finalNote,
+            paymentIds: [],            // unlock — eligibility recomputed at next APPROVE
+            processedAt: null,
+          },
+        });
+        if (revertCount.count === 0) {
+          // Lost a race with another admin; fall through to the standard
+          // already-completed message.
+          throw new ConflictException('This request was already completed by another admin');
+        }
+        throw new BadRequestException(
+          `Some of the approved payments are no longer eligible (${drift} of ${paymentIds.length} changed state). Request auto-reverted to PENDING — re-approve to pick up the remaining eligible payments.`,
+        );
+      }
+
+      const updated = await db.$transaction(async (tx) => {
+        // Re-verify inside tx for race safety — between pre-flight and now,
+        // another flow could have moved one of the payments. The COMPLETE
+        // transition must operate on the same set the pre-flight saw.
+        const stillEligibleInTx = await tx.payment.count({
           where: {
             id: { in: paymentIds },
             status: 'SUCCESS',
             payoutStatus: 'UNPAID',
           },
         });
-        if (stillEligible !== paymentIds.length) {
-          const drift = paymentIds.length - stillEligible;
-          const baseNote = (adminNote ?? request.adminNote ?? '').trim();
-          const systemNote = `[System: payments no longer eligible (${drift} of ${paymentIds.length} refunded after approval). Re-evaluate.]`;
-          const finalNote = baseNote ? `${baseNote}\n${systemNote}` : systemNote;
-          // Optimistic-lock revert: only flip if still APPROVED.
-          const revertCount = await tx.payoutRequest.updateMany({
-            where: { id: requestId, status: 'APPROVED' },
-            data: {
-              status: 'PENDING',
-              adminNote: finalNote,
-              paymentIds: [],            // unlock — eligibility recomputed at next APPROVE
-              processedAt: null,
-            },
-          });
-          if (revertCount.count === 0) {
-            // Lost a race with another admin; fall through to the standard
-            // already-completed message.
-            throw new ConflictException('This request was already completed by another admin');
-          }
-          // Throw a recognisable shape so the caller can surface "we reverted"
-          // vs "we completed" to admin without having to re-fetch.
-          throw new BadRequestException(
-            `Some of the approved payments are no longer eligible (${drift} of ${paymentIds.length} changed state). Request auto-reverted to PENDING — re-approve to pick up the remaining eligible payments.`,
+        if (stillEligibleInTx !== paymentIds.length) {
+          // Lost the race; throw out so the caller retries — the revert
+          // path above will catch it next attempt.
+          throw new ConflictException(
+            'Eligibility changed during completion. Try again — the request will auto-revert if drift persists.',
           );
         }
 
