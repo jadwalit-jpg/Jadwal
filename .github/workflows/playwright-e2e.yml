@@ -1,0 +1,191 @@
+name: Playwright E2E
+
+# Pre-staging E2E suite — runs the full Playwright matrix against a
+# spun-up API + Web stack with Postgres and Redis. This workflow is
+# kept separate from the main CI pipeline (ci.yml) because the e2e
+# job is heavy (~10–15 min with cold compile + browser launch) and
+# we want the fast feedback path for type-check / lint / unit tests
+# to stay quick.
+#
+# Trigger:
+#   - PR to main / develop  → runs both desktop + mobile projects
+#   - workflow_dispatch     → manual run with optional --grep filter
+#   - schedule (nightly)    → catches flake / dependency drift early
+#
+# Output:
+#   - playwright-report/    → uploaded as workflow artefact on failure
+#   - test-results/         → traces + screenshots + videos on failure
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/web/**'
+      - 'apps/api/**'
+      - '.github/workflows/playwright-e2e.yml'
+  workflow_dispatch:
+    inputs:
+      grep_pattern:
+        description: 'Optional --grep pattern to filter specs'
+        required: false
+        type: string
+  schedule:
+    # Nightly at 02:00 UTC — catches network / dependency flake before
+    # business hours.
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22
+  # Test-only secrets — never used in production. The auth layer
+  # accepts any 32+ char value here; rotating is fine and expected.
+  JWT_SECRET: ci-only-test-secret-do-not-use-in-prod-eeeeeeeeeeeeeeeeeee
+  JWT_REFRESH_SECRET: ci-only-test-refresh-secret-do-not-use-eeeeeeeeeeeeeee
+  DATABASE_URL: postgresql://jadwal:jadwal@localhost:5432/jadwal_e2e
+  REDIS_URL: redis://localhost:6379
+  NEXT_PUBLIC_API_URL: http://localhost:4000/api
+  API_PROXY_TARGET: http://localhost:4000/api
+  E2E_API_URL: http://localhost:4000/api
+  NODE_ENV: test
+  # Disable telemetry / analytics so CI runs are quiet.
+  NEXT_TELEMETRY_DISABLED: 1
+  PLAYWRIGHT_BROWSERS_PATH: 0
+
+jobs:
+  e2e:
+    name: E2E (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, mobile-chrome]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: jadwal
+          POSTGRES_PASSWORD: jadwal
+          POSTGRES_DB: jadwal_e2e
+        options: >-
+          --health-cmd "pg_isready -U jadwal"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: apps/api
+        run: npx prisma generate
+
+      - name: Run migrations
+        working-directory: apps/api
+        run: npx prisma migrate deploy
+
+      - name: Seed e2e fixtures
+        working-directory: apps/api
+        run: npx ts-node prisma/seed-e2e-data.ts
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ hashFiles('apps/web/package.json') }}
+
+      - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        working-directory: apps/web
+        run: npx playwright install-deps chromium
+
+      - name: Build API
+        working-directory: apps/api
+        run: npm run build
+
+      - name: Build Web
+        working-directory: apps/web
+        run: npm run build
+
+      - name: Start API server
+        working-directory: apps/api
+        run: |
+          npm run start:prod &
+          # Wait up to 60s for /health.
+          for i in {1..60}; do
+            if curl -fsS http://localhost:4000/api/health 2>/dev/null; then
+              echo "API up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Start Web server
+        working-directory: apps/web
+        run: |
+          npm run start &
+          # Wait up to 60s for the homepage to respond.
+          for i in {1..60}; do
+            if curl -fsS http://localhost:3000 2>/dev/null > /dev/null; then
+              echo "Web up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run Playwright (${{ matrix.project }})
+        working-directory: apps/web
+        env:
+          CI: '1'
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+          E2E_API_URL: http://localhost:4000/api
+        run: |
+          GREP_FLAG=""
+          if [ -n "${{ inputs.grep_pattern }}" ]; then
+            GREP_FLAG="--grep ${{ inputs.grep_pattern }}"
+          fi
+          npx playwright test --project=${{ matrix.project }} $GREP_FLAG
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report-${{ matrix.project }}
+          path: apps/web/playwright-report/
+          retention-days: 14
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-traces-${{ matrix.project }}
+          path: apps/web/test-results/
+          retention-days: 14
