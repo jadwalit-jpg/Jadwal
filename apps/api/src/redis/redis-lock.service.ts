@@ -88,4 +88,73 @@ export class RedisLockService implements OnModuleInit {
     const unit = params.unitNumber ?? 'all';
     return `booking_lock:${params.activityId}:${params.date}:${params.slot}:${unit}`;
   }
+
+  /**
+   * Cron leader-election lock. Differs from acquire() in two ways:
+   *
+   * 1. Fail-CLOSED on Redis errors. Cron leader-election needs guaranteed
+   *    deduplication: if Redis is unreachable we MUST NOT run the cron on
+   *    every pod (the whole point of the lock). Skipping an iteration is
+   *    safe because the cron runs again at the next interval. Contrast with
+   *    booking-slot acquire() which is fail-OPEN — Postgres Serializable is
+   *    the authoritative guard there, so a Redis outage is allowed to
+   *    degrade lock-as-optimization gracefully.
+   *
+   * 2. Returns boolean (acquired or not), since cron callers don't need the
+   *    lock token — withLeaderLock manages release internally.
+   */
+  private async tryAcquireForLeader(key: string, ttlMs: number): Promise<string | null> {
+    const token = crypto.randomUUID();
+    try {
+      const result = await this.redis.set(key, token, 'PX', ttlMs, 'NX');
+      return result === 'OK' ? token : null;
+    } catch (err: unknown) {
+      const name = err instanceof Error ? err.name : 'UnknownError';
+      this.logger.error(`Redis leader-lock acquire failed (${name}) — skipping cron iteration`);
+      return null;
+    }
+  }
+
+  /**
+   * Run `fn` only if this pod wins the leader-election for `lockKey`.
+   *
+   * When auto-scaling lifts the API service to N tasks, every task hits the
+   * same @Cron() trigger. Without leader-election the work runs N times,
+   * duplicating audit logs / loyalty points / coupon refunds. This helper
+   * wraps the cron body so exactly one task wins each iteration.
+   *
+   * Returns the function's result on the winning pod, or null on losers.
+   *
+   * TTL guidance: pick max(2× cron interval, expected longest-run × 2). The
+   * lock auto-expires before the next scheduled iteration so a crashed
+   * leader doesn't permanently silence the cron. Releasing in finally
+   * means a happy-path completion frees the lock immediately.
+   *
+   * Failure modes:
+   *   - Redis unreachable     → acquire returns null → cron skipped this iteration
+   *     (will retry next interval). This is the WHOLE point of fail-closed —
+   *     better to miss one cron tick than run it on every pod.
+   *   - fn throws             → lock released in finally → next pod can take
+   *     over after the cron's interval (or sooner if TTL is short).
+   *   - Pod crashes mid-cron  → lock auto-expires after ttlMs → another pod
+   *     can take over at the next iteration.
+   */
+  async withLeaderLock<T>(
+    lockKey: string,
+    ttlMs: number,
+    fn: () => Promise<T>,
+  ): Promise<T | null> {
+    const token = await this.tryAcquireForLeader(lockKey, ttlMs);
+    if (token === null) {
+      // Another pod won, or Redis is down. Either way: silently skip.
+      // Don't log per-skip — at scale this fires every 5 min on every
+      // non-leader pod and would flood CloudWatch.
+      return null;
+    }
+    try {
+      return await fn();
+    } finally {
+      await this.release(lockKey, token);
+    }
+  }
 }
