@@ -294,6 +294,7 @@ export default function AdminVendorsPage() {
                   return (
                     <React.Fragment key={vendor.id}>
                       <tr
+                        data-testid={`vendor-row-${vendor.id}`}
                         onClick={() => setExpandedIds((prev) => { const n = new Set(prev); if (n.has(vendor.id)) n.delete(vendor.id); else n.add(vendor.id); return n; })}
                         className="hover:bg-gray-50/50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer"
                       >
@@ -457,6 +458,7 @@ export default function AdminVendorsPage() {
                                     {vendor.status !== 'SUSPENDED' ? (
                                       <button
                                         type="button"
+                                        data-testid={`vendor-suspend-${vendor.id}`}
                                         onClick={(e) => { e.stopPropagation(); statusMutation.mutate({ vendorId: vendor.id, status: 'SUSPENDED' }); }}
                                         disabled={statusMutation.isPending}
                                         className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/50 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors cursor-pointer"
@@ -467,6 +469,7 @@ export default function AdminVendorsPage() {
                                     ) : (
                                       <button
                                         type="button"
+                                        data-testid={`vendor-activate-${vendor.id}`}
                                         onClick={(e) => { e.stopPropagation(); statusMutation.mutate({ vendorId: vendor.id, status: 'ACTIVE' }); }}
                                         disabled={statusMutation.isPending}
                                         className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-colors cursor-pointer"
@@ -477,6 +480,7 @@ export default function AdminVendorsPage() {
                                     )}
                                     <button
                                       type="button"
+                                      data-testid={`vendor-delete-${vendor.id}`}
                                       onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ id: vendor.id, name: vendor.businessNameEn }); }}
                                       className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800/50 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors cursor-pointer"
                                     >
@@ -540,6 +544,7 @@ export default function AdminVendorsPage() {
               </button>
               <button
                 type="button"
+                data-testid="vendor-delete-confirm"
                 onClick={() => deleteMutation.mutate(deleteConfirm.id)}
                 disabled={deleteMutation.isPending}
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 cursor-pointer"

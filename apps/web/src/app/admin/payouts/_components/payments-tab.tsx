@@ -356,6 +356,7 @@ export default function PaymentsTab() {
           {selected.size > 0 && (
             <button
               type="button"
+              data-testid="mark-paid-button"
               onClick={() => setMarkPaidOpen(true)}
               disabled={markPaidMutation.isPending}
               className="flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition-all"
@@ -438,6 +439,7 @@ export default function PaymentsTab() {
                   return (
                     <tr
                       key={payment.id}
+                      data-testid={`payment-row-${payment.id}`}
                       className={`transition-colors ${
                         isWanasa
                           ? 'bg-purple-50/30 dark:bg-purple-900/5 hover:bg-purple-50/50 dark:hover:bg-purple-900/10'
@@ -759,6 +761,7 @@ export default function PaymentsTab() {
                   <span className="ms-1 text-red-500">*</span>
                   <input
                     type="text"
+                    data-testid="bank-transfer-ref-input"
                     value={bankTransferRef}
                     onChange={(e) => setBankTransferRef(e.target.value)}
                     placeholder="e.g. SWIFT-MT103-XYZ-0099"
@@ -785,6 +788,7 @@ export default function PaymentsTab() {
                 </button>
                 <button
                   type="button"
+                  data-testid="mark-paid-confirm"
                   onClick={() => markPaidMutation.mutate({
                     paymentIds: Array.from(selected),
                     bankTransferRef: trimmedRef,
