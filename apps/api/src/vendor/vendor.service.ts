@@ -1005,7 +1005,14 @@ export class VendorService {
     // requests until the window passes. Existing vendors who never
     // touched the field since the column landed have NULL, which is
     // treated as "no recent change" — correct behaviour.
-    const cooldownDays = Math.max(0, Number(process.env.PAYOUT_BANK_DETAILS_COOLDOWN_DAYS ?? 7));
+    // NaN-safe parse: a malformed env value (`"abc"`, `""`) used to silently
+    // disable the cool-down because Number("abc") → NaN → `> 0` is false.
+    // Now: only honour the env if it parses to a finite non-negative number;
+    // otherwise fall back to the 7-day default. Setting the env explicitly
+    // to `0` is still allowed (intentional disable for tests).
+    const cooldownEnv = process.env.PAYOUT_BANK_DETAILS_COOLDOWN_DAYS;
+    const cooldownParsed = cooldownEnv === undefined ? 7 : Number(cooldownEnv);
+    const cooldownDays = Number.isFinite(cooldownParsed) && cooldownParsed >= 0 ? cooldownParsed : 7;
     if (cooldownDays > 0 && vendorRow.bankDetailsChangedAt) {
       const cooldownMs = cooldownDays * 24 * 60 * 60 * 1000;
       const elapsedMs = Date.now() - vendorRow.bankDetailsChangedAt.getTime();
