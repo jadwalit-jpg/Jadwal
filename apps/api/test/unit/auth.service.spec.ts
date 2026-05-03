@@ -18,12 +18,13 @@ import { UsersService } from '../../src/users/users.service';
 import { SecurityLoggerService } from '../../src/common/services/security-logger.service';
 import { AuditLoggerService } from '../../src/common/services/audit-logger.service';
 import { EmailService } from '../../src/email/email.service';
+import { EmailQuotaService } from '../../src/email/email-quota.service';
 import { SmsService } from '../../src/sms/sms.service';
 import { NotificationService } from '../../src/common/services/notification.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import {
   makeJwtMock, makeConfigMock, makeUsersMock, makeSecurityLoggerMock,
-  makeAuditLoggerMock, makeEmailMock, makeSmsMock, makeNotificationMock,
+  makeAuditLoggerMock, makeEmailMock, makeEmailQuotaMock, makeSmsMock, makeNotificationMock,
   makeResponseMock, makeRequestMock,
 } from '../mocks/auth-deps.mock';
 
@@ -37,6 +38,7 @@ async function buildSut(configOverrides: Record<string, string> = {}) {
   const sec = makeSecurityLoggerMock();
   const audit = makeAuditLoggerMock();
   const email = makeEmailMock();
+  const emailQuota = makeEmailQuotaMock();
   const sms = makeSmsMock();
   const notif = makeNotificationMock();
 
@@ -50,6 +52,7 @@ async function buildSut(configOverrides: Record<string, string> = {}) {
       { provide: SecurityLoggerService, useValue: sec },
       { provide: AuditLoggerService,    useValue: audit },
       { provide: EmailService,          useValue: email },
+      { provide: EmailQuotaService,     useValue: emailQuota },
       { provide: SmsService,            useValue: sms },
       { provide: NotificationService,   useValue: notif },
     ],
@@ -57,7 +60,7 @@ async function buildSut(configOverrides: Record<string, string> = {}) {
 
   return {
     sut: moduleRef.get(AuthService),
-    prisma, jwt, config, users, sec, audit, email, sms, notif,
+    prisma, jwt, config, users, sec, audit, email, emailQuota, sms, notif,
   };
 }
 
@@ -696,6 +699,112 @@ describe('AuthService.resetPassword', () => {
     ctx.prisma._client.user.findFirst.mockResolvedValueOnce(null);
     await expect(ctx.sut.resetPassword('a'.repeat(64), 'NewPw123'))
       .rejects.toThrow('Invalid or expired reset link');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// changePassword (authenticated rotation)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('AuthService.changePassword', () => {
+  let ctx: Awaited<ReturnType<typeof buildSut>>;
+  beforeEach(async () => { ctx = await buildSut(); });
+
+  test('rejects when user no longer exists (UnauthorizedException)', async () => {
+    ctx.prisma._client.user.findUnique.mockResolvedValueOnce(null);
+    await expect(ctx.sut.changePassword('u1', 'OldPw1!', 'NewPw1!', 'rt', undefined))
+      .rejects.toThrow(UnauthorizedException);
+  });
+
+  test('rejects OAuth-only account (null password)', async () => {
+    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
+      id: 'u1', email: 'a@b.com', fullName: 'A', password: null,
+    });
+    await expect(ctx.sut.changePassword('u1', 'anything', 'NewPw1!', 'rt', undefined))
+      .rejects.toThrow(BadRequestException);
+  });
+
+  test('rejects wrong current password (BadRequestException) + logs PASSWORD_CHANGE_FAILED', async () => {
+    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
+      id: 'u1', email: 'a@b.com', fullName: 'A',
+      password: await bcrypt.hash('correct-current', 4),
+    });
+    await expect(ctx.sut.changePassword('u1', 'wrong-current', 'NewPw1!', 'rt', undefined))
+      .rejects.toThrow(BadRequestException);
+    expect(ctx.sec.log).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'PASSWORD_CHANGE_FAILED', userId: 'u1',
+    }));
+  });
+
+  test('rejects when new password equals current (BadRequestException)', async () => {
+    const samePw = 'SameAsBefore1!';
+    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
+      id: 'u1', email: 'a@b.com', fullName: 'A',
+      password: await bcrypt.hash(samePw, 4),
+    });
+    await expect(ctx.sut.changePassword('u1', samePw, samePw, 'rt', undefined))
+      .rejects.toThrow(/differ from your current/i);
+  });
+
+  test('success → updates password, revokes OTHER refresh tokens (keeps current), logs PASSWORD_CHANGE_COMPLETED', async () => {
+    const oldPw = 'OldPw1Strong!';
+    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
+      id: 'u1', email: 'a@b.com', fullName: 'A',
+      password: await bcrypt.hash(oldPw, 4),
+    });
+
+    // Capture the inner $transaction so we can assert on the calls it makes.
+    const txCalls: Array<{ tx: any }> = [];
+    ctx.prisma._client.$transaction.mockImplementationOnce(async (fn: any) => {
+      const tx = {
+        user: { update: jest.fn().mockResolvedValue(undefined) },
+        refreshToken: { deleteMany: jest.fn().mockResolvedValue({ count: 2 }) },
+      };
+      txCalls.push({ tx });
+      return fn(tx);
+    });
+
+    const result = await ctx.sut.changePassword('u1', oldPw, 'NewPw1Strong!', 'current-refresh-raw', undefined);
+
+    expect(result).toEqual(expect.objectContaining({ message: expect.stringMatching(/changed successfully/i) }));
+    const { tx } = txCalls[0];
+    expect(tx.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'u1' },
+      data: expect.objectContaining({
+        password: expect.any(String),
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      }),
+    }));
+    // refresh tokens deleteMany must scope to userId AND exclude current token hash
+    expect(tx.refreshToken.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ userId: 'u1', tokenHash: expect.objectContaining({ not: expect.any(String) }) }),
+    }));
+    expect(ctx.sec.log).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'PASSWORD_CHANGE_COMPLETED', userId: 'u1',
+    }));
+  });
+
+  test('missing refresh-token cookie → revokes ALL sessions (no tokenHash filter)', async () => {
+    const oldPw = 'OldPw1Strong!';
+    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
+      id: 'u1', email: 'a@b.com', fullName: 'A',
+      password: await bcrypt.hash(oldPw, 4),
+    });
+
+    let capturedWhere: any = null;
+    ctx.prisma._client.$transaction.mockImplementationOnce(async (fn: any) => {
+      const tx = {
+        user: { update: jest.fn().mockResolvedValue(undefined) },
+        refreshToken: { deleteMany: jest.fn((args: any) => { capturedWhere = args.where; return Promise.resolve({ count: 5 }); }) },
+      };
+      return fn(tx);
+    });
+
+    await ctx.sut.changePassword('u1', oldPw, 'NewPw1Strong!', undefined, undefined);
+    // No `tokenHash: { not: ... }` filter when current refresh token is absent —
+    // every session is revoked, caller will need to log back in.
+    expect(capturedWhere).toEqual({ userId: 'u1' });
   });
 });
 

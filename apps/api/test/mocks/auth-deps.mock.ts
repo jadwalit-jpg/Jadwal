@@ -54,11 +54,22 @@ export function makeAuditLoggerMock() {
 
 export function makeEmailMock() {
   return {
-    sendEmailVerification:   jest.fn().mockResolvedValue(undefined),
-    sendPasswordReset:       jest.fn().mockResolvedValue(undefined),
-    sendBookingConfirmation: jest.fn().mockResolvedValue(undefined),
-    sendBookingCancellation: jest.fn().mockResolvedValue(undefined),
-    sendVendorWelcome:       jest.fn().mockResolvedValue(undefined),
+    sendEmailVerification:        jest.fn().mockResolvedValue(undefined),
+    sendPasswordReset:            jest.fn().mockResolvedValue(undefined),
+    sendBookingConfirmation:      jest.fn().mockResolvedValue(undefined),
+    sendBookingCancellation:      jest.fn().mockResolvedValue(undefined),
+    sendVendorWelcome:            jest.fn().mockResolvedValue(undefined),
+    sendPasswordChangedNotification: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+// EmailQuotaService — defaults to "always allowed" so existing tests
+// that don't care about quota behaviour pass through unchanged. Specs
+// that exercise the quota path can override the return value per test.
+export function makeEmailQuotaMock() {
+  return {
+    tryConsume:      jest.fn().mockResolvedValue(true),
+    tryConsumePerIp: jest.fn().mockResolvedValue(true),
   };
 }
 

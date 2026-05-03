@@ -34,6 +34,7 @@ function makeAuthSvcMock() {
     handleGoogleAuth:   jest.fn().mockResolvedValue({ id: 'u1', role: 'CUSTOMER' }),
     forgotPassword:     jest.fn().mockResolvedValue({ message: 'ok' }),
     resetPassword:      jest.fn().mockResolvedValue({ message: 'ok' }),
+    changePassword:     jest.fn().mockResolvedValue({ message: 'Password changed successfully. Other sessions have been signed out.' }),
     sendPhoneOtp:       jest.fn().mockResolvedValue({ sent: true }),
     verifyPhoneOtp:     jest.fn().mockResolvedValue({ verified: true }),
     getTokenHash:       jest.fn((t: string) => `hash(${t})`),
@@ -60,11 +61,12 @@ async function buildCtrl() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('AuthController — delegation', () => {
-  test('POST /auth/register → registerAndLogin with exact DTO', async () => {
+  test('POST /auth/register → registerAndLogin with exact DTO + req (for per-IP quota)', async () => {
     const { ctrl, authSvc } = await buildCtrl();
     const dto = { fullName: 'N', email: 'n@b.com', password: 'Pw123', phone: '+974500' };
-    await ctrl.register(dto as any);
-    expect(authSvc.registerAndLogin).toHaveBeenCalledWith(dto);
+    const req = makeRequestMock();
+    await ctrl.register(dto as any, req as any);
+    expect(authSvc.registerAndLogin).toHaveBeenCalledWith(dto, req);
   });
 
   test('POST /auth/register/vendor → registerVendor with DTO', async () => {
@@ -137,16 +139,42 @@ describe('AuthController — delegation', () => {
     expect(authSvc.verifyEmail).toHaveBeenCalledWith(token, res, req);
   });
 
-  test('POST /auth/resend-verification → delegates email only', async () => {
+  test('POST /auth/resend-verification → delegates email + req (for per-IP quota)', async () => {
     const { ctrl, authSvc } = await buildCtrl();
-    await ctrl.resendVerification({ email: 'a@b.com' } as any);
-    expect(authSvc.resendVerification).toHaveBeenCalledWith('a@b.com');
+    const req = makeRequestMock();
+    await ctrl.resendVerification({ email: 'a@b.com' } as any, req as any);
+    expect(authSvc.resendVerification).toHaveBeenCalledWith('a@b.com', req);
   });
 
-  test('POST /auth/forgot-password → delegates email', async () => {
+  test('POST /auth/forgot-password → delegates email + req (for per-IP quota)', async () => {
     const { ctrl, authSvc } = await buildCtrl();
-    await ctrl.forgotPassword({ email: 'a@b.com' } as any);
-    expect(authSvc.forgotPassword).toHaveBeenCalledWith('a@b.com');
+    const req = makeRequestMock();
+    await ctrl.forgotPassword({ email: 'a@b.com' } as any, req as any);
+    expect(authSvc.forgotPassword).toHaveBeenCalledWith('a@b.com', req);
+  });
+
+  test('POST /auth/change-password → delegates user.id + currentPw + newPw + refreshToken + req', async () => {
+    const { ctrl, authSvc } = await buildCtrl();
+    const req = makeRequestMock() as any;
+    req.cookies = { RefreshToken: 'rtoken' };
+    await ctrl.changePassword(
+      { id: 'u1' } as any,
+      { currentPassword: 'OldPw1!', newPassword: 'NewPw1!' } as any,
+      req,
+    );
+    expect(authSvc.changePassword).toHaveBeenCalledWith('u1', 'OldPw1!', 'NewPw1!', 'rtoken', req);
+  });
+
+  test('POST /auth/change-password → forwards undefined refreshToken when cookie missing', async () => {
+    const { ctrl, authSvc } = await buildCtrl();
+    const req = makeRequestMock() as any;
+    req.cookies = {};
+    await ctrl.changePassword(
+      { id: 'u1' } as any,
+      { currentPassword: 'OldPw1!', newPassword: 'NewPw1!' } as any,
+      req,
+    );
+    expect(authSvc.changePassword).toHaveBeenCalledWith('u1', 'OldPw1!', 'NewPw1!', undefined, req);
   });
 
   test('POST /auth/reset-password → delegates token + newPassword', async () => {
