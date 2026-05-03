@@ -49,6 +49,25 @@ env:
   API_PROXY_TARGET: http://localhost:4000/api
   E2E_API_URL: http://localhost:4000/api
   NODE_ENV: test
+  # API boot dependencies — all of these are getOrThrow() calls that
+  # fail at app start if missing. Values are placeholders only valid
+  # for the ephemeral CI runner; real prod values come from ECS task-
+  # definition env, not this workflow.
+  API_URL: http://localhost:4000
+  APP_URL: http://localhost:4000
+  FRONTEND_URL: http://localhost:3000
+  GOOGLE_CLIENT_ID: ci-test-google-client-id
+  GOOGLE_CLIENT_SECRET: ci-test-google-client-secret
+  GOOGLE_CALLBACK_URL: http://localhost:4000/api/auth/google/callback
+  PAY2M_MERCHANT_ID: CI-TEST-MERCHANT
+  PAY2M_MERCHANT_NAME: CI Test Merchant
+  PAY2M_SECURED_KEY: ci-test-pay2m-secured-key-32chars-min-len
+  PAY2M_SECRET_WORD: ci-test-pay2m-secret-word
+  PAY2M_RETURN_URL: http://localhost:3000/payment/callback
+  PAY2M_API_URL: http://localhost:4000/mock-pay2m
+  VAPID_PUBLIC_KEY: ci-test-vapid-public-not-a-real-key-do-not-use
+  VAPID_PRIVATE_KEY: ci-test-vapid-private-not-a-real-key-do-not-use
+  VAPID_SUBJECT: mailto:ci@jadwal.qa
   # Disable telemetry / analytics so CI runs are quiet.
   NEXT_TELEMETRY_DISABLED: 1
   PLAYWRIGHT_BROWSERS_PATH: 0
