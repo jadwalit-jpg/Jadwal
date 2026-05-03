@@ -56,6 +56,10 @@ env:
   API_URL: http://localhost:4000
   APP_URL: http://localhost:4000
   FRONTEND_URL: http://localhost:3000
+  # CORS_ORIGIN is force-unwrapped at apps/api/src/main.ts:215 — without
+  # it the API crashes at boot with "Cannot read properties of undefined
+  # (reading 'split')". Comma-separated list of allowed origins.
+  CORS_ORIGIN: http://localhost:3000
   GOOGLE_CLIENT_ID: ci-test-google-client-id
   GOOGLE_CLIENT_SECRET: ci-test-google-client-secret
   GOOGLE_CALLBACK_URL: http://localhost:4000/api/auth/google/callback
