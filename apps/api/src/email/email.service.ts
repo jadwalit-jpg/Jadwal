@@ -7,6 +7,7 @@ import { passwordResetTemplate } from './templates/password-reset';
 import { passwordChangedTemplate } from './templates/password-changed';
 import { emailVerificationTemplate } from './templates/email-verification';
 import { vendorWelcomeTemplate } from './templates/vendor-welcome';
+import { EmailSuppressionService } from './email-suppression.service';
 
 /**
  * Email Service — AWS SES integration.
@@ -23,11 +24,20 @@ export class EmailService {
   private readonly enabled: boolean;
   private readonly appUrl: string;
   private readonly sesClient: SESClient | null;
+  // Optional — when set, every SendEmailCommand carries this configuration
+  // set name. The set is wired in AWS to publish Bounce/Complaint events
+  // to two SNS topics; without it, the bounce/complaint feedback loop is
+  // a no-op even though SES still sends the email.
+  private readonly configSetName: string | undefined;
 
-  constructor(private config: ConfigService) {
+  constructor(
+    private config: ConfigService,
+    private suppressions: EmailSuppressionService,
+  ) {
     this.from = this.config.get('EMAIL_FROM', 'noreply@jadwal.qa');
     this.enabled = this.config.get('EMAIL_ENABLED', 'false') === 'true';
     this.appUrl = this.config.getOrThrow<string>('APP_URL');
+    this.configSetName = this.config.get<string>('SES_CONFIG_SET_NAME');
 
     // Defence-in-depth: never let production boot with email in log-only mode
     if (!this.enabled && process.env.NODE_ENV === 'production') {
@@ -209,6 +219,18 @@ export class EmailService {
   private async send(to: string, subject: string, template: string, _data: any): Promise<boolean> {
     const masked = this.maskEmail(to);
 
+    // Suppression check — short-circuit before rendering or hitting SES.
+    // SES bounce/complaint events populate this list via the SNS webhook
+    // at /api/webhooks/ses-events. Returns `true` (success-shaped) so
+    // callers can't distinguish a suppressed recipient from a real send
+    // — preserves anti-enumeration on /forgot-password and friends.
+    // Fail-open inside the service if Prisma errors.
+    const suppressed = await this.suppressions.isSuppressed(to);
+    if (suppressed) {
+      this.logger.warn(`Email to ${masked} dropped — recipient suppressed (${template})`);
+      return true;
+    }
+
     // Render the HTML template (always, even in dev — ensures templates compile correctly)
     const html = this.renderTemplate(template, _data);
     // SECURITY — DO NOT LOG `html` UNDER ANY CIRCUMSTANCES.
@@ -235,6 +257,20 @@ export class EmailService {
           Subject: { Data: subject },
           Body: { Html: { Data: html } },
         },
+        // ConfigurationSetName is what causes SES to publish bounce /
+        // complaint / reject events to the SNS topics that feed the
+        // suppression list. Without this attribute, SES sends the email
+        // but emits no feedback events — the loop is a no-op. Optional
+        // (undefined) so dev / test environments without the set still
+        // work.
+        ...(this.configSetName ? { ConfigurationSetName: this.configSetName } : {}),
+        // Tags surface in CloudWatch metrics so we can break down sends
+        // by environment + template (e.g. spike on `password-reset` in
+        // prod = telltale of a forgot-password attack).
+        Tags: [
+          { Name: 'env', Value: process.env.NODE_ENV ?? 'unknown' },
+          { Name: 'template', Value: template },
+        ],
       });
       await this.sesClient.send(command);
 

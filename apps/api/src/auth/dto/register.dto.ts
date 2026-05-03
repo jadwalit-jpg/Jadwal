@@ -1,6 +1,7 @@
 import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { IsStrongPassword } from '../../common/validators/password-strength';
+import { IsNotDisposableEmail } from '../../common/validators/disposable-email';
 
 export class RegisterDto {
   @IsString()
@@ -11,6 +12,7 @@ export class RegisterDto {
 
   @IsEmail()
   @MaxLength(254)
+  @IsNotDisposableEmail()
   @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
   email!: string;
 
@@ -35,4 +37,16 @@ export class RegisterDto {
   @Matches(/^\+?[0-9\s\-()]{7,20}$/, { message: 'Invalid phone number' })
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   phone?: string;
+
+  // Honeypot field. Real users never see or fill this — it's hidden by CSS
+  // off-screen on the frontend (apps/web/src/app/register/register-form.tsx).
+  // Naive scraper bots that auto-fill every input WILL fill it. The service
+  // treats any non-empty value as "this is a bot" and silently returns the
+  // same anti-enumeration success response WITHOUT creating a User row.
+  // Field is whitelisted in the DTO (otherwise the global ValidationPipe
+  // forbidNonWhitelisted would reject the request and tip off the bot).
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  website?: string;
 }

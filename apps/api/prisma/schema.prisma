@@ -112,6 +112,25 @@ model SecurityLog {
   @@map("security_logs")
 }
 
+// SES bounce/complaint suppression list. Populated by the SNS webhook
+// at POST /webhooks/ses-events when AWS SES reports a permanent bounce
+// or a complaint. Future EmailService.send() calls hash the recipient
+// and short-circuit if a row exists here. Emails are stored as SHA-256
+// hashes (not plaintext) — same PII discipline as Redis quota keys, so
+// a DB dump can't be used as a recipient list.
+model EmailSuppression {
+  id          String   @id @default(uuid())
+  emailHash   String   @unique // sha256(lowercased + trimmed email)
+  reason      String   // "bounce" | "complaint" | "reject" | "manual"
+  bounceType  String?  // SES sub-classification: "Permanent" / "Transient" / "Undetermined"
+  createdAt   DateTime @default(now())
+  notes       String?  // optional admin/operator note (e.g. why a manual suppression was added)
+
+  @@index([reason])
+  @@index([createdAt])
+  @@map("email_suppressions")
+}
+
 enum Role {
   CUSTOMER
   VENDOR

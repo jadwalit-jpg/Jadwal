@@ -65,8 +65,8 @@ export class AuthController {
 
   @Post('register/vendor')
   @Throttle(RATE_LIMIT_STRICT)
-  async registerVendor(@Body() dto: RegisterVendorDto) {
-    return this.authService.registerVendor(dto);
+  async registerVendor(@Body() dto: RegisterVendorDto, @Req() req: Request) {
+    return this.authService.registerVendor(dto, req);
   }
 
   @Post('login')

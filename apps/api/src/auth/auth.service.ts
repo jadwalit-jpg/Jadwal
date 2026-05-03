@@ -363,8 +363,25 @@ export class AuthService {
 
   // ─── Register (customer) — sends verification email, does NOT issue cookies ─
 
-  async registerAndLogin(data: { fullName: string; email: string; password: string; phone?: string }, req?: Request) {
+  async registerAndLogin(data: { fullName: string; email: string; password: string; phone?: string; website?: string }, req?: Request) {
     const db = this.prisma.client;
+
+    // Honeypot trip — `website` is a hidden CSS-offscreen field (see
+    // register-form.tsx). Real users never see or fill it. A non-empty
+    // value here means a naive scraper auto-filled every input. Return
+    // the SAME anti-enumeration response as a real registration would
+    // (`{pending:true, email}`) so the bot can't tell it was caught;
+    // skip user creation and email send entirely.
+    if (data.website && data.website.trim().length > 0) {
+      const { ip: botIp } = this.extractClientInfo(req);
+      await this.securityLogger.log({
+        event: 'LOGIN_FAILED',
+        email: data.email,
+        ip: botIp,
+        details: 'Honeypot tripped on /auth/register',
+      });
+      return { pending: true, email: data.email };
+    }
 
     // Pre-check email uniqueness → clean 409 instead of raw Prisma P2002
     const existingEmail = await db.user.findUnique({ where: { email: data.email }, select: { id: true } });
@@ -566,8 +583,22 @@ export class AuthService {
 
   // ─── Register vendor ───────────────────────────────────────────────────────
 
-  async registerVendor(dto: RegisterVendorDto) {
+  async registerVendor(dto: RegisterVendorDto, req?: Request) {
     const db = this.prisma.client;
+
+    // Honeypot — see registerAndLogin for full rationale. Hidden field on
+    // the vendor signup page; bots fill it, real users don't. Silent
+    // fake-success to avoid telling the bot we caught them.
+    if (dto.website && dto.website.trim().length > 0) {
+      const { ip: botIp } = this.extractClientInfo(req);
+      await this.securityLogger.log({
+        event: 'LOGIN_FAILED',
+        email: dto.email,
+        ip: botIp,
+        details: 'Honeypot tripped on /auth/register/vendor',
+      });
+      return { message: 'Vendor application submitted', email: dto.email };
+    }
 
     const existingUser = await db.user.findUnique({ where: { email: dto.email }, select: { id: true } });
     if (existingUser) throw new ConflictException('Email already registered');

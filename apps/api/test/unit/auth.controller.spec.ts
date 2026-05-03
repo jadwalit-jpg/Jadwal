@@ -69,11 +69,12 @@ describe('AuthController — delegation', () => {
     expect(authSvc.registerAndLogin).toHaveBeenCalledWith(dto, req);
   });
 
-  test('POST /auth/register/vendor → registerVendor with DTO', async () => {
+  test('POST /auth/register/vendor → registerVendor with DTO + req (for honeypot IP logging)', async () => {
     const { ctrl, authSvc } = await buildCtrl();
     const dto = { email: 'v@b.com' } as any;
-    await ctrl.registerVendor(dto);
-    expect(authSvc.registerVendor).toHaveBeenCalledWith(dto);
+    const req = makeRequestMock();
+    await ctrl.registerVendor(dto, req as any);
+    expect(authSvc.registerVendor).toHaveBeenCalledWith(dto, req);
   });
 
   test('POST /auth/login → loginWithCheck(email, pw, response, req)', async () => {

@@ -37,6 +37,12 @@ export default function RegisterForm() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [phone, setPhone] = useState('');
+  // Honeypot — hidden CSS-offscreen + aria-hidden + autocomplete=off so
+  // password managers, screen readers, and humans never touch it. Naive
+  // bots that auto-fill every input WILL fill it, and the backend treats
+  // any non-empty value as bot signup → silent fake-success (no user row
+  // created, same response shape as anti-enumeration login flow).
+  const [website, setWebsite] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingEmail, setPendingEmail] = useState('');
@@ -80,6 +86,10 @@ export default function RegisterForm() {
         email: sanitize(email),
         password,
         phone: phone ? sanitize(phone) : undefined,
+        // Honeypot — empty for humans (input is hidden + aria-hidden so
+        // it can't be tabbed into or filled by password managers); naive
+        // bots that auto-fill every input will populate it.
+        website: website || undefined,
       });
       setPendingEmail(sanitize(email));
     } catch (err: unknown) {
@@ -257,6 +267,23 @@ export default function RegisterForm() {
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+          />
+        </div>
+
+        {/* Honeypot — invisible to humans, off-screen + aria-hidden + tabIndex=-1
+            + autocomplete=off so password managers + screen readers skip it.
+            Naive bots that auto-fill every input will populate it; the backend
+            treats any non-empty value as a silent bot signup. */}
+        <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', overflow: 'hidden' }}>
+          <label htmlFor="register-website">Leave this field blank</label>
+          <input
+            id="register-website"
+            name="website"
+            type="text"
+            tabIndex={-1}
+            autoComplete="off"
+            value={website}
+            onChange={(e) => setWebsite(e.target.value)}
           />
         </div>
 
