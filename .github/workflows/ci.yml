@@ -1,3 +1,10 @@
+# ⚠ OPERATOR WARNING — secrets-in-logs:
+#   Do NOT add `set -x`, `env`, `printenv`, or `echo $SECRET_*` for
+#   debugging. GitHub Actions logs are visible to anyone with read
+#   access to the repo, and a single accidental dump leaks credentials
+#   irreversibly. Mask with `::add-mask::` or print only fingerprints
+#   (length, first 4 chars) when triaging a step.
+
 name: CI/CD
 
 on:

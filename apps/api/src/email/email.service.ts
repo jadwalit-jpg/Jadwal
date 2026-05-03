@@ -201,11 +201,18 @@ export class EmailService {
 
     // Render the HTML template (always, even in dev — ensures templates compile correctly)
     const html = this.renderTemplate(template, _data);
-    // SECURITY: Never log html content — only log the length for debugging
+    // SECURITY — DO NOT LOG `html` UNDER ANY CIRCUMSTANCES.
+    // Rendered HTML embeds verification links, password-reset links, OTP
+    // codes, and one-time tokens directly in <a href="…?token=…"> tags.
+    // Logging it pushes those tokens into CloudWatch / Sentry / stdout
+    // pipelines, where they survive past their single-use window if any
+    // sink retains data. Only `html.length` is safe to emit. If you need
+    // to debug template output locally, use `EMAIL_ENABLED=false` + a
+    // local file dump GUARDED by `process.env.NODE_ENV !== 'production'`.
     this.logger.debug(`Rendered template="${template}" | html_length=${html.length}`);
 
     if (!this.enabled || !this.sesClient) {
-      // NEVER log template data — it can contain verification tokens, reset links, OTP codes
+      // NEVER log `_data` — it carries verification tokens, reset links, OTP codes.
       this.logger.debug(`[DEV] Email to ${masked} | template=${template} | subject=${subject}`);
       return true;
     }

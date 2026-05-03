@@ -68,32 +68,22 @@ export function setup() {
   };
 }
 
-function pickFutureSlot(activityId) {
-  // Walk the next 14 days looking for an available slot. Returns first
-  // hit. Real users do something similar — they pick the first day with
-  // capacity, not a random one. This keeps the test pattern realistic
-  // and avoids repeated 409s on a fully-booked far-future date.
-  for (let offset = 1; offset <= 14; offset++) {
-    const d = new Date();
-    d.setUTCDate(d.getUTCDate() + offset);
-    const date = d.toISOString().slice(0, 10);
-    const res = http.get(
-      `${baseUrl()}/api/availability?activityId=${activityId}&date=${date}`,
-      { tags: { endpoint: 'availability' } },
-    );
-    if (res.status !== 200) continue;
-    let slots;
-    try {
-      const body = res.json();
-      slots = Array.isArray(body) ? body : body?.slots;
-    } catch {
-      continue;
-    }
-    if (slots && slots.length > 0) {
-      return { date, slot: slots[Math.floor(Math.random() * slots.length)] };
-    }
-  }
-  return null;
+function pickFutureDateAndSlot() {
+  // Pick a random date 1–60 days out and a random slotTime in the
+  // activity's typical 08:00–22:00 window. We don't probe availability
+  // first — the booking endpoint itself returns 409 on capacity exhaust,
+  // which is the realistic failure mode at peak. This keeps the script
+  // resilient to the availability response shape (which is allowed to
+  // evolve without breaking the load test).
+  const dayOffset = 1 + Math.floor(Math.random() * 60);
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + dayOffset);
+  const checkInDate = d.toISOString().slice(0, 10);
+  // Hour in [08..19] on the hour — leaves headroom for a 2-hour slot
+  // before the 22:00 checkout window closes.
+  const hour = 8 + Math.floor(Math.random() * 12);
+  const slotTime = `${String(hour).padStart(2, '0')}:00`;
+  return { checkInDate, slotTime };
 }
 
 export default function (data) {
@@ -101,25 +91,15 @@ export default function (data) {
   // across subsequent requests in the same iteration.
   login(data.email, data.password);
 
-  const slot = pickFutureSlot(data.activityId);
-  if (!slot) {
-    // No availability anywhere in the next 2 weeks — log + skip; this
-    // means the seed activity is undersized, which is our problem to fix
-    // before claiming the run is meaningful.
-    bookingErrors.add(true);
-    return;
-  }
-
-  const startDt = slot.slot.startDatetime || `${slot.date}T10:00:00.000Z`;
-  const endDt = slot.slot.endDatetime || `${slot.date}T12:00:00.000Z`;
+  const { checkInDate, slotTime } = pickFutureDateAndSlot();
 
   const start = Date.now();
   const res = http.post(
     `${baseUrl()}/api/bookings`,
     JSON.stringify({
       activityId: data.activityId,
-      startDatetime: startDt,
-      endDatetime: endDt,
+      checkInDate,
+      slotTime,
       guests: 1,
       idempotencyKey: idempotencyKey(),
     }),

@@ -27,11 +27,16 @@ function VerifyEmailContent() {
 
     api.get(`/auth/verify-email?token=${encodeURIComponent(token)}`)
       .then(async () => {
+        // Strip the consumed token from the URL so it doesn't sit in
+        // browser history / window.referer / Sentry breadcrumbs after
+        // success. Token is single-use + short-lived, but defense-in-depth.
+        router.replace('/verify-email');
         await checkAuth();
         setStatus('success');
         setTimeout(() => router.push('/'), 2500);
       })
       .catch((err: unknown) => {
+        router.replace('/verify-email');
         setStatus('error');
         setErrorMsg(getApiError(err, 'Verification failed. The link may have expired.'));
       });
