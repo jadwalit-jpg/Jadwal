@@ -1,5 +1,5 @@
 {
-  "family": "jadwal-seed-e2e",
+  "family": "jadwal-cleanup-e2e",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
 
@@ -11,20 +11,15 @@
 
   "containerDefinitions": [
     {
-      "name": "seed-e2e",
+      "name": "cleanup-e2e",
       "image": "IMAGE_TAG_PLACEHOLDER",
       "essential": true,
       "readonlyRootFilesystem": false,
 
-      "command": [
-        "sh",
-        "-c",
-        "node dist/prisma/seed-e2e-customer.js && node dist/prisma/seed-e2e-vendor.js && node dist/prisma/seed-e2e-data.js"
-      ],
+      "command": ["node", "dist/prisma/cleanup-e2e.js"],
 
       "environment": [
-        { "name": "NODE_ENV", "value": "production" },
-        { "name": "SEED_E2E_ALLOW_PROD", "value": "true" }
+        { "name": "NODE_ENV", "value": "production" }
       ],
 
       "secrets": [
@@ -37,9 +32,9 @@
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "/ecs/jadwal-seed-e2e",
+          "awslogs-group": "/ecs/jadwal-cleanup-e2e",
           "awslogs-region": "<AWS_REGION>",
-          "awslogs-stream-prefix": "seed-e2e",
+          "awslogs-stream-prefix": "cleanup-e2e",
           "awslogs-create-group": "true"
         }
       }
