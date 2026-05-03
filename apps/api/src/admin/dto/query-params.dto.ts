@@ -45,4 +45,11 @@ export class PaginationDto {
   @IsOptional()
   @IsIn(PAYMENT_STATUSES as unknown as string[])
   paymentStatus?: string;
+
+  // Filter by User.emailVerified — used by /admin/users to split confirmed
+  // signups from pending ones (token sent, link not yet clicked). String
+  // values rather than booleans because the source is a query string.
+  @IsOptional()
+  @IsIn(['verified', 'unverified'])
+  verified?: 'verified' | 'unverified';
 }

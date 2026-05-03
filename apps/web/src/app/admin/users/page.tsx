@@ -6,7 +6,7 @@ import api from '@/lib/api';
 import { getApiError } from '@/lib/api-error';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
-import { Search, ChevronLeft, ChevronRight, Shield, UserCircle, ShieldCheck, Ban, CheckCircle, Trash2, AlertTriangle, Download } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, Shield, UserCircle, ShieldCheck, Ban, CheckCircle, Trash2, AlertTriangle, Download, MailCheck, MailWarning } from 'lucide-react';
 import CustomSelect from '@/components/custom-select';
 
 interface User {
@@ -16,6 +16,7 @@ interface User {
   phone: string | null;
   role: 'CUSTOMER' | 'VENDOR' | 'ADMIN';
   isDeactivated: boolean;
+  emailVerified: boolean;
   createdAt: string;
 }
 
@@ -47,6 +48,7 @@ export default function AdminUsersPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [verifiedFilter, setVerifiedFilter] = useState<'' | 'verified' | 'unverified'>('');
   const [deleteConfirm, setDeleteConfirm] = useState<{ id?: string; name?: string; count?: number; ids?: string[] } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -61,13 +63,14 @@ export default function AdminUsersPage() {
   }, []);
 
   const { data, isLoading } = useQuery<UsersResponse>({
-    queryKey: ['admin', 'users', page, debouncedSearch, roleFilter],
+    queryKey: ['admin', 'users', page, debouncedSearch, roleFilter, verifiedFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set('page', String(page));
       params.set('limit', '20');
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (roleFilter) params.set('status', roleFilter);
+      if (verifiedFilter) params.set('verified', verifiedFilter);
       const { data } = await api.get(`/admin/users?${params}`);
       return data;
     },
@@ -163,7 +166,7 @@ export default function AdminUsersPage() {
     <AdminLayout title="Users" subtitle="Manage all platform users">
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-        <div className="flex flex-1 items-center gap-3 w-full">
+        <div className="flex flex-1 items-center flex-wrap gap-3 w-full">
           <div className="relative flex-1 sm:max-w-sm">
             <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
             <input
@@ -188,6 +191,30 @@ export default function AdminUsersPage() {
                   key={opt.value || 'all'}
                   type="button"
                   onClick={() => { setRoleFilter(opt.value); setPage(1); }}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          {/* Email verification filter — pairs with the role filter (mainly for CUSTOMER) */}
+          <div className="inline-flex items-center rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 p-1 shadow-sm">
+            {[
+              { value: '', label: 'Any email' },
+              { value: 'verified', label: 'Verified' },
+              { value: 'unverified', label: 'Unverified' },
+            ].map((opt) => {
+              const isActive = verifiedFilter === opt.value;
+              return (
+                <button
+                  key={opt.value || 'any'}
+                  type="button"
+                  onClick={() => { setVerifiedFilter(opt.value as '' | 'verified' | 'unverified'); setPage(1); }}
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
                     isActive
                       ? 'bg-blue-600 text-white shadow-sm'
@@ -272,7 +299,18 @@ export default function AdminUsersPage() {
                           </div>
                           <div className="min-w-0">
                             <p className="font-medium text-gray-900 dark:text-white wrap-break-word max-w-[220px]">{user.fullName}</p>
-                            <p className="text-xs text-gray-400 dark:text-slate-500 wrap-break-word max-w-[220px]">{user.email}</p>
+                            <div className="flex items-center gap-1.5 max-w-[240px]">
+                              <p className="text-xs text-gray-400 dark:text-slate-500 wrap-break-word truncate">{user.email}</p>
+                              {user.emailVerified ? (
+                                <span title="Email verified" className="inline-flex shrink-0 text-emerald-500">
+                                  <MailCheck className="h-3.5 w-3.5" />
+                                </span>
+                              ) : (
+                                <span title="Email NOT verified" className="inline-flex shrink-0 text-amber-500">
+                                  <MailWarning className="h-3.5 w-3.5" />
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
