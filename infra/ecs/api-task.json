@@ -58,7 +58,10 @@
         { "name": "PAY2M_SECURED_KEY",            "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/PAY2M_SECURED_KEY" },
         { "name": "PAY2M_SECRET_WORD",            "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/PAY2M_SECRET_WORD" },
         { "name": "EMAIL_FROM",                   "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/EMAIL_FROM" },
-        { "name": "ADMIN_EMAIL",                  "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/ADMIN_EMAIL" }
+        { "name": "ADMIN_EMAIL",                  "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/ADMIN_EMAIL" },
+        { "name": "SES_CONFIG_SET_NAME",          "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/SES_CONFIG_SET_NAME" },
+        { "name": "SNS_TOPIC_ARN_BOUNCES",        "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/SNS_TOPIC_ARN_BOUNCES" },
+        { "name": "SNS_TOPIC_ARN_COMPLAINTS",     "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/SNS_TOPIC_ARN_COMPLAINTS" }
       ],
       "mountPoints": [],
       "volumesFrom": [],
