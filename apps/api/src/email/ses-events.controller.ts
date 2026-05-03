@@ -40,6 +40,7 @@ const SIGNABLE_KEYS_SUBSCRIPTION = [
 
 // AWS publishes signing certs from sns.<region>.amazonaws.com[.cn] only.
 // Fetching from any other host opens an SSRF vector — pin the regex.
+// (Hostnames are case-insensitive per RFC 3986.)
 const SIGNING_CERT_HOST = /^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$/i;
 
 interface SnsMessage {
