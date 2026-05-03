@@ -339,17 +339,6 @@ export class SesEventsController {
     const sigVer = body.SignatureVersion;
     if (sigVer !== '1' && sigVer !== '2') return false;
 
-    if (!body.SigningCertURL || typeof body.SigningCertURL !== 'string') return false;
-    let certUrl: URL;
-    try {
-      certUrl = new URL(body.SigningCertURL);
-    } catch {
-      return false;
-    }
-    if (certUrl.protocol !== 'https:') return false;
-    if (!certUrl.pathname.endsWith('.pem')) return false;
-    if (!SIGNING_CERT_HOST.test(certUrl.host)) return false;
-
     const keys: readonly string[] =
       body.Type === 'SubscriptionConfirmation' || body.Type === 'UnsubscribeConfirmation'
         ? SIGNABLE_KEYS_SUBSCRIPTION
@@ -366,7 +355,7 @@ export class SesEventsController {
       canonical += `${k}\n${String(v)}\n`;
     }
 
-    const cert = await this.fetchSigningCert(body.SigningCertURL);
+    const cert = await this.fetchSigningCert(body);
     if (!cert) return false;
 
     try {
@@ -381,21 +370,73 @@ export class SesEventsController {
     }
   }
 
-  protected async fetchSigningCert(url: string): Promise<string | null> {
-    const cached = this.certCache.get(url);
+  /**
+   * Fetch and cache the AWS-published X.509 signing cert. The fetch URL
+   * is RECONSTRUCTED from validated atoms — never the user-supplied
+   * SigningCertURL string directly — because CodeQL taint analysis treats
+   * the message body as user-controlled even after a host regex check.
+   *
+   *   - scheme: hardcoded `https://`
+   *   - subdomain: hardcoded `sns.`
+   *   - region: derived from body.TopicArn (already env-pinned to one of
+   *     two known ARNs in the controller before we get here)
+   *   - tld: `amazonaws.com` or `amazonaws.com.cn` based on ARN partition
+   *   - filename: extracted from body.SigningCertURL pathname and
+   *     regex-bounded to `[A-Za-z0-9_-]{1,200}\.pem` so attacker-supplied
+   *     bytes can't carry path traversal or query separators
+   *
+   * No part of the constructed URL flows directly from message into
+   * fetch() — the only user-input value is the PEM filename, which is
+   * regex-bounded to safe chars.
+   */
+  protected async fetchSigningCert(body: SnsMessage): Promise<string | null> {
+    if (!body.SigningCertURL || typeof body.SigningCertURL !== 'string') return null;
+
+    // ARN format: arn:<partition>:sns:<region>:<account>:<topic>
+    const arnParts = body.TopicArn.split(':');
+    if (arnParts.length < 6) return null;
+    const partition = arnParts[1];
+    const region = arnParts[3];
+    if (!/^[a-z0-9-]+$/.test(region)) return null;
+    if (partition !== 'aws' && partition !== 'aws-cn') return null;
+    const tld = partition === 'aws-cn' ? 'amazonaws.com.cn' : 'amazonaws.com';
+
+    let parsed: URL;
+    try {
+      parsed = new URL(body.SigningCertURL);
+    } catch {
+      return null;
+    }
+    if (parsed.protocol !== 'https:') return null;
+    // Sanity-check the host pattern even though we won't use parsed.host
+    // — keeps the SSRF defence layered.
+    if (!SIGNING_CERT_HOST.test(parsed.host)) return null;
+
+    // AWS cert URL pathname is e.g. `/SimpleNotificationService-abc123.pem`.
+    // Allow exactly one segment under root, safe chars only, .pem suffix.
+    const pemMatch = parsed.pathname.match(/^\/([A-Za-z0-9_-]{1,200}\.pem)$/);
+    if (!pemMatch) return null;
+    const pemFilename = pemMatch[1];
+
+    // codeql[js/server-side-request-forgery]: URL is reconstructed from
+    // hardcoded scheme/subdomain/tld + region derived from already-validated
+    // TopicArn + regex-validated PEM filename. fetch never sees attacker-
+    // controlled host or scheme bytes.
+    const safeUrl = `https://sns.${region}.${tld}/${pemFilename}`;
+
+    const cached = this.certCache.get(safeUrl);
     if (cached) return cached;
     try {
-      const res = await fetch(url, { redirect: 'manual' });
+      const res = await fetch(safeUrl, { redirect: 'manual' });
       if (!res.ok) return null;
       const text = await res.text();
       // Cap cert cache at 16 entries — AWS rotates rarely, so this is
-      // an absolute belt-and-braces against unbounded growth from
-      // attacker-controlled URLs (which we already host-pin above).
+      // an absolute belt-and-braces against unbounded growth.
       if (this.certCache.size >= 16) {
         const firstKey = this.certCache.keys().next().value;
         if (firstKey !== undefined) this.certCache.delete(firstKey);
       }
-      this.certCache.set(url, text);
+      this.certCache.set(safeUrl, text);
       return text;
     } catch {
       return null;
