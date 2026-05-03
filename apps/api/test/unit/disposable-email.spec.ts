@@ -88,8 +88,12 @@ describe('@IsNotDisposableEmail — EMAIL_DOMAIN_ALLOWLIST escape hatch', () => 
     const previousEnv = process.env.EMAIL_DOMAIN_ALLOWLIST;
     process.env.EMAIL_DOMAIN_ALLOWLIST = 'mailinator.com,otherdomain.test';
     try {
-      // Reload the module so the allowlist cache reads the env var fresh.
-      jest.isolateModules(async () => {
+      // jest.isolateModulesAsync (Jest 29.4+) is the async equivalent of
+      // isolateModules — required here because our callback awaits
+      // class-validator's validate(). The sync version doesn't await
+      // and would let assertions run after the test exits, masking
+      // failures.
+      await jest.isolateModulesAsync(async () => {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const mod = require('../../src/common/validators/disposable-email');
         const Decorator = mod.IsNotDisposableEmail;

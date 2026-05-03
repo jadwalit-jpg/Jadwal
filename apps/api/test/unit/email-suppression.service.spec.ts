@@ -81,6 +81,26 @@ describe('EmailSuppressionService.suppress', () => {
     emailSuppression.upsert.mockRejectedValueOnce(new Error('DB down'));
     await expect(sut.suppress('a@b.com', 'bounce')).rejects.toThrow();
   });
+
+  test('re-suppression without notes does NOT overwrite existing operator notes', async () => {
+    // SNS automated events don't pass `notes`. If the update branch
+    // wrote `notes: notes ?? null` it would erase any admin-added
+    // annotation the next time the address shows up in another bounce
+    // event. The fix omits the notes field from the update payload
+    // entirely when the caller didn't provide one.
+    const { sut, emailSuppression } = makeSut();
+    await sut.suppress('a@b.com', 'complaint'); // no notes
+    const updateArg = emailSuppression.upsert.mock.calls[0][0].update;
+    expect(updateArg).not.toHaveProperty('notes');
+    expect(updateArg.reason).toBe('complaint');
+  });
+
+  test('re-suppression WITH notes provided → notes is written', async () => {
+    const { sut, emailSuppression } = makeSut();
+    await sut.suppress('a@b.com', 'manual', undefined, 'admin annotation');
+    const updateArg = emailSuppression.upsert.mock.calls[0][0].update;
+    expect(updateArg.notes).toBe('admin annotation');
+  });
 });
 
 describe('EmailSuppressionService.unsuppress', () => {

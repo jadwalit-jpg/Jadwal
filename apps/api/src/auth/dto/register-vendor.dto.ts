@@ -58,10 +58,11 @@ export class RegisterVendorDto {
   @IsNotEmpty({ message: 'Country is required' })
   countryId!: string;
 
-  // Honeypot field — see RegisterDto.website for full rationale. Hidden in
-  // the frontend, naive bots fill it, service silently no-ops on truthy.
+  // Honeypot field — see RegisterDto.website for full rationale. No
+  // @IsString / @MaxLength: strict validators would turn a bot's filled
+  // honeypot into a 400 instead of the silent fake-success the service
+  // path issues — making the honeypot observable.
   @IsOptional()
-  @IsString()
-  @MaxLength(200)
+  @Transform(({ value }) => value == null ? undefined : String(value))
   website?: string;
 }

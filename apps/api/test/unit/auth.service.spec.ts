@@ -284,6 +284,22 @@ describe('AuthService.registerAndLogin — honeypot field "website"', () => {
     } as any);
     expect(ctx.users.create).toHaveBeenCalled();
   });
+
+  test('explicit empty-string website → normal registration flow (the case the form actually submits)', async () => {
+    // The frontend form submits `website: ''` when the hidden input is
+    // empty (its useState default is '' — see register-form.tsx).
+    // The honeypot trip uses `data.website && data.website.trim()` so
+    // empty string passes through. This test pins that behaviour so a
+    // regression to e.g. `data.website !== undefined` would fail.
+    ctx.users.create.mockResolvedValueOnce({ id: 'u1', email: 'a@b.com', fullName: 'Real', role: 'CUSTOMER' });
+    await ctx.sut.registerAndLogin({
+      fullName: 'Real',
+      email: 'a@b.com',
+      password: 'StrongPw1!',
+      website: '',
+    } as any);
+    expect(ctx.users.create).toHaveBeenCalled();
+  });
 });
 
 describe('AuthService.registerVendor — honeypot field "website"', () => {
@@ -327,6 +343,23 @@ describe('AuthService.registerVendor — honeypot field "website"', () => {
       countryId: 'c1',
     } as any);
     // Lookups proceed normally — uniqueness pre-checks fired
+    expect(ctx.prisma._client.user.findUnique).toHaveBeenCalled();
+  });
+
+  test('explicit empty-string website → normal vendor registration flow', async () => {
+    // Same rationale as the customer-side empty-string test: pin the
+    // behaviour so a regression to `!== undefined` would fail.
+    ctx.prisma._client.country.findUnique.mockResolvedValueOnce({ id: 'c1', status: 'ACTIVE' });
+    ctx.prisma.$transaction.mockResolvedValueOnce({ id: 'u1', email: 'v@b.com', fullName: 'Real' });
+    await ctx.sut.registerVendor({
+      fullName: 'Real',
+      email: 'v@b.com',
+      password: 'StrongPw1!',
+      businessNameEn: 'X', businessNameAr: 'Y',
+      businessId: 'B1', slug: 'real',
+      countryId: 'c1',
+      website: '',
+    } as any);
     expect(ctx.prisma._client.user.findUnique).toHaveBeenCalled();
   });
 });

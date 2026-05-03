@@ -225,10 +225,18 @@ export class EmailService {
     // callers can't distinguish a suppressed recipient from a real send
     // — preserves anti-enumeration on /forgot-password and friends.
     // Fail-open inside the service if Prisma errors.
-    const suppressed = await this.suppressions.isSuppressed(to);
-    if (suppressed) {
-      this.logger.warn(`Email to ${masked} dropped — recipient suppressed (${template})`);
-      return true;
+    //
+    // Exception: admin-alert bypasses the suppression check. Operational
+    // notifications must always go out — if ADMIN_EMAIL ever lands on
+    // the suppression list (mailbox full → bounce; admin marks routine
+    // alert as spam by mistake), silently swallowing the alert hides
+    // production incidents from on-call. Worth the SES bounce-rate cost.
+    if (template !== 'admin-alert') {
+      const suppressed = await this.suppressions.isSuppressed(to);
+      if (suppressed) {
+        this.logger.warn(`Email to ${masked} dropped — recipient suppressed (${template})`);
+        return true;
+      }
     }
 
     // Render the HTML template (always, even in dev — ensures templates compile correctly)

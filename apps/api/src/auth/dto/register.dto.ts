@@ -43,10 +43,15 @@ export class RegisterDto {
   // Naive scraper bots that auto-fill every input WILL fill it. The service
   // treats any non-empty value as "this is a bot" and silently returns the
   // same anti-enumeration success response WITHOUT creating a User row.
-  // Field is whitelisted in the DTO (otherwise the global ValidationPipe
-  // forbidNonWhitelisted would reject the request and tip off the bot).
+  //
+  // No @IsString / @MaxLength here on purpose: ValidationPipe runs BEFORE
+  // the service-side honeypot check, so strict validators would turn a
+  // bot's filled honeypot into a 400 instead of the silent fake-success
+  // we want — making the honeypot observable. The @Transform coerces any
+  // value to a string (or undefined for null/missing) so the service-side
+  // `if (data.website && data.website.trim())` check can do its work
+  // uniformly without ValidationPipe interfering.
   @IsOptional()
-  @IsString()
-  @MaxLength(200)
+  @Transform(({ value }) => value == null ? undefined : String(value))
   website?: string;
 }

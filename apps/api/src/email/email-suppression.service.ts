@@ -76,10 +76,22 @@ export class EmailSuppressionService {
   ): Promise<void> {
     const hash = this.hashEmail(email);
     try {
+      // On a re-suppression event (same hash, new reason/bounceType),
+      // PRESERVE any operator-added notes. SNS automated events don't
+      // pass `notes`; an admin who manually annotated "typo'd address —
+      // user re-registered" must not have their note erased the next
+      // time the address shows up in another bounce/complaint payload.
+      // Hence: only write notes in the update branch when explicitly
+      // provided.
+      const updateData: { reason: string; bounceType: string | null; notes?: string | null } = {
+        reason,
+        bounceType: bounceType ?? null,
+      };
+      if (notes !== undefined) updateData.notes = notes;
       await (this.prisma.client as any).emailSuppression.upsert({
         where: { emailHash: hash },
         create: { emailHash: hash, reason, bounceType: bounceType ?? null, notes: notes ?? null },
-        update: { reason, bounceType: bounceType ?? null, notes: notes ?? null },
+        update: updateData,
       });
       // Mask half the hash in the log line — enough for forensic correlation,
       // not enough to derive the recipient.

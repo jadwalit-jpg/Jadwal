@@ -127,6 +127,20 @@ describe('EmailService — suppression list short-circuit', () => {
     const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
     expect(cmdArgs.ConfigurationSetName).toBeUndefined();
   });
+
+  test('admin-alert bypasses suppression — operational alerts always go out', async () => {
+    // If ADMIN_EMAIL ever lands on the suppression list (mailbox full →
+    // bounce; admin marks routine alert as spam by mistake), suppressing
+    // the alert silently would hide production incidents from on-call.
+    // Verify the bypass: when isSuppressed returns true, admin-alert
+    // template still hits SES.
+    const suppressions = makeSuppressions(async () => true);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, suppressions as any);
+    await svc.sendAdminAlert({ subject: 'Test', message: 'Something is broken' });
+    expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
+    // Suppression check should NOT have been called for admin-alert
+    expect(suppressions.isSuppressed).not.toHaveBeenCalled();
+  });
 });
 
 describe('EmailService — send dispatching', () => {
