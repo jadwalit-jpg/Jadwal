@@ -13,6 +13,14 @@
 #
 # Gated on `vars.DEPLOY_ENABLED` so the workflow can be paused without
 # editing the file — flip the Variable to "false" during a freeze.
+#
+# ⚠ OPERATOR WARNING — secrets-in-logs:
+#   Do NOT add `set -x`, `env`, `printenv`, or `echo $SECRET_*` for
+#   debugging. GitHub Actions logs are visible to anyone with read
+#   access to the repo, and a single accidental dump leaks AWS keys,
+#   RDS passwords, JWT_SECRET, or PAY2M credentials irreversibly.
+#   To debug a step, mask values with `::add-mask::` first or print
+#   only fingerprints (length, first 4 chars).
 # ═════════════════════════════════════════════════════════════════════════
 
 name: deploy

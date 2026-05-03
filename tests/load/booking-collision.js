@@ -7,14 +7,21 @@
 // asserts exactly one wins.
 //
 // Profile: 20 VU, single iteration each, all attempting the SAME
-// (activityId, startDatetime, endDatetime). No ramp, no think time —
+// (activityId, checkInDate, slotTime) tuple. No ramp, no think time —
 // they all start within milliseconds of each other.
+//
+// IMPORTANT: each VU books `guests = TEST_ACTIVITY_CAPACITY` (default 20)
+// so the *first* successful booking eats the entire slot's capacity. The
+// remaining 19 VUs MUST then 409 on capacity-exceeded. With guests=1 and
+// a 20-capacity fixture, all 20 would succeed and the test would prove
+// nothing — capacity must be saturated by the first hit to expose any
+// race.
 //
 // Pass:
 //   - bookings_succeeded: exactly 1
 //   - bookings_409:       exactly 19
 //   - bookings_5xx:       0  (any 5xx is the bug — the 409 path must work)
-//   - duplicates_in_db:   0  (post-run check; must be performed manually)
+//   - duplicates_in_db:   0  (post-run check; query in teardown logs)
 //
 // What this would catch:
 //   - Redis lock TTL race (lock acquired but DB transaction hasn't committed
@@ -23,8 +30,9 @@
 //   - Wrong isolation level on the booking transaction
 //   - createBooking dropping the customerId scope on idempotency key check
 //
-// Run on staging only. Never against production. After each run, run the
-// post-check query in the README to confirm the DB state matches.
+// Run on staging or — during the launch QA window with K6_ALLOW_PROD=true
+// and SES + PAY2M still off — against prod. After each run, run the
+// post-check query in tests/load/README.md to confirm DB state matches.
 
 import http from 'k6/http';
 import { check } from 'k6';
@@ -67,24 +75,33 @@ export const options = {
 
 export function setup() {
   refuseProductionForWrites();
+  // Pick a deterministic future date+slot every VU will fight over.
+  // 7 days out, 10:00 slotTime. Single specific tuple ensures collision.
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + 7);
   return {
     email: requireEnv('TEST_USER_EMAIL'),
     password: requireEnv('TEST_USER_PASSWORD'),
     activityId: requireEnv('TEST_ACTIVITY_ID'),
-    // Pick a deterministic future slot every VU will fight over.
-    // 7 days out, 10:00–12:00 UTC. Single specific slot ensures collision.
-    targetDate: (() => {
-      const d = new Date();
-      d.setUTCDate(d.getUTCDate() + 7);
-      d.setUTCHours(10, 0, 0, 0);
-      return d.toISOString();
+    // Each VU books this many guests. Set to the activity's capacity so
+    // the first successful booking saturates the slot and the remaining
+    // 19 must 409. Default 20 matches the e2e seed activity.
+    // Strict-validate the env override: `Number('abc')` is NaN and
+    // `JSON.stringify({guests: NaN})` emits `guests: null`, which would
+    // turn this integrity test into a payload-validation failure.
+    guestsPerVu: (() => {
+      const raw = __ENV.TEST_ACTIVITY_CAPACITY;
+      if (raw === undefined || raw === '') return 20;
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n <= 0) {
+        throw new Error(
+          `[FATAL] TEST_ACTIVITY_CAPACITY must be a positive integer, got: ${raw}`,
+        );
+      }
+      return n;
     })(),
-    targetEnd: (() => {
-      const d = new Date();
-      d.setUTCDate(d.getUTCDate() + 7);
-      d.setUTCHours(12, 0, 0, 0);
-      return d.toISOString();
-    })(),
+    targetCheckInDate: d.toISOString().slice(0, 10),
+    targetSlotTime: '10:00',
   };
 }
 
@@ -95,9 +112,9 @@ export default function (data) {
     `${baseUrl()}/api/bookings`,
     JSON.stringify({
       activityId: data.activityId,
-      startDatetime: data.targetDate,
-      endDatetime: data.targetEnd,
-      guests: 1,
+      checkInDate: data.targetCheckInDate,
+      slotTime: data.targetSlotTime,
+      guests: data.guestsPerVu,
       idempotencyKey: idempotencyKey(),
     }),
     {
@@ -118,10 +135,12 @@ export default function (data) {
 
 export function teardown(data) {
   console.log(
-    `\nCollision test summary — verify in DB:\n  ` +
+    `\nCollision test summary — verify in DB (psql against prod/staging):\n  ` +
       `SELECT count(*) FROM "Booking"\n  ` +
       `WHERE "activityId" = '${data.activityId}'\n  ` +
-      `  AND "startDatetime" = '${data.targetDate}'\n  ` +
+      `  AND DATE("startDatetime") = '${data.targetCheckInDate}'\n  ` +
+      `  AND EXTRACT(HOUR FROM "startDatetime") = ` +
+      `${parseInt(data.targetSlotTime.split(':')[0], 10)}\n  ` +
       `  AND status IN ('CONFIRMED','PENDING');\n` +
       `Expected: exactly 1 row. More than 1 = integrity bug.\n`,
   );
