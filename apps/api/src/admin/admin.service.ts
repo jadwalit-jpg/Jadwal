@@ -260,7 +260,7 @@ export class AdminService {
   // ─── Users ──────────────────────────────────────────────────
   async getUsers(query: PaginationDto) {
     const db = this.prisma.client;
-    const { page = 1, limit = 20, search, status } = query;
+    const { page = 1, limit = 20, search, status, verified } = query;
     const skip = (page - 1) * limit;
 
     const where: Prisma.UserWhereInput = {};
@@ -273,6 +273,8 @@ export class AdminService {
     if (status) {
       where.role = status as any;
     }
+    if (verified === 'verified') where.emailVerified = true;
+    else if (verified === 'unverified') where.emailVerified = false;
 
     const [users, total] = await Promise.all([
       db.user.findMany({
