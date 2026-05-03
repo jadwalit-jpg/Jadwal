@@ -127,7 +127,9 @@ export default function ChangePasswordPage() {
                 <button
                   type="button"
                   onClick={() => setShowCurrent((v) => !v)}
-                  aria-label={showCurrent ? 'Hide password' : 'Show password'}
+                  aria-label={showCurrent
+                    ? t('changePassword.hideCurrent', { defaultValue: 'Hide current password' })
+                    : t('changePassword.showCurrent', { defaultValue: 'Show current password' })}
                   className="absolute inset-e-3 top-1/2 -translate-y-1/2 text-jadwal-text-muted hover:text-jadwal-text cursor-pointer"
                 >
                   {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -156,7 +158,9 @@ export default function ChangePasswordPage() {
                 <button
                   type="button"
                   onClick={() => setShowNew((v) => !v)}
-                  aria-label={showNew ? 'Hide password' : 'Show password'}
+                  aria-label={showNew
+                    ? t('changePassword.hideNew', { defaultValue: 'Hide new password' })
+                    : t('changePassword.showNew', { defaultValue: 'Show new password' })}
                   className="absolute inset-e-3 top-1/2 -translate-y-1/2 text-jadwal-text-muted hover:text-jadwal-text cursor-pointer"
                 >
                   {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
