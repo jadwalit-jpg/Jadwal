@@ -683,7 +683,7 @@ export default function ProfilePage() {
                   },
                   {
                     icon: Shield,
-                    href: '/forgot-password',
+                    href: '/account/change-password',
                     label: t('profile.changePassword', {
                       defaultValue: 'Change password',
                     }),

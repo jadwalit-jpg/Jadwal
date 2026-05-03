@@ -19,6 +19,7 @@ import { RegisterVendorDto } from './dto/register-vendor.dto';
 import { SecurityLoggerService } from '../common/services/security-logger.service';
 import { AuditLoggerService } from '../common/services/audit-logger.service';
 import { EmailService } from '../email/email.service';
+import { EmailQuotaService } from '../email/email-quota.service';
 import { SmsService } from '../sms/sms.service';
 import { NotificationService } from '../common/services/notification.service';
 
@@ -38,6 +39,7 @@ export class AuthService {
     private securityLogger: SecurityLoggerService,
     private auditLogger: AuditLoggerService,
     private emailService: EmailService,
+    private emailQuota: EmailQuotaService,
     private smsService: SmsService,
     private notificationService: NotificationService,
   ) {
@@ -361,7 +363,7 @@ export class AuthService {
 
   // ─── Register (customer) — sends verification email, does NOT issue cookies ─
 
-  async registerAndLogin(data: { fullName: string; email: string; password: string; phone?: string }) {
+  async registerAndLogin(data: { fullName: string; email: string; password: string; phone?: string }, req?: Request) {
     const db = this.prisma.client;
 
     // Pre-check email uniqueness → clean 409 instead of raw Prisma P2002
@@ -381,7 +383,8 @@ export class AuthService {
     // emailVerified defaults to false in schema; usersService hashes password
     const user = await this.usersService.create(data);
 
-    await this.sendVerificationEmail(db, user.id, user.email, user.fullName);
+    const { ip: regIp } = this.extractClientInfo(req);
+    await this.sendVerificationEmail(db, user.id, user.email, user.fullName, regIp);
 
     await this.securityLogger.log({ event: 'LOGIN_SUCCESS', userId: user.id, email: user.email, details: 'Customer registered, pending verification' });
 
@@ -443,7 +446,7 @@ export class AuthService {
 
   // ─── Resend verification email ──────────────────────────────────────────────
 
-  async resendVerification(email: string) {
+  async resendVerification(email: string, req?: Request) {
     const db = this.prisma.client;
     const genericResponse = { message: 'If that email exists, a new link has been sent.' };
 
@@ -454,7 +457,8 @@ export class AuthService {
     if (!user || user.role !== 'CUSTOMER') return genericResponse;
     if (user.emailVerified) return genericResponse;
 
-    await this.sendVerificationEmail(db, user.id, user.email, user.fullName);
+    const { ip: resendIp } = this.extractClientInfo(req);
+    await this.sendVerificationEmail(db, user.id, user.email, user.fullName, resendIp);
 
     return genericResponse;
   }
@@ -525,7 +529,7 @@ export class AuthService {
 
   // ─── Internal: generate + save + send verification email ───────────────────
 
-  private async sendVerificationEmail(db: any, userId: string, email: string, fullName: string) {
+  private async sendVerificationEmail(db: any, userId: string, email: string, fullName: string, ip?: string) {
     // Plaintext token goes in the email URL; only its SHA-256 hash is
     // persisted in the DB. This matches the password-reset hardening: a
     // DB dump leaks no actionable verification tokens.
@@ -541,6 +545,21 @@ export class AuthService {
 
     const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
     const verificationLink = `${frontendUrl}/verify-email?token=${plainToken}`;
+
+    // Per-account daily cap + progressive cooldown (cost / mailbomb
+    // defence). On overage we drop the send silently; the caller still
+    // returns its anti-enumeration success response, so an attacker can't
+    // tell when the cap kicked in. The token IS persisted regardless — if
+    // the legitimate user comes back later they can hit /resend-verification
+    // and once the counter rolls over the email goes through.
+    const accountAllowed = await this.emailQuota.tryConsume(email, 'verification');
+    if (!accountAllowed) return;
+
+    // Per-IP daily cap — closes the "one IP cycling through many target
+    // emails" attack that the per-account cap can't see (each account
+    // counter starts fresh; only the IP is shared).
+    const ipAllowed = await this.emailQuota.tryConsumePerIp(ip);
+    if (!ipAllowed) return;
 
     await this.emailService.sendEmailVerification(email, { userName: fullName, verificationLink });
   }
@@ -620,7 +639,7 @@ export class AuthService {
 
   // ─── Password Reset ──────────────────────────────────────────────────────
 
-  async forgotPassword(email: string) {
+  async forgotPassword(email: string, req?: Request) {
     const db = this.prisma.client;
 
     // Always return success — never reveal if email exists (anti-enumeration)
@@ -658,17 +677,34 @@ export class AuthService {
       const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
       const resetLink = `${frontendUrl}/reset-password?token=${plainToken}`;
 
-      this.emailService.sendPasswordReset(email, {
-        userName: user.fullName,
-        resetLink,
-        expiresIn: `${resetExpiryHours} hour${resetExpiryHours > 1 ? 's' : ''}`,
-      });
+      // Per-account daily cap + progressive cooldown (cost / mailbomb
+      // defence). The reset token is already persisted — if quota is
+      // exhausted we just drop the outbound email; the link in any
+      // unexpired prior email still works. Per-IP cap on top closes the
+      // "one IP cycling many emails" attack vector (per-account caps can't
+      // see across different recipients).
+      const { ip: forgotIp } = this.extractClientInfo(req);
+      const accountAllowed = await this.emailQuota.tryConsume(email, 'reset');
+      const ipAllowed = accountAllowed ? await this.emailQuota.tryConsumePerIp(forgotIp) : false;
+      if (accountAllowed && ipAllowed) {
+        this.emailService.sendPasswordReset(email, {
+          userName: user.fullName,
+          resetLink,
+          expiresIn: `${resetExpiryHours} hour${resetExpiryHours > 1 ? 's' : ''}`,
+        });
 
-      this.securityLogger.log({
-        event: 'PASSWORD_RESET_REQUESTED',
-        userId: user.id,
-        details: `Reset email sent (role=${user.role})`,
-      });
+        this.securityLogger.log({
+          event: 'PASSWORD_RESET_REQUESTED',
+          userId: user.id,
+          details: `Reset email sent (role=${user.role})`,
+        });
+      } else {
+        this.securityLogger.log({
+          event: 'PASSWORD_RESET_REQUESTED',
+          userId: user.id,
+          details: 'Reset email DROPPED — daily quota exceeded',
+        });
+      }
     }
 
     // Always return same response regardless of whether email exists
@@ -740,6 +776,128 @@ export class AuthService {
     });
 
     return { message: 'Password has been reset successfully. You can now log in with your new password.' };
+  }
+
+  // ─── Change Password (authenticated, in-session) ──────────────────────────
+  // Differs from resetPassword: caller is already logged in and proves
+  // ownership via the current password, not via an email token. The current
+  // session refresh token is preserved (no mid-task logout); every OTHER
+  // refresh token for this user is revoked, so any leaked/stolen session on
+  // another device dies the moment the password rotates.
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    currentRefreshTokenRaw: string | undefined,
+    req?: Request,
+  ) {
+    const db = this.prisma.client;
+    const { ip, userAgent } = this.extractClientInfo(req);
+
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, fullName: true, password: true },
+    });
+    // Defensive: JwtAuthGuard should have rejected before reaching here, so
+    // a missing user means the row was deleted between auth and this call.
+    if (!user) {
+      throw new UnauthorizedException('Session no longer valid');
+    }
+
+    // OAuth-only accounts (no local password set yet) cannot change a
+    // password they never had. Direct them at the reset-password flow.
+    if (!user.password) {
+      throw new BadRequestException(
+        'This account was created via Google. Use "Forgot password" to set a local password first.',
+      );
+    }
+
+    const valid = await bcrypt.compare(currentPassword, user.password);
+    if (!valid) {
+      this.securityLogger.log({
+        event: 'PASSWORD_CHANGE_FAILED',
+        userId: user.id,
+        email: user.email,
+        ip,
+        userAgent,
+        details: 'Incorrect current password',
+      });
+      // Generic message — don't disclose whether the account exists or what
+      // specifically failed. Caller is already authed so existence is given,
+      // but we still avoid mirroring the failure shape used elsewhere.
+      throw new BadRequestException('Current password is incorrect');
+    }
+
+    // Block trivial password churn — re-using the existing password just to
+    // appease a "you must rotate" prompt undermines the whole rotation.
+    const sameAsCurrent = await bcrypt.compare(newPassword, user.password);
+    if (sameAsCurrent) {
+      throw new BadRequestException('New password must differ from your current password');
+    }
+
+    const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
+    const hash = await bcrypt.hash(newPassword, bcryptRounds);
+
+    // Identify the current session's refresh token so we can keep it alive
+    // while killing every other session. If the cookie is missing (shouldn't
+    // happen — JwtAuthGuard implies an access token was present, and access
+    // tokens travel alongside refresh) we revoke EVERYTHING and let the
+    // controller issue a fresh pair before responding.
+    const currentTokenHash = currentRefreshTokenRaw
+      ? this.hashToken(currentRefreshTokenRaw)
+      : null;
+
+    await db.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          password: hash,
+          // Reset lockout state — a successful credentialed change is
+          // proof of legitimate access, prior failed-login counters are stale.
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        },
+      });
+      // Revoke OTHER sessions. Keep the caller's current refresh token so
+      // they don't get logged out mid-task on this device.
+      await tx.refreshToken.deleteMany({
+        where: currentTokenHash
+          ? { userId: user.id, tokenHash: { not: currentTokenHash } }
+          : { userId: user.id },
+      });
+    });
+
+    this.securityLogger.log({
+      event: 'PASSWORD_CHANGE_COMPLETED',
+      userId: user.id,
+      email: user.email,
+      ip,
+      userAgent,
+      details: 'Password changed via authenticated /auth/change-password',
+    });
+
+    // Best-effort security notification — don't block the response on it.
+    // The email serves as out-of-band confirmation, so if an attacker who
+    // owns the session changes the password, the legitimate user still
+    // sees it and can act (reset + revoke).
+    //
+    // Quota-gated: a legitimate user can only change their password a
+    // small number of times per day, so the cap is generous (3/day) and
+    // primarily defends against a session-hijacker spinning up many
+    // password rotations to mailbomb the inbox.
+    this.emailQuota
+      .tryConsume(user.email, 'change-notification')
+      .then((allowed) => {
+        if (allowed) {
+          return this.emailService.sendPasswordChangedNotification(user.email, {
+            customerName: user.fullName,
+          });
+        }
+        return undefined;
+      })
+      .catch(() => undefined);
+
+    return { message: 'Password changed successfully. Other sessions have been signed out.' };
   }
 
   // ─── Logout ─────────────────────────────────────────────────────────────────
