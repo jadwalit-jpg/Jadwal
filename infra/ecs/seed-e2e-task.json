@@ -1,0 +1,48 @@
+{
+  "family": "jadwal-seed-e2e",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+
+  "cpu": "256",
+  "memory": "512",
+
+  "executionRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/jadwal-ecs-task-execution",
+  "taskRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/jadwal-ecs-task-role",
+
+  "containerDefinitions": [
+    {
+      "name": "seed-e2e",
+      "image": "IMAGE_TAG_PLACEHOLDER",
+      "essential": true,
+      "readonlyRootFilesystem": false,
+
+      "command": [
+        "sh",
+        "-c",
+        "node dist/prisma/seed-e2e-customer.js && node dist/prisma/seed-e2e-vendor.js && node dist/prisma/seed-e2e-data.js"
+      ],
+
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "SEED_E2E_ALLOW_PROD", "value": "true" }
+      ],
+
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/DATABASE_URL"
+        }
+      ],
+
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/jadwal-seed-e2e",
+          "awslogs-region": "<AWS_REGION>",
+          "awslogs-stream-prefix": "seed-e2e",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}

@@ -27,8 +27,14 @@ const TEST_VENDOR_SLUG = 'e2e-vendor';
 const TEST_BUSINESS_ID = 'E2E-BIZ-0001';
 
 async function main() {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('Refusing to seed test vendor in production');
+  if (process.env.NODE_ENV === 'production' && process.env.SEED_E2E_ALLOW_PROD !== 'true') {
+    throw new Error(
+      'Refusing to seed test vendor in production. ' +
+        'Set SEED_E2E_ALLOW_PROD=true in the task env to override (only for ' +
+        'pen-test windows or staging mirrors). Test data is identifiable by ' +
+        'the @jadwal-test.local suffix and can be cleaned up via: ' +
+        "DELETE FROM users WHERE email LIKE '%@jadwal-test.local';",
+    );
   }
 
   const adapter = new PrismaPg(new Pool({ connectionString: process.env.DATABASE_URL }));
