@@ -165,9 +165,10 @@ describe('SesEventsController.handle — bounce + complaint processing', () => {
 });
 
 describe('SesEventsController.handle — subscription handshake', () => {
-  test('SubscriptionConfirmation → fetches SubscribeURL, returns ok', async () => {
+  test('SubscriptionConfirmation → reconstructs URL from validated parts and fetches', async () => {
     const { sut } = makeSut();
     fetchMock.mockClear();
+    const realToken = 'a'.repeat(150); // realistic SNS token shape
     const msg = {
       Type: 'SubscriptionConfirmation',
       MessageId: 'msg-3',
@@ -176,11 +177,15 @@ describe('SesEventsController.handle — subscription handshake', () => {
       SignatureVersion: '1',
       Signature: 'sig',
       SigningCertURL: 'https://sns.eu-central-1.amazonaws.com/cert.pem',
-      SubscribeURL: 'https://sns.eu-central-1.amazonaws.com/?Action=ConfirmSubscription&Token=xxx',
+      SubscribeURL: `https://sns.eu-central-1.amazonaws.com/?Action=ConfirmSubscription&TopicArn=${encodeURIComponent(KNOWN_BOUNCES_ARN)}&Token=${realToken}`,
       Message: 'You have chosen to subscribe...',
     };
     const result = await sut.handle('SubscriptionConfirmation', msg as any);
-    expect(fetchMock).toHaveBeenCalledWith('https://sns.eu-central-1.amazonaws.com/?Action=ConfirmSubscription&Token=xxx');
+    // The fetched URL is RECONSTRUCTED — host/path/action are hardcoded,
+    // only TopicArn (validated above) and Token (regex-validated) flow in.
+    const fetched = fetchMock.mock.calls[0][0] as string;
+    expect(fetched).toMatch(/^https:\/\/sns\.eu-central-1\.amazonaws\.com\/\?Action=ConfirmSubscription&TopicArn=.*&Token=/);
+    expect(fetched).toContain(realToken);
     expect(result).toEqual({ ok: true });
   });
 
@@ -199,16 +204,15 @@ describe('SesEventsController.handle — subscription handshake', () => {
     await expect(sut.handle('SubscriptionConfirmation', msg)).rejects.toThrow(ForbiddenException);
   });
 
-  // ── SSRF defence on SubscribeURL ────────────────────────────────────
+  // ── URL reconstruction: malformed/missing Token + bad scheme rejected ─
   test.each([
-    ['http://sns.eu-central-1.amazonaws.com/?Action=ConfirmSubscription', 'http (not https)'],
-    ['https://169.254.169.254/latest/meta-data/iam/security-credentials/', 'IMDS endpoint'],
-    ['https://attacker.example/relay?url=...', 'attacker domain'],
-    ['https://sns.amazonaws.com.attacker.test/', 'attacker subdomain trick'],
-    ['https://sns-fake.eu-central-1.amazonaws.com/', 'wrong subdomain prefix'],
-    ['https://localhost/admin', 'localhost'],
-    ['file:///etc/passwd', 'file:// scheme'],
-  ])('SubscribeURL %p (%s) → 403 (SSRF defence)', async (subscribeUrl) => {
+    ['https://sns.eu-central-1.amazonaws.com/?Action=ConfirmSubscription', 'no Token query'],
+    ['http://sns.eu-central-1.amazonaws.com/?Token=' + 'a'.repeat(150), 'http (not https)'],
+    ['file:///etc/passwd?Token=' + 'a'.repeat(150), 'file:// scheme'],
+    ['not a url', 'unparseable URL'],
+    [`https://attacker.example/?Token=${'a'.repeat(2049)}`, 'Token too long'],
+    [`https://attacker.example/?Token=`, 'empty Token'],
+  ])('SubscribeURL %p (%s) → 403, fetch never called', async (subscribeUrl) => {
     fetchMock.mockClear();
     const { sut } = makeSut();
     const msg = {
@@ -226,26 +230,50 @@ describe('SesEventsController.handle — subscription handshake', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test.each([
-    'https://sns.eu-central-1.amazonaws.com/?Action=ConfirmSubscription&Token=xxx',
-    'https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&Token=yyy',
-    'https://sns.cn-north-1.amazonaws.com.cn/?Action=ConfirmSubscription&Token=zzz', // China partition
-  ])('legitimate AWS SNS SubscribeURL %p → fetch called', async (subscribeUrl) => {
+  // ── Critical: even when SubscribeURL host is attacker-controlled, the
+  // ── reconstructed fetch goes to the legitimate AWS SNS host derived
+  // ── from the validated TopicArn, NEVER to the attacker.
+  test('attacker host with valid Token → fetch hits AWS SNS, not attacker', async () => {
     fetchMock.mockClear();
     const { sut } = makeSut();
+    const realToken = 'b'.repeat(150);
     const msg = {
       Type: 'SubscriptionConfirmation',
-      MessageId: 'msg-ok',
+      MessageId: 'msg-attacker',
       TopicArn: KNOWN_BOUNCES_ARN,
       Timestamp: '2026-05-03T10:00:00Z',
       SignatureVersion: '1',
       Signature: 'sig',
       SigningCertURL: 'https://sns.eu-central-1.amazonaws.com/cert.pem',
-      SubscribeURL: subscribeUrl,
+      SubscribeURL: `https://attacker.example/?Token=${realToken}`,
       Message: 'You have chosen to subscribe...',
     } as any;
     const result = await sut.handle('SubscriptionConfirmation', msg);
-    expect(fetchMock).toHaveBeenCalledWith(subscribeUrl);
+    const fetched = fetchMock.mock.calls[0]?.[0] as string;
+    expect(fetched).toMatch(/^https:\/\/sns\.eu-central-1\.amazonaws\.com\//);
+    expect(fetched).not.toContain('attacker.example');
+    expect(fetched).toContain(realToken);
     expect(result).toEqual({ ok: true });
+  });
+
+  test('IMDS host with valid-shape Token → fetch still goes to AWS SNS, not 169.254.169.254', async () => {
+    fetchMock.mockClear();
+    const { sut } = makeSut();
+    const realToken = 'c'.repeat(150);
+    const msg = {
+      Type: 'SubscriptionConfirmation',
+      MessageId: 'msg-imds',
+      TopicArn: KNOWN_BOUNCES_ARN,
+      Timestamp: '2026-05-03T10:00:00Z',
+      SignatureVersion: '1',
+      Signature: 'sig',
+      SigningCertURL: 'https://sns.eu-central-1.amazonaws.com/cert.pem',
+      SubscribeURL: `https://169.254.169.254/?Token=${realToken}`,
+      Message: 'You have chosen to subscribe...',
+    } as any;
+    await sut.handle('SubscriptionConfirmation', msg);
+    const fetched = fetchMock.mock.calls[0]?.[0] as string;
+    expect(fetched).toMatch(/^https:\/\/sns\.eu-central-1\.amazonaws\.com\//);
+    expect(fetched).not.toContain('169.254.169.254');
   });
 });

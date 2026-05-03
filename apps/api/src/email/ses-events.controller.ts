@@ -142,21 +142,36 @@ export class SesEventsController {
     });
 
     if (body.Type === 'SubscriptionConfirmation') {
-      // AWS sends this once per subscription. Hitting SubscribeURL
-      // completes the handshake. Even though the library has verified
-      // the signature, SubscribeURL is still an attacker-controlled
-      // field if upstream signing is ever compromised — so we ALSO
-      // pin the hostname to the documented AWS SNS confirmation
-      // pattern (`sns.<region>.amazonaws.com[.cn]`) and require
-      // HTTPS. Without this, an SSRF could redirect the fetch at
-      // 169.254.169.254 (EC2/Fargate IMDS for credential theft) or
-      // any internal RDS/Redis endpoint.
-      if (!body.SubscribeURL) throw new ForbiddenException();
-      if (!this.isAwsSnsUrl(body.SubscribeURL)) {
-        this.logger.warn('ses-events SubscribeURL rejected: not an AWS SNS hostname');
+      // AWS sends this once per subscription. To complete the handshake
+      // we GET an HTTPS endpoint at `sns.<region>.amazonaws.com[.cn]`
+      // with `Action=ConfirmSubscription` + the TopicArn + a Token.
+      //
+      // SSRF defence: do NOT call fetch(body.SubscribeURL) — that field
+      // is part of the SNS message body and a CodeQL taint analysis
+      // (rightly) flags it as user-controlled even after a hostname
+      // regex check. Instead we extract the Token (regex-validated to
+      // an opaque base64-ish string), then reconstruct the URL from
+      // validated components:
+      //   - scheme: hardcoded `https://`
+      //   - hostname: `sns.<region>.amazonaws.com[.cn]`, region derived
+      //     from TopicArn (which we already pinned to two known ARNs
+      //     above), partition-suffix from the ARN's `arn:aws-cn:` prefix
+      //   - path: hardcoded `/`
+      //   - query: hardcoded action + URL-encoded TopicArn + URL-encoded
+      //     Token
+      // No part of the constructed URL flows directly from the message
+      // payload into fetch() — the Token is the only user-input value
+      // and it's regex-validated + percent-encoded.
+      const safeUrl = this.buildConfirmationUrl(body);
+      if (!safeUrl) {
+        this.logger.warn('ses-events SubscribeURL rejected: malformed Token / TopicArn');
         throw new ForbiddenException();
       }
-      await fetch(body.SubscribeURL).catch(() => undefined);
+      // codeql[js/server-side-request-forgery]: URL is reconstructed from
+      // hardcoded scheme/path + region derived from already-validated
+      // TopicArn + regex-validated Token. fetch never sees user-input
+      // characters in the host or scheme.
+      await fetch(safeUrl).catch(() => undefined);
       this.logger.log(`SNS subscription confirmed for topic ${body.TopicArn}`);
       return { ok: true };
     }
@@ -223,27 +238,55 @@ export class SesEventsController {
   }
 
   /**
-   * Pin the SubscribeURL hostname to the documented AWS SNS confirmation
-   * pattern. AWS publishes these as `sns.<region>.amazonaws.com` for
-   * commercial regions and `sns.<region>.amazonaws.com.cn` for the China
-   * partition. Anything else is rejected to prevent SSRF (e.g. an
-   * attacker substituting `169.254.169.254` to exfiltrate the task
-   * IAM role credentials via the IMDS endpoint).
+   * Reconstruct the SNS confirmation URL from validated parts. Returns
+   * null if the input doesn't look like a real AWS SNS confirmation
+   * request, in which case the caller MUST NOT call fetch.
    *
-   * Defence-in-depth on top of sns-validator's signature check — that
-   * library validates Signature against SigningCertURL, but SubscribeURL
-   * is a separate field. Both have to be locked down independently.
+   * Why reconstruction instead of trusting body.SubscribeURL:
+   *   - Even after a hostname regex check, taint analysis treats the
+   *     full URL as user-controlled because the path/query bits could
+   *     still steer the request semantically.
+   *   - Reconstructing from validated atoms (validated TopicArn region +
+   *     regex-bounded Token) keeps the host, scheme, path, and action
+   *     parameter completely outside the user-input dataflow.
    */
-  private isAwsSnsUrl(rawUrl: string): boolean {
+  private buildConfirmationUrl(body: SnsMessage): string | null {
+    if (!body.SubscribeURL) return null;
+
     let parsed: URL;
     try {
-      parsed = new URL(rawUrl);
+      parsed = new URL(body.SubscribeURL);
     } catch {
-      return false;
+      return null;
     }
-    if (parsed.protocol !== 'https:') return false;
-    // Must be exactly `sns.<region>.amazonaws.com` or
-    // `sns.<region>.amazonaws.com.cn`. Region is letters / digits / hyphens.
-    return /^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$/.test(parsed.hostname);
+    if (parsed.protocol !== 'https:') return null;
+
+    // TopicArn is already validated against env-config above; extracting
+    // the region is therefore safe (one of two known ARNs).
+    //   ARN format: arn:<partition>:sns:<region>:<account>:<topic>
+    const arnParts = body.TopicArn.split(':');
+    if (arnParts.length < 6) return null;
+    const partition = arnParts[1];
+    const region = arnParts[3];
+    if (!/^[a-z0-9-]+$/.test(region)) return null;
+    if (partition !== 'aws' && partition !== 'aws-cn') return null;
+    const tld = partition === 'aws-cn' ? 'amazonaws.com.cn' : 'amazonaws.com';
+
+    const token = parsed.searchParams.get('Token');
+    // SNS Tokens are opaque ~150-char base64-ish strings. Bound the shape
+    // so a malicious Token can't carry ; or & or other URL-shape chars
+    // even after percent-encoding.
+    if (!token || !/^[A-Za-z0-9_-]{1,2048}$/.test(token)) return null;
+
+    // Final URL is fully reconstructed: hardcoded scheme/path/Action,
+    // hostname assembled from validated region + tld, query from
+    // already-pinned TopicArn + regex-validated Token. fetch never sees
+    // user-input characters outside encodeURIComponent's escape table.
+    return (
+      `https://sns.${region}.${tld}/` +
+      `?Action=ConfirmSubscription` +
+      `&TopicArn=${encodeURIComponent(body.TopicArn)}` +
+      `&Token=${encodeURIComponent(token)}`
+    );
   }
 }
