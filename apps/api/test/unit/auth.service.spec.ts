@@ -755,7 +755,7 @@ describe('AuthService.changePassword', () => {
 
     // Capture the inner $transaction so we can assert on the calls it makes.
     const txCalls: Array<{ tx: any }> = [];
-    ctx.prisma._client.$transaction.mockImplementationOnce(async (fn: any) => {
+    ctx.prisma.$transaction.mockImplementationOnce(async (fn: any) => {
       const tx = {
         user: { update: jest.fn().mockResolvedValue(undefined) },
         refreshToken: { deleteMany: jest.fn().mockResolvedValue({ count: 2 }) },
@@ -793,7 +793,7 @@ describe('AuthService.changePassword', () => {
     });
 
     let capturedWhere: any = null;
-    ctx.prisma._client.$transaction.mockImplementationOnce(async (fn: any) => {
+    ctx.prisma.$transaction.mockImplementationOnce(async (fn: any) => {
       const tx = {
         user: { update: jest.fn().mockResolvedValue(undefined) },
         refreshToken: { deleteMany: jest.fn((args: any) => { capturedWhere = args.where; return Promise.resolve({ count: 5 }); }) },
