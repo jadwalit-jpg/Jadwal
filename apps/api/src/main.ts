@@ -218,7 +218,22 @@ async function bootstrap() {
   // 128 chars, emails at 254, the largest realistic body is an Activity
   // create with a few text fields and image URL refs (well under 50 KB).
   // Image uploads go via S3 presigned URLs, not through this parser.
-  app.use(bodyJson({ limit: '100kb' }));
+  // `type` widens the JSON parser to also accept text/plain payloads.
+  // Required for the SES events webhook (POST /api/webhooks/ses-events):
+  // AWS SNS HTTP delivery sends `Content-Type: text/plain; charset=UTF-8`
+  // with a valid-JSON body (documented quirk; see AWS SNS HTTP/HTTPS
+  // delivery docs). Without this widener, body-parser ignores SNS posts
+  // and `req.body` arrives as `undefined`, which the controller treats
+  // as a 403 — the SubscriptionConfirmation handshake never completes
+  // and the bounce/complaint feedback loop is dead. The same parser
+  // size cap applies (100 KB) so we don't open a new DoS surface.
+  // No real endpoint expects unstructured text bodies, so widening
+  // text/plain to JSON parsing is safe — non-JSON text bodies become
+  // an empty object and downstream validators reject as usual.
+  app.use(bodyJson({
+    limit: '100kb',
+    type: ['application/json', 'text/plain'],
+  }));
   app.use(bodyUrlencoded({ limit: '100kb', extended: true }));
 
   // ─── Cookie Parser ──────────────────────────────────────────────────────
