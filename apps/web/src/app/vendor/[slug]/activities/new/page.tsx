@@ -526,6 +526,7 @@ export default function CreateActivityPage() {
               <div className="grid grid-cols-2 gap-5">
                 <FieldGroup label={t('vendor.activities.wizard.ui.fieldTitleEn')} required error={errors.titleEn}>
                   <input
+                    data-testid="activity-field-titleEn"
                     value={form.titleEn}
                     onChange={e => handleTitleEnChange(e.target.value)}
                     className={inputCls(!!errors.titleEn)}
@@ -534,6 +535,7 @@ export default function CreateActivityPage() {
                 </FieldGroup>
                 <FieldGroup label={t('vendor.activities.wizard.ui.fieldTitleAr')} required error={errors.titleAr}>
                   <input
+                    data-testid="activity-field-titleAr"
                     value={form.titleAr}
                     onChange={e => updateField('titleAr', e.target.value)}
                     className={inputCls(!!errors.titleAr)}
@@ -784,13 +786,13 @@ export default function CreateActivityPage() {
                       }
                       required error={errors.pricePerPerson}
                     >
-                      <input type="number" min="0" value={form.pricePerPerson}
+                      <input type="number" min="0" data-testid="activity-field-pricePerPerson" value={form.pricePerPerson}
                         onChange={e => updateField('pricePerPerson', e.target.value)}
                         className={inputCls(!!errors.pricePerPerson)} placeholder={t('vendor.activities.wizard.ui.phPriceExample')} />
                     </FieldGroup>
                     {!hasUnits && (
                       <FieldGroup label={t('vendor.activities.wizard.ui.fieldTotalCapacityGuests')} required error={errors.capacity} hint={t('vendor.activities.wizard.ui.hintTotalCapacityGuests')}>
-                        <input type="number" min="1" value={form.capacity}
+                        <input type="number" min="1" data-testid="activity-field-capacity" value={form.capacity}
                           onChange={e => updateField('capacity', e.target.value)}
                           className={inputCls(!!errors.capacity)} placeholder={t('vendor.activities.wizard.ui.phCapacityGuests')} />
                       </FieldGroup>
@@ -1014,6 +1016,7 @@ export default function CreateActivityPage() {
                     {extraServices.map((svc, i) => (
                       <div
                         key={i}
+                        data-testid={`activity-extra-service-row-${i}`}
                         className={`flex items-center justify-between px-4 py-2.5 rounded-xl border text-sm ${
                           svc.price === 0
                             ? 'bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800/30 text-emerald-700 dark:text-emerald-400'
@@ -1107,6 +1110,7 @@ export default function CreateActivityPage() {
           ) : (
             <button
               type="button"
+              data-testid="activity-submit"
               onClick={handleSubmit}
               disabled={createMutation.isPending}
               className="flex items-center gap-2 px-8 py-3 text-sm font-semibold text-white bg-[#1d4f35] hover:bg-[#164030] rounded-xl transition-colors shadow-sm disabled:opacity-50"
