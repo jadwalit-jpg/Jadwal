@@ -217,27 +217,34 @@ jobs:
         working-directory: apps/api
         run: |
           npm run start:prod &
-          # Wait up to 60s for /health.
+          # Wait up to 60s for /health. Exit non-zero on timeout so the
+          # workflow fails fast with a clear error rather than running
+          # the test suite against a dead stack (which would surface as
+          # cryptic per-spec assertion failures).
           for i in {1..60}; do
             if curl -fsS http://localhost:4000/api/health 2>/dev/null; then
               echo "API up after ${i}s"
-              break
+              exit 0
             fi
             sleep 1
           done
+          echo "ERROR: API did not become healthy within 60s" >&2
+          exit 1
 
       - name: Start Web server
         working-directory: apps/web
         run: |
           npm run start &
-          # Wait up to 60s for the homepage to respond.
+          # Same fail-fast pattern as Start API server above.
           for i in {1..60}; do
             if curl -fsS http://localhost:3000 2>/dev/null > /dev/null; then
               echo "Web up after ${i}s"
-              break
+              exit 0
             fi
             sleep 1
           done
+          echo "ERROR: Web server did not become healthy within 60s" >&2
+          exit 1
 
       - name: Run Playwright (${{ matrix.project }})
         working-directory: apps/web
@@ -245,12 +252,17 @@ jobs:
           CI: '1'
           PLAYWRIGHT_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:4000/api
+          # SECURITY — bind workflow_dispatch input to env var so it's
+          # passed to the shell as a value, never as code. Embedding
+          # ${{ inputs.x }} directly in a `run:` script would let any
+          # actor with write access inject shell commands via this input.
+          GREP_PATTERN: ${{ inputs.grep_pattern }}
         run: |
-          GREP_FLAG=""
-          if [ -n "${{ inputs.grep_pattern }}" ]; then
-            GREP_FLAG="--grep ${{ inputs.grep_pattern }}"
+          if [ -n "$GREP_PATTERN" ]; then
+            npx playwright test --project=${{ matrix.project }} --grep "$GREP_PATTERN"
+          else
+            npx playwright test --project=${{ matrix.project }}
           fi
-          npx playwright test --project=${{ matrix.project }} $GREP_FLAG
 
       - name: Upload Playwright report on failure
         if: failure()
