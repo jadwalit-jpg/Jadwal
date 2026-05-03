@@ -175,12 +175,12 @@ describe('SesEventsController.handle — subscription handshake', () => {
       Timestamp: '2026-05-03T10:00:00Z',
       SignatureVersion: '1',
       Signature: 'sig',
-      SigningCertURL: 'https://sns.../cert.pem',
-      SubscribeURL: 'https://sns.../confirm?Token=xxx',
+      SigningCertURL: 'https://sns.eu-central-1.amazonaws.com/cert.pem',
+      SubscribeURL: 'https://sns.eu-central-1.amazonaws.com/?Action=ConfirmSubscription&Token=xxx',
       Message: 'You have chosen to subscribe...',
     };
     const result = await sut.handle('SubscriptionConfirmation', msg as any);
-    expect(fetchMock).toHaveBeenCalledWith('https://sns.../confirm?Token=xxx');
+    expect(fetchMock).toHaveBeenCalledWith('https://sns.eu-central-1.amazonaws.com/?Action=ConfirmSubscription&Token=xxx');
     expect(result).toEqual({ ok: true });
   });
 
@@ -197,5 +197,55 @@ describe('SesEventsController.handle — subscription handshake', () => {
       Message: 'You have chosen to subscribe...',
     } as any;
     await expect(sut.handle('SubscriptionConfirmation', msg)).rejects.toThrow(ForbiddenException);
+  });
+
+  // ── SSRF defence on SubscribeURL ────────────────────────────────────
+  test.each([
+    ['http://sns.eu-central-1.amazonaws.com/?Action=ConfirmSubscription', 'http (not https)'],
+    ['https://169.254.169.254/latest/meta-data/iam/security-credentials/', 'IMDS endpoint'],
+    ['https://attacker.example/relay?url=...', 'attacker domain'],
+    ['https://sns.amazonaws.com.attacker.test/', 'attacker subdomain trick'],
+    ['https://sns-fake.eu-central-1.amazonaws.com/', 'wrong subdomain prefix'],
+    ['https://localhost/admin', 'localhost'],
+    ['file:///etc/passwd', 'file:// scheme'],
+  ])('SubscribeURL %p (%s) → 403 (SSRF defence)', async (subscribeUrl) => {
+    fetchMock.mockClear();
+    const { sut } = makeSut();
+    const msg = {
+      Type: 'SubscriptionConfirmation',
+      MessageId: 'msg-ssrf',
+      TopicArn: KNOWN_BOUNCES_ARN,
+      Timestamp: '2026-05-03T10:00:00Z',
+      SignatureVersion: '1',
+      Signature: 'sig',
+      SigningCertURL: 'https://sns.eu-central-1.amazonaws.com/cert.pem',
+      SubscribeURL: subscribeUrl,
+      Message: 'You have chosen to subscribe...',
+    } as any;
+    await expect(sut.handle('SubscriptionConfirmation', msg)).rejects.toThrow(ForbiddenException);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    'https://sns.eu-central-1.amazonaws.com/?Action=ConfirmSubscription&Token=xxx',
+    'https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&Token=yyy',
+    'https://sns.cn-north-1.amazonaws.com.cn/?Action=ConfirmSubscription&Token=zzz', // China partition
+  ])('legitimate AWS SNS SubscribeURL %p → fetch called', async (subscribeUrl) => {
+    fetchMock.mockClear();
+    const { sut } = makeSut();
+    const msg = {
+      Type: 'SubscriptionConfirmation',
+      MessageId: 'msg-ok',
+      TopicArn: KNOWN_BOUNCES_ARN,
+      Timestamp: '2026-05-03T10:00:00Z',
+      SignatureVersion: '1',
+      Signature: 'sig',
+      SigningCertURL: 'https://sns.eu-central-1.amazonaws.com/cert.pem',
+      SubscribeURL: subscribeUrl,
+      Message: 'You have chosen to subscribe...',
+    } as any;
+    const result = await sut.handle('SubscriptionConfirmation', msg);
+    expect(fetchMock).toHaveBeenCalledWith(subscribeUrl);
+    expect(result).toEqual({ ok: true });
   });
 });

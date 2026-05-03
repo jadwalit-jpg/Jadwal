@@ -143,9 +143,19 @@ export class SesEventsController {
 
     if (body.Type === 'SubscriptionConfirmation') {
       // AWS sends this once per subscription. Hitting SubscribeURL
-      // completes the handshake. Library already verified the signature
-      // so we can trust the URL.
+      // completes the handshake. Even though the library has verified
+      // the signature, SubscribeURL is still an attacker-controlled
+      // field if upstream signing is ever compromised — so we ALSO
+      // pin the hostname to the documented AWS SNS confirmation
+      // pattern (`sns.<region>.amazonaws.com[.cn]`) and require
+      // HTTPS. Without this, an SSRF could redirect the fetch at
+      // 169.254.169.254 (EC2/Fargate IMDS for credential theft) or
+      // any internal RDS/Redis endpoint.
       if (!body.SubscribeURL) throw new ForbiddenException();
+      if (!this.isAwsSnsUrl(body.SubscribeURL)) {
+        this.logger.warn('ses-events SubscribeURL rejected: not an AWS SNS hostname');
+        throw new ForbiddenException();
+      }
       await fetch(body.SubscribeURL).catch(() => undefined);
       this.logger.log(`SNS subscription confirmed for topic ${body.TopicArn}`);
       return { ok: true };
@@ -210,5 +220,30 @@ export class SesEventsController {
     }
 
     return { ok: true };
+  }
+
+  /**
+   * Pin the SubscribeURL hostname to the documented AWS SNS confirmation
+   * pattern. AWS publishes these as `sns.<region>.amazonaws.com` for
+   * commercial regions and `sns.<region>.amazonaws.com.cn` for the China
+   * partition. Anything else is rejected to prevent SSRF (e.g. an
+   * attacker substituting `169.254.169.254` to exfiltrate the task
+   * IAM role credentials via the IMDS endpoint).
+   *
+   * Defence-in-depth on top of sns-validator's signature check — that
+   * library validates Signature against SigningCertURL, but SubscribeURL
+   * is a separate field. Both have to be locked down independently.
+   */
+  private isAwsSnsUrl(rawUrl: string): boolean {
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      return false;
+    }
+    if (parsed.protocol !== 'https:') return false;
+    // Must be exactly `sns.<region>.amazonaws.com` or
+    // `sns.<region>.amazonaws.com.cn`. Region is letters / digits / hyphens.
+    return /^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$/.test(parsed.hostname);
   }
 }
