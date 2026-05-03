@@ -17,6 +17,13 @@ export type AuditActionCategory = 'FINANCIAL' | 'OPERATIONAL';
  * Set explicitly to FINANCIAL in callers when applicable (the default is
  * OPERATIONAL because most ad-hoc service-side audits are about state
  * transitions, not money).
+ *
+ * SECURITY — caller responsibility:
+ * The `details` field is persisted to the AuditLog table for up to 7 years
+ * (FINANCIAL events). It must NEVER contain raw request bodies, tokens,
+ * passwords, OTPs, card data, or unmasked PII. Pass enums, IDs, status
+ * codes, and short human-readable summaries only. The 1000-char cap below
+ * is a backstop, not a sanitizer — it doesn't redact, it truncates.
  */
 @Injectable()
 export class AuditLoggerService {
@@ -31,6 +38,7 @@ export class AuditLoggerService {
     action: string;
     entity: string;
     entityId?: string;
+    /** Safe summary only — see class JSDoc. No req.body / tokens / PII. */
     details?: string;
     actionCategory?: AuditActionCategory;
   }) {
