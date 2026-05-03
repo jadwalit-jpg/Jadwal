@@ -6,11 +6,9 @@
  * marked CANCELLED by the cleanup cron, the booking is un-cancelled and
  * confirmed (since the customer's money DID land). An audit row is left
  * documenting the unusual transition.
- *
- * This spec mocks the booking GET to flip CANCELLED → CONFIRMED after a
- * POST to /payment/callback/ipn, and asserts the customer-visible state.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const CUSTOMER_STATE = 'e2e/.auth/customer.json';
 
@@ -26,6 +24,7 @@ const beforeIpn = {
   currencyCode: 'QAR',
   activity: { titleEn: 'M6 Mock Activity', slug: 'm6-mock' },
   payment: { id: 'pay-mock-m6', status: 'PENDING', amount: '450.00' },
+  systemNote: null,
 };
 
 const afterIpn = {
@@ -33,9 +32,19 @@ const afterIpn = {
   status: 'CONFIRMED',
   cancelledBy: null,
   payment: { id: 'pay-mock-m6', status: 'SUCCESS', amount: '450.00' },
-  // Audit message documenting the recovery transition.
   systemNote: 'Restored from CANCELLED via late payment confirmation',
 };
+
+interface BookingState {
+  status: string;
+  payment: { status: string };
+  systemNote: string | null;
+}
+
+interface IpnResult {
+  recovered: boolean;
+  bookingId: string;
+}
 
 async function setupRoutes(page: Page) {
   await page.route('**/api/bookings/**', async (route: Route) => {
@@ -60,6 +69,7 @@ test.describe('Customer payment IPN — §M6 cancelled booking recovery', () => 
 
   test('valid late IPN un-cancels the booking and marks it CONFIRMED', async ({ page }) => {
     await setupRoutes(page);
+    await page.goto('/bookings');
 
     await page.route('**/api/payment/callback/ipn', async (route: Route) => {
       if (route.request().method() === 'POST') {
@@ -74,25 +84,24 @@ test.describe('Customer payment IPN — §M6 cancelled booking recovery', () => 
       await route.fallback();
     });
 
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-
     // Pre-IPN: booking is CANCELLED.
-    const beforeRes = await page.request.get(`${apiBase}/bookings/${MOCK_BOOKING_ID}`);
-    expect(beforeRes.ok()).toBeTruthy();
-    expect((await beforeRes.json()).status).toBe('CANCELLED');
+    const before = await fetchFromPage<BookingState>(page, `/api/bookings/${MOCK_BOOKING_ID}`);
+    expect(before.ok).toBeTruthy();
+    expect(before.body?.status).toBe('CANCELLED');
 
     // Fire the IPN.
-    const ipnRes = await page.request.post(`${apiBase}/payment/callback/ipn`, {
-      data: { bookingId: MOCK_BOOKING_ID, hash: 'mock-hash' },
-    });
-    expect(ipnRes.ok()).toBeTruthy();
+    const ipn = await fetchFromPage<IpnResult>(
+      page,
+      '/api/payment/callback/ipn',
+      { method: 'POST', body: JSON.stringify({ bookingId: MOCK_BOOKING_ID, hash: 'mock-hash' }) },
+    );
+    expect(ipn.ok).toBeTruthy();
 
     // Post-IPN: booking is CONFIRMED with the recovery system note.
-    const afterRes = await page.request.get(`${apiBase}/bookings/${MOCK_BOOKING_ID}`);
-    expect(afterRes.ok()).toBeTruthy();
-    const afterBody = await afterRes.json();
-    expect(afterBody.status).toBe('CONFIRMED');
-    expect(afterBody.payment?.status).toBe('SUCCESS');
-    expect(afterBody.systemNote).toMatch(/restored.*cancelled.*late payment/i);
+    const after = await fetchFromPage<BookingState>(page, `/api/bookings/${MOCK_BOOKING_ID}`);
+    expect(after.ok).toBeTruthy();
+    expect(after.body?.status).toBe('CONFIRMED');
+    expect(after.body?.payment?.status).toBe('SUCCESS');
+    expect(after.body?.systemNote).toMatch(/restored.*cancelled.*late payment/i);
   });
 });

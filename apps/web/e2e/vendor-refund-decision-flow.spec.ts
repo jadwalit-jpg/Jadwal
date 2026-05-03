@@ -7,6 +7,7 @@
  * 4. Customer GETs /bookings/:id → sees refund status APPROVED
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const CUSTOMER_STATE = 'e2e/.auth/customer.json';
 const VENDOR_STATE = 'e2e/.auth/vendor.json';
@@ -30,6 +31,19 @@ function bookingShape() {
       reason: 'Schedule conflict',
     },
   };
+}
+
+interface Booking {
+  refundRequest: { status: string } | null;
+}
+
+interface RefundRow {
+  id: string;
+  status: string;
+}
+
+interface RefundList {
+  data: RefundRow[];
 }
 
 async function setupCustomerRoutes(page: Page) {
@@ -103,45 +117,48 @@ test.describe('Refund flow — customer requests, vendor approves', () => {
   });
 
   test('customer request → vendor approve → customer sees APPROVED', async ({ browser }) => {
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-
     // Step 1+4 — customer context.
     const customerCtx = await browser.newContext({ storageState: CUSTOMER_STATE });
     const customerPage = await customerCtx.newPage();
     await setupCustomerRoutes(customerPage);
+    await customerPage.goto('/bookings');
 
-    const reqRes = await customerPage.request.post(
-      `${apiBase}/bookings/${MOCK_BOOKING_ID}/refund`,
-      { data: { reason: 'Schedule conflict' } },
+    const reqRes = await fetchFromPage<RefundRow>(
+      customerPage,
+      `/api/bookings/${MOCK_BOOKING_ID}/refund`,
+      { method: 'POST', body: JSON.stringify({ reason: 'Schedule conflict' }) },
     );
-    expect(reqRes.ok()).toBeTruthy();
+    expect(reqRes.ok).toBeTruthy();
     expect(refundStatus).toBe('PENDING');
 
     // Step 2+3 — vendor context.
     const vendorCtx = await browser.newContext({ storageState: VENDOR_STATE });
     const vendorPage = await vendorCtx.newPage();
     await setupVendorRoutes(vendorPage);
+    await vendorPage.goto('/');
 
-    const list = await vendorPage.request.get(`${apiBase}/vendor/refund-requests?page=1`);
-    expect(list.ok()).toBeTruthy();
-    const listBody = await list.json();
-    const row = (listBody.data ?? []).find((r: { id: string }) => r.id === MOCK_REFUND_ID);
-    expect(row).toBeTruthy();
-    expect(row.status).toBe('PENDING');
-
-    const approve = await vendorPage.request.post(
-      `${apiBase}/vendor/refund-requests/${MOCK_REFUND_ID}/approve`,
-      { data: {} },
+    const list = await fetchFromPage<RefundList>(
+      vendorPage,
+      '/api/vendor/refund-requests?page=1',
     );
-    expect(approve.ok()).toBeTruthy();
+    expect(list.ok).toBeTruthy();
+    const row = (list.body?.data ?? []).find((r) => r.id === MOCK_REFUND_ID);
+    expect(row).toBeTruthy();
+    expect(row?.status).toBe('PENDING');
+
+    const approve = await fetchFromPage<RefundRow>(
+      vendorPage,
+      `/api/vendor/refund-requests/${MOCK_REFUND_ID}/approve`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+    expect(approve.ok).toBeTruthy();
     expect(refundStatus).toBe('APPROVED');
     await vendorCtx.close();
 
     // Step 4 — customer sees the APPROVED status.
-    const final = await customerPage.request.get(`${apiBase}/bookings/${MOCK_BOOKING_ID}`);
-    expect(final.ok()).toBeTruthy();
-    const finalBody = await final.json();
-    expect(finalBody.refundRequest?.status).toBe('APPROVED');
+    const final = await fetchFromPage<Booking>(customerPage, `/api/bookings/${MOCK_BOOKING_ID}`);
+    expect(final.ok).toBeTruthy();
+    expect(final.body?.refundRequest?.status).toBe('APPROVED');
     await customerCtx.close();
   });
 });

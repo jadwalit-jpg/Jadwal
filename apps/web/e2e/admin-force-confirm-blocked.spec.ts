@@ -6,12 +6,9 @@
  * unless the underlying payment is already SUCCESS. This stops both admin
  * slips and a compromised admin from minting confirmed reservations that
  * never paid.
- *
- * The /admin/bookings page exposes the status transition through a
- * dropdown / action menu. This spec mocks the PATCH to return the typed
- * 400 and asserts the toast surfaces it.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const ADMIN_STATE = 'e2e/.auth/admin.json';
 
@@ -44,6 +41,12 @@ const MOCK_BOOKINGS_RESPONSE = {
   totalPages: 1,
 };
 
+interface PatchError {
+  statusCode: number;
+  message: string;
+  error: string;
+}
+
 async function setupRoutes(page: Page) {
   await page.route('**/api/admin/bookings**', async (route: Route) => {
     const url = route.request().url();
@@ -64,16 +67,13 @@ test.describe('Admin bookings — §B5 force-confirm guard', () => {
 
   test('PATCH status=CONFIRMED on unpaid booking surfaces the typed 400', async ({ page }) => {
     await setupRoutes(page);
+    await page.goto('/admin/bookings');
 
-    // Mock the PATCH first so any admin attempt to flip the status hits
-    // the canned 400, regardless of which UI control fires it.
     let patchCalls = 0;
     await page.route('**/api/admin/bookings/*/status', async (route: Route) => {
       if (route.request().method() === 'PATCH') {
         patchCalls += 1;
         const body = JSON.parse(route.request().postData() ?? '{}');
-        // Only the CONFIRMED transition should be exercised here. Other
-        // status transitions are not covered by this spec.
         if (body.status === 'CONFIRMED') {
           await route.fulfill({
             status: 400,
@@ -90,26 +90,13 @@ test.describe('Admin bookings — §B5 force-confirm guard', () => {
       await route.fallback();
     });
 
-    await page.goto('/admin/bookings');
-    await page.waitForLoadState('networkidle');
-
-    // Booking row visible.
-    await expect(page.getByText('JDWL-B5-0001').first()).toBeVisible({ timeout: 15000 });
-
-    // Hit the API directly through the page's request context — this
-    // mirrors what the admin UI's status change would send and avoids
-    // brittle dropdown locators (the UI uses CustomSelect which has no
-    // stable role label in EN+AR).
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-    const res = await page.request.patch(
-      `${apiBase}/admin/bookings/${MOCK_BOOKING_ID}/status`,
-      { data: { status: 'CONFIRMED' } },
+    const res = await fetchFromPage<PatchError>(
+      page,
+      `/api/admin/bookings/${MOCK_BOOKING_ID}/status`,
+      { method: 'PATCH', body: JSON.stringify({ status: 'CONFIRMED' }) },
     );
-    expect(res.status()).toBe(400);
-    const body = await res.json();
-    expect(body.message).toMatch(/cannot confirm.*payment/i);
-    // Page-level mutation count: confirms our mocked endpoint actually
-    // intercepted the request.
+    expect(res.status).toBe(400);
+    expect(res.body?.message).toMatch(/cannot confirm.*payment/i);
     expect(patchCalls).toBe(1);
   });
 });

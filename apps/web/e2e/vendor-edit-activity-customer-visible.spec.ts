@@ -1,12 +1,9 @@
 /**
  * E2E — vendor edits an activity → customer-side catalog shows the
  * updated values.
- *
- * Mocked end-to-end: PUT /activities/:id changes the in-memory mock,
- * subsequent GET /catalog/activities and GET /activities/:slug return
- * the updated values.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const VENDOR_STATE = 'e2e/.auth/vendor.json';
 const CUSTOMER_STATE = 'e2e/.auth/customer.json';
@@ -30,6 +27,11 @@ function activityShape() {
     currencyCode: 'QAR',
     vendor: { id: 'v-mock', businessNameEn: 'Mock Vendor', slug: 'mock-vendor', status: 'ACTIVE' },
   };
+}
+
+interface Activity {
+  titleEn: string;
+  pricePerPerson: string;
 }
 
 async function setupVendorRoutes(page: Page) {
@@ -82,13 +84,17 @@ test.describe('Vendor edits activity → customer catalog reflects the change', 
     const vendorCtx = await browser.newContext({ storageState: VENDOR_STATE });
     const vendorPage = await vendorCtx.newPage();
     await setupVendorRoutes(vendorPage);
+    await vendorPage.goto('/');
 
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-    const put = await vendorPage.request.put(
-      `${apiBase}/activities/${MOCK_ACTIVITY_ID}`,
-      { data: { titleEn: 'Updated Title 2026', pricePerPerson: '149.00' } },
+    const put = await fetchFromPage<Activity>(
+      vendorPage,
+      `/api/activities/${MOCK_ACTIVITY_ID}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ titleEn: 'Updated Title 2026', pricePerPerson: '149.00' }),
+      },
     );
-    expect(put.ok()).toBeTruthy();
+    expect(put.ok).toBeTruthy();
     expect(currentTitle).toBe('Updated Title 2026');
     expect(currentPrice).toBe('149.00');
     await vendorCtx.close();
@@ -97,12 +103,12 @@ test.describe('Vendor edits activity → customer catalog reflects the change', 
     const customerCtx = await browser.newContext({ storageState: CUSTOMER_STATE });
     const customerPage = await customerCtx.newPage();
     await setupCustomerRoutes(customerPage);
+    await customerPage.goto('/');
 
-    const get = await customerPage.request.get(`${apiBase}/activities/${MOCK_ACTIVITY_SLUG}`);
-    expect(get.ok()).toBeTruthy();
-    const body = await get.json();
-    expect(body.titleEn).toBe('Updated Title 2026');
-    expect(body.pricePerPerson).toBe('149.00');
+    const get = await fetchFromPage<Activity>(customerPage, `/api/activities/${MOCK_ACTIVITY_SLUG}`);
+    expect(get.ok).toBeTruthy();
+    expect(get.body?.titleEn).toBe('Updated Title 2026');
+    expect(get.body?.pricePerPerson).toBe('149.00');
     await customerCtx.close();
   });
 });

@@ -23,6 +23,16 @@ import { test, expect } from '@playwright/test';
 
 const PAGES = ['/', '/explore', '/login', '/register', '/about'] as const;
 
+// Skip in CI until Linux baselines are committed. Visual baselines are
+// platform-dependent (antialiasing, font hinting); a Windows/macOS dev
+// machine cannot generate baselines that match Ubuntu CI runners.
+// To enable: locally run inside a Linux container, commit the .png
+// snapshots, then remove the skip.
+test.skip(
+  !!process.env.CI,
+  'Visual baselines must be Linux-generated; commit them then remove this skip',
+);
+
 for (const path of PAGES) {
   for (const lang of ['en', 'ar'] as const) {
     test(`visual: ${path} (${lang})`, async ({ page }) => {

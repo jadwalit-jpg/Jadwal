@@ -10,6 +10,7 @@
  * cancel, 400 after, and a CANCEL_REVERSE_AWARDED -100 ledger row.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const CUSTOMER_STATE = 'e2e/.auth/customer.json';
 
@@ -32,6 +33,25 @@ const COMPLETED_BOOKING = {
 const CANCELLED_BOOKING = { ...COMPLETED_BOOKING, status: 'CANCELLED' };
 
 let cancelHasRun = false;
+
+interface CancelResult {
+  ok: boolean;
+  pointsReversed: number;
+}
+
+interface BalanceResult {
+  balance: number;
+  totalReversed: number;
+}
+
+interface LedgerRow {
+  source: string;
+  delta: number;
+}
+
+interface LedgerList {
+  data: LedgerRow[];
+}
 
 async function setupRoutes(page: Page) {
   await page.route('**/api/bookings/**', async (route: Route) => {
@@ -65,21 +85,11 @@ async function setupRoutes(page: Page) {
 
   await page.route('**/api/loyalty/ledger**', async (route: Route) => {
     if (route.request().method() === 'GET') {
-      const rows = [
-        {
-          id: 'ledger-earn',
-          source: 'BOOKING_EARN',
-          delta: 100,
-          createdAt: new Date(Date.now() - 86400_000).toISOString(),
-        },
+      const rows: LedgerRow[] = [
+        { source: 'BOOKING_EARN', delta: 100 },
       ];
       if (cancelHasRun) {
-        rows.unshift({
-          id: 'ledger-reverse',
-          source: 'CANCEL_REVERSE_AWARDED',
-          delta: -100,
-          createdAt: new Date().toISOString(),
-        });
+        rows.unshift({ source: 'CANCEL_REVERSE_AWARDED', delta: -100 });
       }
       await route.fulfill({
         status: 200,
@@ -101,9 +111,8 @@ test.describe('Customer cancel — §B3 points reversal', () => {
 
   test('cancelling a COMPLETED booking debits previously-awarded points', async ({ page }) => {
     await setupRoutes(page);
+    await page.goto('/bookings');
 
-    // Cancel POST flips the in-memory state so subsequent GETs return the
-    // post-reversal data.
     await page.route('**/api/bookings/*/cancel', async (route: Route) => {
       if (route.request().method() === 'POST') {
         cancelHasRun = true;
@@ -117,33 +126,25 @@ test.describe('Customer cancel — §B3 points reversal', () => {
       await route.fallback();
     });
 
-    // Issue the cancel through the page's request context (the customer
-    // cancel UI lives inside booking detail; mocking the action this way
-    // keeps the spec robust to copy/locale changes on the cancel modal).
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-    const cancelRes = await page.request.post(
-      `${apiBase}/bookings/${MOCK_BOOKING_ID}/cancel`,
-      { data: {} },
+    const cancel = await fetchFromPage<CancelResult>(
+      page,
+      `/api/bookings/${MOCK_BOOKING_ID}/cancel`,
+      { method: 'POST', body: JSON.stringify({}) },
     );
-    expect(cancelRes.ok()).toBeTruthy();
-    const cancelBody = await cancelRes.json();
-    expect(cancelBody.pointsReversed).toBe(100);
+    expect(cancel.ok).toBeTruthy();
+    expect(cancel.body?.pointsReversed).toBe(100);
 
-    // Loyalty balance reflects the reversal.
-    const balanceRes = await page.request.get(`${apiBase}/loyalty/balance`);
-    expect(balanceRes.ok()).toBeTruthy();
-    const balance = await balanceRes.json();
-    expect(balance.balance).toBe(400);
-    expect(balance.totalReversed).toBe(100);
+    const balance = await fetchFromPage<BalanceResult>(page, '/api/loyalty/balance');
+    expect(balance.ok).toBeTruthy();
+    expect(balance.body?.balance).toBe(400);
+    expect(balance.body?.totalReversed).toBe(100);
 
-    // Ledger row exists.
-    const ledgerRes = await page.request.get(`${apiBase}/loyalty/ledger?page=1`);
-    expect(ledgerRes.ok()).toBeTruthy();
-    const ledger = await ledgerRes.json();
-    const reverse = (ledger.data ?? []).find(
-      (r: { source: string }) => r.source === 'CANCEL_REVERSE_AWARDED',
+    const ledger = await fetchFromPage<LedgerList>(page, '/api/loyalty/ledger?page=1');
+    expect(ledger.ok).toBeTruthy();
+    const reverse = (ledger.body?.data ?? []).find(
+      (r) => r.source === 'CANCEL_REVERSE_AWARDED',
     );
     expect(reverse).toBeTruthy();
-    expect(reverse.delta).toBe(-100);
+    expect(reverse?.delta).toBe(-100);
   });
 });
