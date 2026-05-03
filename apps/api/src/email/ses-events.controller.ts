@@ -170,8 +170,11 @@ export class SesEventsController {
       // codeql[js/server-side-request-forgery]: URL is reconstructed from
       // hardcoded scheme/path + region derived from already-validated
       // TopicArn + regex-validated Token. fetch never sees user-input
-      // characters in the host or scheme.
-      await fetch(safeUrl).catch(() => undefined);
+      // characters in the host or scheme. `redirect: 'manual'` is the
+      // last belt-and-braces — even if AWS SNS unexpectedly issued a
+      // 30x to a different host, fetch returns the redirect response
+      // without following it (no second outbound request).
+      await fetch(safeUrl, { redirect: 'manual' }).catch(() => undefined);
       this.logger.log(`SNS subscription confirmed for topic ${body.TopicArn}`);
       return { ok: true };
     }
