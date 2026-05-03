@@ -49,7 +49,14 @@ jobs:
           # are dominant, ISC / 0BSD also common in node ecosystem).
           # Flag anything outside the list — usually means a copyleft GPL
           # crept in via a transitive bump.
+          #
+          # MPL-2.0 added 2026-05-04 — Mozilla Public License 2.0 is "weak
+          # copyleft" with file-level scope (modifications to MPL files
+          # must be MPL; using as a library creates no obligation). Comes
+          # in via lightningcss platform binaries (bundled by Tailwind /
+          # Next.js) and is the same licence Firefox itself ships under.
+          # Standard practice in JS ecosystems is to allow it.
           allow-licenses: >-
             MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD,
             CC0-1.0, CC-BY-3.0, CC-BY-4.0, Unlicense, Python-2.0,
-            BlueOak-1.0.0, MIT-0
+            BlueOak-1.0.0, MIT-0, MPL-2.0
