@@ -95,7 +95,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [chromium, mobile-chrome]
+        # mobile-chrome temporarily removed (2026-05-03) — runtime was ~12 min
+        # per project, doubling PR wall-clock; both projects fail consistently
+        # on prod-targeted PRs because no staging stack exists yet. Re-add
+        # mobile-chrome once a dedicated staging environment is wired up so
+        # the suite can actually pass green and the wait is justified.
+        project: [chromium]
 
     services:
       postgres:
