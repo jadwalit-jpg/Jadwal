@@ -136,8 +136,10 @@ export class SesEventsController {
         else resolve();
       });
     }).catch((err) => {
-      const kind = err instanceof Error ? err.name : 'UnknownError';
-      this.logger.warn(`ses-events signature verification failed (${kind})`);
+      const msg = err instanceof Error ? err.message : 'UnknownError';
+      this.logger.warn(
+        `ses-events signature verification failed: ${msg} (sigVer=${body.SignatureVersion}, type=${body.Type})`,
+      );
       throw new ForbiddenException();
     });
 
