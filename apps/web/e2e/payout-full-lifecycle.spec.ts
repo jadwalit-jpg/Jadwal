@@ -3,6 +3,7 @@
  * mark paid (with bankTransferRef) → vendor sees PAID.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const VENDOR_STATE = 'e2e/.auth/vendor.json';
 const ADMIN_STATE = 'e2e/.auth/admin.json';
@@ -23,6 +24,22 @@ function requestShape() {
     bankTransferRef: requestStatus === 'PAID' ? 'SWIFT-S6-001' : null,
     processedAt: requestStatus === 'PAID' ? new Date().toISOString() : null,
   };
+}
+
+interface RequestRow {
+  id: string;
+  status: string;
+  bankTransferRef: string | null;
+}
+
+interface RequestsList {
+  data: RequestRow[];
+}
+
+interface MarkPaidError {
+  statusCode: number;
+  message: string;
+  error: string;
 }
 
 async function setupVendorRoutes(page: Page) {
@@ -94,7 +111,6 @@ async function setupAdminRoutes(page: Page) {
   await page.route('**/api/admin/payouts/mark-paid', async (route: Route) => {
     if (route.request().method() === 'POST') {
       const body = JSON.parse(route.request().postData() ?? '{}');
-      // §M4 — bankTransferRef is REQUIRED.
       if (!body.bankTransferRef || body.bankTransferRef.length < 3) {
         await route.fulfill({
           status: 400,
@@ -125,51 +141,54 @@ test.describe('Payout — full lifecycle (vendor → admin approve → mark paid
   });
 
   test('end-to-end: vendor request → admin approve → admin mark paid → vendor sees PAID', async ({ browser }) => {
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-
     // Vendor: submit request.
     const vendorCtx = await browser.newContext({ storageState: VENDOR_STATE });
     const vendorPage = await vendorCtx.newPage();
     await setupVendorRoutes(vendorPage);
+    await vendorPage.goto('/');
 
-    const submit = await vendorPage.request.post(`${apiBase}/vendor/payout-requests`, {
-      data: { amount: '500.00' },
+    const submit = await fetchFromPage<RequestRow>(vendorPage, '/api/vendor/payout-requests', {
+      method: 'POST',
+      body: JSON.stringify({ amount: '500.00' }),
     });
-    expect(submit.status()).toBe(201);
+    expect(submit.status).toBe(201);
     expect(requestStatus).toBe('PENDING');
 
     // Admin: approve.
     const adminCtx = await browser.newContext({ storageState: ADMIN_STATE });
     const adminPage = await adminCtx.newPage();
     await setupAdminRoutes(adminPage);
+    await adminPage.goto('/admin/payouts');
 
-    const approve = await adminPage.request.post(
-      `${apiBase}/admin/payouts/requests/${MOCK_REQUEST_ID}/approve`,
-      { data: {} },
+    const approve = await fetchFromPage<RequestRow>(
+      adminPage,
+      `/api/admin/payouts/requests/${MOCK_REQUEST_ID}/approve`,
+      { method: 'POST', body: JSON.stringify({}) },
     );
-    expect(approve.ok()).toBeTruthy();
+    expect(approve.ok).toBeTruthy();
     expect(requestStatus).toBe('APPROVED');
 
     // Admin: mark-paid (without bankTransferRef must fail).
-    const noRef = await adminPage.request.post(`${apiBase}/admin/payouts/mark-paid`, {
-      data: { paymentIds: [MOCK_PAYMENT_ID] },
+    const noRef = await fetchFromPage<MarkPaidError>(adminPage, '/api/admin/payouts/mark-paid', {
+      method: 'POST',
+      body: JSON.stringify({ paymentIds: [MOCK_PAYMENT_ID] }),
     });
-    expect(noRef.status()).toBe(400);
+    expect(noRef.status).toBe(400);
     expect(requestStatus).toBe('APPROVED'); // unchanged
 
     // Admin: mark-paid with valid ref.
-    const withRef = await adminPage.request.post(`${apiBase}/admin/payouts/mark-paid`, {
-      data: { paymentIds: [MOCK_PAYMENT_ID], bankTransferRef: 'SWIFT-S6-001' },
+    const withRef = await fetchFromPage<{ updated: number }>(adminPage, '/api/admin/payouts/mark-paid', {
+      method: 'POST',
+      body: JSON.stringify({ paymentIds: [MOCK_PAYMENT_ID], bankTransferRef: 'SWIFT-S6-001' }),
     });
-    expect(withRef.ok()).toBeTruthy();
+    expect(withRef.ok).toBeTruthy();
     expect(requestStatus).toBe('PAID');
     await adminCtx.close();
 
     // Vendor: sees PAID.
-    const list = await vendorPage.request.get(`${apiBase}/vendor/payout-requests?page=1`);
-    expect(list.ok()).toBeTruthy();
-    const listBody = await list.json();
-    const row = (listBody.data ?? []).find((r: { id: string }) => r.id === MOCK_REQUEST_ID);
+    const list = await fetchFromPage<RequestsList>(vendorPage, '/api/vendor/payout-requests?page=1');
+    expect(list.ok).toBeTruthy();
+    const row = (list.body?.data ?? []).find((r) => r.id === MOCK_REQUEST_ID);
     expect(row?.status).toBe('PAID');
     expect(row?.bankTransferRef).toBe('SWIFT-S6-001');
     await vendorCtx.close();

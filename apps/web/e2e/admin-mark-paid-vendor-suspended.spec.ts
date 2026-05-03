@@ -6,6 +6,7 @@
  * have been triggered by fraud detection between approval and mark-paid).
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const ADMIN_STATE = 'e2e/.auth/admin.json';
 
@@ -44,6 +45,16 @@ const MOCK_PAYOUTS_RESPONSE = {
   totalPages: 1,
 };
 
+interface MarkPaidError {
+  statusCode: number;
+  message: string;
+  error: string;
+}
+
+interface PayoutsList {
+  data: Array<{ id: string; payoutStatus: string }>;
+}
+
 async function setupRoutes(page: Page) {
   await page.route('**/api/admin/payouts**', async (route: Route) => {
     if (route.request().method() === 'GET' && !route.request().url().includes('/export')) {
@@ -63,6 +74,7 @@ test.describe('Admin mark-paid — §M3 vendor-suspended block', () => {
 
   test('mark-paid for suspended vendor returns VENDOR_SUSPENDED 400', async ({ page }) => {
     await setupRoutes(page);
+    await page.goto('/admin/payouts');
 
     await page.route('**/api/admin/payouts/mark-paid', async (route: Route) => {
       if (route.request().method() === 'POST') {
@@ -80,20 +92,20 @@ test.describe('Admin mark-paid — §M3 vendor-suspended block', () => {
       await route.fallback();
     });
 
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-    const res = await page.request.post(
-      `${apiBase}/admin/payouts/mark-paid`,
-      { data: { paymentIds: [MOCK_PAYMENT_ID], bankTransferRef: 'SWIFT-M3-001' } },
-    );
-    expect(res.status()).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe('VENDOR_SUSPENDED');
+    const result = await fetchFromPage<MarkPaidError>(page, '/api/admin/payouts/mark-paid', {
+      method: 'POST',
+      body: JSON.stringify({
+        paymentIds: [MOCK_PAYMENT_ID],
+        bankTransferRef: 'SWIFT-M3-001',
+      }),
+    });
+    expect(result.status).toBe(400);
+    expect(result.body?.error).toBe('VENDOR_SUSPENDED');
 
     // Subsequent list query confirms the payment is still UNPAID.
-    const list = await page.request.get(`${apiBase}/admin/payouts?page=1`);
-    expect(list.ok()).toBeTruthy();
-    const listBody = await list.json();
-    const row = (listBody.data ?? []).find((r: { id: string }) => r.id === MOCK_PAYMENT_ID);
+    const list = await fetchFromPage<PayoutsList>(page, '/api/admin/payouts?page=1');
+    expect(list.ok).toBeTruthy();
+    const row = (list.body?.data ?? []).find((r) => r.id === MOCK_PAYMENT_ID);
     expect(row?.payoutStatus).toBe('UNPAID');
   });
 });

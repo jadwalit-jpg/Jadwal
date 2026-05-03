@@ -11,6 +11,7 @@
  *   2. start in 1h  → cancel returns refundAmount = 0 (or partial)
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const CUSTOMER_STATE = 'e2e/.auth/customer.json';
 
@@ -36,6 +37,12 @@ function makeBooking(window: Window) {
     activity: { titleEn: 'S1 Mock Activity', slug: 's1-mock' },
     payment: { id: 'pay-mock-s1', status: 'SUCCESS', amount: '500.00' },
   };
+}
+
+interface CancelResult {
+  ok: boolean;
+  refundAmount: string;
+  refundQueued: boolean;
 }
 
 async function setupRoutes(page: Page, window: Window) {
@@ -74,27 +81,29 @@ test.describe('Customer cancel — refund window policy', () => {
 
   test('within free-cancellation window: full refund queued', async ({ page }) => {
     await setupRoutes(page, 'within');
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-    const res = await page.request.post(
-      `${apiBase}/bookings/${makeBooking('within').id}/cancel`,
-      { data: {} },
+    await page.goto('/bookings');
+
+    const res = await fetchFromPage<CancelResult>(
+      page,
+      `/api/bookings/${makeBooking('within').id}/cancel`,
+      { method: 'POST', body: JSON.stringify({}) },
     );
-    expect(res.ok()).toBeTruthy();
-    const body = await res.json();
-    expect(body.refundQueued).toBe(true);
-    expect(body.refundAmount).toBe('500.00');
+    expect(res.ok).toBeTruthy();
+    expect(res.body?.refundQueued).toBe(true);
+    expect(res.body?.refundAmount).toBe('500.00');
   });
 
   test('outside window (start in 1h): no refund', async ({ page }) => {
     await setupRoutes(page, 'outside');
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-    const res = await page.request.post(
-      `${apiBase}/bookings/${makeBooking('outside').id}/cancel`,
-      { data: {} },
+    await page.goto('/bookings');
+
+    const res = await fetchFromPage<CancelResult>(
+      page,
+      `/api/bookings/${makeBooking('outside').id}/cancel`,
+      { method: 'POST', body: JSON.stringify({}) },
     );
-    expect(res.ok()).toBeTruthy();
-    const body = await res.json();
-    expect(body.refundQueued).toBe(false);
-    expect(body.refundAmount).toBe('0.00');
+    expect(res.ok).toBeTruthy();
+    expect(res.body?.refundQueued).toBe(false);
+    expect(res.body?.refundAmount).toBe('0.00');
   });
 });

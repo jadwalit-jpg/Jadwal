@@ -8,12 +8,21 @@
  * still query and render it.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const ADMIN_STATE = 'e2e/.auth/admin.json';
 
 const FOUR_YEARS_AGO = new Date(Date.now() - 365 * 86400_000 * 4).toISOString();
 
-const OLD_FINANCIAL_ROW = {
+interface AuditRow {
+  id: string;
+  actorEmail: string;
+  actionCategory: string;
+  action: string;
+  resourceId: string;
+}
+
+const OLD_FINANCIAL_ROW: AuditRow & { actorId: string; resourceType: string; details: object; createdAt: string } = {
   id: 'audit-old-financial',
   actorId: 'admin-1',
   actorEmail: 'admin@jadwal.qa',
@@ -24,6 +33,10 @@ const OLD_FINANCIAL_ROW = {
   details: { amount: '1500.00', bankTransferRef: 'SWIFT-LEGACY-001' },
   createdAt: FOUR_YEARS_AGO,
 };
+
+interface AuditList {
+  data: AuditRow[];
+}
 
 async function setupRoutes(page: Page) {
   await page.route('**/api/admin/audit-logs**', async (route: Route) => {
@@ -59,16 +72,15 @@ test.describe('Admin audit logs — §B8 financial retention', () => {
       page.getByText(/PAYOUT_MARK_PAID|pay-historical|admin@jadwal\.qa/i).first(),
     ).toBeVisible({ timeout: 15000 });
 
-    // API contract: the same row is reachable via the audit-logs endpoint
-    // even when filtered to >180 days ago.
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-    const res = await page.request.get(
-      `${apiBase}/admin/audit-logs?actionCategory=FINANCIAL&page=1`,
+    // API contract: same row reachable via the audit-logs endpoint when
+    // filtered to FINANCIAL.
+    const res = await fetchFromPage<AuditList>(
+      page,
+      '/api/admin/audit-logs?actionCategory=FINANCIAL&page=1',
     );
-    expect(res.ok()).toBeTruthy();
-    const body = await res.json();
-    const found = (body.data ?? []).find((r: { id: string }) => r.id === OLD_FINANCIAL_ROW.id);
+    expect(res.ok).toBeTruthy();
+    const found = (res.body?.data ?? []).find((r) => r.id === OLD_FINANCIAL_ROW.id);
     expect(found).toBeTruthy();
-    expect(found.actionCategory).toBe('FINANCIAL');
+    expect(found?.actionCategory).toBe('FINANCIAL');
   });
 });

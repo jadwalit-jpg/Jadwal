@@ -10,16 +10,27 @@
  * deletion would orphan the financial trail.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const ADMIN_STATE = 'e2e/.auth/admin.json';
 
 const MOCK_VENDOR_ID_UNPAID = '00000000-0000-4000-8000-00000000f301';
 const MOCK_VENDOR_ID_INFLIGHT = '00000000-0000-4000-8000-00000000f302';
 
+interface DeleteResponse {
+  statusCode: number;
+  message: string;
+  error: string;
+}
+
 test.describe('Admin vendor delete — §F3 financial-state guards', () => {
   test.use({ storageState: ADMIN_STATE });
 
   test('DELETE vendor with UNPAID payouts returns 400 with typed reason', async ({ page }) => {
+    // Need a page context for fetchFromPage's evaluate(). Any admin page
+    // works; /admin/vendors is the natural fit.
+    await page.goto('/admin/vendors');
+
     let deleteCalls = 0;
     await page.route(`**/api/admin/vendors/${MOCK_VENDOR_ID_UNPAID}`, async (route: Route) => {
       if (route.request().method() === 'DELETE') {
@@ -38,16 +49,20 @@ test.describe('Admin vendor delete — §F3 financial-state guards', () => {
       await route.fallback();
     });
 
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-    const res = await page.request.delete(`${apiBase}/admin/vendors/${MOCK_VENDOR_ID_UNPAID}`);
-    expect(res.status()).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe('VENDOR_HAS_UNPAID_PAYOUTS');
-    expect(body.message).toMatch(/unresolved.*UNPAID|settle/i);
+    const result = await fetchFromPage<DeleteResponse>(
+      page,
+      `/api/admin/vendors/${MOCK_VENDOR_ID_UNPAID}`,
+      { method: 'DELETE' },
+    );
+    expect(result.status).toBe(400);
+    expect(result.body?.error).toBe('VENDOR_HAS_UNPAID_PAYOUTS');
+    expect(result.body?.message).toMatch(/unresolved.*UNPAID|settle/i);
     expect(deleteCalls).toBe(1);
   });
 
   test('DELETE vendor with in-flight payout request returns 400 with typed reason', async ({ page }) => {
+    await page.goto('/admin/vendors');
+
     let deleteCalls = 0;
     await page.route(`**/api/admin/vendors/${MOCK_VENDOR_ID_INFLIGHT}`, async (route: Route) => {
       if (route.request().method() === 'DELETE') {
@@ -66,12 +81,14 @@ test.describe('Admin vendor delete — §F3 financial-state guards', () => {
       await route.fallback();
     });
 
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-    const res = await page.request.delete(`${apiBase}/admin/vendors/${MOCK_VENDOR_ID_INFLIGHT}`);
-    expect(res.status()).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe('VENDOR_HAS_INFLIGHT_PAYOUT_REQUEST');
-    expect(body.message).toMatch(/in-flight|payout request|PENDING|APPROVED/i);
+    const result = await fetchFromPage<DeleteResponse>(
+      page,
+      `/api/admin/vendors/${MOCK_VENDOR_ID_INFLIGHT}`,
+      { method: 'DELETE' },
+    );
+    expect(result.status).toBe(400);
+    expect(result.body?.error).toBe('VENDOR_HAS_INFLIGHT_PAYOUT_REQUEST');
+    expect(result.body?.message).toMatch(/in-flight|payout request|PENDING|APPROVED/i);
     expect(deleteCalls).toBe(1);
   });
 });

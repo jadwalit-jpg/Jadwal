@@ -7,6 +7,7 @@
  * rating in subsequent fetches.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const CUSTOMER_STATE = 'e2e/.auth/customer.json';
 
@@ -27,10 +28,19 @@ const baseActivity = {
   currencyCode: 'QAR',
 };
 
+interface Activity {
+  averageRating: number;
+  reviewCount: number;
+}
+
+interface ReviewResponse {
+  id: string;
+  rating: number;
+}
+
 async function setupRoutes(page: Page) {
   await page.route('**/api/activities/**', async (route: Route) => {
     if (route.request().method() === 'GET') {
-      // After submit, recompute average: (4*4 + 5) / 5 = 4.2
       const updated = reviewSubmitted
         ? { ...baseActivity, averageRating: 4.2, reviewCount: 5 }
         : baseActivity;
@@ -54,6 +64,7 @@ test.describe('Customer review — POST creates row, activity rating updates', (
 
   test('submitting a 5-star review updates the activity average', async ({ page }) => {
     await setupRoutes(page);
+    await page.goto('/');
 
     await page.route('**/api/reviews', async (route: Route) => {
       if (route.request().method() === 'POST') {
@@ -76,33 +87,29 @@ test.describe('Customer review — POST creates row, activity rating updates', (
       await route.fallback();
     });
 
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-
     // Pre-submit rating.
-    const before = await page.request.get(`${apiBase}/activities/${MOCK_ACTIVITY_SLUG}`);
-    expect(before.ok()).toBeTruthy();
-    const beforeBody = await before.json();
-    expect(beforeBody.averageRating).toBeCloseTo(4.0, 1);
-    expect(beforeBody.reviewCount).toBe(4);
+    const before = await fetchFromPage<Activity>(page, `/api/activities/${MOCK_ACTIVITY_SLUG}`);
+    expect(before.ok).toBeTruthy();
+    expect(before.body?.averageRating).toBeCloseTo(4.0, 1);
+    expect(before.body?.reviewCount).toBe(4);
 
     // Submit the review.
-    const post = await page.request.post(`${apiBase}/reviews`, {
-      data: {
+    const post = await fetchFromPage<ReviewResponse>(page, '/api/reviews', {
+      method: 'POST',
+      body: JSON.stringify({
         activityId: MOCK_ACTIVITY_ID,
         bookingId: MOCK_BOOKING_ID,
         rating: 5,
         body: 'Outstanding experience!',
-      },
+      }),
     });
-    expect(post.status()).toBe(201);
-    const postBody = await post.json();
-    expect(postBody.rating).toBe(5);
+    expect(post.status).toBe(201);
+    expect(post.body?.rating).toBe(5);
 
     // Post-submit rating reflects the new aggregate.
-    const after = await page.request.get(`${apiBase}/activities/${MOCK_ACTIVITY_SLUG}`);
-    expect(after.ok()).toBeTruthy();
-    const afterBody = await after.json();
-    expect(afterBody.reviewCount).toBe(5);
-    expect(afterBody.averageRating).toBeGreaterThan(beforeBody.averageRating);
+    const after = await fetchFromPage<Activity>(page, `/api/activities/${MOCK_ACTIVITY_SLUG}`);
+    expect(after.ok).toBeTruthy();
+    expect(after.body?.reviewCount).toBe(5);
+    expect(after.body?.averageRating ?? 0).toBeGreaterThan(before.body?.averageRating ?? 0);
   });
 });

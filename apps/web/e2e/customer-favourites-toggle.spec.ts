@@ -8,12 +8,22 @@
  *   GET    /api/customer/likes           → lists favourites
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const CUSTOMER_STATE = 'e2e/.auth/customer.json';
 
 const MOCK_ACTIVITY_ID = '00000000-0000-4000-8000-00000000s301';
 
 let isLiked = false;
+
+interface LikeResponse {
+  liked: boolean;
+}
+
+interface LikesList {
+  total: number;
+  data: Array<{ id: string }>;
+}
 
 async function setupRoutes(page: Page) {
   await page.route('**/api/customer/likes**', async (route: Route) => {
@@ -69,33 +79,40 @@ test.describe('Customer favourites — toggle from /likes', () => {
 
   test('like → appears on /likes; unlike → list empty', async ({ page }) => {
     await setupRoutes(page);
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
+    await page.goto('/');
 
     // Initial list is empty.
-    const before = await page.request.get(`${apiBase}/customer/likes`);
-    expect(before.ok()).toBeTruthy();
-    expect((await before.json()).total).toBe(0);
+    const before = await fetchFromPage<LikesList>(page, '/api/customer/likes');
+    expect(before.ok).toBeTruthy();
+    expect(before.body?.total).toBe(0);
 
     // Like the activity.
-    const like = await page.request.post(`${apiBase}/activities/${MOCK_ACTIVITY_ID}/like`);
-    expect(like.ok()).toBeTruthy();
-    expect((await like.json()).liked).toBe(true);
+    const like = await fetchFromPage<LikeResponse>(
+      page,
+      `/api/activities/${MOCK_ACTIVITY_ID}/like`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+    expect(like.ok).toBeTruthy();
+    expect(like.body?.liked).toBe(true);
 
     // Now appears on /likes.
-    const list = await page.request.get(`${apiBase}/customer/likes`);
-    expect(list.ok()).toBeTruthy();
-    const listBody = await list.json();
-    expect(listBody.total).toBe(1);
-    expect(listBody.data[0].id).toBe(MOCK_ACTIVITY_ID);
+    const list = await fetchFromPage<LikesList>(page, '/api/customer/likes');
+    expect(list.ok).toBeTruthy();
+    expect(list.body?.total).toBe(1);
+    expect(list.body?.data[0].id).toBe(MOCK_ACTIVITY_ID);
 
     // Unlike.
-    const unlike = await page.request.delete(`${apiBase}/activities/${MOCK_ACTIVITY_ID}/like`);
-    expect(unlike.ok()).toBeTruthy();
-    expect((await unlike.json()).liked).toBe(false);
+    const unlike = await fetchFromPage<LikeResponse>(
+      page,
+      `/api/activities/${MOCK_ACTIVITY_ID}/like`,
+      { method: 'DELETE' },
+    );
+    expect(unlike.ok).toBeTruthy();
+    expect(unlike.body?.liked).toBe(false);
 
     // List empty again.
-    const after = await page.request.get(`${apiBase}/customer/likes`);
-    expect(after.ok()).toBeTruthy();
-    expect((await after.json()).total).toBe(0);
+    const after = await fetchFromPage<LikesList>(page, '/api/customer/likes');
+    expect(after.ok).toBeTruthy();
+    expect(after.body?.total).toBe(0);
   });
 });

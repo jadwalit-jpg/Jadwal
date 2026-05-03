@@ -8,6 +8,7 @@
  * PENDING with a system note when mark-paid detects the mismatch.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { fetchFromPage } from './_fixtures/fetch';
 
 const ADMIN_STATE = 'e2e/.auth/admin.json';
 
@@ -32,6 +33,16 @@ const REQUEST_REVERTED = {
   systemNote:
     'Payments no longer eligible (refunded after approval). Re-evaluate.',
 };
+
+interface RequestsList {
+  data: Array<{ id: string; status: string; systemNote: string | null }>;
+}
+
+interface MarkPaidConflict {
+  statusCode: number;
+  message: string;
+  error: string;
+}
 
 async function setupRoutes(page: Page) {
   await page.route('**/api/admin/payouts/requests**', async (route: Route) => {
@@ -62,6 +73,7 @@ test.describe('Admin payouts — §M2 auto-revert on ineligible payments', () =>
 
   test('mark-paid with refunded payment flips request back to PENDING with system note', async ({ page }) => {
     await setupRoutes(page);
+    await page.goto('/admin/payouts');
 
     await page.route('**/api/admin/payouts/requests/*/mark-paid', async (route: Route) => {
       if (route.request().method() === 'POST') {
@@ -80,24 +92,19 @@ test.describe('Admin payouts — §M2 auto-revert on ineligible payments', () =>
       await route.fallback();
     });
 
-    const apiBase = process.env.E2E_API_URL || 'http://localhost:4000/api';
-
-    // Mark-paid attempt returns 409 with the typed code.
-    const mp = await page.request.post(
-      `${apiBase}/admin/payouts/requests/${MOCK_REQUEST_ID}/mark-paid`,
-      { data: { bankTransferRef: 'SWIFT-TEST-001' } },
+    const mp = await fetchFromPage<MarkPaidConflict>(
+      page,
+      `/api/admin/payouts/requests/${MOCK_REQUEST_ID}/mark-paid`,
+      { method: 'POST', body: JSON.stringify({ bankTransferRef: 'SWIFT-TEST-001' }) },
     );
-    expect(mp.status()).toBe(409);
-    const mpBody = await mp.json();
-    expect(mpBody.error).toBe('PAYMENTS_NO_LONGER_ELIGIBLE');
+    expect(mp.status).toBe(409);
+    expect(mp.body?.error).toBe('PAYMENTS_NO_LONGER_ELIGIBLE');
 
-    // List query shows the row reverted to PENDING with the system note.
-    const list = await page.request.get(`${apiBase}/admin/payouts/requests?page=1`);
-    expect(list.ok()).toBeTruthy();
-    const listBody = await list.json();
-    const row = (listBody.data ?? []).find((r: { id: string }) => r.id === MOCK_REQUEST_ID);
+    const list = await fetchFromPage<RequestsList>(page, '/api/admin/payouts/requests?page=1');
+    expect(list.ok).toBeTruthy();
+    const row = (list.body?.data ?? []).find((r) => r.id === MOCK_REQUEST_ID);
     expect(row).toBeTruthy();
-    expect(row.status).toBe('PENDING');
-    expect(row.systemNote).toMatch(/no longer eligible|re-evaluate/i);
+    expect(row?.status).toBe('PENDING');
+    expect(row?.systemNote).toMatch(/no longer eligible|re-evaluate/i);
   });
 });
