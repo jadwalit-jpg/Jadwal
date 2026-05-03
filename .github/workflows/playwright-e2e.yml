@@ -1,0 +1,281 @@
+name: Playwright E2E
+
+# Pre-staging E2E suite — runs the full Playwright matrix against a
+# spun-up API + Web stack with Postgres and Redis. This workflow is
+# kept separate from the main CI pipeline (ci.yml) because the e2e
+# job is heavy (~10–15 min with cold compile + browser launch) and
+# we want the fast feedback path for type-check / lint / unit tests
+# to stay quick.
+#
+# Trigger:
+#   - PR to main / develop  → runs both desktop + mobile projects
+#   - workflow_dispatch     → manual run with optional --grep filter
+#   - schedule (nightly)    → catches flake / dependency drift early
+#
+# Output:
+#   - playwright-report/    → uploaded as workflow artefact on failure
+#   - test-results/         → traces + screenshots + videos on failure
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/web/**'
+      - 'apps/api/**'
+      - '.github/workflows/playwright-e2e.yml'
+  workflow_dispatch:
+    inputs:
+      grep_pattern:
+        description: 'Optional --grep pattern to filter specs'
+        required: false
+        type: string
+  schedule:
+    # Nightly at 02:00 UTC — catches network / dependency flake before
+    # business hours.
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22
+  # Test-only secrets — never used in production. The auth layer
+  # accepts any 32+ char value here; rotating is fine and expected.
+  JWT_SECRET: ci-only-test-secret-do-not-use-in-prod-eeeeeeeeeeeeeeeeeee
+  JWT_REFRESH_SECRET: ci-only-test-refresh-secret-do-not-use-eeeeeeeeeeeeeee
+  DATABASE_URL: postgresql://jadwal:jadwal@localhost:5432/jadwal_e2e
+  REDIS_URL: redis://localhost:6379
+  NEXT_PUBLIC_API_URL: http://localhost:4000/api
+  API_PROXY_TARGET: http://localhost:4000/api
+  E2E_API_URL: http://localhost:4000/api
+  NODE_ENV: test
+  # API boot dependencies — all of these are getOrThrow() calls that
+  # fail at app start if missing. Values are placeholders only valid
+  # for the ephemeral CI runner; real prod values come from ECS task-
+  # definition env, not this workflow.
+  API_URL: http://localhost:4000
+  APP_URL: http://localhost:4000
+  FRONTEND_URL: http://localhost:3000
+  # CORS_ORIGIN is force-unwrapped at apps/api/src/main.ts:215 — without
+  # it the API crashes at boot with "Cannot read properties of undefined
+  # (reading 'split')". Comma-separated list of allowed origins.
+  CORS_ORIGIN: http://localhost:3000
+  GOOGLE_CLIENT_ID: ci-test-google-client-id
+  GOOGLE_CLIENT_SECRET: ci-test-google-client-secret
+  GOOGLE_CALLBACK_URL: http://localhost:4000/api/auth/google/callback
+  PAY2M_MERCHANT_ID: CI-TEST-MERCHANT
+  PAY2M_MERCHANT_NAME: CI Test Merchant
+  PAY2M_SECURED_KEY: ci-test-pay2m-secured-key-32chars-min-len
+  PAY2M_SECRET_WORD: ci-test-pay2m-secret-word
+  PAY2M_RETURN_URL: http://localhost:3000/payment/callback
+  PAY2M_API_URL: http://localhost:4000/mock-pay2m
+  # VAPID keys are validated by the web-push library at boot
+  # ('Vapid public key should be 65 bytes long when decoded'). Generated
+  # at runtime in the 'Generate VAPID test keys' step below — this env
+  # value is the placeholder the prod-guard requires; the real values
+  # are exported into $GITHUB_ENV at runtime.
+  VAPID_PUBLIC_KEY: placeholder-overridden-by-generate-step
+  VAPID_PRIVATE_KEY: placeholder-overridden-by-generate-step
+  VAPID_SUBJECT: mailto:ci@jadwal.qa
+  # Disable telemetry / analytics so CI runs are quiet.
+  NEXT_TELEMETRY_DISABLED: 1
+  PLAYWRIGHT_BROWSERS_PATH: 0
+
+jobs:
+  e2e:
+    name: E2E (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Marked non-blocking on first land — the workflow is wired up but
+    # the suite is still being stabilised against the prod-build server
+    # boot path (Apr 2026). Once a clean green run is seen, flip to
+    # continue-on-error: false (or remove this line) to gate PRs.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, mobile-chrome]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: jadwal
+          POSTGRES_PASSWORD: jadwal
+          POSTGRES_DB: jadwal_e2e
+        options: >-
+          --health-cmd "pg_isready -U jadwal"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: apps/api
+        run: npx prisma generate
+
+      - name: Run migrations
+        working-directory: apps/api
+        run: npx prisma migrate deploy
+
+      # Reference data first (Country/City/Category) — seed-e2e-data.ts
+      # asserts these exist (line 58: "Seed at least one Country before
+      # this script."). Both seed scripts have a NODE_ENV=production
+      # guard that refuses to run against prod.
+      - name: Seed reference data
+        working-directory: apps/api
+        run: npx ts-node prisma/seed-e2e-reference.ts
+
+      # Admin user with the credentials e2e/_fixtures/auth.ts expects
+      # (admin@jadwal.com / Admin123!). seed-admin.ts has a NODE_ENV=
+      # production guard that requires SEED_ADMIN_EMAIL/PASSWORD when
+      # in prod — here we're in NODE_ENV=test so the dev defaults apply,
+      # but we override with the auth-fixture creds so the storage-state
+      # setup at e2e/auth.setup.ts logs in successfully.
+      - name: Seed admin
+        working-directory: apps/api
+        env:
+          SEED_ADMIN_EMAIL: admin@jadwal.com
+          SEED_ADMIN_PASSWORD: Admin123!
+          SEED_ADMIN_ALLOW_UPDATE: 'true'
+        run: npx ts-node prisma/seed-admin.ts
+
+      # Vendor + customer fixtures must exist before seed-e2e-data.ts
+      # (it asserts at lines 65 + 67 that VENDOR_EMAIL / CUSTOMER_EMAIL
+      # already have rows). All scripts have NODE_ENV=production guards.
+      - name: Seed e2e vendor
+        working-directory: apps/api
+        run: npx ts-node prisma/seed-e2e-vendor.ts
+
+      - name: Seed e2e customer
+        working-directory: apps/api
+        run: npx ts-node prisma/seed-e2e-customer.ts
+
+      - name: Seed e2e fixtures
+        working-directory: apps/api
+        run: npx ts-node prisma/seed-e2e-data.ts
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ hashFiles('apps/web/package.json') }}
+
+      - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        working-directory: apps/web
+        run: npx playwright install-deps chromium
+
+      # The API uses web-push at boot, which validates that VAPID keys
+      # decode to 65-byte / 32-byte P-256 points. Generate a fresh
+      # throwaway pair per run rather than hard-coding (avoids gitleaks
+      # false positives and keeps the keys out of the repo entirely).
+      - name: Generate VAPID test keys
+        run: |
+          npx --yes web-push generate-vapid-keys --json > /tmp/vapid.json
+          PUB=$(node -e "console.log(require('/tmp/vapid.json').publicKey)")
+          PRIV=$(node -e "console.log(require('/tmp/vapid.json').privateKey)")
+          echo "VAPID_PUBLIC_KEY=$PUB" >> "$GITHUB_ENV"
+          echo "VAPID_PRIVATE_KEY=$PRIV" >> "$GITHUB_ENV"
+
+      - name: Build API
+        working-directory: apps/api
+        run: npm run build
+
+      - name: Build Web
+        working-directory: apps/web
+        run: npm run build
+
+      - name: Start API server
+        working-directory: apps/api
+        run: |
+          npm run start:prod &
+          # Wait up to 60s for /health. Exit non-zero on timeout so the
+          # workflow fails fast with a clear error rather than running
+          # the test suite against a dead stack (which would surface as
+          # cryptic per-spec assertion failures).
+          for i in {1..60}; do
+            if curl -fsS http://localhost:4000/api/health 2>/dev/null; then
+              echo "API up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ERROR: API did not become healthy within 60s" >&2
+          exit 1
+
+      - name: Start Web server
+        working-directory: apps/web
+        run: |
+          npm run start &
+          # Same fail-fast pattern as Start API server above.
+          for i in {1..60}; do
+            if curl -fsS http://localhost:3000 2>/dev/null > /dev/null; then
+              echo "Web up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ERROR: Web server did not become healthy within 60s" >&2
+          exit 1
+
+      - name: Run Playwright (${{ matrix.project }})
+        working-directory: apps/web
+        env:
+          CI: '1'
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+          E2E_API_URL: http://localhost:4000/api
+          # SECURITY — bind workflow_dispatch input to env var so it's
+          # passed to the shell as a value, never as code. Embedding
+          # ${{ inputs.x }} directly in a `run:` script would let any
+          # actor with write access inject shell commands via this input.
+          GREP_PATTERN: ${{ inputs.grep_pattern }}
+        run: |
+          if [ -n "$GREP_PATTERN" ]; then
+            npx playwright test --project=${{ matrix.project }} --grep "$GREP_PATTERN"
+          else
+            npx playwright test --project=${{ matrix.project }}
+          fi
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report-${{ matrix.project }}
+          path: apps/web/playwright-report/
+          retention-days: 14
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-traces-${{ matrix.project }}
+          path: apps/web/test-results/
+          retention-days: 14
