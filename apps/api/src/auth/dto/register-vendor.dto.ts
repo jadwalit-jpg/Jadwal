@@ -1,6 +1,7 @@
 import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches, IsUUID } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { IsStrongPassword } from '../../common/validators/password-strength';
+import { IsNotDisposableEmail } from '../../common/validators/disposable-email';
 
 export class RegisterVendorDto {
   @IsString()
@@ -12,6 +13,7 @@ export class RegisterVendorDto {
 
   @IsEmail({}, { message: 'Please enter a valid email address' })
   @MaxLength(254, { message: 'Email is too long' })
+  @IsNotDisposableEmail()
   @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
   email!: string;
 
@@ -55,4 +57,12 @@ export class RegisterVendorDto {
   @IsUUID('4', { message: 'Invalid country' })
   @IsNotEmpty({ message: 'Country is required' })
   countryId!: string;
+
+  // Honeypot field — see RegisterDto.website for full rationale. No
+  // @IsString / @MaxLength: strict validators would turn a bot's filled
+  // honeypot into a 400 instead of the silent fake-success the service
+  // path issues — making the honeypot observable.
+  @IsOptional()
+  @Transform(({ value }) => value == null ? undefined : String(value))
+  website?: string;
 }

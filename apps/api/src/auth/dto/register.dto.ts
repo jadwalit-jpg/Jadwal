@@ -1,6 +1,7 @@
 import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { IsStrongPassword } from '../../common/validators/password-strength';
+import { IsNotDisposableEmail } from '../../common/validators/disposable-email';
 
 export class RegisterDto {
   @IsString()
@@ -11,6 +12,7 @@ export class RegisterDto {
 
   @IsEmail()
   @MaxLength(254)
+  @IsNotDisposableEmail()
   @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
   email!: string;
 
@@ -35,4 +37,21 @@ export class RegisterDto {
   @Matches(/^\+?[0-9\s\-()]{7,20}$/, { message: 'Invalid phone number' })
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   phone?: string;
+
+  // Honeypot field. Real users never see or fill this — it's hidden by CSS
+  // off-screen on the frontend (apps/web/src/app/register/register-form.tsx).
+  // Naive scraper bots that auto-fill every input WILL fill it. The service
+  // treats any non-empty value as "this is a bot" and silently returns the
+  // same anti-enumeration success response WITHOUT creating a User row.
+  //
+  // No @IsString / @MaxLength here on purpose: ValidationPipe runs BEFORE
+  // the service-side honeypot check, so strict validators would turn a
+  // bot's filled honeypot into a 400 instead of the silent fake-success
+  // we want — making the honeypot observable. The @Transform coerces any
+  // value to a string (or undefined for null/missing) so the service-side
+  // `if (data.website && data.website.trim())` check can do its work
+  // uniformly without ValidationPipe interfering.
+  @IsOptional()
+  @Transform(({ value }) => value == null ? undefined : String(value))
+  website?: string;
 }

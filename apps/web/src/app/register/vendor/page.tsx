@@ -114,6 +114,7 @@ function VendorAuthContent() {
     const businessId = sanitize((fd.get('businessId') as string) || '');
     const slug = sanitize((fd.get('slug') as string) || '');
     const countryId = (fd.get('countryId') as string) || '';
+    const website = (fd.get('website') as string) || ''; // honeypot — humans never fill
 
     // Per-field validation
     const nameCheck = validateFullName(fullName);
@@ -161,6 +162,7 @@ function VendorAuthContent() {
           slug,
           phone: phone || undefined,
           countryId,
+          website: website || undefined, // honeypot
         }),
         password: pw, // Never sanitize passwords — sanitize() strips valid chars like <, >
       });
@@ -386,6 +388,22 @@ function VendorAuthContent() {
                       {fieldErrors.countryId && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.countryId}</p>}
                     </div>
                   </div>
+                </div>
+
+                {/* Honeypot — hidden CSS-offscreen + aria-hidden + tabIndex=-1 +
+                    autocomplete=off so password managers + screen readers + humans
+                    skip it. Naive bots that auto-fill every input WILL fill it;
+                    backend treats any non-empty value as a silent bot signup
+                    (see register-vendor honeypot in auth.service.ts). */}
+                <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', overflow: 'hidden' }}>
+                  <label htmlFor="register-vendor-website">Leave this field blank</label>
+                  <input
+                    id="register-vendor-website"
+                    name="website"
+                    type="text"
+                    tabIndex={-1}
+                    autoComplete="off"
+                  />
                 </div>
 
                 <button
