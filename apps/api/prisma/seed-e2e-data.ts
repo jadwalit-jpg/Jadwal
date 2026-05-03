@@ -24,12 +24,10 @@
  *
  * NOT FOR PRODUCTION.
  */
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { createSeedPrisma } from './_db-helper';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
@@ -67,8 +65,7 @@ async function main() {
     );
   }
 
-  const adapter = new PrismaPg(new Pool({ connectionString: process.env.DATABASE_URL }));
-  const prisma = new PrismaClient({ adapter } as never);
+  const prisma = createSeedPrisma();
 
   // Resolve required pre-existing entities.
   const country = await prisma.country.findFirst();
