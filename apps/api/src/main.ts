@@ -14,6 +14,7 @@ import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter'
 import helmet from 'helmet';
 import * as cookieParser from 'cookie-parser';
 import { join } from 'path';
+import { json as bodyJson, urlencoded as bodyUrlencoded } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { envNumber } from './common/env';
 
@@ -206,6 +207,19 @@ async function bootstrap() {
     });
     app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads/' });
   }
+
+  // ─── Body size limits (DoS hardening) ──────────────────────────────────
+  // Pin JSON + URL-encoded payload caps explicitly. Without this Nest/Express
+  // falls back to the body-parser default (100 KB), which is fine in practice
+  // but leaves the value implicit; pinning to 100 KB documents the contract
+  // and protects every route — including auth endpoints — from oversized
+  // payloads being parsed into memory before per-DTO @MaxLength runs.
+  // 100 KB comfortably covers every legitimate request: passwords cap at
+  // 128 chars, emails at 254, the largest realistic body is an Activity
+  // create with a few text fields and image URL refs (well under 50 KB).
+  // Image uploads go via S3 presigned URLs, not through this parser.
+  app.use(bodyJson({ limit: '100kb' }));
+  app.use(bodyUrlencoded({ limit: '100kb', extended: true }));
 
   // ─── Cookie Parser ──────────────────────────────────────────────────────
   app.use(cookieParser());

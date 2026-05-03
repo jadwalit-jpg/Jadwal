@@ -213,6 +213,7 @@ function LoginFormContent() {
             type="email"
             autoComplete="email"
             required
+            maxLength={254}
             placeholder="name@example.com"
             value={email}
             onChange={(e) => { setEmail(e.target.value); setUnverifiedEmail(''); setResendDone(false); setResendError(false); }}
@@ -233,6 +234,7 @@ function LoginFormContent() {
             type="password"
             autoComplete="current-password"
             required
+            maxLength={128}
             placeholder="••••••••"
             value={password}
             onChange={(e) => setPassword(e.target.value)}

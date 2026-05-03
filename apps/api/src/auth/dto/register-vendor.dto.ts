@@ -48,6 +48,7 @@ export class RegisterVendorDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(20)
   @Matches(/^\+?[0-9]{7,15}$/, { message: 'Phone must be 7–15 digits, optionally starting with +' })
   phone?: string;
 

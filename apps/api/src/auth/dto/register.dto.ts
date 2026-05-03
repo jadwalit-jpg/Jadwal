@@ -31,6 +31,7 @@ export class RegisterDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(20)
   @Matches(/^\+?[0-9\s\-()]{7,20}$/, { message: 'Invalid phone number' })
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   phone?: string;

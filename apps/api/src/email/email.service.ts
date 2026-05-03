@@ -4,6 +4,7 @@ import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { bookingConfirmationTemplate } from './templates/booking-confirmation';
 import { bookingCancellationTemplate } from './templates/booking-cancellation';
 import { passwordResetTemplate } from './templates/password-reset';
+import { passwordChangedTemplate } from './templates/password-changed';
 import { emailVerificationTemplate } from './templates/email-verification';
 import { vendorWelcomeTemplate } from './templates/vendor-welcome';
 
@@ -132,6 +133,12 @@ export class EmailService {
     return this.send(to, 'Reset Your Password — Jadwal', 'password-reset', data);
   }
 
+  async sendPasswordChangedNotification(to: string, data: {
+    customerName: string;
+  }) {
+    return this.send(to, 'Your password was changed — Jadwal', 'password-changed', data);
+  }
+
   async sendWelcome(to: string, data: {
     userName: string;
   }) {
@@ -168,6 +175,9 @@ export class EmailService {
         break;
       case 'password-reset':
         html = passwordResetTemplate(data as any);
+        break;
+      case 'password-changed':
+        html = passwordChangedTemplate(data as any);
         break;
       case 'email-verification':
         html = emailVerificationTemplate(data as any);

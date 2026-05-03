@@ -15,7 +15,7 @@ import { AuthService } from '../../src/auth/auth.service';
 import { UsersService } from '../../src/users/users.service';
 import {
   makeJwtMock, makeConfigMock, makeSecurityLoggerMock, makeAuditLoggerMock,
-  makeEmailMock, makeSmsMock, makeNotificationMock,
+  makeEmailMock, makeEmailQuotaMock, makeSmsMock, makeNotificationMock,
   makeResponseMock, makeRequestMock,
 } from '../mocks/auth-deps.mock';
 import * as bcrypt from 'bcrypt';
@@ -38,6 +38,7 @@ function makeAuth(emailMock = makeEmailMock()) {
     makeSecurityLoggerMock() as any,
     makeAuditLoggerMock() as any,
     emailMock as any,
+    makeEmailQuotaMock() as any,    // EmailQuotaService — mock returns true (no quota gating in tests)
     makeSmsMock() as any,
     makeNotificationMock() as any,
   );

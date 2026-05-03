@@ -332,23 +332,23 @@ function VendorAuthContent() {
                   <p className="text-xs font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-2 ms-0.5">{t('vendor.accountDetails')}</p>
                   <div className="grid grid-cols-2 gap-2.5">
                     <div>
-                      <input name="fullName" type="text" placeholder={t('auth.fullName')} className={`${inputCls} ${fieldErrors.fullName ? '!border-red-500' : ''}`} />
+                      <input name="fullName" type="text" maxLength={100} placeholder={t('auth.fullName')} className={`${inputCls} ${fieldErrors.fullName ? '!border-red-500' : ''}`} />
                       {fieldErrors.fullName && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.fullName}</p>}
                     </div>
                     <div>
-                      <input name="email" type="email" placeholder={t('auth.emailAddress')} className={`${inputCls} ${fieldErrors.email ? '!border-red-500' : ''}`} />
+                      <input name="email" type="email" maxLength={254} placeholder={t('auth.emailAddress')} className={`${inputCls} ${fieldErrors.email ? '!border-red-500' : ''}`} />
                       {fieldErrors.email && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.email}</p>}
                     </div>
                     <div>
-                      <input name="phone" type="tel" placeholder={t('auth.phone')} maxLength={16} className={`${inputCls} ${fieldErrors.phone ? '!border-red-500' : ''}`} />
+                      <input name="phone" type="tel" placeholder={t('auth.phone')} maxLength={20} className={`${inputCls} ${fieldErrors.phone ? '!border-red-500' : ''}`} />
                       {fieldErrors.phone && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.phone}</p>}
                     </div>
                     <div>
-                      <input name="password" type="password" placeholder={t('auth.passwordHint')} className={`${inputCls} ${fieldErrors.password ? '!border-red-500' : ''}`} />
+                      <input name="password" type="password" minLength={8} maxLength={128} placeholder={t('auth.passwordHint')} className={`${inputCls} ${fieldErrors.password ? '!border-red-500' : ''}`} />
                       {fieldErrors.password && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.password}</p>}
                     </div>
                     <div className="col-span-2">
-                      <input name="confirmPassword" type="password" placeholder={t('auth.confirmPassword')} className={`${inputCls} ${fieldErrors.confirmPassword ? '!border-red-500' : ''}`} />
+                      <input name="confirmPassword" type="password" minLength={8} maxLength={128} placeholder={t('auth.confirmPassword')} className={`${inputCls} ${fieldErrors.confirmPassword ? '!border-red-500' : ''}`} />
                       {fieldErrors.confirmPassword && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.confirmPassword}</p>}
                     </div>
                   </div>
@@ -359,19 +359,19 @@ function VendorAuthContent() {
                   <p className="text-xs font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-2 ms-0.5">{t('vendor.businessDetails')}</p>
                   <div className="grid grid-cols-2 gap-2.5">
                     <div>
-                      <input name="businessNameEn" type="text" placeholder={t('vendor.businessNameEn')} value={businessNameEn} onChange={(e) => handleBusinessNameChange(e.target.value)} className={`${inputCls} ${fieldErrors.businessNameEn ? '!border-red-500' : ''}`} />
+                      <input name="businessNameEn" type="text" maxLength={200} placeholder={t('vendor.businessNameEn')} value={businessNameEn} onChange={(e) => handleBusinessNameChange(e.target.value)} className={`${inputCls} ${fieldErrors.businessNameEn ? '!border-red-500' : ''}`} />
                       {fieldErrors.businessNameEn && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.businessNameEn}</p>}
                     </div>
                     <div>
-                      <input name="businessNameAr" type="text" placeholder={t('vendor.businessNameAr')} className={`${inputCls} ${fieldErrors.businessNameAr ? '!border-red-500' : ''}`} />
+                      <input name="businessNameAr" type="text" maxLength={200} placeholder={t('vendor.businessNameAr')} className={`${inputCls} ${fieldErrors.businessNameAr ? '!border-red-500' : ''}`} />
                       {fieldErrors.businessNameAr && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.businessNameAr}</p>}
                     </div>
                     <div>
-                      <input name="businessId" type="text" placeholder={t('vendor.businessId')} className={`${inputCls} ${fieldErrors.businessId ? '!border-red-500' : ''}`} />
+                      <input name="businessId" type="text" maxLength={50} placeholder={t('vendor.businessId')} className={`${inputCls} ${fieldErrors.businessId ? '!border-red-500' : ''}`} />
                       {fieldErrors.businessId && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.businessId}</p>}
                     </div>
                     <div>
-                      <input name="slug" type="text" placeholder={t('vendor.slugHint')} pattern="[a-z0-9-]+" title="Only lowercase letters, numbers, and hyphens" value={slug} onChange={(e) => { setSlug(e.target.value); setSlugTouched(true); }} className={`${inputCls} ${fieldErrors.slug ? '!border-red-500' : ''}`} />
+                      <input name="slug" type="text" maxLength={60} placeholder={t('vendor.slugHint')} pattern="[a-z0-9-]+" title="Only lowercase letters, numbers, and hyphens" value={slug} onChange={(e) => { setSlug(e.target.value); setSlugTouched(true); }} className={`${inputCls} ${fieldErrors.slug ? '!border-red-500' : ''}`} />
                       {fieldErrors.slug && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.slug}</p>}
                     </div>
                     <div className="col-span-2">

@@ -18,6 +18,7 @@ import { SendPhoneOtpDto } from './dto/send-phone-otp.dto';
 import { VerifyPhoneOtpDto } from './dto/verify-phone-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -28,13 +29,14 @@ export class AuthController {
   ) {}
 
   @Post('register')
-  // STRICT (3/min) — bumped from AUTH on the live-prod hardening pass.
-  // Account creation is high-value to attackers (bot signup → review
-  // spam, coupon farming, payment-fraud setup) so per-IP cap goes to 3.
-  // Add per-(IP+email) keying in a follow-up to also block IP-cycling.
+  // STRICT (3/min) per-IP — bumped from AUTH on the live-prod hardening
+  // pass. Account creation is high-value to attackers (bot signup → review
+  // spam, coupon farming, payment-fraud setup). The IP-cycling vector is
+  // closed by EmailQuotaService.tryConsumePerIp (per-IP daily cap on email
+  // sends, applied inside sendVerificationEmail).
   @Throttle(RATE_LIMIT_STRICT)
-  async register(@Body() dto: RegisterDto) {
-    return this.authService.registerAndLogin(dto);
+  async register(@Body() dto: RegisterDto, @Req() req: Request) {
+    return this.authService.registerAndLogin(dto, req);
   }
 
   @Get('verify-email')
@@ -57,8 +59,8 @@ export class AuthController {
 
   @Post('resend-verification')
   @Throttle(RATE_LIMIT_STRICT)
-  async resendVerification(@Body() dto: ResendVerificationDto) {
-    return this.authService.resendVerification(dto.email);
+  async resendVerification(@Body() dto: ResendVerificationDto, @Req() req: Request) {
+    return this.authService.resendVerification(dto.email, req);
   }
 
   @Post('register/vendor')
@@ -286,8 +288,8 @@ export class AuthController {
 
   @Post('forgot-password')
   @Throttle(RATE_LIMIT_STRICT)
-  async forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.forgotPassword(dto.email);
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
+    return this.authService.forgotPassword(dto.email, req);
   }
 
   @Post('reset-password')
@@ -297,5 +299,28 @@ export class AuthController {
   @Throttle(RATE_LIMIT_STRICT)
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto.token, dto.newPassword);
+  }
+
+  // ─── Authenticated Change Password ──────────────────────────────────────
+  // Logged-in user rotates their own password. Requires currentPassword
+  // (proof of session ownership beyond the cookie). Keeps the calling
+  // session alive; revokes every OTHER refresh token so any compromised
+  // session on another device dies on rotation.
+  @Post('change-password')
+  @Throttle(RATE_LIMIT_STRICT)
+  @UseGuards(JwtAuthGuard)
+  async changePassword(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: ChangePasswordDto,
+    @Req() req: Request,
+  ) {
+    const refreshToken = req.cookies?.RefreshToken;
+    return this.authService.changePassword(
+      user.id,
+      dto.currentPassword,
+      dto.newPassword,
+      refreshToken,
+      req,
+    );
   }
 }

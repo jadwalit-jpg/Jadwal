@@ -106,6 +106,7 @@ function ResetPasswordContent() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   minLength={8}
+                  maxLength={128}
                   placeholder="A-Z, a-z, 0-9, min 8 chars"
                   className="w-full px-4 py-3 pe-12 bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl text-sm text-gray-900 dark:text-white placeholder:text-gray-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all"
                 />
@@ -129,6 +130,7 @@ function ResetPasswordContent() {
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 required
+                maxLength={128}
                 placeholder={t('auth.repeatPassword')}
                 className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl text-sm text-gray-900 dark:text-white placeholder:text-gray-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all"
               />

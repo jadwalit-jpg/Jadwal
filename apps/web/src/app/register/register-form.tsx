@@ -35,6 +35,7 @@ export default function RegisterForm() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,6 +62,11 @@ export default function RegisterForm() {
 
     const pwCheck = validatePassword(password);
     if (!pwCheck.valid) { setError(pwCheck.error); return; }
+
+    if (password !== confirmPassword) {
+      setError(t('auth.toast.passwordsNoMatch'));
+      return;
+    }
 
     if (phone) {
       const phoneCheck = validatePhone(phone);
@@ -179,6 +185,7 @@ export default function RegisterForm() {
             type="text"
             autoComplete="name"
             required
+            maxLength={100}
             placeholder="John Doe"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
@@ -194,6 +201,7 @@ export default function RegisterForm() {
             type="email"
             autoComplete="email"
             required
+            maxLength={254}
             placeholder="name@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -209,9 +217,28 @@ export default function RegisterForm() {
             type="password"
             autoComplete="new-password"
             required
+            minLength={8}
+            maxLength={128}
             placeholder={t('auth.passwordHint')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <label htmlFor="register-confirm-password" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.confirmPassword')}</label>
+          <input
+            id="register-confirm-password"
+            name="confirmPassword"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={8}
+            maxLength={128}
+            placeholder={t('auth.confirmPassword')}
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
             className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
           />
         </div>
@@ -225,6 +252,7 @@ export default function RegisterForm() {
             name="phone"
             type="tel"
             autoComplete="tel"
+            maxLength={20}
             placeholder="+974 1234 5678"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
