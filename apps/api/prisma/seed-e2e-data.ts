@@ -39,7 +39,18 @@ const PENDING_VENDOR_EMAIL = 'pending-vendor@jadwal-test.local';
 const PENDING_VENDOR_PASSWORD = 'S3cure!Pass1';
 
 const ACTIVITY_SLUG = 'e2e-activity';
+// Phase F enrichment: extra activities so admin/vendor list pages have rows
+// in different statuses (admin-activities-list, vendor-activity-list specs).
+const HOURLY_ACTIVE_SLUG = 'e2e-hourly-active-2';
+const DAILY_ACTIVE_SLUG = 'e2e-daily-active';
+const DAILY_PENDING_SLUG = 'e2e-daily-pending';
+const HOURLY_INACTIVE_SLUG = 'e2e-hourly-inactive';
+
 const COUPON_CODE = 'E2EFIVE'; // 5 QAR off
+// Phase F: 2nd coupon, claimed by the customer so admin-coupons + vendor-
+// coupon-crud see "claimed" rows and customer-coupon-redeem has data.
+const COUPON_CLAIMED_CODE = 'E2ECLAIMED';
+
 const PENDING_BOOKING_REF = 'JDWL-E2EPND';
 const CONFIRMED_BOOKING_REF = 'JDWL-E2ECNF';
 const REFUND_BOOKING_REF = 'JDWL-E2ERFD';
@@ -319,11 +330,227 @@ async function main() {
     data: { loyaltyPoints: 50 },
   });
 
+  // ─── Phase F enrichment: 4 more activities (HOURLY + DAILY mix) ───────
+  // Gives admin-activities-list / vendor-activity-list / catalog-browse
+  // specs multiple rows to assert against.
+  const extraActivities = [
+    {
+      slug: HOURLY_ACTIVE_SLUG,
+      titleEn: 'E2E City Walking Tour',
+      titleAr: 'جولة مشي في المدينة',
+      bookingType: 'HOURLY' as const,
+      pricingModel: 'PER_PERSON' as const,
+      pricePerPerson: 75,
+      durationValue: 3,
+      capacity: 15,
+      status: 'ACTIVE' as const,
+    },
+    {
+      slug: DAILY_ACTIVE_SLUG,
+      titleEn: 'E2E Beach Resort Stay',
+      titleAr: 'إقامة في منتجع شاطئي',
+      bookingType: 'DAILY' as const,
+      pricingModel: 'PER_UNIT' as const,
+      pricePerPerson: 350,
+      durationValue: 1,
+      capacity: 4,
+      status: 'ACTIVE' as const,
+    },
+    {
+      slug: DAILY_PENDING_SLUG,
+      titleEn: 'E2E Yacht Charter',
+      titleAr: 'تأجير يخت',
+      bookingType: 'DAILY' as const,
+      pricingModel: 'PER_UNIT' as const,
+      pricePerPerson: 1200,
+      durationValue: 1,
+      capacity: 8,
+      status: 'PENDING' as const,
+    },
+    {
+      slug: HOURLY_INACTIVE_SLUG,
+      titleEn: 'E2E Karting Session',
+      titleAr: 'جلسة كارتنج',
+      bookingType: 'HOURLY' as const,
+      pricingModel: 'PER_PERSON' as const,
+      pricePerPerson: 120,
+      durationValue: 1,
+      capacity: 6,
+      status: 'INACTIVE' as const,
+    },
+  ];
+  for (const a of extraActivities) {
+    await prisma.activity.upsert({
+      where: { slug: a.slug },
+      create: {
+        slug: a.slug,
+        vendorId: vendorUser.vendorProfile.id,
+        countryId: country.id,
+        categoryId: category.id,
+        cityId: city.id,
+        titleEn: a.titleEn,
+        titleAr: a.titleAr,
+        descriptionEn: `${a.titleEn} — fixed Playwright fixture. Long enough to clear the wizard validation rule that requires at least 50 characters in the description field.`,
+        descriptionAr: `${a.titleAr} — تركيبة ثابتة للاختبار. طويل بما يكفي لاجتياز قاعدة التحقق التي تتطلب 50 حرفًا على الأقل في حقل الوصف.`,
+        pricePerPerson: a.pricePerPerson,
+        durationValue: a.durationValue,
+        capacity: a.capacity,
+        locationLat: 25.286,
+        locationLng: 51.534,
+        locationAddress: 'Doha, Qatar',
+        bookingType: a.bookingType,
+        pricingModel: a.pricingModel,
+        checkInTime: '08:00',
+        checkOutTime: '22:00',
+        status: a.status,
+        activeDays: ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'],
+      },
+      update: { status: a.status },
+    });
+  }
+
+  // ─── Phase F enrichment: 2 reviews on the COMPLETED booking activity ──
+  // admin-reviews + vendor-reviews specs can render rows; customer-review-
+  // after-completion has prior reviews to verify rating updates against.
+  // Review schema has no @@unique constraint, so multiple rows for the
+  // same (activityId, customerId) pair are valid.
+  const existingReviews = await prisma.review.findMany({
+    where: { activityId: activity.id, customerId: customerUser.id },
+  });
+  if (existingReviews.length < 2) {
+    const toCreate = 2 - existingReviews.length;
+    const reviewSeeds = [
+      { rating: 5, text: 'Outstanding experience — guide was knowledgeable and the route well-paced.' },
+      { rating: 4, text: 'Good overall, minor pacing issues but worth it for the views.' },
+    ];
+    for (let i = 0; i < toCreate; i += 1) {
+      await prisma.review.create({
+        data: {
+          activityId: activity.id,
+          customerId: customerUser.id,
+          rating: reviewSeeds[i].rating,
+          text: reviewSeeds[i].text,
+        },
+      });
+    }
+  }
+
+  // ─── Phase F enrichment: 2nd coupon, claimed by the customer ──────────
+  const claimedCoupon = await prisma.coupon.upsert({
+    where: { code: COUPON_CLAIMED_CODE },
+    create: {
+      code: COUPON_CLAIMED_CODE,
+      vendorId: vendorUser.vendorProfile.id,
+      discountType: 'PERCENTAGE',
+      discountValue: 10,
+      validFrom,
+      validTo,
+      usageLimit: 100,
+      usedCount: 1,
+      status: 'APPROVED',
+    },
+    update: {
+      validFrom,
+      validTo,
+      status: 'APPROVED',
+      discountType: 'PERCENTAGE',
+      discountValue: 10,
+      usedCount: 1,
+    },
+  });
+  await prisma.claimedCoupon.upsert({
+    where: { userId_couponId: { userId: customerUser.id, couponId: claimedCoupon.id } },
+    create: { userId: customerUser.id, couponId: claimedCoupon.id, used: true },
+    update: { used: true },
+  });
+
+  // ─── Phase F enrichment: 1 PENDING PayoutRequest ──────────────────────
+  // Admin payout-requests page + vendor-payout-request spec have a row
+  // to render. Linked to the COMPLETED booking's payment so the request
+  // is consistent with the vendor's earnings balance.
+  const existingPayoutRequest = await prisma.payoutRequest.findFirst({
+    where: { vendorId: vendorUser.vendorProfile.id, status: 'PENDING' },
+  });
+  if (!existingPayoutRequest) {
+    await prisma.payoutRequest.create({
+      data: {
+        vendorId: vendorUser.vendorProfile.id,
+        amount: 450, // < completedBooking.totalPrice (500) - commission
+        currency: 'QAR',
+        status: 'PENDING',
+        paymentIds: [],
+      },
+    });
+  }
+
+  // ─── Phase F enrichment: 3 audit-log rows (mix of categories) ─────────
+  // Admin audit-logs page has rows to render; B8 retention spec can
+  // assert that FINANCIAL rows older than 180 days are still queryable.
+  // actorId points at the seeded admin user — best-effort lookup; if the
+  // admin seed hasn't run yet (separate workflow) we fall back to a
+  // sentinel UUID so the row still inserts.
+  const adminUser = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
+  const auditActorId = adminUser?.id ?? '00000000-0000-0000-0000-000000000000';
+  const auditActorName = adminUser?.fullName ?? 'Platform Admin';
+
+  const auditSeeds = [
+    {
+      action: 'PAYOUT_MARK_PAID',
+      entity: 'PAYMENT',
+      entityId: 'historical-payment-1',
+      actionCategory: 'FINANCIAL' as const,
+      details: 'Bank transfer ref SWIFT-LEGACY-001, amount 1500 QAR',
+      // 4 years ago — older than the 180-day OPERATIONAL retention.
+      createdAt: new Date(Date.now() - 4 * 365 * 86400_000),
+    },
+    {
+      action: 'VENDOR_APPROVE',
+      entity: 'VENDOR',
+      entityId: vendorUser.vendorProfile.id,
+      actionCategory: 'OPERATIONAL' as const,
+      details: 'Initial approval after KYC review',
+      createdAt: new Date(Date.now() - 30 * 86400_000),
+    },
+    {
+      action: 'PLATFORM_SETTING_UPDATE',
+      entity: 'PLATFORM_SETTING',
+      entityId: 'commission_rate',
+      actionCategory: 'OPERATIONAL' as const,
+      details: 'commission_rate 10 → 12',
+      createdAt: new Date(Date.now() - 7 * 86400_000),
+    },
+  ];
+  for (const a of auditSeeds) {
+    // Idempotency: skip if a row with the same (action, entityId) already
+    // exists. This keeps re-runs from accumulating duplicates.
+    const existing = await prisma.auditLog.findFirst({
+      where: { action: a.action, entityId: a.entityId },
+    });
+    if (!existing) {
+      await prisma.auditLog.create({
+        data: {
+          actorId: auditActorId,
+          actorName: auditActorName,
+          action: a.action,
+          entity: a.entity,
+          entityId: a.entityId,
+          actionCategory: a.actionCategory,
+          details: a.details,
+          createdAt: a.createdAt,
+        },
+      });
+    }
+  }
+
   console.log('E2E data seeded:');
-  console.log('  activity:          ' + activity.slug);
+  console.log('  activities (5):    1 ACTIVE-HOURLY (e2e-activity) + 1 ACTIVE-HOURLY +');
+  console.log('                     1 ACTIVE-DAILY + 1 PENDING-DAILY + 1 INACTIVE-HOURLY');
   console.log('  pending-vendor:    e2e-pending-vendor (PENDING)');
-  console.log('  coupon:            ' + COUPON_CODE);
+  console.log('  coupons (2):       ' + COUPON_CODE + ' + ' + COUPON_CLAIMED_CODE + ' (claimed)');
   console.log('  bookings (4):      pending / confirmed / refund-pending / completed');
+  console.log('  reviews (2):       on e2e-activity (5★ + 4★)');
+  console.log('  payout-request:    1 PENDING for 450 QAR');
+  console.log('  audit-logs (3):    1 FINANCIAL (4y old) + 2 OPERATIONAL');
   console.log('  loyalty points:    50 (customer)');
   console.log('  vendor bank:       set (payout-eligible)');
 }
