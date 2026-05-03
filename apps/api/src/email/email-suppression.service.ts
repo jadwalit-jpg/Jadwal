@@ -11,7 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
  *   rate >0.1% over a 7-day window flags the domain. Once flagged, *all*
  *   subsequent sends — including to legitimate recipients — get rate-
  *   limited, junked, or rejected by receiving MTAs. The cost of one bad
- *   address sent 5 times per day across 100 fake signups is real $$$ and
+ *   address sent 5 times per day across 100 spam signups is real $$$ and
  *   weeks of recovery.
  *
  *   This service maintains a Postgres-backed list of recipients SES has
