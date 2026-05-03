@@ -229,6 +229,109 @@ describe('AuthService.loginWithCheck', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Honeypot — silent fake-success on registerAndLogin + registerVendor
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('AuthService.registerAndLogin — honeypot field "website"', () => {
+  let ctx: Awaited<ReturnType<typeof buildSut>>;
+  beforeEach(async () => { ctx = await buildSut(); });
+
+  test('non-empty website → silent fake-success (no User row, no email)', async () => {
+    const result = await ctx.sut.registerAndLogin({
+      fullName: 'Bot',
+      email: 'spam@example.com',
+      password: 'StrongPw1!',
+      website: 'http://my-bot-fill.com',
+    } as any);
+
+    expect(result).toEqual({ pending: true, email: 'spam@example.com' });
+    // No DB lookups — bot must not see a 409 if email already exists
+    expect(ctx.prisma._client.user.findUnique).not.toHaveBeenCalled();
+    // No user creation
+    expect(ctx.users.create).not.toHaveBeenCalled();
+    // No verification email
+    expect(ctx.email.sendEmailVerification).not.toHaveBeenCalled();
+    // Security log emitted so ops can see honeypot trips
+    expect(ctx.sec.log).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'LOGIN_FAILED',
+      email: 'spam@example.com',
+      details: expect.stringMatching(/honeypot/i),
+    }));
+  });
+
+  test('whitespace-only website → passes through to normal flow (trim() === "")', async () => {
+    // Mock the post-honeypot path so the test doesn't crash on user.id access.
+    ctx.users.create.mockResolvedValueOnce({ id: 'u1', email: 'spam@example.com', fullName: 'Bot', role: 'CUSTOMER' });
+    await ctx.sut.registerAndLogin({
+      fullName: 'Bot',
+      email: 'spam@example.com',
+      password: 'StrongPw1!',
+      website: '   ',
+    } as any);
+    // Whitespace.trim() === '' so honeypot does NOT trip — normal flow runs.
+    expect(ctx.prisma._client.user.findUnique).toHaveBeenCalled();
+  });
+
+  test('empty / undefined website → normal registration flow', async () => {
+    // findUnique on user returns null (default) → email/phone uniqueness
+    // pre-checks pass. usersService.create resolves with a real user shape
+    // so post-create code paths (sendVerificationEmail) don't crash.
+    ctx.users.create.mockResolvedValueOnce({ id: 'u1', email: 'a@b.com', fullName: 'Real', role: 'CUSTOMER' });
+    await ctx.sut.registerAndLogin({
+      fullName: 'Real',
+      email: 'a@b.com',
+      password: 'StrongPw1!',
+    } as any);
+    expect(ctx.users.create).toHaveBeenCalled();
+  });
+});
+
+describe('AuthService.registerVendor — honeypot field "website"', () => {
+  let ctx: Awaited<ReturnType<typeof buildSut>>;
+  beforeEach(async () => { ctx = await buildSut(); });
+
+  test('non-empty website → silent fake-success (no Vendor row)', async () => {
+    const result = await ctx.sut.registerVendor({
+      fullName: 'Bot',
+      email: 'spam@example.com',
+      password: 'StrongPw1!',
+      businessNameEn: 'X',
+      businessNameAr: 'Y',
+      businessId: 'B1',
+      slug: 'bot',
+      countryId: '00000000-0000-4000-8000-000000000000',
+      website: 'http://exploit.example',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({ email: 'spam@example.com' }));
+    // No uniqueness lookups — bot must not see "Email already registered" or "Slug already taken"
+    expect(ctx.prisma._client.user.findUnique).not.toHaveBeenCalled();
+    expect(ctx.prisma._client.vendor.findUnique).not.toHaveBeenCalled();
+    expect(ctx.sec.log).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'LOGIN_FAILED',
+      email: 'spam@example.com',
+      details: expect.stringMatching(/honeypot.*vendor/i),
+    }));
+  });
+
+  test('empty website → normal vendor registration flow', async () => {
+    ctx.prisma._client.country.findUnique.mockResolvedValueOnce({ id: 'c1', status: 'ACTIVE' });
+    // $transaction lives on prisma top-level, not _client (see prisma.mock.ts).
+    ctx.prisma.$transaction.mockResolvedValueOnce({ id: 'u1', email: 'v@b.com', fullName: 'Real' });
+    await ctx.sut.registerVendor({
+      fullName: 'Real',
+      email: 'v@b.com',
+      password: 'StrongPw1!',
+      businessNameEn: 'X', businessNameAr: 'Y',
+      businessId: 'B1', slug: 'real',
+      countryId: 'c1',
+    } as any);
+    // Lookups proceed normally — uniqueness pre-checks fired
+    expect(ctx.prisma._client.user.findUnique).toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // issueTokens — cookie shape
 // ═══════════════════════════════════════════════════════════════════════════
 

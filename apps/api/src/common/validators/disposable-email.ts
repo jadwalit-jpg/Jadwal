@@ -41,9 +41,15 @@
  *   without redeploying the validator.
  */
 import { registerDecorator, ValidationOptions, ValidatorConstraint, ValidatorConstraintInterface, ValidationArguments } from 'class-validator';
-import disposableDomains from 'disposable-email-domains';
+// disposable-email-domains is a CommonJS package that uses `module.exports = arr`.
+// With esModuleInterop=false (this project's tsconfig) the ES default-import
+// form `import x from '...'` resolves to the namespace object, NOT the array
+// — `Array.from(namespace)` returns nothing. The TS-compatible require form
+// below is the documented escape hatch and matches the .d.ts shim's `export =`.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import disposableDomains = require('disposable-email-domains');
 
-const blocklist = new Set<string>(disposableDomains as string[]);
+const blocklist = new Set<string>(disposableDomains);
 
 function loadAllowlistFromEnv(): Set<string> {
   const raw = process.env.EMAIL_DOMAIN_ALLOWLIST;
