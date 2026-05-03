@@ -12,12 +12,10 @@
  *
  * NOT FOR PRODUCTION. Credentials are hard-coded test fixtures.
  */
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { createSeedPrisma } from './_db-helper';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
@@ -37,8 +35,7 @@ async function main() {
     );
   }
 
-  const adapter = new PrismaPg(new Pool({ connectionString: process.env.DATABASE_URL }));
-  const prisma = new PrismaClient({ adapter } as never);
+  const prisma = createSeedPrisma();
   const hash = await bcrypt.hash(TEST_PASSWORD, 12);
 
   // Vendor.country is a required relation (Restrict on delete) — pick the
