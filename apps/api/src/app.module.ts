@@ -90,6 +90,12 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     // Global HTTP logger — runs for every route, including auth and static.
     // Attaches x-request-id and emits one structured JSON log on finish.
-    consumer.apply(RequestLoggerMiddleware).forRoutes('*');
+    //
+    // Path is '*path' (named wildcard), not bare '*'. NestJS 11 upgraded
+    // path-to-regexp to v8, which dropped support for unnamed wildcards
+    // and now requires every catch-all to bind a parameter name. Bare '*'
+    // logs a [LegacyRouteConverter] WARN at startup + auto-converts at
+    // runtime; '*path' silences the warning and is forward-compatible.
+    consumer.apply(RequestLoggerMiddleware).forRoutes('*path');
   }
 }
