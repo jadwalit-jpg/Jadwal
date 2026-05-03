@@ -57,8 +57,14 @@ const REFUND_BOOKING_REF = 'JDWL-E2ERFD';
 const COMPLETED_BOOKING_REF = 'JDWL-E2ECMP';
 
 async function main() {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('Refusing to seed E2E data in production');
+  if (process.env.NODE_ENV === 'production' && process.env.SEED_E2E_ALLOW_PROD !== 'true') {
+    throw new Error(
+      'Refusing to seed E2E data in production. ' +
+        'Set SEED_E2E_ALLOW_PROD=true in the task env to override (only for ' +
+        'pen-test windows or staging mirrors). Test data is identifiable by ' +
+        'the @jadwal-test.local suffix and can be cleaned up via: ' +
+        "DELETE FROM users WHERE email LIKE '%@jadwal-test.local';",
+    );
   }
 
   const adapter = new PrismaPg(new Pool({ connectionString: process.env.DATABASE_URL }));
