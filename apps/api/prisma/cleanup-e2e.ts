@@ -45,29 +45,58 @@ async function main() {
     console.log(`  - ${u.email} (${u.id})`);
   }
 
-  let totals = { vendors: 0, activities: 0, bookings: 0, coupons: 0, users: 0 };
+  let totals = {
+    vendors: 0,
+    activities: 0,
+    bookings: 0,
+    coupons: 0,
+    reviews: 0,
+    payouts: 0,
+    users: 0,
+  };
 
   for (const u of testUsers) {
-    // Activities → Bookings → Coupons → Vendor → User. Order matters
-    // because of FK constraints (Vendor is parent of Activity & Coupon;
-    // Activity is parent of Booking).
+    // Order matters because several relations are `onDelete: Restrict`
+    // — deleting parent rows (Vendor / Activity / User) fails if any
+    // dependent row references them. Sequence:
+    //
+    //   Vendor side: Coupons → PayoutRequests → Reviews-on-vendor-activities
+    //                → Bookings-on-vendor-activities → Activities → Vendor
+    //   User side:   Reviews-by-customer → Bookings-by-customer → User
+    //
+    // Restrict-constrained relations confirmed in schema.prisma:
+    //   Booking.customerId            → onDelete: Restrict (User)
+    //   Review.activityId             → onDelete: Restrict (Activity)
+    //   Review.customerId             → onDelete: Restrict (User)
+    //   PayoutRequest.vendorId        → onDelete: Restrict (Vendor)
     const vendor = await prisma.vendor.findUnique({ where: { userId: u.id } });
     if (vendor) {
       // Coupons (vendor-scoped)
       const couponDel = await prisma.coupon.deleteMany({ where: { vendorId: vendor.id } });
       totals.coupons += couponDel.count;
 
-      // Activities (vendor-scoped) — Bookings on these activities will
-      // be deleted via the per-user booking sweep below; activities
-      // themselves go after their bookings. Get the activity IDs first.
+      // PayoutRequests (vendor-scoped) — onDelete: Restrict on Vendor
+      const payoutDel = await prisma.payoutRequest.deleteMany({
+        where: { vendorId: vendor.id },
+      });
+      totals.payouts += payoutDel.count;
+
+      // Activities owned by this vendor — Reviews + Bookings on them
+      // need to go first (both onDelete: Restrict).
       const activities = await prisma.activity.findMany({
         where: { vendorId: vendor.id },
         select: { id: true },
       });
-      // Bookings on these activities (regardless of customer)
       if (activities.length) {
+        const activityIds = activities.map((a) => a.id);
+        // Reviews on activities — onDelete: Restrict on Activity
+        const reviewActDel = await prisma.review.deleteMany({
+          where: { activityId: { in: activityIds } },
+        });
+        totals.reviews += reviewActDel.count;
+        // Bookings on activities (regardless of customer)
         const bookingDel = await prisma.booking.deleteMany({
-          where: { activityId: { in: activities.map((a) => a.id) } },
+          where: { activityId: { in: activityIds } },
         });
         totals.bookings += bookingDel.count;
       }
@@ -75,14 +104,19 @@ async function main() {
       const actDel = await prisma.activity.deleteMany({ where: { vendorId: vendor.id } });
       totals.activities += actDel.count;
 
-      // Vendor row
+      // Vendor row (now that Coupons + PayoutRequests + Activities are gone)
       await prisma.vendor.delete({ where: { id: vendor.id } });
       totals.vendors += 1;
     }
 
-    // Bookings the user made as customer (covers test-customer's bookings
-    // on activities owned by other vendors — though seed-e2e doesn't
-    // create those, this is defensive).
+    // User-side relations:
+    //   Reviews where customerId = u.id — onDelete: Restrict on User
+    const reviewUserDel = await prisma.review.deleteMany({
+      where: { customerId: u.id },
+    });
+    totals.reviews += reviewUserDel.count;
+
+    //   Bookings the user made as customer — onDelete: Restrict on User
     const customerBookingDel = await prisma.booking.deleteMany({
       where: { customerId: u.id },
     });
@@ -94,11 +128,13 @@ async function main() {
   }
 
   console.log('\nCleanup complete:');
-  console.log(`  users     deleted: ${totals.users}`);
-  console.log(`  vendors   deleted: ${totals.vendors}`);
+  console.log(`  users      deleted: ${totals.users}`);
+  console.log(`  vendors    deleted: ${totals.vendors}`);
   console.log(`  activities deleted: ${totals.activities}`);
-  console.log(`  bookings  deleted: ${totals.bookings}`);
-  console.log(`  coupons   deleted: ${totals.coupons}`);
+  console.log(`  bookings   deleted: ${totals.bookings}`);
+  console.log(`  coupons    deleted: ${totals.coupons}`);
+  console.log(`  payouts    deleted: ${totals.payouts}`);
+  console.log(`  reviews    deleted: ${totals.reviews}`);
 
   await prisma.$disconnect();
 }
