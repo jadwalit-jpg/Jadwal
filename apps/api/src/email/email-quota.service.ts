@@ -34,8 +34,8 @@ import { RedisService } from '../redis/redis.service';
  *
  *   If Redis is unreachable, we fail OPEN (allow the send). Reason: a
  *   broken Redis shouldn't lock legitimate users out of password recovery.
- *   The per-IP throttle still applies, and the SES sandbox/quota acts as
- *   a hard ceiling. We log Redis errors but don't surface them.
+ *   The per-IP throttle still applies, and the SES per-account quota
+ *   acts as a hard ceiling. We log Redis errors but don't surface them.
  */
 @Injectable()
 export class EmailQuotaService {

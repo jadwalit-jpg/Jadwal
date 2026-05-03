@@ -16,7 +16,9 @@ export type SecurityEvent =
   | 'PHONE_VERIFIED'
   | 'PASSWORD_RESET_REQUESTED'
   | 'PASSWORD_RESET_COMPLETED'
-  | 'PASSWORD_RESET_FAILED';
+  | 'PASSWORD_RESET_FAILED'
+  | 'PASSWORD_CHANGE_FAILED'
+  | 'PASSWORD_CHANGE_COMPLETED';
 
 interface LogParams {
   event: SecurityEvent;
