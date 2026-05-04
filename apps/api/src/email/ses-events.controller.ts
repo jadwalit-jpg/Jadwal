@@ -10,51 +10,25 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
-import { createVerify, verify as cryptoVerify } from 'node:crypto';
 import { RATE_LIMIT_AUTH } from '../common/throttle-config';
 import { EmailSuppressionService } from './email-suppression.service';
 
-// Signable fields per https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html
-// The previously-used `sns-validator` 0.3.5 npm has buggy lists (includes
-// SubscribeURL in NOTIFICATION's signables and Subject in SUBSCRIPTION's),
-// which intermittently mismatches AWS's canonical string and yields
-// "The message signature is invalid." on real SES bounce / complaint
-// notifications. Inlining the AWS-spec lists fixes that.
-const SIGNABLE_KEYS_NOTIFICATION = [
-  'Message',
-  'MessageId',
-  'Subject',
-  'Timestamp',
-  'TopicArn',
-  'Type',
-] as const;
-const SIGNABLE_KEYS_SUBSCRIPTION = [
-  'Message',
-  'MessageId',
-  'SubscribeURL',
-  'Timestamp',
-  'Token',
-  'TopicArn',
-  'Type',
-] as const;
-
-// AWS publishes signing certs from sns.<region>.amazonaws.com[.cn] only.
-// Fetching from any other host opens an SSRF vector — pin the regex.
-// (Hostnames are case-insensitive per RFC 3986.)
-const SIGNING_CERT_HOST = /^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$/i;
-
-// Hardcoded allowlist of cert URL bases per AWS region we operate in.
-// CodeQL's taint analysis treats `body.TopicArn` derivatives as user-
-// controlled even after regex validation; mapping the validated region
-// to a literal URL base via const lookup makes the host fully static in
-// the dataflow graph. Only the PEM filename slot is dynamic, and that's
-// regex-bounded + percent-encoded before interpolation.
-//
-// Add a new region here when expanding deployment; AWS publishes one
-// signing-cert URL pattern per region, all under sns.<region>.amazonaws.com.
-const CERT_URL_BASES: Readonly<Record<string, string>> = {
-  'eu-central-1': 'https://sns.eu-central-1.amazonaws.com/',
-};
+// `sns-payload-validator` (devinstewart/sns-payload-validator, MIT, 2.1.0)
+// is a maintained, focused replacement for the buggy `sns-validator` npm
+// we used originally. Key correctness wins over hand-rolled / sns-validator:
+//   - Uses 'sha1WithRSAEncryption' / 'sha256WithRSAEncryption' (the
+//     OpenSSL 3 explicit names). Node 22 + OpenSSL 3 silently fail
+//     'RSA-SHA1' streaming verifies through the legacy provider, which
+//     bit our previous implementation.
+//   - Correct AWS-spec signableKeys for each message type (no Subject
+//     in Subscription; no SubscribeURL in Notification — both bugs in
+//     `sns-validator` 0.3.5).
+//   - Strict cert URL pattern: ^https://sns.<region>.amazonaws.com[.cn]/
+//     SimpleNotificationService-[32 alphanum].pem$ — much tighter than
+//     a generic host regex.
+//   - LRU cert cache with bounded size.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const SnsPayloadValidator = require('sns-payload-validator');
 
 interface SnsMessage {
   Type: 'Notification' | 'SubscriptionConfirmation' | 'UnsubscribeConfirmation';
@@ -134,9 +108,9 @@ export class SesEventsController {
   private readonly logger = new Logger(SesEventsController.name);
   private readonly bouncesTopicArn: string | undefined;
   private readonly complaintsTopicArn: string | undefined;
-  // Cert cache — AWS rotates signing certs occasionally; entries live
-  // for the process lifetime. RSS impact is negligible (one PEM ~1.5 KB).
-  private readonly certCache = new Map<string, string>();
+  // Library handles cert fetching, caching (LRU, max 1000), and the
+  // RSA-PKCS1v15 verify with the right OpenSSL 3 algorithm names.
+  private readonly snsValidator = new SnsPayloadValidator({ useCache: true });
 
   constructor(
     private config: ConfigService,
@@ -348,171 +322,30 @@ export class SesEventsController {
    * wrong signable-keys lists, which intermittently mismatches AWS's
    * canonical and rejects real bounce/complaint notifications.
    */
+  /**
+   * Verify an SNS message signature via `sns-payload-validator`. The
+   * library handles canonical-string construction (AWS-spec correct
+   * signableKeys per message type), cert URL validation against a
+   * strict regex, cert HTTPS fetch, LRU cache, and RSA verify using
+   * OpenSSL 3-friendly algorithm names (sha1WithRSAEncryption /
+   * sha256WithRSAEncryption).
+   *
+   * Returns true if AWS authentically signed the message, false on any
+   * failure (invalid signature, malformed cert URL, network error, etc).
+   * Errors are logged at WARN with the library's message string for
+   * triage, but never re-thrown — the caller already maps false → 403.
+   */
   protected async verifySnsSignature(body: SnsMessage): Promise<boolean> {
-    const sigVer = body.SignatureVersion;
-    if (sigVer !== '1' && sigVer !== '2') return false;
-
-    const keys: readonly string[] =
-      body.Type === 'SubscriptionConfirmation' || body.Type === 'UnsubscribeConfirmation'
-        ? SIGNABLE_KEYS_SUBSCRIPTION
-        : SIGNABLE_KEYS_NOTIFICATION;
-
-    let canonical = '';
-    const includedKeys: string[] = [];
-    for (const k of keys) {
-      const v = (body as unknown as Record<string, unknown>)[k];
-      // AWS spec: skip a field if "not specified". null/undefined/empty
-      // string all map to "not specified" in practice — including empty
-      // strings would diverge from AWS's signing canonical (e.g. SES
-      // bounce notifications can send Subject="" which AWS doesn't sign).
-      if (v === undefined || v === null) continue;
-      const s = String(v);
-      if (s.length === 0) continue;
-      canonical += `${k}\n${s}\n`;
-      includedKeys.push(k);
-    }
-
-    const cert = await this.fetchSigningCert(body);
-    if (!cert) return false;
-
-    // Trim PEM — `response.text()` can return trailing whitespace that
-    // some Node/OpenSSL builds reject when parsing the certificate.
-    const pemCert = cert.trim();
-
-    if (!body.Signature || typeof body.Signature !== 'string') return false;
-    let sigBuf: Buffer;
     try {
-      sigBuf = Buffer.from(body.Signature, 'base64');
-    } catch {
+      await this.snsValidator.validate(body);
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `ses-events signature verification failed: ${err instanceof Error ? err.message : 'unknown'} ` +
+          `(sigVer=${body.SignatureVersion}, type=${body.Type})`,
+      );
       return false;
     }
-
-    const algo = sigVer === '1' ? 'RSA-SHA1' : 'RSA-SHA256';
-    const dataBuf = Buffer.from(canonical, 'utf8');
-
-    // Try the static crypto.verify API first. With OpenSSL 3 in Node 22+,
-    // RSA-SHA1 sometimes works through the static API where the streaming
-    // `createVerify` chain trips up on legacy-provider routing. Fall back
-    // to streaming if static throws (older crypto builds).
-    let ok = false;
-    let attemptError = '';
-    try {
-      ok = cryptoVerify(algo, dataBuf, pemCert, sigBuf);
-    } catch (err) {
-      attemptError = `static:${err instanceof Error ? err.message : 'unknown'}`;
-      try {
-        const v = createVerify(algo);
-        v.update(dataBuf);
-        ok = v.verify(pemCert, sigBuf);
-      } catch (err2) {
-        attemptError += ` streaming:${err2 instanceof Error ? err2.message : 'unknown'}`;
-        ok = false;
-      }
-    }
-
-    if (!ok) {
-      // Diagnostic: log canonical-key set + lengths + per-character-class
-      // counts on the signature so we can identify URL-decoding / encoding
-      // corruption en route. AWS metadata only — no PII.
-      const bodyKeys = Object.keys(body as unknown as Record<string, unknown>).join(',');
-      const sig = body.Signature;
-      const sigPlus = (sig.match(/\+/g) || []).length;
-      const sigSlash = (sig.match(/\//g) || []).length;
-      const sigSpace = (sig.match(/ /g) || []).length;
-      const sigEq = (sig.match(/=/g) || []).length;
-      const sigDash = (sig.match(/-/g) || []).length;
-      const sigUnderscore = (sig.match(/_/g) || []).length;
-      const sigOther = sig.replace(/[A-Za-z0-9+/= _-]/g, '').length;
-      const sigHead = sig.slice(0, 12);
-      const sigTail = sig.slice(-12);
-      this.logger.warn(
-        `ses-events sig false: ` +
-          `canonicalLen=${canonical.length} ` +
-          `sigLen=${sig.length} sigBufLen=${sigBuf.length} ` +
-          `certLen=${pemCert.length} ` +
-          `algo=${algo} ` +
-          `sigChars=+${sigPlus}/${sigSlash}=${sigEq}-${sigDash}_${sigUnderscore}sp${sigSpace}other${sigOther} ` +
-          `sigHead='${sigHead}' sigTail='${sigTail}' ` +
-          `included=[${includedKeys.join(',')}] ` +
-          `bodyKeys=[${bodyKeys}]` +
-          (attemptError ? ` err=${attemptError}` : ''),
-      );
-    }
-    return ok;
   }
 
-  /**
-   * Fetch and cache the AWS-published X.509 signing cert. The fetch URL
-   * is RECONSTRUCTED from validated atoms — never the user-supplied
-   * SigningCertURL string directly — because CodeQL taint analysis treats
-   * the message body as user-controlled even after a host regex check.
-   *
-   *   - scheme: hardcoded `https://`
-   *   - subdomain: hardcoded `sns.`
-   *   - region: derived from body.TopicArn (already env-pinned to one of
-   *     two known ARNs in the controller before we get here)
-   *   - tld: `amazonaws.com` or `amazonaws.com.cn` based on ARN partition
-   *   - filename: extracted from body.SigningCertURL pathname and
-   *     regex-bounded to `[A-Za-z0-9_-]{1,200}\.pem` so attacker-supplied
-   *     bytes can't carry path traversal or query separators
-   *
-   * No part of the constructed URL flows directly from message into
-   * fetch() — the only user-input value is the PEM filename, which is
-   * regex-bounded to safe chars.
-   */
-  protected async fetchSigningCert(body: SnsMessage): Promise<string | null> {
-    if (!body.SigningCertURL || typeof body.SigningCertURL !== 'string') return null;
-
-    // ARN format: arn:<partition>:sns:<region>:<account>:<topic>
-    const arnParts = body.TopicArn.split(':');
-    if (arnParts.length < 6) return null;
-    const region = arnParts[3];
-
-    // Look up the literal URL base for this region. Anything not in the
-    // hardcoded allowlist is rejected — including aws-cn / GovCloud /
-    // regions we don't operate in. Adding a new region is a code change.
-    const certUrlBase = CERT_URL_BASES[region];
-    if (!certUrlBase) return null;
-
-    let parsed: URL;
-    try {
-      parsed = new URL(body.SigningCertURL);
-    } catch {
-      return null;
-    }
-    if (parsed.protocol !== 'https:') return null;
-    // Sanity-check the host pattern even though we won't use parsed.host
-    // — keeps the SSRF defence layered.
-    if (!SIGNING_CERT_HOST.test(parsed.host)) return null;
-
-    // AWS cert URL pathname is e.g. `/SimpleNotificationService-abc123.pem`.
-    // Allow exactly one segment under root, safe chars only, .pem suffix.
-    const pemMatch = parsed.pathname.match(/^\/([A-Za-z0-9_-]{1,200}\.pem)$/);
-    if (!pemMatch) return null;
-    const pemFilename = pemMatch[1];
-
-    // URL is fully reconstructed: literal scheme + literal host + literal
-    // path-prefix (selected from the const allowlist by validated region),
-    // with only the percent-encoded PEM filename interpolated. The
-    // attacker-controlled bytes never touch the host or scheme slots.
-    const safeUrl = certUrlBase + encodeURIComponent(pemFilename);
-
-    const cached = this.certCache.get(safeUrl);
-    if (cached) return cached;
-    try {
-      const res = await fetch(safeUrl, { redirect: 'manual' });
-      if (!res.ok) return null;
-      const text = await res.text();
-      // Cap cert cache at 16 entries — AWS rotates rarely, so this is
-      // an absolute belt-and-braces against unbounded growth.
-      if (this.certCache.size >= 16) {
-        const firstKey = this.certCache.keys().next().value;
-        if (firstKey !== undefined) this.certCache.delete(firstKey);
-      }
-      this.certCache.set(safeUrl, text);
-      return text;
-    } catch {
-      return null;
-    }
-  }
 }
