@@ -411,16 +411,28 @@ export class SesEventsController {
     }
 
     if (!ok) {
-      // One-shot diagnostic: log the canonical-key set + lengths so we
-      // can spot a divergence from AWS's signing canonical without
-      // dumping any PII (only metadata field names + lengths).
+      // Diagnostic: log canonical-key set + lengths + per-character-class
+      // counts on the signature so we can identify URL-decoding / encoding
+      // corruption en route. AWS metadata only — no PII.
       const bodyKeys = Object.keys(body as unknown as Record<string, unknown>).join(',');
+      const sig = body.Signature;
+      const sigPlus = (sig.match(/\+/g) || []).length;
+      const sigSlash = (sig.match(/\//g) || []).length;
+      const sigSpace = (sig.match(/ /g) || []).length;
+      const sigEq = (sig.match(/=/g) || []).length;
+      const sigDash = (sig.match(/-/g) || []).length;
+      const sigUnderscore = (sig.match(/_/g) || []).length;
+      const sigOther = sig.replace(/[A-Za-z0-9+/= _-]/g, '').length;
+      const sigHead = sig.slice(0, 12);
+      const sigTail = sig.slice(-12);
       this.logger.warn(
         `ses-events sig false: ` +
           `canonicalLen=${canonical.length} ` +
-          `sigLen=${body.Signature.length} sigBufLen=${sigBuf.length} ` +
+          `sigLen=${sig.length} sigBufLen=${sigBuf.length} ` +
           `certLen=${pemCert.length} ` +
           `algo=${algo} ` +
+          `sigChars=+${sigPlus}/${sigSlash}=${sigEq}-${sigDash}_${sigUnderscore}sp${sigSpace}other${sigOther} ` +
+          `sigHead='${sigHead}' sigTail='${sigTail}' ` +
           `included=[${includedKeys.join(',')}] ` +
           `bodyKeys=[${bodyKeys}]` +
           (attemptError ? ` err=${attemptError}` : ''),
