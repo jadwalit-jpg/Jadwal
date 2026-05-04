@@ -1,24 +1,27 @@
 /**
  * SesEventsController unit tests.
  *
- * Security-critical paths:
- *   - Wrong/unknown TopicArn → 403 (drop before signature verify)
- *   - Bad SNS signature → 403
- *   - Permanent bounce → suppression upserted
+ * Auth model: this controller does NOT cryptographically verify SNS
+ * signatures (see controller for full rationale). Auth substitutes are:
+ *   1. Cloudflare WAF AWS-IP allowlist on the path (configured outside
+ *      this codebase — runbook entry only)
+ *   2. TopicArn pinning (tested here)
+ *   3. Content-shape validation (tested here)
+ *
+ * Tests cover:
+ *   - Missing message-type header → 403
+ *   - Wrong/unknown TopicArn → 403 (the primary in-code auth gate)
+ *   - Permanent bounce → suppression upserted (notificationType + eventType)
  *   - Transient bounce → ignored (do NOT suppress legit recipients on
  *     temporary failures like greylisting / mailbox full)
  *   - Complaint → suppressed unconditionally
- *   - SubscriptionConfirmation → SubscribeURL fetched once
- *
- * Signature verification is stubbed by spying on the controller's
- * protected `verifySnsSignature` method (the controller inlines AWS's
- * canonical-string + RSA verify spec — see the controller for why we
- * dropped the buggy `sns-validator` npm).
+ *   - SubscriptionConfirmation → SubscribeURL reconstructed safely + fetched
+ *   - SSRF defence — attacker-controlled SubscribeURL host is discarded
  */
 
 import { ForbiddenException } from '@nestjs/common';
 
-// global fetch mock for SubscribeURL + cert URL
+// global fetch mock for SubscribeURL
 const fetchMock = jest.fn().mockResolvedValue(undefined);
 (global as any).fetch = fetchMock;
 
@@ -27,8 +30,7 @@ import { SesEventsController } from '../../src/email/ses-events.controller';
 const KNOWN_BOUNCES_ARN = 'arn:aws:sns:eu-central-1:1:jadwal-ses-bounces';
 const KNOWN_COMPLAINTS_ARN = 'arn:aws:sns:eu-central-1:1:jadwal-ses-complaints';
 
-function makeSut(opts: { signatureOk?: boolean } = {}) {
-  const signatureOk = opts.signatureOk ?? true;
+function makeSut() {
   const config = {
     get: (k: string) => {
       if (k === 'SNS_TOPIC_ARN_BOUNCES') return KNOWN_BOUNCES_ARN;
@@ -42,11 +44,6 @@ function makeSut(opts: { signatureOk?: boolean } = {}) {
     unsuppress: jest.fn(),
   };
   const sut = new SesEventsController(config as any, suppressions as any);
-  // Stub the AWS-cert RSA verify path — tests don't need real X.509
-  // fixtures and can't compute valid signatures without AWS's private key.
-  jest
-    .spyOn(sut as unknown as { verifySnsSignature: () => Promise<boolean> }, 'verifySnsSignature')
-    .mockResolvedValue(signatureOk);
   return { sut, suppressions };
 }
 
@@ -97,7 +94,7 @@ describe('SesEventsController.handle — auth gates', () => {
     await expect(sut.handle(undefined, makeBounceMessage('x@b.com') as any)).rejects.toThrow(ForbiddenException);
   });
 
-  test('unknown TopicArn → 403 (drop before signature verify)', async () => {
+  test('unknown TopicArn → 403 (the primary in-code auth gate)', async () => {
     const { sut, suppressions } = makeSut();
     const msg = makeBounceMessage('x@b.com');
     msg.TopicArn = 'arn:aws:sns:eu-central-1:1:wrong-topic';
@@ -105,9 +102,9 @@ describe('SesEventsController.handle — auth gates', () => {
     expect(suppressions.suppress).not.toHaveBeenCalled();
   });
 
-  test('bad SNS signature → 403, never touches suppression list', async () => {
-    const { sut, suppressions } = makeSut({ signatureOk: false });
-    await expect(sut.handle('Notification', makeBounceMessage('x@b.com') as any)).rejects.toThrow(ForbiddenException);
+  test('null body → 403', async () => {
+    const { sut, suppressions } = makeSut();
+    await expect(sut.handle('Notification', null as any)).rejects.toThrow(ForbiddenException);
     expect(suppressions.suppress).not.toHaveBeenCalled();
   });
 });
@@ -134,6 +131,35 @@ describe('SesEventsController.handle — bounce + complaint processing', () => {
     await sut.handle('Notification', makeComplaintMessage('marked@spam.com') as any);
     expect(suppressions.suppress).toHaveBeenCalledTimes(1);
     expect(suppressions.suppress.mock.calls[0][1]).toBe('complaint');
+  });
+
+  test('eventType=Bounce (configuration-set events format) → suppressed same as notificationType', async () => {
+    // SES configuration-set events use `eventType` instead of the legacy
+    // `notificationType` key. Controller accepts both.
+    const { sut, suppressions } = makeSut();
+    const msg = {
+      Type: 'Notification',
+      MessageId: 'msg-event',
+      TopicArn: KNOWN_BOUNCES_ARN,
+      Timestamp: '2026-05-04T05:31:14.164Z',
+      SignatureVersion: '1',
+      Signature: 'sig',
+      SigningCertURL: 'https://sns.../cert.pem',
+      Subject: 'Amazon SES Email Event Notification',
+      Message: JSON.stringify({
+        eventType: 'Bounce',
+        bounce: {
+          bounceType: 'Permanent',
+          bounceSubType: 'General',
+          bouncedRecipients: [{ emailAddress: 'event@bounced.com' }],
+          timestamp: '2026-05-04T05:31:13.885Z',
+        },
+      }),
+    } as any;
+    await sut.handle('Notification', msg);
+    expect(suppressions.suppress).toHaveBeenCalledTimes(1);
+    expect(suppressions.suppress.mock.calls[0][0]).toBe('event@bounced.com');
+    expect(suppressions.suppress.mock.calls[0][1]).toBe('bounce');
   });
 
   test('multiple bounced recipients in one message → all suppressed', async () => {
