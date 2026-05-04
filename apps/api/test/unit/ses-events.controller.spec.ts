@@ -10,24 +10,15 @@
  *   - Complaint → suppressed unconditionally
  *   - SubscriptionConfirmation → SubscribeURL fetched once
  *
- * sns-validator is mocked to flip between accept/reject so we don't need
- * AWS X.509 fixtures in the test fixture.
+ * Signature verification is stubbed by spying on the controller's
+ * protected `verifySnsSignature` method (the controller inlines AWS's
+ * canonical-string + RSA verify spec — see the controller for why we
+ * dropped the buggy `sns-validator` npm).
  */
 
 import { ForbiddenException } from '@nestjs/common';
 
-// sns-validator: shared mock that flips behaviour per-test via __setOk(...)
-let validatorOk = true;
-jest.mock('sns-validator', () => {
-  return jest.fn().mockImplementation(() => ({
-    validate: (_msg: any, cb: (err: Error | null) => void) => {
-      if (validatorOk) cb(null);
-      else cb(new Error('signature invalid'));
-    },
-  }));
-});
-
-// global fetch mock for SubscribeURL
+// global fetch mock for SubscribeURL + cert URL
 const fetchMock = jest.fn().mockResolvedValue(undefined);
 (global as any).fetch = fetchMock;
 
@@ -37,7 +28,7 @@ const KNOWN_BOUNCES_ARN = 'arn:aws:sns:eu-central-1:1:jadwal-ses-bounces';
 const KNOWN_COMPLAINTS_ARN = 'arn:aws:sns:eu-central-1:1:jadwal-ses-complaints';
 
 function makeSut(opts: { signatureOk?: boolean } = {}) {
-  validatorOk = opts.signatureOk ?? true;
+  const signatureOk = opts.signatureOk ?? true;
   const config = {
     get: (k: string) => {
       if (k === 'SNS_TOPIC_ARN_BOUNCES') return KNOWN_BOUNCES_ARN;
@@ -51,6 +42,11 @@ function makeSut(opts: { signatureOk?: boolean } = {}) {
     unsuppress: jest.fn(),
   };
   const sut = new SesEventsController(config as any, suppressions as any);
+  // Stub the AWS-cert RSA verify path — tests don't need real X.509
+  // fixtures and can't compute valid signatures without AWS's private key.
+  jest
+    .spyOn(sut as unknown as { verifySnsSignature: () => Promise<boolean> }, 'verifySnsSignature')
+    .mockResolvedValue(signatureOk);
   return { sut, suppressions };
 }
 
