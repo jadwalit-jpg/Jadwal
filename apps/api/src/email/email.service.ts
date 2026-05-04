@@ -8,6 +8,7 @@ import { passwordChangedTemplate } from './templates/password-changed';
 import { emailVerificationTemplate } from './templates/email-verification';
 import { vendorWelcomeTemplate } from './templates/vendor-welcome';
 import { EmailSuppressionService } from './email-suppression.service';
+import { EmailQuotaService } from './email-quota.service';
 
 /**
  * Email Service — AWS SES integration.
@@ -33,6 +34,7 @@ export class EmailService {
   constructor(
     private config: ConfigService,
     private suppressions: EmailSuppressionService,
+    private emailQuota: EmailQuotaService,
   ) {
     this.from = this.config.get('EMAIL_FROM', 'noreply@jadwal.qa');
     this.enabled = this.config.get('EMAIL_ENABLED', 'false') === 'true';
@@ -235,6 +237,22 @@ export class EmailService {
       const suppressed = await this.suppressions.isSuppressed(to);
       if (suppressed) {
         this.logger.warn(`Email to ${masked} dropped — recipient suppressed (${template})`);
+        return true;
+      }
+
+      // Platform-wide daily circuit breaker — the absolute ceiling on
+      // outbound volume per 24h regardless of who/where. Final cost
+      // runaway gate: even if upstream caps fail, this caps total spend.
+      // Skipped for admin-alert so operational notifications always go
+      // out (same exception logic as the suppression check above).
+      const platformOk = await this.emailQuota.tryConsumePlatformDaily();
+      if (!platformOk) {
+        // Success-shaped return preserves anti-enumeration on
+        // /forgot-password etc. Caller cannot distinguish "we hit the
+        // platform cap" from "the email actually sent".
+        this.logger.warn(
+          `Email to ${masked} dropped — platform daily cap exceeded (${template})`,
+        );
         return true;
       }
     }
