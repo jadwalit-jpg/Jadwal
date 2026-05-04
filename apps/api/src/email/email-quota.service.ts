@@ -203,6 +203,63 @@ export class EmailQuotaService {
       return true;
     }
   }
+
+  /**
+   * Platform-wide daily send circuit breaker. A SINGLE counter across all
+   * users / templates / IPs — the absolute ceiling on outbound volume per
+   * 24h. Designed as a cost-runaway gate: even if every other quota fails
+   * in a way that lets traffic through, this caps total spend at a known
+   * amount.
+   *
+   * Why this matters:
+   *   AWS SES production-access quotas typically start at 50K/day and
+   *   ramp up. Without an in-app cap, a code bug or unusual traffic
+   *   pattern could spend the full AWS budget before anyone notices —
+   *   at $0.10/1K emails that's $5/day at 50K, much higher at higher
+   *   tiers. This counter is the hard ceiling that bounds runaway spend.
+   *
+   *   Default 5,000/day is comfortably above legitimate steady-state for
+   *   a launch-phase platform; override via `EMAIL_QUOTA_PLATFORM_PER_DAY`
+   *   without a code change as you scale.
+   *
+   * Semantics:
+   *   - INCR-then-check is atomic, no race. First call sets a 24h TTL
+   *     so the counter rolls over without manual intervention.
+   *   - Returns true if the send is within budget. Fails OPEN on Redis
+   *     error (the per-recipient + per-IP caps are still active and
+   *     bound the worst case during an outage).
+   *   - Cap exceeded → returns false. Caller (EmailService.send) treats
+   *     this identically to a suppressed recipient: returns success-shaped
+   *     so anti-enumeration is preserved on /forgot-password etc.
+   */
+  async tryConsumePlatformDaily(): Promise<boolean> {
+    const limit = Number(this.config.get('EMAIL_QUOTA_PLATFORM_PER_DAY', '5000'));
+    if (limit <= 0) return true; // disabled — useful for tests / dev
+
+    const key = 'email_quota_platform_total';
+    try {
+      const client = this.redis.getClient();
+      const count = await client.incr(key);
+      if (count === 1) {
+        await client.expire(key, 24 * 60 * 60);
+      }
+      if (count > limit) {
+        // WARN level — operators should treat sustained breach as an
+        // incident (either real growth past the cap, or an abuse spike).
+        this.logger.warn(
+          `email-quota PLATFORM-WIDE cap exceeded count=${count} limit=${limit} — blocking remaining sends for the 24h window`,
+        );
+        return false;
+      }
+      return true;
+    } catch (err) {
+      const kind = err instanceof Error ? err.name : 'UnknownError';
+      this.logger.error(
+        `email-quota platform-daily redis check failed (${kind}) — allowing send`,
+      );
+      return true;
+    }
+  }
 }
 
 export type EmailQuotaType = 'reset' | 'verification' | 'change-notification';

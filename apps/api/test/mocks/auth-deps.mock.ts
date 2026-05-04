@@ -68,8 +68,9 @@ export function makeEmailMock() {
 // that exercise the quota path can override the return value per test.
 export function makeEmailQuotaMock() {
   return {
-    tryConsume:      jest.fn().mockResolvedValue(true),
-    tryConsumePerIp: jest.fn().mockResolvedValue(true),
+    tryConsume:               jest.fn().mockResolvedValue(true),
+    tryConsumePerIp:          jest.fn().mockResolvedValue(true),
+    tryConsumePlatformDaily:  jest.fn().mockResolvedValue(true),
   };
 }
 

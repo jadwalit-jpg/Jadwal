@@ -53,26 +53,36 @@ function makeSuppressions(isSuppressed: () => Promise<boolean> = async () => fal
   };
 }
 
+// Default mock — platform daily cap always allows. Tests that exercise
+// the platform-cap blocking path override `tryConsumePlatformDaily`.
+function makeQuota(tryConsumePlatformDaily: () => Promise<boolean> = async () => true) {
+  return {
+    tryConsume: jest.fn().mockResolvedValue(true),
+    tryConsumePerIp: jest.fn().mockResolvedValue(true),
+    tryConsumePlatformDaily: jest.fn(tryConsumePlatformDaily),
+  };
+}
+
 describe('EmailService — construction + prod-guard', () => {
   const ORIGINAL_ENV = process.env.NODE_ENV;
   afterEach(() => { process.env.NODE_ENV = ORIGINAL_ENV; });
 
   test('dev (EMAIL_ENABLED=false) → no SES client instantiated', () => {
     sesMocks.SESClient.mockClear();
-    new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any);
+    new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any, makeQuota() as any);
     expect(sesMocks.SESClient).not.toHaveBeenCalled();
   });
 
   test('EMAIL_ENABLED=true → SESClient instantiated with configured region', () => {
     sesMocks.SESClient.mockClear();
-    new EmailService(makeConfig({ EMAIL_ENABLED: 'true', AWS_REGION: 'eu-west-1' }) as any, makeSuppressions() as any);
+    new EmailService(makeConfig({ EMAIL_ENABLED: 'true', AWS_REGION: 'eu-west-1' }) as any, makeSuppressions() as any, makeQuota() as any);
     expect(sesMocks.SESClient).toHaveBeenCalledWith({ region: 'eu-west-1' });
   });
 
   test('production + EMAIL_ENABLED=false → throws at construction (fail-safe)', () => {
     process.env.NODE_ENV = 'production';
     expect(() =>
-      new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any),
+      new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any, makeQuota() as any),
     ).toThrow(/FATAL.*EMAIL_ENABLED must be true/);
   });
 });
@@ -85,7 +95,7 @@ describe('EmailService — suppression list short-circuit', () => {
 
   test('suppressed recipient → SES never called, returns true (anti-enumeration)', async () => {
     const suppressions = makeSuppressions(async () => true);
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, suppressions as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, suppressions as any, makeQuota() as any);
     const ok = await svc.sendEmailVerification('bounced@example.com', {
       userName: 'Alice', verificationLink: 'https://x/v?t=abc',
     });
@@ -97,10 +107,42 @@ describe('EmailService — suppression list short-circuit', () => {
 
   test('non-suppressed recipient → SES called normally', async () => {
     const suppressions = makeSuppressions(async () => false);
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, suppressions as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, suppressions as any, makeQuota() as any);
     await svc.sendPasswordReset('user@example.com', {
       userName: 'A', resetLink: 'https://x/r', expiresIn: '1 hour',
     });
+    expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
+  });
+
+  test('platform daily cap exceeded → returns success-shaped, never calls SES', async () => {
+    // Hard cost-runaway gate. Cap exceeded = success-shaped return so
+    // callers can't distinguish from a real send (anti-enumeration).
+    const quota = makeQuota(async () => false); // platform cap exhausted
+    const svc = new EmailService(
+      makeConfig({ EMAIL_ENABLED: 'true' }) as any,
+      makeSuppressions() as any,
+      quota as any,
+    );
+    const ok = await svc.sendEmailVerification('user@example.com', {
+      userName: 'Alice', verificationLink: 'https://x/v?t=abc',
+    });
+    expect(ok).toBe(true);
+    expect(quota.tryConsumePlatformDaily).toHaveBeenCalledTimes(1);
+    expect(sesMocks.SendEmailCommand).not.toHaveBeenCalled();
+    expect(sesMocks.__sendMock).not.toHaveBeenCalled();
+  });
+
+  test('admin-alert bypasses platform cap — operational alerts always go out', async () => {
+    // Same logic as suppression bypass — if the cap blocks ADMIN_EMAIL we'd
+    // silently hide production incidents from on-call. Worth the cost.
+    const quota = makeQuota(async () => false); // cap exhausted
+    const svc = new EmailService(
+      makeConfig({ EMAIL_ENABLED: 'true' }) as any,
+      makeSuppressions() as any,
+      quota as any,
+    );
+    await svc.sendAdminAlert({ subject: 'Cap test', message: 'fired through cap' });
+    expect(quota.tryConsumePlatformDaily).not.toHaveBeenCalled();
     expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
   });
 
@@ -108,6 +150,7 @@ describe('EmailService — suppression list short-circuit', () => {
     const svc = new EmailService(
       makeConfig({ EMAIL_ENABLED: 'true', SES_CONFIG_SET_NAME: 'jadwal-prod' }) as any,
       makeSuppressions() as any,
+      makeQuota() as any,
     );
     await svc.sendEmailVerification('user@example.com', {
       userName: 'A', verificationLink: 'https://x/v?t=abc',
@@ -120,6 +163,7 @@ describe('EmailService — suppression list short-circuit', () => {
     const svc = new EmailService(
       makeConfig({ EMAIL_ENABLED: 'true' }) as any,
       makeSuppressions() as any,
+      makeQuota() as any,
     );
     await svc.sendEmailVerification('user@example.com', {
       userName: 'A', verificationLink: 'https://x/v?t=abc',
@@ -135,7 +179,7 @@ describe('EmailService — suppression list short-circuit', () => {
     // Verify the bypass: when isSuppressed returns true, admin-alert
     // template still hits SES.
     const suppressions = makeSuppressions(async () => true);
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, suppressions as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, suppressions as any, makeQuota() as any);
     await svc.sendAdminAlert({ subject: 'Test', message: 'Something is broken' });
     expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
     // Suppression check should NOT have been called for admin-alert
@@ -150,7 +194,7 @@ describe('EmailService — send dispatching', () => {
   });
 
   test('dev mode send returns true + never calls SES', async () => {
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any, makeQuota() as any);
     const ok = await svc.sendEmailVerification('user@example.com', {
       userName: 'Alice', verificationLink: 'https://app.jadwal.test/verify?token=abc',
     });
@@ -159,7 +203,7 @@ describe('EmailService — send dispatching', () => {
   });
 
   test('prod mode send calls SES with Source + Destination + Html body', async () => {
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, makeSuppressions() as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, makeSuppressions() as any, makeQuota() as any);
     const ok = await svc.sendEmailVerification('user@example.com', {
       userName: 'Alice', verificationLink: 'https://app.jadwal.test/verify?token=abc',
     });
@@ -175,7 +219,7 @@ describe('EmailService — send dispatching', () => {
 
   test('SES throws → send() returns false (caller must not crash)', async () => {
     sesMocks.__sendMock.mockRejectedValueOnce(new Error('SES rejected: ThrottlingException'));
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, makeSuppressions() as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, makeSuppressions() as any, makeQuota() as any);
     const ok = await svc.sendBookingConfirmation('user@example.com', {
       customerName: 'Alice', activityTitle: 'X',
       date: '2030-06-15', guests: 2, totalAmount: '200', currency: 'QAR',
@@ -187,7 +231,7 @@ describe('EmailService — send dispatching', () => {
   test('SES log masks the email address (j***@domain.com) — no full-email leak', async () => {
     const logSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
     try {
-      const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, makeSuppressions() as any);
+      const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, makeSuppressions() as any, makeQuota() as any);
       await svc.sendPasswordReset('alice@sensitive.com', {
         userName: 'Alice', resetLink: 'https://x/reset?t=y', expiresIn: '1 hour',
       });
@@ -201,7 +245,7 @@ describe('EmailService — send dispatching', () => {
 
 describe('EmailService.renderTemplate — template dispatcher', () => {
   test('booking-confirmation template renders with {{APP_URL}} replaced', () => {
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false', APP_URL: 'https://myhost.test' }) as any, makeSuppressions() as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false', APP_URL: 'https://myhost.test' }) as any, makeSuppressions() as any, makeQuota() as any);
     const html = svc.renderTemplate('booking-confirmation', {
       customerName: 'A', activityTitle: 'B',
       date: '2030-01-01', guests: 1, totalAmount: '10', currency: 'QAR',
@@ -212,7 +256,7 @@ describe('EmailService.renderTemplate — template dispatcher', () => {
   });
 
   test('email-verification template includes the verification link', () => {
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any, makeQuota() as any);
     const link = 'https://app.jadwal.test/verify?token=xyz';
     const html = svc.renderTemplate('email-verification', {
       userName: 'Alice', verificationLink: link,
@@ -221,7 +265,7 @@ describe('EmailService.renderTemplate — template dispatcher', () => {
   });
 
   test('password-reset template includes the reset link + expiry', () => {
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any, makeQuota() as any);
     const html = svc.renderTemplate('password-reset', {
       userName: 'Alice',
       resetLink: 'https://app.jadwal.test/reset?t=abc123',
@@ -232,7 +276,7 @@ describe('EmailService.renderTemplate — template dispatcher', () => {
   });
 
   test('unknown template → returns a plain-HTML fallback without crashing', () => {
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any, makeQuota() as any);
     const html = svc.renderTemplate('does-not-exist', { any: 'data' });
     expect(html).toMatch(/^<html>/);
     expect(html).not.toContain('{{APP_URL}}');
@@ -253,7 +297,7 @@ describe('EmailService — every public method routes through send()', () => {
   ] as const;
 
   test.each(cases)('%s — dev mode returns true', async (method, data) => {
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'false' }) as any, makeSuppressions() as any, makeQuota() as any);
     const ok = await (svc as any)[method]('u@example.com', data);
     expect(ok).toBe(true);
   });
@@ -261,7 +305,7 @@ describe('EmailService — every public method routes through send()', () => {
   test.each(cases)('%s — prod mode issues a SendEmailCommand', async (method, data) => {
     sesMocks.__sendMock.mockClear();
     sesMocks.SendEmailCommand.mockClear();
-    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, makeSuppressions() as any);
+    const svc = new EmailService(makeConfig({ EMAIL_ENABLED: 'true' }) as any, makeSuppressions() as any, makeQuota() as any);
     await (svc as any)[method]('u@example.com', data);
     expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
   });
