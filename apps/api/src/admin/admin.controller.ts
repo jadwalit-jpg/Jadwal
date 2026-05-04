@@ -19,6 +19,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { AdminService } from './admin.service';
 import { UploadService } from '../common/services/upload.service';
 import { CleanupService } from '../common/services/cleanup.service';
+import { EmailSuppressionService } from '../email/email-suppression.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RequestUser } from '../auth/interfaces/request-user.interface';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -61,6 +62,7 @@ export class AdminController {
     private readonly adminService: AdminService,
     private readonly uploadService: UploadService,
     private readonly cleanupService: CleanupService,
+    private readonly suppressions: EmailSuppressionService,
   ) {}
 
   // ─── Diagnostic: real-IP verification ───────────────────────
@@ -573,5 +575,41 @@ export class AdminController {
   async triggerCleanup() {
     await this.cleanupService.handleDailyCleanup();
     return { message: 'Cleanup completed successfully' };
+  }
+
+  // ─── Email Suppression List ─────────────────────────────────────────────
+  //
+  // The SES bounce/complaint webhook (and manual admin actions) populate
+  // EmailSuppression with SHA-256 hashes of recipient emails that should
+  // never receive outbound mail. EmailService.send() short-circuits on
+  // hash hit. These endpoints let support staff inspect and recover from
+  // false-positive suppressions (e.g. a typo'd address that the user has
+  // since fixed, or a temporary mailbox-full bounce that resolved).
+  //
+  // We do NOT expose the plaintext email — only the hash — because the
+  // table never stores plaintext (PII discipline, see EmailSuppressionService).
+  // The admin client computes SHA-256(email) locally to look up a specific
+  // address.
+
+  @Get('email-suppressions')
+  @Throttle(RATE_LIMIT_READ)
+  listEmailSuppressions(@Query() query: PaginationDto) {
+    return this.adminService.listEmailSuppressions(query);
+  }
+
+  /**
+   * Remove an email from the suppression list. Caller passes the SHA-256
+   * hash of the lowercased+trimmed email (computed client-side or read
+   * from the list endpoint). Idempotent — returns `removed:false` if the
+   * hash wasn't present.
+   */
+  @Delete('email-suppressions/:hash')
+  @Throttle(RATE_LIMIT_WRITE)
+  async unsuppressEmail(@Param('hash') hash: string) {
+    if (!/^[a-f0-9]{64}$/.test(hash)) {
+      throw new NotFoundException();
+    }
+    const removed = await this.suppressions.unsuppress(hash);
+    return { removed };
   }
 }

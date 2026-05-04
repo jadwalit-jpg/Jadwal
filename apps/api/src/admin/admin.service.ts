@@ -2746,4 +2746,32 @@ export class AdminService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  // ─── Email Suppression List (admin) ─────────────────────────────────────
+  async listEmailSuppressions(query: PaginationDto) {
+    const page = Number(query.page ?? 1);
+    const limit = Math.min(Number(query.limit ?? 50), 100);
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      (this.prisma.client as any).emailSuppression.findMany({
+        // Only expose the hash + metadata. Never plaintext recipient — we
+        // don't store it (see EmailSuppressionService). Admin must compute
+        // SHA-256(email) client-side to look up a specific address.
+        select: {
+          emailHash: true,
+          reason: true,
+          bounceType: true,
+          notes: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      (this.prisma.client as any).emailSuppression.count(),
+    ]);
+
+    return { items, total, page, limit };
+  }
 }
