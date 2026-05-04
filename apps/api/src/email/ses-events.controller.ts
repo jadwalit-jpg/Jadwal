@@ -358,6 +358,7 @@ export class SesEventsController {
         : SIGNABLE_KEYS_NOTIFICATION;
 
     let canonical = '';
+    const includedKeys: string[] = [];
     for (const k of keys) {
       const v = (body as unknown as Record<string, unknown>)[k];
       // AWS skips missing fields when signing; null and undefined behave
@@ -366,6 +367,7 @@ export class SesEventsController {
       // SES omits the key entirely when no subject was set).
       if (v === undefined || v === null) continue;
       canonical += `${k}\n${String(v)}\n`;
+      includedKeys.push(k);
     }
 
     const cert = await this.fetchSigningCert(body);
@@ -374,7 +376,18 @@ export class SesEventsController {
     try {
       const verifier = createVerify(sigVer === '1' ? 'RSA-SHA1' : 'RSA-SHA256');
       verifier.update(canonical, 'utf8');
-      return verifier.verify(cert, body.Signature, 'base64');
+      const ok = verifier.verify(cert, body.Signature, 'base64');
+      if (!ok) {
+        // Diagnostic: signature failed despite cert fetch succeeding. Most
+        // likely cause is canonical-string mismatch — log which keys we
+        // included plus all keys present in the body so we can spot any
+        // missing/extra fields vs AWS's canonical.
+        const bodyKeys = Object.keys(body as unknown as Record<string, unknown>).join(',');
+        this.logger.warn(
+          `ses-events sig false: canonicalLen=${canonical.length} sigLen=${body.Signature?.length ?? 0} certLen=${cert.length} included=[${includedKeys.join(',')}] bodyKeys=[${bodyKeys}]`,
+        );
+      }
+      return ok;
     } catch (err) {
       this.logger.warn(
         `ses-events crypto.verify threw: ${err instanceof Error ? err.message : 'unknown'}`,
