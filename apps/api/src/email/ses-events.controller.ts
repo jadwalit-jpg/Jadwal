@@ -43,6 +43,19 @@ const SIGNABLE_KEYS_SUBSCRIPTION = [
 // (Hostnames are case-insensitive per RFC 3986.)
 const SIGNING_CERT_HOST = /^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$/i;
 
+// Hardcoded allowlist of cert URL bases per AWS region we operate in.
+// CodeQL's taint analysis treats `body.TopicArn` derivatives as user-
+// controlled even after regex validation; mapping the validated region
+// to a literal URL base via const lookup makes the host fully static in
+// the dataflow graph. Only the PEM filename slot is dynamic, and that's
+// regex-bounded + percent-encoded before interpolation.
+//
+// Add a new region here when expanding deployment; AWS publishes one
+// signing-cert URL pattern per region, all under sns.<region>.amazonaws.com.
+const CERT_URL_BASES: Readonly<Record<string, string>> = {
+  'eu-central-1': 'https://sns.eu-central-1.amazonaws.com/',
+};
+
 interface SnsMessage {
   Type: 'Notification' | 'SubscriptionConfirmation' | 'UnsubscribeConfirmation';
   MessageId: string;
@@ -395,11 +408,13 @@ export class SesEventsController {
     // ARN format: arn:<partition>:sns:<region>:<account>:<topic>
     const arnParts = body.TopicArn.split(':');
     if (arnParts.length < 6) return null;
-    const partition = arnParts[1];
     const region = arnParts[3];
-    if (!/^[a-z0-9-]+$/.test(region)) return null;
-    if (partition !== 'aws' && partition !== 'aws-cn') return null;
-    const tld = partition === 'aws-cn' ? 'amazonaws.com.cn' : 'amazonaws.com';
+
+    // Look up the literal URL base for this region. Anything not in the
+    // hardcoded allowlist is rejected — including aws-cn / GovCloud /
+    // regions we don't operate in. Adding a new region is a code change.
+    const certUrlBase = CERT_URL_BASES[region];
+    if (!certUrlBase) return null;
 
     let parsed: URL;
     try {
@@ -418,11 +433,11 @@ export class SesEventsController {
     if (!pemMatch) return null;
     const pemFilename = pemMatch[1];
 
-    // codeql[js/server-side-request-forgery]: URL is reconstructed from
-    // hardcoded scheme/subdomain/tld + region derived from already-validated
-    // TopicArn + regex-validated PEM filename. fetch never sees attacker-
-    // controlled host or scheme bytes.
-    const safeUrl = `https://sns.${region}.${tld}/${pemFilename}`;
+    // URL is fully reconstructed: literal scheme + literal host + literal
+    // path-prefix (selected from the const allowlist by validated region),
+    // with only the percent-encoded PEM filename interpolated. The
+    // attacker-controlled bytes never touch the host or scheme slots.
+    const safeUrl = certUrlBase + encodeURIComponent(pemFilename);
 
     const cached = this.certCache.get(safeUrl);
     if (cached) return cached;
