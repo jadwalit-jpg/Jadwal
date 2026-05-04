@@ -100,6 +100,14 @@ function makeCleanupMock() {
   return { manualCleanup: jest.fn().mockResolvedValue({}) };
 }
 
+function makeSuppressionsMock() {
+  return {
+    isSuppressed:  jest.fn().mockResolvedValue(false),
+    suppress:      jest.fn().mockResolvedValue(undefined),
+    unsuppress:    jest.fn().mockResolvedValue(true),
+  };
+}
+
 function makeBookingsSvcStub() {
   return { getVendorRefundRequests: jest.fn().mockResolvedValue([]) };
 }
@@ -113,17 +121,20 @@ describe('AdminController — delegation', () => {
     const adminSvc = makeAdminSvcMock();
     const upload = makeUploadMock();
     const cleanup = makeCleanupMock();
+    const suppressions = makeSuppressionsMock();
+    const { EmailSuppressionService } = require('../../src/email/email-suppression.service');
     const mod = await Test.createTestingModule({
       controllers: [AdminController],
       providers: [
-        { provide: AdminService,    useValue: adminSvc },
-        { provide: UploadService,   useValue: upload },
-        { provide: CleanupService,  useValue: cleanup },
+        { provide: AdminService,             useValue: adminSvc },
+        { provide: UploadService,            useValue: upload },
+        { provide: CleanupService,           useValue: cleanup },
+        { provide: EmailSuppressionService,  useValue: suppressions },
       ],
     })
       .overrideInterceptor(AdminAuditInterceptor).useValue({ intercept: (_c: any, n: any) => n.handle() })
       .compile();
-    return { ctrl: mod.get(AdminController), svc: adminSvc };
+    return { ctrl: mod.get(AdminController), svc: adminSvc, suppressions };
   }
 
   test('GET /admin/profile → getAdminProfile(user.id)', async () => {
