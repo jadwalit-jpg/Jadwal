@@ -329,6 +329,26 @@ export class SesEventsController {
    * library's error message for triage. Caller maps false → 403.
    */
   protected async verifySnsSignature(body: SnsMessage): Promise<boolean> {
+    // ─── DIAG (transient): full-body capture for AWS test addresses ─────
+    // Two independent verifiers (hand-rolled + sns-payload-validator) both
+    // reject AWS's signature against the same canonical, even with the
+    // Subject-fallback. The only remaining hypothesis is that one field's
+    // bytes differ from what AWS signed in transit.
+    //
+    // Dump the full body ONLY when the inner SES Message contains an AWS
+    // simulator address (bounce@simulator.amazonses.com etc.). Those are
+    // AWS-owned public test fixtures — logging them is not a PII concern.
+    // For real prod bounces we never log content; this branch is a no-op.
+    //
+    // REMOVE THIS DIAG IMMEDIATELY AFTER ROOT CAUSE IS IDENTIFIED.
+    const messageStrForDiag = typeof body.Message === 'string' ? body.Message : '';
+    if (messageStrForDiag.includes('@simulator.amazonses.com')) {
+      // 8 KB cap is enough for the full SNS envelope including the inner
+      // SES bounce JSON for simulator messages (~3-4 KB typical).
+      const fullBody = JSON.stringify(body).slice(0, 8000);
+      this.logger.warn(`ses-events DIAG-test-body: ${fullBody}`);
+    }
+
     // Attempt 1: include all fields present in the body (matches AWS spec
     // when Subject was explicitly specified at publish time).
     try {
