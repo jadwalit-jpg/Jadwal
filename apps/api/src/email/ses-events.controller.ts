@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
-import { createVerify } from 'node:crypto';
+import { createVerify, verify as cryptoVerify } from 'node:crypto';
 import { RATE_LIMIT_AUTH } from '../common/throttle-config';
 import { EmailSuppressionService } from './email-suppression.service';
 
@@ -358,29 +358,75 @@ export class SesEventsController {
         : SIGNABLE_KEYS_NOTIFICATION;
 
     let canonical = '';
+    const includedKeys: string[] = [];
     for (const k of keys) {
       const v = (body as unknown as Record<string, unknown>)[k];
-      // AWS skips missing fields when signing; null and undefined behave
-      // the same in our parsed body. Empty string is included only if the
-      // field was actually emitted by AWS (which it isn't for Subject —
-      // SES omits the key entirely when no subject was set).
+      // AWS spec: skip a field if "not specified". null/undefined/empty
+      // string all map to "not specified" in practice — including empty
+      // strings would diverge from AWS's signing canonical (e.g. SES
+      // bounce notifications can send Subject="" which AWS doesn't sign).
       if (v === undefined || v === null) continue;
-      canonical += `${k}\n${String(v)}\n`;
+      const s = String(v);
+      if (s.length === 0) continue;
+      canonical += `${k}\n${s}\n`;
+      includedKeys.push(k);
     }
 
     const cert = await this.fetchSigningCert(body);
     if (!cert) return false;
 
+    // Trim PEM — `response.text()` can return trailing whitespace that
+    // some Node/OpenSSL builds reject when parsing the certificate.
+    const pemCert = cert.trim();
+
+    if (!body.Signature || typeof body.Signature !== 'string') return false;
+    let sigBuf: Buffer;
     try {
-      const verifier = createVerify(sigVer === '1' ? 'RSA-SHA1' : 'RSA-SHA256');
-      verifier.update(canonical, 'utf8');
-      return verifier.verify(cert, body.Signature, 'base64');
-    } catch (err) {
-      this.logger.warn(
-        `ses-events crypto.verify threw: ${err instanceof Error ? err.message : 'unknown'}`,
-      );
+      sigBuf = Buffer.from(body.Signature, 'base64');
+    } catch {
       return false;
     }
+
+    const algo = sigVer === '1' ? 'RSA-SHA1' : 'RSA-SHA256';
+    const dataBuf = Buffer.from(canonical, 'utf8');
+
+    // Try the static crypto.verify API first. With OpenSSL 3 in Node 22+,
+    // RSA-SHA1 sometimes works through the static API where the streaming
+    // `createVerify` chain trips up on legacy-provider routing. Fall back
+    // to streaming if static throws (older crypto builds).
+    let ok = false;
+    let attemptError = '';
+    try {
+      ok = cryptoVerify(algo, dataBuf, pemCert, sigBuf);
+    } catch (err) {
+      attemptError = `static:${err instanceof Error ? err.message : 'unknown'}`;
+      try {
+        const v = createVerify(algo);
+        v.update(dataBuf);
+        ok = v.verify(pemCert, sigBuf);
+      } catch (err2) {
+        attemptError += ` streaming:${err2 instanceof Error ? err2.message : 'unknown'}`;
+        ok = false;
+      }
+    }
+
+    if (!ok) {
+      // One-shot diagnostic: log the canonical-key set + lengths so we
+      // can spot a divergence from AWS's signing canonical without
+      // dumping any PII (only metadata field names + lengths).
+      const bodyKeys = Object.keys(body as unknown as Record<string, unknown>).join(',');
+      this.logger.warn(
+        `ses-events sig false: ` +
+          `canonicalLen=${canonical.length} ` +
+          `sigLen=${body.Signature.length} sigBufLen=${sigBuf.length} ` +
+          `certLen=${pemCert.length} ` +
+          `algo=${algo} ` +
+          `included=[${includedKeys.join(',')}] ` +
+          `bodyKeys=[${bodyKeys}]` +
+          (attemptError ? ` err=${attemptError}` : ''),
+      );
+    }
+    return ok;
   }
 
   /**
