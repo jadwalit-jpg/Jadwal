@@ -306,46 +306,62 @@ export class SesEventsController {
   }
 
   /**
-   * Verify an SNS message signature per AWS spec. Returns true if the
-   * message is authentically signed by AWS, false otherwise.
-   *
-   *   1. Validate SigningCertURL is HTTPS at sns.<region>.amazonaws.com[.cn]/*.pem
-   *   2. Fetch (and cache) the X.509 cert
-   *   3. Build the canonical string from SignableKeys:
-   *        - For Notification: Message, MessageId, [Subject], Timestamp, TopicArn, Type
-   *        - For Subscription / UnsubscribeConfirmation: Message, MessageId, SubscribeURL, Timestamp, Token, TopicArn, Type
-   *      Each key+value is appended as `${key}\n${value}\n`. Skip keys that
-   *      are absent / null / undefined (AWS does the same when signing).
-   *   4. RSA verify with SHA1 (SignatureVersion=1) or SHA256 (=2).
-   *
-   * Inlined here because the popular `sns-validator` 0.3.5 npm has the
-   * wrong signable-keys lists, which intermittently mismatches AWS's
-   * canonical and rejects real bounce/complaint notifications.
-   */
-  /**
    * Verify an SNS message signature via `sns-payload-validator`. The
-   * library handles canonical-string construction (AWS-spec correct
-   * signableKeys per message type), cert URL validation against a
-   * strict regex, cert HTTPS fetch, LRU cache, and RSA verify using
-   * OpenSSL 3-friendly algorithm names (sha1WithRSAEncryption /
-   * sha256WithRSAEncryption).
+   * library handles canonical-string construction, cert URL validation,
+   * cert HTTPS fetch, LRU cache, and RSA verify using OpenSSL 3-correct
+   * algorithm names (sha1WithRSAEncryption / sha256WithRSAEncryption).
    *
-   * Returns true if AWS authentically signed the message, false on any
-   * failure (invalid signature, malformed cert URL, network error, etc).
-   * Errors are logged at WARN with the library's message string for
-   * triage, but never re-thrown — the caller already maps false → 403.
+   * **Subject-fallback retry for SES configuration-set notifications:**
+   * SES events publish to SNS without an explicit Subject parameter, but
+   * SNS still adds a default Subject ("Amazon SES Email Event Notification")
+   * to the delivered envelope. AWS signs WITHOUT that auto-added Subject,
+   * so the library's canonical (which includes Subject when present) doesn't
+   * match AWS's signed canonical → "Invalid Signature".
+   *
+   * The library doesn't expose a way to skip Subject. Workaround: on the
+   * first verify failure, retry with Subject deleted from a body copy.
+   * If either canonical (with-Subject or without-Subject) verifies, we
+   * accept the message as authentic. This is consistent with AWS's actual
+   * signing rule ("Subject signed only if specified at publish") — we just
+   * don't know upfront whether SES specified one.
+   *
+   * Returns true on success of either attempt, false otherwise. Logs the
+   * library's error message for triage. Caller maps false → 403.
    */
   protected async verifySnsSignature(body: SnsMessage): Promise<boolean> {
+    // Attempt 1: include all fields present in the body (matches AWS spec
+    // when Subject was explicitly specified at publish time).
     try {
       await this.snsValidator.validate(body);
       return true;
     } catch (err) {
+      const primaryErr = err instanceof Error ? err.message : 'unknown';
+
+      // Attempt 2: SES configuration-set events — retry without Subject.
+      // Only meaningful for Notifications that have a Subject; skip the
+      // retry otherwise (avoids a wasted cert fetch + verify cycle).
+      if (body.Type === 'Notification' && body.Subject) {
+        const { Subject: _Subject, ...withoutSubject } = body;
+        void _Subject;
+        try {
+          await this.snsValidator.validate(withoutSubject as SnsMessage);
+          return true;
+        } catch (err2) {
+          const fallbackErr = err2 instanceof Error ? err2.message : 'unknown';
+          this.logger.warn(
+            `ses-events signature verification failed (both attempts): ` +
+              `primary='${primaryErr}' fallback='${fallbackErr}' ` +
+              `(sigVer=${body.SignatureVersion}, type=${body.Type})`,
+          );
+          return false;
+        }
+      }
+
       this.logger.warn(
-        `ses-events signature verification failed: ${err instanceof Error ? err.message : 'unknown'} ` +
+        `ses-events signature verification failed: ${primaryErr} ` +
           `(sigVer=${body.SignatureVersion}, type=${body.Type})`,
       );
       return false;
     }
   }
-
 }
