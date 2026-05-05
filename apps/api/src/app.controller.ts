@@ -78,8 +78,11 @@ export class AppController {
     // can include connection strings, query fragments, or AUTH passwords).
     if (!dbOk) {
       const reason = checks[0] as PromiseRejectedResult;
-      const kind = reason.reason instanceof Error ? reason.reason.name : 'UnknownError';
-      this.logger.warn(`Readiness: DB check failed (${kind})`);
+      const err = reason.reason as { name?: string; code?: string; message?: string } | undefined;
+      const kind = err?.name ?? 'UnknownError';
+      const code = err?.code ?? 'no-code';
+      const msg = err?.message ? err.message.replace(/postgres(?:ql)?:\/\/[^\s]+/gi, '<redacted-conn>').slice(0, 240) : '';
+      this.logger.warn(`Readiness: DB check failed (${kind} code=${code}) ${msg}`);
     }
     if (!redisOk) {
       const reason = checks[1] as PromiseRejectedResult;
