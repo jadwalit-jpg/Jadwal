@@ -75,6 +75,13 @@ export const metadata: Metadata = {
   description: "Discover and book experiences in your city.",
   applicationName: "Jadwal",
   manifest: "/site.webmanifest",
+  // Per-page canonical = the page's own URL (resolved against metadataBase).
+  // Each page can override `metadata.alternates.canonical` explicitly when
+  // needed (e.g. when serving paginated lists or filtered queries that
+  // should canonicalize to the un-filtered root).
+  alternates: {
+    canonical: "./",
+  },
   icons: {
     icon: [
       { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
@@ -150,6 +157,73 @@ export default async function RootLayout({
             <link rel="dns-prefetch" href={apiOrigin} />
           </>
         ) : null}
+
+        {/*
+         * JSON-LD structured data for Google rich snippets.
+         *
+         * - `Organization`: gives Google our name, logo, contact, postal
+         *   address, social links → eligible for the knowledge-panel
+         *   sidebar on brand searches ("Jadwal Qatar").
+         * - `WebSite` with `SearchAction`: registers our internal search
+         *   so Google can render the in-result search box pointing at
+         *   /explore?q={query} on brand searches.
+         *
+         * `nonce` is the per-request CSP nonce — without it strict-dynamic
+         * blocks the inline script. `dangerouslySetInnerHTML` is the
+         * standard React pattern for JSON-LD; XSS-safe because the JSON
+         * is server-built from constants, not user input.
+         */}
+        <script
+          type="application/ld+json"
+          nonce={nonce}
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "Organization",
+              "name": "Jadwal",
+              "alternateName": "AL Jadwal",
+              "url": siteUrl.toString(),
+              "logo": `${siteUrl.origin}/android-chrome-512x512.png`,
+              "description": "Discover and book activities, tours, and experiences across Qatar.",
+              "email": "Jadwalqtr@gmail.com",
+              "address": {
+                "@type": "PostalAddress",
+                "streetAddress": "Apt 18, Floor 1, Building 60, Street 840",
+                "addressLocality": "Doha",
+                "addressRegion": "Zone 39",
+                "addressCountry": "QA",
+              },
+              "areaServed": {
+                "@type": "Country",
+                "name": "Qatar",
+              },
+              "sameAs": [
+                "https://www.instagram.com/jadwal.qtr/",
+              ],
+            }),
+          }}
+        />
+        <script
+          type="application/ld+json"
+          nonce={nonce}
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "WebSite",
+              "name": "Jadwal",
+              "url": siteUrl.toString(),
+              "inLanguage": ["en", "ar"],
+              "potentialAction": {
+                "@type": "SearchAction",
+                "target": {
+                  "@type": "EntryPoint",
+                  "urlTemplate": `${siteUrl.origin}/explore?q={search_term_string}`,
+                },
+                "query-input": "required name=search_term_string",
+              },
+            }),
+          }}
+        />
       </head>
       <body
         className={`${inter.variable} ${outfit.variable} ${tajawal.variable} antialiased font-outfit`}
