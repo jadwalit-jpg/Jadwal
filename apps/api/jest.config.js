@@ -9,6 +9,17 @@ module.exports = {
   transform: { '^.+\\.ts$': 'ts-jest' },
   collectCoverageFrom: ['src/**/*.ts'],
   coverageDirectory: './coverage',
+  // Conservative floor — prevents tests being deleted en masse without
+  // CI flagging it. Raise these gradually as test coverage matures.
+  // Run `npm run test -- --coverage` locally to see actual %s.
+  coverageThreshold: {
+    global: {
+      branches: 50,
+      functions: 50,
+      lines: 50,
+      statements: 50,
+    },
+  },
   testEnvironment: 'node',
   moduleNameMapper: {
     '^src/(.*)$': '<rootDir>/src/$1',
