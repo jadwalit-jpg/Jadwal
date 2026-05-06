@@ -166,7 +166,7 @@ export default function VendorSettingsPage() {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit">
         <VendorSidebar />
-        <main className="ms-64 p-10 space-y-6">
+        <main className="md:ms-64 p-10 space-y-6">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-48 bg-white dark:bg-slate-900/60 border border-gray-200/80 dark:border-slate-800/60 rounded-2xl animate-pulse" />
           ))}
@@ -179,7 +179,7 @@ export default function VendorSettingsPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="ms-64 p-10 max-w-3xl space-y-8">
+      <main className="md:ms-64 p-10 max-w-3xl space-y-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">{t('vendor.settings.title')}</h1>
           <p className="text-gray-500 dark:text-slate-400 mt-1">{t('vendor.settings.subtitle')}</p>

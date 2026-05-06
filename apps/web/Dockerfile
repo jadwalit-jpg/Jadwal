@@ -77,6 +77,12 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_VAPID_KEY
 ENV NEXT_PUBLIC_VAPID_KEY=$NEXT_PUBLIC_VAPID_KEY
 
+# CloudFront / CDN base URL for uploaded user content. Baked into the bundle
+# so middleware.ts CSP and next.config.ts remotePatterns both allow this
+# origin for <Image> rendering. Empty = no CDN whitelisted (dev / no-CDN).
+ARG NEXT_PUBLIC_CDN_URL
+ENV NEXT_PUBLIC_CDN_URL=$NEXT_PUBLIC_CDN_URL
+
 # API_PROXY_TARGET — required by next.config.ts in production. Server-side
 # only (not baked into the client bundle); used at runtime by Next.js's
 # rewrite() to forward /api/* to the API container. Build still needs it

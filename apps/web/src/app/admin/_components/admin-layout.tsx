@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { AdminSidebar } from './admin-sidebar';
 import NotificationBell from '@/components/notification-bell';
-import { Search, Users, Store, CalendarRange, BookOpen, X, ExternalLink } from 'lucide-react';
+import { Search, Users, Store, CalendarRange, BookOpen, X, ExternalLink, Menu } from 'lucide-react';
 import Link from 'next/link';
 
 function AdminLayoutSkeleton() {
@@ -24,7 +24,7 @@ function AdminLayoutSkeleton() {
           ))}
         </div>
       </aside>
-      <div className="ms-64 min-h-screen">
+      <div className="md:ms-64 min-h-screen">
         <header className="sticky top-0 z-10 flex items-center justify-between px-8 py-4 bg-white/80 dark:bg-slate-950/80 backdrop-blur border-b border-gray-200 dark:border-slate-800">
           <div className="h-6 w-40 bg-gray-200 dark:bg-slate-700 rounded animate-pulse" />
           <div className="flex items-center gap-3">
@@ -76,6 +76,7 @@ export default function AdminLayout({ children, title, subtitle }: AdminLayoutPr
   const { user, logout, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLDivElement>(null);
@@ -115,12 +116,22 @@ export default function AdminLayout({ children, title, subtitle }: AdminLayoutPr
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
-      <AdminSidebar onLogout={handleLogout} />
+      <AdminSidebar onLogout={handleLogout} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="ms-64 min-h-screen">
+      <div className="md:ms-64 min-h-screen">
         {/* Top bar */}
-        <header className="sticky top-0 z-10 flex items-center justify-between px-8 py-4 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800/80">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h2>
+        <header className="sticky top-0 z-10 flex items-center justify-between px-4 md:px-8 py-4 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800/80">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="md:hidden p-2 rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+              aria-label="Open menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h2>
+          </div>
           <div className="flex items-center gap-3">
             {/* Global Search */}
             <div className="relative" ref={searchRef}>

@@ -61,7 +61,7 @@ export default function VendorReviewsPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="ms-64 p-10">
+      <main className="md:ms-64 p-10">
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight">{t('vendor.reviews.title')}</h1>
           <p className="text-gray-500 dark:text-slate-400 mt-1">{t('vendor.reviews.subtitle')}</p>
