@@ -160,6 +160,9 @@ describe('PrismaService — Secrets Manager + P1000 reconnect', () => {
 
   // ── 8. refreshOnAuthError single-flight: 5 concurrent calls → 1 SDK call
   it('collapses concurrent refreshOnAuthError calls into one SDK fetch', async () => {
+    // Fake timers so the 5 s drain-old-pool setTimeout inside reconnect doesn't
+    // leak as an open handle into the next test (Jest --detectOpenHandles).
+    jest.useFakeTimers();
     process.env.RDS_SECRET_ARN = 'arn:x';
     process.env.DB_HOST = 'h';
     process.env.DB_NAME = 'd';
@@ -185,10 +188,16 @@ describe('PrismaService — Secrets Manager + P1000 reconnect', () => {
     ]);
 
     expect(sendMock).toHaveBeenCalledTimes(2);
+
+    // Advance past the 5 s drain timer so it fires + cleans up before we
+    // restore real timers.
+    jest.runAllTimers();
+    jest.useRealTimers();
   });
 
   // ── 9. Sequential refreshOnAuthError → 2 SDK calls (single-flight resets)
   it('allows a fresh fetch on a NEW rotation event after the previous one settled', async () => {
+    jest.useFakeTimers();
     process.env.RDS_SECRET_ARN = 'arn:x';
     process.env.DB_HOST = 'h';
     process.env.DB_NAME = 'd';
@@ -203,5 +212,8 @@ describe('PrismaService — Secrets Manager + P1000 reconnect', () => {
 
     await svc.refreshOnAuthError();
     expect(sendMock).toHaveBeenCalledTimes(3);
+
+    jest.runAllTimers();
+    jest.useRealTimers();
   });
 });
