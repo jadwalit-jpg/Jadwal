@@ -50,7 +50,7 @@ jobs:
       IMAGE_TAG: jadwal-api-prod:ci
       MAX_BYTES: "1073741824"  # 1 GB
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Build prod API image
         run: docker build -f apps/api/Dockerfile -t "${{ env.IMAGE_TAG }}" .
@@ -84,7 +84,7 @@ jobs:
       IMAGE_TAG: jadwal-web-prod:ci
       MAX_BYTES: "524288000"  # 500 MB
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Build prod web image
         run: |
