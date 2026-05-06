@@ -138,6 +138,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
             NEXT_PUBLIC_VAPID_KEY=${{ vars.NEXT_PUBLIC_VAPID_KEY }}
+            NEXT_PUBLIC_CDN_URL=${{ vars.NEXT_PUBLIC_CDN_URL }}
             API_PROXY_TARGET=${{ vars.API_PROXY_TARGET }}
           tags: |
             ${{ env.ECR_REGISTRY }}/jadwal-web:${{ github.sha }}

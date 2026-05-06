@@ -25,6 +25,8 @@ import {
   Tag,
   Undo2,
   Languages,
+  Menu,
+  X,
 } from 'lucide-react';
 
 // Label is a translation key suffix resolved via `t('vendor.nav.<labelKey>')`
@@ -47,6 +49,7 @@ export function VendorSidebar() {
   const slug = params.slug as string;
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const { logout } = useAuth();
   const router = useRouter();
   const { t, i18n } = useTranslation();
@@ -81,19 +84,50 @@ export function VendorSidebar() {
   const base = `/vendor/${slug}`;
 
   return (
-    <aside className="fixed inset-s-0 top-0 z-20 h-full w-64 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-e border-gray-200/80 dark:border-slate-800/80 flex flex-col">
+    <>
+      {/* Mobile hamburger — fixed top-start, only visible when sidebar is closed on mobile */}
+      <button
+        type="button"
+        onClick={() => setMobileOpen(true)}
+        className={`fixed top-4 start-4 z-40 md:hidden p-2 rounded-xl bg-white/90 dark:bg-slate-900/90 backdrop-blur border border-gray-200/80 dark:border-slate-800/80 text-gray-500 dark:text-slate-400 shadow-sm transition-opacity duration-200 ${mobileOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+        aria-label="Open menu"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-black/50 md:hidden"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside className={`fixed inset-s-0 top-0 z-30 h-full w-64 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-e border-gray-200/80 dark:border-slate-800/80 flex flex-col transition-transform duration-300 ease-in-out md:translate-x-0 ${mobileOpen ? 'translate-x-0' : 'ltr:-translate-x-full rtl:translate-x-full'}`}>
       {/* Brand */}
-      <div className="px-6 pt-8 pb-6">
-        <Link
-          href={`${base}/dashboard`}
-          className="text-xl font-bold tracking-tight bg-linear-to-r from-teal-600 to-emerald-600 dark:from-teal-400 dark:to-emerald-400 bg-clip-text text-transparent block"
-        >
-          {t('vendor.portalBrand')}
-        </Link>
-        <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">{t('vendor.portalTitle')}</p>
-        <div className="mt-3">
-          <NotificationBell align="start" />
+      <div className="px-6 pt-8 pb-6 flex items-start justify-between">
+        <div>
+          <Link
+            href={`${base}/dashboard`}
+            onClick={() => setMobileOpen(false)}
+            className="text-xl font-bold tracking-tight bg-linear-to-r from-teal-600 to-emerald-600 dark:from-teal-400 dark:to-emerald-400 bg-clip-text text-transparent block"
+          >
+            {t('vendor.portalBrand')}
+          </Link>
+          <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">{t('vendor.portalTitle')}</p>
+          <div className="mt-3">
+            <NotificationBell align="start" />
+          </div>
         </div>
+        <button
+          type="button"
+          onClick={() => setMobileOpen(false)}
+          className="md:hidden p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+          aria-label="Close menu"
+        >
+          <X className="h-5 w-5" />
+        </button>
       </div>
 
       {/* Navigation */}
@@ -106,6 +140,7 @@ export function VendorSidebar() {
             <Link
               key={path}
               href={href}
+              onClick={() => setMobileOpen(false)}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
                 isActive
                   ? 'bg-linear-to-r from-teal-500/10 to-emerald-500/10 dark:from-teal-500/15 dark:to-emerald-500/15 text-teal-600 dark:text-teal-400 shadow-sm'
@@ -156,5 +191,6 @@ export function VendorSidebar() {
         </button>
       </div>
     </aside>
+    </>
   );
 }

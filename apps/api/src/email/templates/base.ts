@@ -98,7 +98,7 @@ export function baseTemplate(content: string, previewText?: string): string {
                   <td align="center" style="font-family: Arial, sans-serif; font-size: 12px; color: #9ca3af; line-height: 20px;">
                     &copy; 2026 Jadwal. All rights reserved.<br>
                     <span style="color: #d1d5db;">You received this transactional email because you have an account on Jadwal. We don&#x27;t send marketing emails.</span><br>
-                    <span style="color: #d1d5db;">Doha, Qatar</span>
+                    <span style="color: #d1d5db;"><!-- POSTAL_ADDRESS_PLACEHOLDER --></span>
                   </td>
                 </tr>
               </table>

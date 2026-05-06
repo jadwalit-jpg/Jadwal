@@ -95,6 +95,19 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "cdn.jadwal.qa",
       },
+      // CloudFront distribution for uploaded user content. Hostname is
+      // injected at build time via NEXT_PUBLIC_CDN_URL so a future swap
+      // (e.g. once cdn.jadwal.qa CNAMEs to CloudFront) needs no code edit.
+      ...(process.env.NEXT_PUBLIC_CDN_URL
+        ? (() => {
+            try {
+              const u = new URL(process.env.NEXT_PUBLIC_CDN_URL);
+              return [{ protocol: u.protocol.replace(":", "") as "https" | "http", hostname: u.hostname }];
+            } catch {
+              return [];
+            }
+          })()
+        : []),
       // Dev-only: API serves uploads from localhost:4000/uploads/*
       ...(process.env.NODE_ENV === "development"
         ? [

@@ -26,6 +26,7 @@ import {
   Award,
   UserCircle,
   Undo2,
+  X,
 } from 'lucide-react';
 
 const navItems = [
@@ -47,7 +48,7 @@ const navItems = [
   { href: '/admin/profile', label: 'My Profile', icon: UserCircle },
 ] as { href: string; label: string; icon: any; comingSoon?: boolean }[];
 
-export function AdminSidebar({ onLogout }: { onLogout: () => void }) {
+export function AdminSidebar({ onLogout, isOpen, onClose }: { onLogout: () => void; isOpen: boolean; onClose: () => void }) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -69,16 +70,35 @@ export function AdminSidebar({ onLogout }: { onLogout: () => void }) {
   useEffect(() => setMounted(true), []);
 
   return (
-    <aside className="fixed inset-s-0 top-0 z-20 h-full w-64 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-e border-gray-200/80 dark:border-slate-800/80 flex flex-col">
+    <>
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-black/50 md:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+      <aside className={`fixed inset-s-0 top-0 z-30 h-full w-64 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-e border-gray-200/80 dark:border-slate-800/80 flex flex-col transition-transform duration-300 ease-in-out md:translate-x-0 ${isOpen ? 'translate-x-0' : 'ltr:-translate-x-full rtl:translate-x-full'}`}>
       {/* Brand */}
-      <div className="px-6 pt-8 pb-6">
-        <Link
-          href="/admin/dashboard"
-          className="text-xl font-bold tracking-tight bg-linear-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent block"
+      <div className="px-6 pt-8 pb-6 flex items-start justify-between">
+        <div>
+          <Link
+            href="/admin/dashboard"
+            onClick={onClose}
+            className="text-xl font-bold tracking-tight bg-linear-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent block"
+          >
+            Jadwal Admin
+          </Link>
+          <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Management Console</p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="md:hidden p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+          aria-label="Close menu"
         >
-          Jadwal Admin
-        </Link>
-        <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Management Console</p>
+          <X className="h-5 w-5" />
+        </button>
       </div>
 
       {/* Navigation */}
@@ -101,6 +121,7 @@ export function AdminSidebar({ onLogout }: { onLogout: () => void }) {
             <Link
               key={href}
               href={href}
+              onClick={onClose}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
                 isActive
                   ? 'bg-linear-to-r from-blue-500/10 to-indigo-500/10 dark:from-blue-500/15 dark:to-indigo-500/15 text-blue-600 dark:text-blue-400 shadow-sm'
@@ -147,5 +168,6 @@ export function AdminSidebar({ onLogout }: { onLogout: () => void }) {
         </button>
       </div>
     </aside>
+    </>
   );
 }
