@@ -27,6 +27,8 @@
     "terms": "Terms of Service",
     "privacy": "Privacy Policy",
     "contact": "Contact",
+    "address": "AL Jadwal · Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar",
+    "legalEntity": "AL Jadwal",
     "rights": "All rights reserved."
   },
   "home": {
@@ -1204,7 +1206,7 @@
     },
     "contact": {
       "title": "13. Contact",
-      "p1": "For questions about these Terms, contact us at Jadwalqtr@gmail.com."
+      "p1": "For questions about these Terms, contact AL Jadwal at Jadwalqtr@gmail.com or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
     }
   },
   "privacy": {
@@ -1321,7 +1323,7 @@
     },
     "contact": {
       "title": "12. Contact Us",
-      "p1": "For privacy-related inquiries, contact our Data Protection team at Jadwalqtr@gmail.com."
+      "p1": "For privacy-related inquiries, contact AL Jadwal's Data Protection team at Jadwalqtr@gmail.com or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
     }
   },
   "explore": {
