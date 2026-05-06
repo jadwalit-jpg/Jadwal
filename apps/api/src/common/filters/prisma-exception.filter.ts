@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
+import { PrismaService } from '../../prisma/prisma.service';
 
 /**
  * Global filter for Prisma known-request errors.
@@ -27,25 +28,61 @@ import { Request, Response } from 'express';
  * handlers throw HttpException subclasses which bypass this filter via
  * Nest's HttpException filter.
  */
-@Catch(Prisma.PrismaClientKnownRequestError)
+@Catch(
+  Prisma.PrismaClientKnownRequestError,
+  Prisma.PrismaClientInitializationError,
+)
 export class PrismaExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger('PrismaExceptionFilter');
 
-  catch(exception: Prisma.PrismaClientKnownRequestError, host: ArgumentsHost): void {
+  /**
+   * PrismaService is injected so we can trigger a credential refresh on P1000
+   * (auth fail). Optional in the constructor so legacy code paths and tests
+   * that instantiate the filter without DI keep working — the refresh is
+   * a best-effort side-effect.
+   */
+  constructor(private readonly prisma?: PrismaService) {}
+
+  catch(
+    exception: Prisma.PrismaClientKnownRequestError | Prisma.PrismaClientInitializationError,
+    host: ArgumentsHost,
+  ): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
+    const code = (exception as { code?: string }).code ?? 'UNKNOWN';
 
     // Log full details server-side with sanitized path (strips query string
     // which may contain tokens/emails). Client never sees the Prisma code,
     // meta, or stack — just the generic message from mapError().
     const safePath = request.path || 'unknown';
     this.logger.error(
-      `${request.method} ${safePath} → Prisma ${exception.code}`,
+      `${request.method} ${safePath} → Prisma ${code}`,
       exception.stack,
     );
 
-    const { status, message } = this.mapError(exception.code);
+    // P1000 = authentication failed. Almost always means Secrets Manager has
+    // rotated the RDS master password and our cached connection-string is
+    // stale. Trigger an out-of-band refresh (single-flight inside the
+    // service) and respond 503 + Retry-After so the client retries against
+    // the freshly-swapped pool.
+    if (code === 'P1000' && this.prisma) {
+      this.prisma
+        .refreshOnAuthError()
+        .catch((err: Error) =>
+          this.logger.error(`refreshOnAuthError failed: ${err.name}`),
+        );
+      response
+        .status(HttpStatus.SERVICE_UNAVAILABLE)
+        .header('Retry-After', '1')
+        .json({
+          statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+          message: 'Service temporarily unavailable, please retry',
+        });
+      return;
+    }
+
+    const { status, message } = this.mapError(code);
 
     response.status(status).json({
       statusCode: status,

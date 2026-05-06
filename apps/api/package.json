@@ -29,6 +29,7 @@
   "type": "commonjs",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1025.0",
+    "@aws-sdk/client-secrets-manager": "^3.1043.0",
     "@aws-sdk/client-ses": "^3.1025.0",
     "@aws-sdk/client-sns": "^3.1025.0",
     "@nestjs/common": "^11.1.15",
