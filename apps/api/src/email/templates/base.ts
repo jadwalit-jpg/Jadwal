@@ -75,7 +75,8 @@ export function baseTemplate(content: string, previewText?: string): string {
             <td align="center" style="background-color: #0f172a; padding: 24px 32px;">
               <table role="presentation" cellspacing="0" cellpadding="0" border="0">
                 <tr>
-                  <td style="font-family: Arial, sans-serif; font-size: 28px; font-weight: bold; color: #ffffff; letter-spacing: 1px;">
+                  <td align="center" style="font-family: Arial, sans-serif; font-size: 28px; font-weight: bold; color: #ffffff; letter-spacing: 1px;">
+                    <img src="https://jadwal.qa/android-chrome-192x192.png" width="56" height="56" alt="Jadwal" style="display: block; margin: 0 auto 12px; border: 0; border-radius: 12px;">
                     Jadwal <span style="font-size: 22px; color: #7dd3fc;">&#1580;&#1583;&#1608;&#1604;</span>
                   </td>
                 </tr>

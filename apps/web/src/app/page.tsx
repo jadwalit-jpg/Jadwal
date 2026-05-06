@@ -26,12 +26,24 @@ export const metadata: Metadata = {
       'Discover activities, tours, and experiences across Qatar. Instant confirmation. 50+ verified partners.',
     type: 'website',
     siteName: 'Jadwal',
+    url: '/',
+    locale: 'en_US',
+    alternateLocale: ['ar_QA'],
+    images: [
+      {
+        url: '/android-chrome-512x512.png',
+        width: 512,
+        height: 512,
+        alt: 'Jadwal',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Jadwal — Discover & Book Experiences in Qatar',
     description:
       'Discover activities, tours, and experiences across Qatar. Instant confirmation. 50+ verified partners.',
+    images: ['/android-chrome-512x512.png'],
   },
 };
 
