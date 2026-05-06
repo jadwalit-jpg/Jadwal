@@ -297,13 +297,66 @@ jobs:
             --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
 
-      - name: Run migration (RunTask, wait for exit code 0)
+      # Resolve the live RDS master password from Secrets Manager every
+      # time we run migrations. Static SSM DATABASE_URL would go stale on
+      # the next 8-day auto-rotation and break this step until manually
+      # re-synced — this keeps the migrate path self-healing.
+      #
+      # The fetched URL is injected via containerOverrides so the
+      # password never lives in a logged env var, and `add-mask` ensures
+      # any accidental echo in subsequent steps is redacted.
+      - name: Resolve live DB URL for migrate task
+        id: dburl
+        env:
+          RDS_SECRET_ARN: ${{ vars.RDS_SECRET_ARN }}
+          DB_HOST:        ${{ vars.DB_HOST }}
+          DB_NAME:        ${{ vars.DB_NAME }}
         run: |
+          missing=()
+          [ -z "$RDS_SECRET_ARN" ] && missing+=("RDS_SECRET_ARN")
+          [ -z "$DB_HOST" ]        && missing+=("DB_HOST")
+          [ -z "$DB_NAME" ]        && missing+=("DB_NAME")
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing GitHub Variables: ${missing[*]}"
+            exit 1
+          fi
+
+          SECRET_JSON="$(aws secretsmanager get-secret-value \
+            --secret-id "$RDS_SECRET_ARN" \
+            --version-stage AWSCURRENT \
+            --query SecretString --output text)"
+          USER="$(printf '%s' "$SECRET_JSON" | python3 -c 'import json,sys,urllib.parse;print(urllib.parse.quote(json.load(sys.stdin)["username"], safe=""))')"
+          PASS="$(printf '%s' "$SECRET_JSON" | python3 -c 'import json,sys,urllib.parse;print(urllib.parse.quote(json.load(sys.stdin)["password"], safe=""))')"
+          DB_URL="postgresql://${USER}:${PASS}@${DB_HOST}:5432/${DB_NAME}?schema=public&sslmode=verify-full&sslrootcert=/app/prisma/rds-ca-bundle.pem"
+
+          # Mask so subsequent echo / set -x can't leak.
+          echo "::add-mask::$PASS"
+          echo "::add-mask::$DB_URL"
+          {
+            echo "db_url<<__EOF__"
+            echo "$DB_URL"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run migration (RunTask, wait for exit code 0)
+        env:
+          DB_URL: ${{ steps.dburl.outputs.db_url }}
+        run: |
+          # Build containerOverrides JSON in a tempfile (CLI's --overrides
+          # arg has shell-quoting hazards with embedded JSON). The DB_URL
+          # value is masked via ::add-mask:: above so it won't appear in
+          # the action log even if a future step prints process env.
+          OVERRIDES=$(jq -nc \
+            --arg name "migrations" \
+            --arg url "$DB_URL" \
+            '{containerOverrides:[{name:$name,environment:[{name:"DATABASE_URL",value:$url}]}]}')
+
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER }} \
             --task-definition ${{ steps.register.outputs.revision }} \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=${{ vars.PRIVATE_SUBNETS }},securityGroups=${{ vars.MIGRATE_SG }},assignPublicIp=DISABLED}" \
+            --overrides "$OVERRIDES" \
             --query 'tasks[0].taskArn' --output text)
 
           echo "Waiting for migrate task to complete: $TASK_ARN"
