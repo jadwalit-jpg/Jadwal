@@ -526,7 +526,7 @@ export default function EditActivityPage() {
     return (
       <div className="min-h-screen bg-stone-50 dark:bg-slate-950 font-outfit">
         <VendorSidebar />
-        <main className="md:ms-64 min-h-screen">
+        <main className="md:ms-64 min-h-screen overflow-x-hidden">
           <div className="px-10 py-6 border-b border-stone-200 dark:border-slate-800">
             <div className="h-8 w-56 bg-gray-200 dark:bg-slate-800 rounded-lg animate-pulse" />
             <div className="h-4 w-72 bg-gray-100 dark:bg-slate-800/60 rounded-lg animate-pulse mt-2" />
@@ -545,7 +545,7 @@ export default function EditActivityPage() {
     <div className="min-h-screen bg-stone-50 dark:bg-slate-950 font-outfit">
       <VendorSidebar />
 
-      <main className="md:ms-64 min-h-screen">
+      <main className="md:ms-64 min-h-screen overflow-x-hidden">
         {/* Top bar */}
         <div className="flex items-center justify-between px-10 py-6 border-b border-stone-200 dark:border-slate-800 bg-stone-50 dark:bg-slate-950">
           <div>
