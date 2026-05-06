@@ -119,6 +119,18 @@ function decodeMime(cmdArgs: any): string {
   return Buffer.isBuffer(buf) ? buf.toString('utf8') : Buffer.from(buf).toString('utf8');
 }
 
+/**
+ * Extract and base64-decode the body section of a raw MIME message.
+ * The MIME builder uses Content-Transfer-Encoding: base64, so the literal
+ * HTML can only be inspected after decoding the base64 lines.
+ */
+function decodeMimeBody(mime: string): string {
+  const sep = mime.indexOf('\r\n\r\n');
+  if (sep < 0) return '';
+  const body = mime.slice(sep + 4).replace(/\r\n/g, '');
+  return Buffer.from(body, 'base64').toString('utf8');
+}
+
 describe('EmailService — construction + prod-guard', () => {
   const ORIGINAL_ENV = process.env.NODE_ENV;
   afterEach(() => { process.env.NODE_ENV = ORIGINAL_ENV; });
@@ -247,8 +259,9 @@ describe('EmailService — send dispatching + raw MIME', () => {
     expect(mime).toContain('To: user@example.com');
     expect(mime).toContain('Subject:');
     expect(mime).toContain('Content-Type: text/html');
-    // HTML body present
-    expect(mime).toContain('<html');
+    expect(mime).toContain('Content-Transfer-Encoding: base64');
+    // HTML body present (base64-encoded — decode to inspect)
+    expect(decodeMimeBody(mime)).toContain('<html');
   });
 
   test('raw MIME includes List-Unsubscribe + List-Unsubscribe-Post when user is found', async () => {

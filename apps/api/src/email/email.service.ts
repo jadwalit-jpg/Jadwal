@@ -279,7 +279,11 @@ export class EmailService {
       `Subject: ${this.encodeHeader(subject)}`,
       `MIME-Version: 1.0`,
       `Content-Type: text/html; charset=UTF-8`,
-      `Content-Transfer-Encoding: 7bit`,
+      // base64, not 7bit: templates may carry non-ASCII (Arabic copy, smart
+      // quotes, currency glyphs) which would violate the RFC 2045 7bit
+      // contract. AWS SES also doesn't guarantee 8bit preservation when it
+      // rewrites the message for open/click tracking — base64 is robust.
+      `Content-Transfer-Encoding: base64`,
       `List-Unsubscribe: ${listUnsubscribe}`,
       // List-Unsubscribe-Post is the RFC 8058 marker that says "I support
       // one-click POST unsubscribe" — receivers (Gmail, Yahoo) only register
@@ -287,7 +291,11 @@ export class EmailService {
       ...(unsubscribeToken ? [`List-Unsubscribe-Post: List-Unsubscribe=One-Click`] : []),
     ];
 
-    const mime = headers.join('\r\n') + '\r\n\r\n' + html;
+    // RFC 2045 §6.8: base64 lines must be ≤76 chars; fold with CRLF.
+    const encodedBody = Buffer.from(html, 'utf8')
+      .toString('base64')
+      .replace(/(.{76})/g, '$1\r\n');
+    const mime = headers.join('\r\n') + '\r\n\r\n' + encodedBody;
     // SES v2 wants base64-encoded Raw.Data (decoded back to bytes by SES).
     // The SDK accepts a Buffer or string; we encode explicitly to be unambiguous.
     return Buffer.from(mime, 'utf8').toString('base64');
