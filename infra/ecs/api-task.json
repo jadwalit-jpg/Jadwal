@@ -20,7 +20,11 @@
       "environment": [
         { "name": "PORT", "value": "4000" },
         { "name": "DIAG_IP_CHECK", "value": "false" },
-        { "name": "TRUST_PROXY_HOPS", "value": "2" }
+        { "name": "TRUST_PROXY_HOPS", "value": "2" },
+        { "name": "RDS_SECRET_ARN", "value": "RDS_SECRET_ARN_PLACEHOLDER" },
+        { "name": "DB_HOST",        "value": "DB_HOST_PLACEHOLDER" },
+        { "name": "DB_PORT",        "value": "5432" },
+        { "name": "DB_NAME",        "value": "DB_NAME_PLACEHOLDER" }
       ],
       "secrets": [
         { "name": "NODE_ENV",                     "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/NODE_ENV" },

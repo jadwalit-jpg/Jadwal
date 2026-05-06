@@ -373,14 +373,17 @@ jobs:
             -e "s|IMAGE_TAG_PLACEHOLDER|$IMG|g" \
             -e "s|<AWS_ACCOUNT_ID>|$ACCT|g" \
             -e "s|<AWS_REGION>|${AWS_REGION}|g" \
+            -e "s|RDS_SECRET_ARN_PLACEHOLDER|${{ vars.RDS_SECRET_ARN }}|g" \
+            -e "s|DB_HOST_PLACEHOLDER|${{ vars.DB_HOST }}|g" \
+            -e "s|DB_NAME_PLACEHOLDER|${{ vars.DB_NAME }}|g" \
             /tmp/td.json
 
           # Fail loud if any placeholder didn't get substituted — this catches
           # a forgotten placeholder before AWS rejects the register call with
           # a less obvious "Unable to parse ARN" error.
-          if grep -q '<AWS_ACCOUNT_ID>\|<AWS_REGION>\|IMAGE_TAG_PLACEHOLDER' /tmp/td.json; then
+          if grep -q '<AWS_ACCOUNT_ID>\|<AWS_REGION>\|IMAGE_TAG_PLACEHOLDER\|RDS_SECRET_ARN_PLACEHOLDER\|DB_HOST_PLACEHOLDER\|DB_NAME_PLACEHOLDER' /tmp/td.json; then
             echo "::error::Unsubstituted placeholder remains in /tmp/td.json"
-            grep -n '<AWS_ACCOUNT_ID>\|<AWS_REGION>\|IMAGE_TAG_PLACEHOLDER' /tmp/td.json
+            grep -n '<AWS_ACCOUNT_ID>\|<AWS_REGION>\|IMAGE_TAG_PLACEHOLDER\|RDS_SECRET_ARN_PLACEHOLDER\|DB_HOST_PLACEHOLDER\|DB_NAME_PLACEHOLDER' /tmp/td.json
             exit 1
           fi
 

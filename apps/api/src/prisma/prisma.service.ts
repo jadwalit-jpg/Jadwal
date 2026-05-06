@@ -4,6 +4,10 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} from '@aws-sdk/client-secrets-manager';
 
 // AWS RDS server certs are signed by AWS's private CA bundle, which is NOT
 // in node:22-alpine's default trust store. We vendor the global CA bundle
@@ -47,30 +51,127 @@ const LOCAL_DEV_DB_HOSTS: ReadonlySet<string> = new Set([
   'postgres',              // dev: docker-compose service name (most common)
   'db',                    // dev: docker-compose service name (some templates)
 ]);
-function shouldUseSslForDb(databaseUrl: string | undefined): boolean {
-  if (!databaseUrl) return false;
-  try {
-    const host = new URL(databaseUrl).hostname.toLowerCase();
-    // Known local-dev hosts: skip SSL — they don't speak TLS.
-    if (LOCAL_DEV_DB_HOSTS.has(host)) return false;
-    // Anything else (RDS or any future remote DB) → require SSL.
-    return true;
-  } catch {
-    return false;
-  }
+function shouldUseSslForHost(host: string | undefined): boolean {
+  if (!host) return false;
+  return !LOCAL_DEV_DB_HOSTS.has(host.toLowerCase());
+}
+
+interface RdsManagedSecret {
+  username: string;
+  password: string;
+}
+
+/**
+ * Build a Postgres connection string from a Secrets Manager-managed credential
+ * record + plaintext host/port/db env vars. URL-encodes credentials so a
+ * rotated password containing reserved chars can't break the URL.
+ */
+function buildUrlFromSecret(
+  secret: RdsManagedSecret,
+  host: string,
+  port: string,
+  dbName: string,
+): string {
+  const u = new URL(`postgresql://placeholder:placeholder@${host}:${port}/${dbName}`);
+  u.username = encodeURIComponent(secret.username);
+  u.password = encodeURIComponent(secret.password);
+  return u.toString();
 }
 
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
-  private readonly pool: Pool;
-  readonly client: PrismaClient;
 
-  constructor() {
+  // Mutable: swapped on rotation. Both old and new instances stay alive
+  // for ~5 s during a swap so in-flight queries on the old pool finish.
+  private currentPool!: Pool;
+  private currentClient!: PrismaClient;
+
+  // Single-flight guard: a flood of concurrent P1000s during a rotation
+  // window collapses to ONE GetSecretValue call.
+  private reconnectInflight: Promise<void> | null = null;
+
+  // Cached SDK client — reused across reconnects.
+  private secretsClient: SecretsManagerClient | undefined;
+
+  /**
+   * Public accessor. Always returns the current PrismaClient (post-rotation
+   * if a swap happened). Callers should use this getter rather than caching
+   * a reference at startup.
+   */
+  get client(): PrismaClient {
+    return this.currentClient;
+  }
+
+  async onModuleInit() {
+    await this.bootstrap();
+    this.logger.log('Database connected via Prisma 7 + pg adapter');
+  }
+
+  async onModuleDestroy() {
+    try { await this.currentClient.$disconnect(); } catch { /* ignore */ }
+    try { await this.currentPool.end(); } catch { /* ignore */ }
+    this.logger.log('Database disconnected');
+  }
+
+  /**
+   * Public hook called by PrismaExceptionFilter when a query fails with
+   * P1000 (auth fail). Refetches the secret + swaps pool/client. Single-
+   * flight guarded — concurrent callers wait on the same in-flight promise
+   * so we make one Secrets Manager call per rotation event.
+   *
+   * Side-effect only — caller still surfaces 503/Retry-After to the client
+   * so the next request hits the freshly-swapped pool.
+   */
+  async refreshOnAuthError(): Promise<void> {
+    if (!this.reconnectInflight) {
+      this.reconnectInflight = this.reconnectFromSecret().finally(() => {
+        this.reconnectInflight = null;
+      });
+    }
+    return this.reconnectInflight;
+  }
+
+  // -- private helpers ----------------------------------------------------
+
+  private async bootstrap() {
+    const url = await this.resolveConnectionString();
+    const { pool, client } = this.createPoolAndClient(url);
+    await client.$connect();
+    this.currentPool = pool;
+    this.currentClient = client;
+  }
+
+  /**
+   * Single-flight reconnect. Builds a fresh pool+client from the latest
+   * secret and atomically swaps. The OLD pool/client are drained on a 5s
+   * timer so any in-flight queries on them complete naturally.
+   */
+  private async reconnectFromSecret(): Promise<void> {
+    const url = await this.resolveConnectionString();
+    const { pool: newPool, client: newClient } = this.createPoolAndClient(url);
+    await newClient.$connect();
+
+    const oldPool = this.currentPool;
+    const oldClient = this.currentClient;
+    this.currentPool = newPool;
+    this.currentClient = newClient;
+
+    setTimeout(() => {
+      oldClient.$disconnect().catch(() => { /* ignore */ });
+      oldPool.end().catch(() => { /* ignore */ });
+    }, 5000);
+
+    this.logger.log('PrismaService reconnect complete (new pool + client live)');
+  }
+
+  private createPoolAndClient(url: string): { pool: Pool; client: PrismaClient } {
+    const host = (() => { try { return new URL(url).hostname; } catch { return undefined; } })();
+    const useSsl = shouldUseSslForHost(host);
     const isProd = process.env.NODE_ENV === 'production';
-    const useSsl = shouldUseSslForDb(process.env.DATABASE_URL);
-    this.pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+
+    const pool = new Pool({
+      connectionString: url,
       max: Number(process.env.DB_POOL_MAX || (isProd ? 20 : 10)),
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
@@ -90,19 +191,15 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // Set DB_STATEMENT_TIMEOUT_MS=0 to disable (don't — only for
     // emergency hot-fixes if a real workload genuinely needs longer).
     const STATEMENT_TIMEOUT_MS = Number(process.env.DB_STATEMENT_TIMEOUT_MS ?? 15000);
-    this.pool.on('connect', (client) => {
-      // Fire-and-forget: pg's `connect` event handler is sync but
-      // client.query returns a promise. Errors here surface on the
-      // first user query that lands on this client (which would also
-      // fail), so logging only is sufficient.
-      client
+    pool.on('connect', (c) => {
+      c
         .query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`)
         .catch((err: Error) =>
           this.logger.error(`SET statement_timeout failed (${err.name})`),
         );
     });
 
-    const adapter = new PrismaPg(this.pool);
+    const adapter = new PrismaPg(pool);
     // Note: no `log:` config is intentional. Prisma query logging in
     // production prints user emails / phones / IDs — every WHERE clause
     // is PII. Keep this off; prefer `pg_stat_statements` + Performance
@@ -114,7 +211,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // flag. Auth flows that legitimately need them (login bcrypt compare,
     // OTP/refresh-token verify) live in auth.service.ts and access them
     // through narrow helpers, not directly from feature controllers.
-    this.client = new PrismaClient({
+    const client = new PrismaClient({
       adapter,
       omit: {
         user: {
@@ -128,16 +225,66 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         },
       },
     } as any);
+
+    return { pool, client };
   }
 
-  async onModuleInit() {
-    await this.client.$connect();
-    this.logger.log('Database connected via Prisma 7 + pg adapter');
+  /**
+   * Production: reads {username,password} from the rds-managed Secrets Manager
+   * secret pointed at by RDS_SECRET_ARN, and combines with plaintext DB_HOST /
+   * DB_PORT / DB_NAME env vars (non-secret) to build the URL.
+   *
+   * Dev/local: falls through to the legacy DATABASE_URL env var so docker-
+   * compose, local tests, and CI continue to work without AWS access.
+   *
+   * Fail-secure: if RDS_SECRET_ARN is set but the SDK call rejects, we throw
+   * — the task fails to start, ECS marks unhealthy, deployment circuit
+   * breaker rolls back. We do NOT silently fall back to DATABASE_URL,
+   * because that would mask a misconfigured-IAM regression and let the app
+   * keep running on a stale credential.
+   */
+  private async resolveConnectionString(): Promise<string> {
+    const secretArn = process.env.RDS_SECRET_ARN?.trim();
+    if (secretArn) {
+      const host = process.env.DB_HOST?.trim();
+      const port = process.env.DB_PORT?.trim() || '5432';
+      const dbName = process.env.DB_NAME?.trim();
+      if (!host) throw new Error('[FATAL] DB_HOST is required when RDS_SECRET_ARN is set');
+      if (!dbName) throw new Error('[FATAL] DB_NAME is required when RDS_SECRET_ARN is set');
+
+      const secret = await this.fetchSecret(secretArn);
+      return buildUrlFromSecret(secret, host, port, dbName);
+    }
+
+    // Legacy / local-dev path
+    const url = process.env.DATABASE_URL;
+    if (!url) throw new Error('[FATAL] Either RDS_SECRET_ARN or DATABASE_URL must be set');
+    return url;
   }
 
-  async onModuleDestroy() {
-    await this.client.$disconnect();
-    await this.pool.end();
-    this.logger.log('Database disconnected');
+  private async fetchSecret(arn: string): Promise<RdsManagedSecret> {
+    if (!this.secretsClient) {
+      const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+      this.secretsClient = new SecretsManagerClient(region ? { region } : {});
+    }
+    const out = await this.secretsClient.send(
+      new GetSecretValueCommand({ SecretId: arn, VersionStage: 'AWSCURRENT' }),
+    );
+    if (!out.SecretString) {
+      // Generic message — never log SecretString or any partial value.
+      throw new Error('[FATAL] RDS managed secret has no SecretString');
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(out.SecretString);
+    } catch {
+      throw new Error('[FATAL] RDS managed secret is not valid JSON');
+    }
+    const u = (parsed as any)?.username;
+    const p = (parsed as any)?.password;
+    if (typeof u !== 'string' || typeof p !== 'string' || !u || !p) {
+      throw new Error('[FATAL] RDS managed secret missing username/password');
+    }
+    return { username: u, password: p };
   }
 }

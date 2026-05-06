@@ -11,6 +11,7 @@ import { ThrottlerExceptionFilter } from './common/filters/throttler-exception.f
 import { JsonSyntaxFilter } from './common/filters/json-syntax.filter';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
+import { PrismaService } from './prisma/prisma.service';
 import helmet from 'helmet';
 import * as cookieParser from 'cookie-parser';
 import { join } from 'path';
@@ -19,7 +20,6 @@ import type { Request, Response, NextFunction } from 'express';
 import { envNumber } from './common/env';
 
 const REQUIRED_IN_PRODUCTION = [
-  'DATABASE_URL',
   'JWT_SECRET',
   'FRONTEND_URL',
   'CORS_ORIGIN',
@@ -59,6 +59,24 @@ async function bootstrap() {
     if (missing.length) {
       console.error(`\n[FATAL] Missing required environment variables:\n  ${missing.join('\n  ')}\n`);
       process.exit(1);
+    }
+
+    // DB connection: either RDS_SECRET_ARN (preferred — picks up auto-rotation
+    // from Secrets Manager and pairs with DB_HOST / DB_PORT / DB_NAME) OR a
+    // legacy plaintext DATABASE_URL. At least one must be set; if RDS_SECRET_ARN
+    // is set, the host/port/db env vars must accompany it.
+    const hasSecretArn = !!process.env.RDS_SECRET_ARN?.trim();
+    const hasLegacyUrl = !!process.env.DATABASE_URL?.trim();
+    if (!hasSecretArn && !hasLegacyUrl) {
+      console.error('\n[FATAL] DB connection not configured: set RDS_SECRET_ARN (+ DB_HOST/DB_PORT/DB_NAME) or DATABASE_URL.\n');
+      process.exit(1);
+    }
+    if (hasSecretArn) {
+      const dbMissing = ['DB_HOST', 'DB_NAME'].filter((k) => !process.env[k]?.trim());
+      if (dbMissing.length) {
+        console.error(`\n[FATAL] RDS_SECRET_ARN is set but missing: ${dbMissing.join(', ')}\n`);
+        process.exit(1);
+      }
     }
 
     // JWT secret strength check — reject known dev placeholders and short secrets.
@@ -253,9 +271,14 @@ async function bootstrap() {
   //   - ThrottlerException      → ThrottlerExceptionFilter (custom 429 shape)
   //   - PrismaClientKnownRequestError → PrismaExceptionFilter (maps P2002→409, etc.)
   //   - Everything else         → AllExceptionsFilter (HttpException passthrough + generic 500)
+  // PrismaExceptionFilter needs PrismaService so it can trigger an out-of-band
+  // refresh on P1000 (auth fail / Secrets Manager rotation). Resolve from the
+  // root injector — Nest's `app.get` is the right shape since the filter is
+  // registered via `useGlobalFilters` (instance-based, not class-based).
+  const prismaService = app.get(PrismaService, { strict: false });
   app.useGlobalFilters(
     new AllExceptionsFilter(),
-    new PrismaExceptionFilter(),
+    new PrismaExceptionFilter(prismaService),
     new ThrottlerExceptionFilter(),
     new JsonSyntaxFilter(),
   );
