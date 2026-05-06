@@ -41,7 +41,7 @@ export default function Footer() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const name = platform?.platformName ?? 'Jadwal';
+  const name = platform?.platformName ?? t('footer.legalEntity');
 
   return (
     <footer className="border-t border-gray-100 dark:border-slate-800/60 bg-white dark:bg-slate-950">
