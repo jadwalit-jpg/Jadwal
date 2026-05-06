@@ -11,9 +11,6 @@
 # not in this file. The only thing this file knows is which Variable
 # names to read.
 #
-# Gated on `vars.DEPLOY_ENABLED` so the workflow can be paused without
-# editing the file — flip the Variable to "false" during a freeze.
-#
 # ⚠ OPERATOR WARNING — secrets-in-logs:
 #   Do NOT add `set -x`, `env`, `printenv`, or `echo $SECRET_*` for
 #   debugging. GitHub Actions logs are visible to anyone with read
