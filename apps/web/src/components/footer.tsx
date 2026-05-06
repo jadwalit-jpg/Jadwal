@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Mail, Phone, Instagram } from 'lucide-react';
+import { Mail, Phone, Instagram, MapPin } from 'lucide-react';
 import api from '@/lib/api';
 
 interface PlatformInfo {
@@ -41,7 +41,7 @@ export default function Footer() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const name = platform?.platformName ?? 'Jadwal';
+  const name = platform?.platformName ?? t('footer.legalEntity');
 
   return (
     <footer className="border-t border-gray-100 dark:border-slate-800/60 bg-white dark:bg-slate-950">
@@ -143,6 +143,10 @@ export default function Footer() {
                   </a>
                 </li>
               )}
+              <li className="flex items-start gap-2 text-sm text-gray-500 dark:text-slate-400 leading-relaxed">
+                <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>{t('footer.address')}</span>
+              </li>
             </ul>
           </div>
         </div>
