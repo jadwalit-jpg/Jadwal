@@ -75,6 +75,13 @@ export const metadata: Metadata = {
   description: "Discover and book experiences in your city.",
   applicationName: "Jadwal",
   manifest: "/site.webmanifest",
+  // Per-page canonical = the page's own URL (resolved against metadataBase).
+  // Each page can override `metadata.alternates.canonical` explicitly when
+  // needed (e.g. when serving paginated lists or filtered queries that
+  // should canonicalize to the un-filtered root).
+  alternates: {
+    canonical: "./",
+  },
   icons: {
     icon: [
       { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
