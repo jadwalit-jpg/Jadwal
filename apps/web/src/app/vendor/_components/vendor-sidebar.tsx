@@ -104,7 +104,16 @@ export function VendorSidebar() {
         />
       )}
 
-      <aside className={`fixed inset-s-0 top-0 z-30 h-full w-64 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-e border-gray-200/80 dark:border-slate-800/80 flex flex-col transition-transform duration-300 ease-in-out md:translate-x-0 ${mobileOpen ? 'translate-x-0' : 'ltr:-translate-x-full rtl:translate-x-full'}`}>
+      {/*
+        Class-order note: `ltr:-translate-x-full` has selector
+        `[dir=ltr] .ltr\:-translate-x-full` (specificity 0,0,2,0) and out-
+        weighs the @media-only `.md\:translate-x-0` (specificity 0,0,1,0)
+        — so on desktop the sidebar would silently stay translated off-
+        screen. Scoping the hide-rule with `max-md:` confines it below
+        the md breakpoint; nothing fires above it, and the bare
+        `md:translate-x-0` is the only matching rule on desktop.
+      */}
+      <aside className={`fixed inset-s-0 top-0 z-30 h-full w-64 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-e border-gray-200/80 dark:border-slate-800/80 flex flex-col transition-transform duration-300 ease-in-out md:translate-x-0 ${mobileOpen ? 'translate-x-0' : 'max-md:ltr:-translate-x-full max-md:rtl:translate-x-full'}`}>
       {/* Brand */}
       <div className="px-6 pt-8 pb-6 flex items-start justify-between">
         <div>
