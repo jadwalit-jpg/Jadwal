@@ -363,9 +363,29 @@ jobs:
       # Rollback: previous-revision ARN is still active in ECS; switching back
       # is `aws ecs update-service --task-definition jadwal-api:<prev-rev>`.
       - name: Deploy ${{ matrix.service.name }}
+        env:
+          RDS_SECRET_ARN: ${{ vars.RDS_SECRET_ARN }}
+          DB_HOST:        ${{ vars.DB_HOST }}
+          DB_NAME:        ${{ vars.DB_NAME }}
         run: |
           IMG="${{ env.ECR_REGISTRY }}/${{ matrix.service.img }}:${{ github.sha }}"
           ACCT="$(aws sts get-caller-identity --query Account --output text)"
+
+          # Required-vars guard — only relevant when registering the api task
+          # (web/migrate templates don't use these placeholders, so an empty
+          # value here would still pass the post-sed grep but ship a broken
+          # api revision that fails at task start).
+          if [ "${{ matrix.service.name }}" = "jadwal-api" ]; then
+            missing=()
+            [ -z "$RDS_SECRET_ARN" ] && missing+=("RDS_SECRET_ARN")
+            [ -z "$DB_HOST" ]        && missing+=("DB_HOST")
+            [ -z "$DB_NAME" ]        && missing+=("DB_NAME")
+            if [ ${#missing[@]} -ne 0 ]; then
+              echo "::error::Missing required GitHub Variables for jadwal-api: ${missing[*]}"
+              echo "Set them at: Settings → Secrets and variables → Actions → Variables"
+              exit 1
+            fi
+          fi
 
           # Defensive copy — never sed-edit the committed file in place.
           cp infra/ecs/${{ matrix.service.taskdef }} /tmp/td.json
@@ -373,9 +393,9 @@ jobs:
             -e "s|IMAGE_TAG_PLACEHOLDER|$IMG|g" \
             -e "s|<AWS_ACCOUNT_ID>|$ACCT|g" \
             -e "s|<AWS_REGION>|${AWS_REGION}|g" \
-            -e "s|RDS_SECRET_ARN_PLACEHOLDER|${{ vars.RDS_SECRET_ARN }}|g" \
-            -e "s|DB_HOST_PLACEHOLDER|${{ vars.DB_HOST }}|g" \
-            -e "s|DB_NAME_PLACEHOLDER|${{ vars.DB_NAME }}|g" \
+            -e "s|RDS_SECRET_ARN_PLACEHOLDER|${RDS_SECRET_ARN}|g" \
+            -e "s|DB_HOST_PLACEHOLDER|${DB_HOST}|g" \
+            -e "s|DB_NAME_PLACEHOLDER|${DB_NAME}|g" \
             /tmp/td.json
 
           # Fail loud if any placeholder didn't get substituted — this catches

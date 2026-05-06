@@ -142,7 +142,7 @@ export default function VendorBookingsPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="md:ms-64 p-10">
+      <main className="md:ms-64 p-4 md:p-10 overflow-x-hidden">
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight">{t('vendor.bookings.title')}</h1>
           <p className="text-gray-500 dark:text-slate-400 mt-1">{t('vendor.bookings.subtitle')}</p>

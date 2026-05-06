@@ -190,7 +190,25 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // `SET LOCAL statement_timeout = '60s'` inside its `$transaction`.
     // Set DB_STATEMENT_TIMEOUT_MS=0 to disable (don't — only for
     // emergency hot-fixes if a real workload genuinely needs longer).
-    const STATEMENT_TIMEOUT_MS = Number(process.env.DB_STATEMENT_TIMEOUT_MS ?? 15000);
+    //
+    // Strict parse: empty string would coerce to 0 (silent disable) and a
+    // junk string to NaN (which then produces 'SET statement_timeout = NaN'
+    // — Postgres rejects that and the per-connection guard becomes a
+    // permanent error log). Treat anything that isn't a non-negative
+    // finite integer as "use the default" so the safeguard never silently
+    // drops below the 15 s baseline because of a typo'd env var.
+    const STATEMENT_TIMEOUT_MS = (() => {
+      const raw = process.env.DB_STATEMENT_TIMEOUT_MS?.trim();
+      if (raw === undefined || raw === '') return 15000;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+        this.logger.error(
+          `Invalid DB_STATEMENT_TIMEOUT_MS=${JSON.stringify(raw)} — falling back to 15000ms`,
+        );
+        return 15000;
+      }
+      return n;
+    })();
     pool.on('connect', (c) => {
       c
         .query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`)

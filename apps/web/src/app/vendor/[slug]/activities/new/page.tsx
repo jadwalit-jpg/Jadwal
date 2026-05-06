@@ -466,7 +466,7 @@ export default function CreateActivityPage() {
     <div className="min-h-screen bg-stone-50 dark:bg-slate-950 font-outfit">
       <VendorSidebar />
 
-      <main className="md:ms-64 min-h-screen">
+      <main className="md:ms-64 min-h-screen overflow-x-hidden">
         {/* Top bar */}
         <div className="flex items-center justify-between px-10 py-6 border-b border-stone-200 dark:border-slate-800 bg-stone-50 dark:bg-slate-950">
           <div>

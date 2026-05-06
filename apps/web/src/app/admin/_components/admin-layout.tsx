@@ -118,9 +118,9 @@ export default function AdminLayout({ children, title, subtitle }: AdminLayoutPr
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <AdminSidebar onLogout={handleLogout} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="md:ms-64 min-h-screen">
+      <div className="md:ms-64 min-h-screen overflow-x-hidden">
         {/* Top bar */}
-        <header className="sticky top-0 z-10 flex items-center justify-between px-4 md:px-8 py-4 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800/80">
+        <header className="sticky top-0 z-10 flex items-center justify-between gap-3 px-4 md:px-8 py-4 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800/80">
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -144,7 +144,11 @@ export default function AdminLayout({ children, title, subtitle }: AdminLayoutPr
                 <Search className="h-4.5 w-4.5 text-gray-500 dark:text-slate-400" />
               </button>
               {searchOpen && (
-                <div className="absolute end-0 top-full mt-2 w-96 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-xl overflow-hidden">
+                // w-96 (384 px) overflows the right edge on phones < 400 px wide
+                // and forces the whole page to scroll sideways. Cap at the
+                // viewport (with 1 rem padding so the dropdown isn't flush) and
+                // restore the original 384 px on screens that fit it.
+                <div className="absolute end-0 top-full mt-2 w-[calc(100vw-2rem)] sm:w-96 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-xl overflow-hidden">
                   <div className="p-3 border-b border-gray-100 dark:border-slate-800">
                     <div className="relative">
                       <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -205,23 +209,23 @@ export default function AdminLayout({ children, title, subtitle }: AdminLayoutPr
               href="/"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 transition-all"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 transition-all"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               View Site
             </Link>
 
-            <div className="w-px h-6 bg-gray-200 dark:bg-slate-800" />
+            <div className="hidden sm:block w-px h-6 bg-gray-200 dark:bg-slate-800" />
 
-            <span className="text-sm text-gray-500 dark:text-slate-400">{user?.fullName}</span>
-            <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center font-bold text-white text-sm shadow-lg shadow-blue-500/20">
+            <span className="hidden sm:inline text-sm text-gray-500 dark:text-slate-400 truncate max-w-40">{user?.fullName}</span>
+            <div className="h-9 w-9 shrink-0 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center font-bold text-white text-sm shadow-lg shadow-blue-500/20">
               {user?.fullName?.charAt(0)?.toUpperCase()}
             </div>
           </div>
         </header>
 
         {/* Page content */}
-        <main className="p-8">
+        <main className="p-4 md:p-8">
           {subtitle && (
             <div className="mb-8">
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{title}</h1>

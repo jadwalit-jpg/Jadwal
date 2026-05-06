@@ -100,7 +100,7 @@ export default function VendorDashboardPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="md:ms-64 p-10">
+      <main className="md:ms-64 p-4 md:p-10 overflow-x-hidden">
         <header className="flex justify-between items-center mb-10">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">

@@ -61,12 +61,15 @@ export class PrismaExceptionFilter implements ExceptionFilter {
       exception.stack,
     );
 
-    // P1000 = authentication failed. Almost always means Secrets Manager has
-    // rotated the RDS master password and our cached connection-string is
-    // stale. Trigger an out-of-band refresh (single-flight inside the
-    // service) and respond 503 + Retry-After so the client retries against
-    // the freshly-swapped pool.
-    if (code === 'P1000' && this.prisma) {
+    // P1000 = authentication failed. Triggers the rotation-recovery path
+    // ONLY when the app is configured to read credentials from Secrets
+    // Manager (RDS_SECRET_ARN is set). On the legacy DATABASE_URL path
+    // the password is static — refreshing would just rebuild a client
+    // with the same wrong creds and clients would 503-loop forever.
+    // On that path, fall through to the generic 500 mapping so the real
+    // outage surfaces in logs/metrics.
+    const usingRotatingCreds = !!process.env.RDS_SECRET_ARN?.trim();
+    if (code === 'P1000' && this.prisma && usingRotatingCreds) {
       this.prisma
         .refreshOnAuthError()
         .catch((err: Error) =>
