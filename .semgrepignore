@@ -23,3 +23,9 @@ apps/api/prisma/seed-e2e-data.ts
 # Manual one-off booking-creation script for local QA — same rationale
 # as the seed scripts above.
 apps/api/scripts/create-test-booking.ts
+
+# PrismaService unit test — fixtures intentionally include reserved
+# URL chars in the password to assert percent-encoding works. The test
+# password is constant + obviously synthetic; never reaches a real
+# system. Same rationale as the seed scripts above.
+apps/api/test/unit/prisma.service.spec.ts
