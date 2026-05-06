@@ -68,8 +68,46 @@ const siteUrl = (() => {
 
 export const metadata: Metadata = {
   metadataBase: siteUrl,
-  title: "Jadwal",
+  title: {
+    default: "Jadwal — Discover and book experiences in Qatar",
+    template: "%s · Jadwal",
+  },
   description: "Discover and book experiences in your city.",
+  applicationName: "Jadwal",
+  manifest: "/site.webmanifest",
+  icons: {
+    icon: [
+      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/android-chrome-192x192.png", sizes: "192x192", type: "image/png" },
+      { url: "/android-chrome-512x512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+    shortcut: "/favicon.ico",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "Jadwal",
+    title: "Jadwal — Discover and book experiences in Qatar",
+    description: "Discover and book experiences in your city.",
+    locale: "en_US",
+    alternateLocale: ["ar_QA"],
+    url: siteUrl.toString(),
+    images: [
+      {
+        url: "/android-chrome-512x512.png",
+        width: 512,
+        height: 512,
+        alt: "Jadwal",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: "Jadwal — Discover and book experiences in Qatar",
+    description: "Discover and book experiences in your city.",
+    images: ["/android-chrome-512x512.png"],
+  },
 };
 
 export default async function RootLayout({
