@@ -49,6 +49,10 @@ const REQUIRED_IN_PRODUCTION = [
   'VAPID_PUBLIC_KEY',
   'VAPID_PRIVATE_KEY',
   'VAPID_SUBJECT',
+  // RFC 8058 List-Unsubscribe HMAC signing key. Min 32 chars; generate via
+  // `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+  // and store as SSM SecureString /jadwal/prod/UNSUBSCRIBE_TOKEN_SECRET.
+  'UNSUBSCRIBE_TOKEN_SECRET',
 ];
 
 async function bootstrap() {

@@ -18,7 +18,8 @@ export type SecurityEvent =
   | 'PASSWORD_RESET_COMPLETED'
   | 'PASSWORD_RESET_FAILED'
   | 'PASSWORD_CHANGE_FAILED'
-  | 'PASSWORD_CHANGE_COMPLETED';
+  | 'PASSWORD_CHANGE_COMPLETED'
+  | 'EMAIL_UNSUBSCRIBE';
 
 interface LogParams {
   event: SecurityEvent;
