@@ -410,7 +410,9 @@ describe('AWS Service Skeletons (Production Readiness)', () => {
 
   test('Email service has production SES code commented and ready', () => {
     const emailService = readSrc('src/email/email.service.ts');
-    expect(emailService).toContain('SESClient');
+    // Migrated to SES v2 SDK on 2026-05-06 — v1 API can't carry custom MIME
+    // headers (List-Unsubscribe / List-Unsubscribe-Post for RFC 8058).
+    expect(emailService).toContain('SESv2Client');
     expect(emailService).toContain('SendEmailCommand');
     expect(emailService).toContain('EMAIL_ENABLED');
     expect(emailService).toContain('EMAIL_FROM');
