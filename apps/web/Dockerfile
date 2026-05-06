@@ -83,6 +83,14 @@ ENV NEXT_PUBLIC_VAPID_KEY=$NEXT_PUBLIC_VAPID_KEY
 ARG NEXT_PUBLIC_CDN_URL
 ENV NEXT_PUBLIC_CDN_URL=$NEXT_PUBLIC_CDN_URL
 
+# Site URL used by Next.js metadataBase. Without this, the bundle ships
+# with the localhost fallback in src/app/layout.tsx, which means OpenGraph
+# image URLs resolve to 127.0.0.1 — link unfurlers (WhatsApp, Twitter,
+# Slack, iMessage) cannot fetch them, and previews fall back to a Next.js
+# default placeholder. Set to https://jadwal.qa in prod via GH Variable.
+ARG NEXT_PUBLIC_SITE_URL
+ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+
 # API_PROXY_TARGET — required by next.config.ts in production. Server-side
 # only (not baked into the client bundle); used at runtime by Next.js's
 # rewrite() to forward /api/* to the API container. Build still needs it
