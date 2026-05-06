@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { AdminSidebar } from './admin-sidebar';
 import NotificationBell from '@/components/notification-bell';
-import { Search, Users, Store, CalendarRange, BookOpen, X, ExternalLink, Menu } from 'lucide-react';
+import { Search, Users, Store, CalendarRange, BookOpen, ExternalLink, Menu } from 'lucide-react';
 import Link from 'next/link';
 
 function AdminLayoutSkeleton() {

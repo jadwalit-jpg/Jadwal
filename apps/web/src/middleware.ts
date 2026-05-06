@@ -46,7 +46,18 @@ const API_ORIGIN = (() => {
 // CDN_URL is a build-time injection (NEXT_PUBLIC_*) so it can be switched via
 // the web task definition without code edits. Falls back to no extra host when
 // unset (dev / no-CDN deploys); production sets it to the CloudFront domain.
-const CDN_HOST = process.env.NEXT_PUBLIC_CDN_URL?.trim();
+// Normalize to scheme+host only — a misconfigured value with trailing slash
+// or path (e.g. "https://cdn.example.com/uploads/") would corrupt CSP if
+// injected verbatim.
+const CDN_HOST = (() => {
+  const raw = process.env.NEXT_PUBLIC_CDN_URL?.trim();
+  if (!raw) return undefined;
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return undefined;
+  }
+})();
 
 const IMG_HOSTS = [
   "'self'",
