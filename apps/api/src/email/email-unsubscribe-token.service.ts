@@ -44,8 +44,8 @@ export class EmailUnsubscribeTokenService {
     // so we never sign with an empty secret and write toy signatures to email.
     if (!s || s.length < 32) {
       throw new Error(
-        'UNSUBSCRIBE_TOKEN_SECRET is required and must be ≥32 characters. Generate via: ' +
-          "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+        'UNSUBSCRIBE_TOKEN_SECRET is required and must be ≥32 characters. ' +
+          'Generate one with: openssl rand -hex 32',
       );
     }
     this.secret = Buffer.from(s, 'utf8');
