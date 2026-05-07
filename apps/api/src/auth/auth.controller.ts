@@ -213,8 +213,17 @@ export class AuthController {
       if (rawState) {
         const parsed: unknown = JSON.parse(Buffer.from(rawState, 'base64url').toString());
         const raw = (parsed as Record<string, string>)?.callbackUrl ?? '';
-        // Re-validate on the way back — second line of defence against open redirect
-        if (raw.startsWith('/') && !raw.startsWith('//') && !raw.includes(':')) {
+        // Re-validate on the way back — second line of defence against open redirect.
+        // Mirrors `sanitizeCallbackUrl` in google-auth.guard.ts: rejects `/\foo`
+        // (Chrome/Firefox normalize backslash → forward slash, bypassing `//` check)
+        // and any embedded backslash anywhere (defence in depth across URL parsers).
+        if (
+          raw.startsWith('/') &&
+          !raw.startsWith('//') &&
+          !raw.startsWith('/\\') &&
+          !raw.includes(':') &&
+          !raw.includes('\\')
+        ) {
           callbackUrl = raw;
         }
       }
