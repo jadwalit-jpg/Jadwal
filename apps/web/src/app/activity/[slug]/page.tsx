@@ -842,7 +842,7 @@ export default function ActivityDetailPage() {
                   <ActivityLocationMap
                     lat={activity.locationLat}
                     lng={activity.locationLng}
-                    ariaLabel={`Map showing the location of ${activity.titleEn ?? 'the activity'}`}
+                    ariaLabel={`Map showing the location of ${title}`}
                   />
                   <a
                     href={`https://www.google.com/maps/search/?api=1&query=${activity.locationLat},${activity.locationLng}`}

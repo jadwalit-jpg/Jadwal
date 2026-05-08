@@ -61,6 +61,10 @@ export default function ActivityLocationMap({
 
     // Dynamic import — Leaflet pokes `window` on first import, so static
     // import would break SSR even on a 'use client' page.
+    // .catch() prevents an unhandled promise rejection if the network is
+    // flaky on first load or a CSP rule (now or later) blocks the chunk.
+    // Failure mode: the map container stays empty; the "Open in Google
+    // Maps" link below stays clickable, so the user still has a path.
     import('leaflet').then((Lmod) => {
       if (cancelled || !container || mapInstanceRef.current) return;
       const L = (Lmod as unknown as { default?: typeof Lmod }).default ?? Lmod;
@@ -90,6 +94,14 @@ export default function ActivityLocationMap({
       L.marker([lat, lng]).addTo(map);
 
       mapInstanceRef.current = map;
+    }).catch((err) => {
+      // Swallow + log only. The empty container leaves room for the user
+      // to fall through to the "Open in Google Maps" link rendered by the
+      // parent. We don't surface an inline error UI because a missing map
+      // is not actionable — the address text and external link are
+      // already visible above and below this element.
+      // eslint-disable-next-line no-console
+      console.warn('[ActivityLocationMap] Leaflet load failed:', err);
     });
 
     return () => {
