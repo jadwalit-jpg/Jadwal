@@ -195,7 +195,7 @@ describe('EmailService — suppression list short-circuit', () => {
   test('admin-alert bypasses platform cap — operational alerts always go out', async () => {
     const quota = makeQuota(async () => false);
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, quota });
-    await svc.sendAdminAlert({ subject: 'Cap test', message: 'fired through cap' });
+    await svc.sendAdminAlert({ type: 'DATABASE_ERROR', note: 'fired through cap' });
     expect(quota.tryConsumePlatformDaily).not.toHaveBeenCalled();
     expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
   });
@@ -221,7 +221,7 @@ describe('EmailService — suppression list short-circuit', () => {
   test('admin-alert bypasses suppression — operational alerts always go out', async () => {
     const suppressions = makeSuppressions(async () => true);
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, suppressions });
-    await svc.sendAdminAlert({ subject: 'Test', message: 'Something is broken' });
+    await svc.sendAdminAlert({ type: 'SECURITY_EVENT', note: 'Something is broken' });
     expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
     expect(suppressions.isSuppressed).not.toHaveBeenCalled();
   });
@@ -295,7 +295,7 @@ describe('EmailService — send dispatching + raw MIME', () => {
   test('raw MIME includes mailto-only header for admin-alert (no user lookup attempted)', async () => {
     const prisma = makePrisma();
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, prisma });
-    await svc.sendAdminAlert({ subject: 'X', message: 'Y' });
+    await svc.sendAdminAlert({ type: 'DEPLOYMENT_FAILURE' });
     const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
     const mime = decodeMime(cmdArgs);
     // admin-alert skips the user lookup → mailto-only
@@ -404,5 +404,75 @@ describe('EmailService — every public method routes through send()', () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     await (svc as any)[method]('u@example.com', data);
     expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── Typed admin-alert hardening (2026-05-08) ─────────────────────────────
+describe('EmailService — sendAdminAlert typed events', () => {
+  beforeEach(() => {
+    sesMocks.__sendMock.mockClear();
+    sesMocks.SendEmailCommand.mockClear();
+  });
+
+  test('subject is sourced from the type, never from caller input', async () => {
+    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
+    await svc.sendAdminAlert({ type: 'DATABASE_ERROR' });
+    const mime = decodeMime(sesMocks.SendEmailCommand.mock.calls[0][0]);
+    expect(mime).toContain('Subject:');
+    expect(mime).toMatch(/Subject: Jadwal/);
+    expect(mime).toContain('Database error');
+  });
+
+  test('details are HTML-escaped in the body (defence-in-depth)', async () => {
+    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
+    await svc.sendAdminAlert({
+      type: 'SECURITY_EVENT',
+      details: { offender: '<script>alert(1)</script>' },
+    });
+    const body = decodeMimeBody(decodeMime(sesMocks.SendEmailCommand.mock.calls[0][0]));
+    expect(body).not.toContain('<script>alert(1)</script>');
+    expect(body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+  });
+
+  test('long detail values are truncated with an ellipsis', async () => {
+    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
+    await svc.sendAdminAlert({
+      type: 'PAYMENT_DRIFT',
+      details: { trace: 'x'.repeat(1000) },
+    });
+    const body = decodeMimeBody(decodeMime(sesMocks.SendEmailCommand.mock.calls[0][0]));
+    // 200-char cap + ellipsis — must contain a truncated run, not the full string
+    expect(body).not.toContain('x'.repeat(1000));
+    expect(body).toContain('…');
+  });
+
+  test('control characters in note are stripped before render', async () => {
+    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
+    await svc.sendAdminAlert({
+      type: 'CRON_FAILURE',
+      note: 'job\x00failed\x07at\x1bstep',
+    });
+    const body = decodeMimeBody(decodeMime(sesMocks.SendEmailCommand.mock.calls[0][0]));
+    expect(body).toContain('jobfailedatstep');
+    expect(body).not.toMatch(/[\x00\x07\x1b]/);
+  });
+
+  test('unknown alert type returns success-shaped + does not call SES', async () => {
+    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
+    // Bypass the type system to simulate a bad runtime caller
+    const ok = await (svc.sendAdminAlert as any)({ type: 'NOT_A_REAL_TYPE' });
+    expect(ok).toBe(true);
+    expect(sesMocks.SendEmailCommand).not.toHaveBeenCalled();
+  });
+
+  test('details with more than 20 keys are capped', async () => {
+    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
+    const huge: Record<string, string> = {};
+    for (let i = 0; i < 50; i++) huge[`k${i}`] = `v${i}`;
+    await svc.sendAdminAlert({ type: 'BOUNCE_RATE_HIGH', details: huge });
+    const body = decodeMimeBody(decodeMime(sesMocks.SendEmailCommand.mock.calls[0][0]));
+    expect(body).toContain('k0');
+    expect(body).toContain('k19');
+    expect(body).not.toContain('k20');
   });
 });
