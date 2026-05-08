@@ -1,0 +1,207 @@
+# ═════════════════════════════════════════════════════════════════════════
+# Prisma migrate status — read-only drift check against prod.
+#
+# Runs `prisma migrate status` (NOT `migrate deploy`) as a one-shot
+# Fargate task inside the VPC, against the live prod RDS. The output
+# tells us whether the local migration files agree with the prod
+# `_prisma_migrations` table.
+#
+# READ-ONLY GUARANTEES:
+#   - The container CMD is hard-coded below to `migrate status` —
+#     there is no input parameter that could swap it for `deploy`.
+#   - `prisma migrate status` only issues SELECT queries against the
+#     `_prisma_migrations` bookkeeping table. It cannot DELETE,
+#     UPDATE, ALTER, or DROP anything. Verified against Prisma 7
+#     source.
+#   - Trigger is workflow_dispatch only — never automatic.
+#
+# Output interpretation:
+#   - "Database schema is in sync" → no drift, parked task can close
+#   - "Following migrations have not yet been applied: ..." → source
+#     ahead of DB; safe to deploy via the normal `deploy.yml` pipeline
+#   - "Migration was modified after applying" → history mismatch;
+#     needs `prisma migrate resolve`. No data loss possible.
+#   - "Drift detected" → DB ahead of source (someone ran SQL directly
+#     against prod). Review the diff Prisma prints BEFORE any cleanup.
+#
+# Why a one-shot Fargate task and not a local run:
+#   - Prod RDS lives in a private VPC subnet, only reachable from
+#     inside the VPC.
+#   - The migrate-task pattern (already battle-tested by deploy.yml)
+#     already has the secrets-resolution + IAM scoping right.
+#   - GitHub Actions logs are auditable; local terminal output isn't.
+# ═════════════════════════════════════════════════════════════════════════
+
+name: prisma-migrate-status
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prisma-migrate-status
+  cancel-in-progress: false
+
+env:
+  AWS_REGION:        ${{ vars.AWS_REGION }}
+  ECR_REGISTRY:      ${{ vars.ECR_REGISTRY }}
+  ECS_CLUSTER:       ${{ vars.ECS_CLUSTER }}
+  MIGRATE_TASK_DEF:  ${{ vars.MIGRATE_TASK_DEF }}
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Resolve the latest pushed migrations image. This may differ from
+      # the SHA currently running in prod by at most one deploy cycle —
+      # close enough for a status check, and avoids dragging the entire
+      # build pipeline through a read-only diagnostic.
+      - name: Resolve latest migrations image SHA
+        id: img
+        run: |
+          SHA=$(aws ecr describe-images \
+            --region "${AWS_REGION}" \
+            --repository-name jadwal-migrations \
+            --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags[0]' \
+            --output text)
+          if [ -z "$SHA" ] || [ "$SHA" = "None" ]; then
+            echo "::error::Could not resolve latest jadwal-migrations image SHA"
+            exit 1
+          fi
+          echo "Using latest jadwal-migrations:$SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Register migrate task revision
+        id: register
+        run: |
+          IMG="${ECR_REGISTRY}/jadwal-migrations:${{ steps.img.outputs.sha }}"
+          ACCT="$(aws sts get-caller-identity --query Account --output text)"
+          sed -i \
+            -e "s|IMAGE_TAG_PLACEHOLDER|$IMG|g" \
+            -e "s|<AWS_ACCOUNT_ID>|$ACCT|g" \
+            -e "s|<AWS_REGION>|${AWS_REGION}|g" \
+            infra/ecs/migrate-task.json
+          REVISION=$(aws ecs register-task-definition \
+            --cli-input-json file://infra/ecs/migrate-task.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+
+      # Same secrets-resolution path as deploy.yml's migrate job — pulls
+      # the live RDS master password from Secrets Manager so this stays
+      # self-healing across the 8-day automatic password rotation.
+      - name: Resolve live DB URL
+        id: dburl
+        env:
+          RDS_SECRET_ARN: ${{ vars.RDS_SECRET_ARN }}
+          DB_HOST:        ${{ vars.DB_HOST }}
+          DB_NAME:        ${{ vars.DB_NAME }}
+        run: |
+          missing=()
+          [ -z "$RDS_SECRET_ARN" ] && missing+=("RDS_SECRET_ARN")
+          [ -z "$DB_HOST" ]        && missing+=("DB_HOST")
+          [ -z "$DB_NAME" ]        && missing+=("DB_NAME")
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing GitHub Variables: ${missing[*]}"
+            exit 1
+          fi
+
+          SECRET_JSON="$(aws secretsmanager get-secret-value \
+            --secret-id "$RDS_SECRET_ARN" \
+            --version-stage AWSCURRENT \
+            --query SecretString --output text)"
+          USER="$(printf '%s' "$SECRET_JSON" | python3 -c 'import json,sys,urllib.parse;print(urllib.parse.quote(json.load(sys.stdin)["username"], safe=""))')"
+          PASS="$(printf '%s' "$SECRET_JSON" | python3 -c 'import json,sys,urllib.parse;print(urllib.parse.quote(json.load(sys.stdin)["password"], safe=""))')"
+          DB_URL="postgresql://${USER}:${PASS}@${DB_HOST}:5432/${DB_NAME}?schema=public&sslmode=verify-full&sslrootcert=/app/prisma/rds-ca-bundle.pem"
+
+          echo "::add-mask::$PASS"
+          echo "::add-mask::$DB_URL"
+          {
+            echo "db_url<<__EOF__"
+            echo "$DB_URL"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      # The container command override is HARD-CODED to `migrate status`.
+      # No input variable controls this. Guarantees this workflow can
+      # never accidentally run `migrate deploy` even if invoked malformed.
+      - name: Run prisma migrate status (read-only) and wait for exit
+        id: run
+        env:
+          DB_URL: ${{ steps.dburl.outputs.db_url }}
+        run: |
+          OVERRIDES=$(jq -nc \
+            --arg name "migrations" \
+            --arg url "$DB_URL" \
+            '{containerOverrides:[{
+              name: $name,
+              command: ["node", "/app/node_modules/prisma/build/index.js", "migrate", "status"],
+              environment: [{name: "DATABASE_URL", value: $url}]
+            }]}')
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ steps.register.outputs.revision }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=${{ vars.PRIVATE_SUBNETS }},securityGroups=${{ vars.MIGRATE_SG }},assignPublicIp=DISABLED}" \
+            --overrides "$OVERRIDES" \
+            --query 'tasks[0].taskArn' --output text)
+
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "::error::run-task did not return a task ARN"
+            exit 1
+          fi
+
+          echo "Task started: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks "$TASK_ARN"
+
+          EXIT=$(aws ecs describe-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          echo "exit=$EXIT" >> "$GITHUB_OUTPUT"
+          echo "Task stopped — exit code: $EXIT"
+
+      # Stream the container logs so the user can read the full
+      # `migrate status` output here in the workflow run page.
+      - name: Print prisma migrate status output
+        if: always()
+        run: |
+          echo "=== /ecs/jadwal-migrations (last 10 min) ==="
+          aws logs tail /ecs/jadwal-migrations \
+            --since 10m --format short || \
+            echo "(log group not found yet — task may have failed before logging)"
+
+      # `prisma migrate status` exit codes:
+      #   0 — Database schema is in sync
+      #   1 — There are drifts / pending migrations / mismatches
+      # We DO NOT fail the workflow on exit=1 — the whole point is to
+      # surface the state for the operator to read. Exit-1 is an
+      # informational "yes there's drift" not a failure of the workflow.
+      - name: Summarise findings
+        run: |
+          case "${{ steps.run.outputs.exit }}" in
+            "0")
+              echo "::notice::✅ No drift — local migration files agree with the database. Parked-task investigation can be closed as a no-op."
+              ;;
+            "1")
+              echo "::warning::⚠️ Drift or pending migrations detected — read the migrations log above to decide next step. Common interpretations:"
+              echo "::warning::  • 'have not yet been applied' → safe; let normal deploy.yml apply on next push to main"
+              echo "::warning::  • 'modified after applying' → run 'prisma migrate resolve --applied <name>'"
+              echo "::warning::  • 'Drift detected' → DB ahead of source; review the diff BEFORE any action"
+              ;;
+            *)
+              echo "::error::Task exited with unexpected code ${{ steps.run.outputs.exit }} — see container logs above"
+              exit 1
+              ;;
+          esac
