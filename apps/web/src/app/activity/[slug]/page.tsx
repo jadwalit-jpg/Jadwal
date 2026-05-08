@@ -27,6 +27,7 @@ import { useTranslation } from 'react-i18next';
 import api from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
+import ActivityLocationMap from '@/components/activity-location-map';
 import { getApiError } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import { localized } from '@/lib/localize';
@@ -830,21 +831,18 @@ export default function ActivityDetailPage() {
               </div>
               {activity.locationLat && activity.locationLng ? (
                 <div className="mt-4 rounded-2xl overflow-hidden border border-jadwal-border-subtle">
-                  <iframe
-                    title="Activity location"
-                    width="100%"
-                    height="220"
-                    loading="lazy"
-                    referrerPolicy="no-referrer-when-downgrade"
-                    // Sandbox confines the embedded frame so that even if the
-                    // Google Maps origin were ever compromised or spoofed via
-                    // a MITM, the frame can't run top-nav redirects, spawn
-                    // popups, or access our storage. `allow-scripts` +
-                    // `allow-same-origin` are the minimum flags needed for
-                    // the embed to render.
-                    sandbox="allow-scripts allow-same-origin"
-                    src={`https://maps.google.com/maps?q=${activity.locationLat},${activity.locationLng}&z=15&output=embed`}
-                    className="block"
+                  {/*
+                    Leaflet + OpenStreetMap tiles. Replaces the previous
+                    Google Maps iframe that broke when Google deprecated
+                    the `output=embed` URL pattern (server now sends
+                    X-Frame-Options: SAMEORIGIN). Same dependency stack
+                    as map-picker-modal.tsx — no new packages or CSP
+                    allowlist entries required.
+                  */}
+                  <ActivityLocationMap
+                    lat={activity.locationLat}
+                    lng={activity.locationLng}
+                    ariaLabel={`Map showing the location of ${activity.titleEn ?? 'the activity'}`}
                   />
                   <a
                     href={`https://www.google.com/maps/search/?api=1&query=${activity.locationLat},${activity.locationLng}`}
