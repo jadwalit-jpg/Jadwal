@@ -27,16 +27,26 @@
 --   Postgres needs the btree_gist contrib extension. This lets the
 --   planner do an index lookup on (activityId, range) in one shot.
 --
--- Why an IMMUTABLE wrapper for tstzrange():
+-- Why an IMMUTABLE wrapper for tstzrange() in plpgsql (not sql):
 --   Postgres marks the standard tstzrange(timestamptz, timestamptz, text)
 --   constructor as STABLE (not IMMUTABLE) because of how the bounds
 --   string is parsed. Postgres rejects STABLE-volatility functions in
 --   index expressions — they could theoretically vary between calls,
---   which would corrupt the index. Wrapping in our own IMMUTABLE SQL
---   function is the documented Postgres pattern for this case. The
---   wrapper IS deterministic given two timestamptz inputs (timestamptz
---   values are stored in UTC, no session-state dependency), so the
---   IMMUTABLE marker is honest, not a lie.
+--   which would corrupt the index.
+--
+--   A naive `LANGUAGE sql` wrapper marked IMMUTABLE doesn't work:
+--   Postgres aggressively INLINES simple SQL functions during planning,
+--   substituting the body directly into the calling expression. Once
+--   inlined, the volatility check happens on the inlined expression
+--   (which still contains the STABLE tstzrange call), and the index
+--   creation fails with "functions in index expression must be marked
+--   IMMUTABLE". This is exactly what happened on PR #167 commit aed5cb3.
+--
+--   `LANGUAGE plpgsql` functions are NOT inlined, so the IMMUTABLE
+--   marker on the wrapper is taken at face value — Postgres trusts the
+--   developer assertion. The wrapper IS deterministic given two
+--   timestamptz inputs (timestamptz is stored UTC, no session
+--   dependency), so the IMMUTABLE marker is honest, not a lie.
 --
 -- Why partial index `WHERE status != 'CANCELLED'`:
 --   Conflict detection only cares about non-cancelled bookings. The
@@ -72,12 +82,18 @@
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 -- Immutable wrapper for tstzrange — see comment block above for rationale.
+-- LANGUAGE plpgsql (not sql) prevents Postgres from inlining the function
+-- body, which would otherwise cause the IMMUTABLE marker to be discarded.
 CREATE OR REPLACE FUNCTION booking_active_range(start_ts timestamptz, end_ts timestamptz)
 RETURNS tstzrange
-LANGUAGE sql
+LANGUAGE plpgsql
 IMMUTABLE
 PARALLEL SAFE
-AS $$ SELECT tstzrange(start_ts, end_ts, '[)') $$;
+AS $$
+BEGIN
+  RETURN tstzrange(start_ts, end_ts, '[)');
+END;
+$$;
 
 CREATE INDEX IF NOT EXISTS booking_active_overlap_gist
   ON bookings USING GIST (

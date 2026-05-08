@@ -359,65 +359,6 @@ export class BookingsService {
   }
 
   /**
-   * Returns booking rows that overlap [startDatetime, endDatetime) and are
-   * still "active" (not CANCELLED, and PENDING reservations whose
-   * reservedUntil hasn't lapsed). This is the conflict-detection primitive
-   * used by every availability + booking-creation code path.
-   *
-   * Implementation note: the WHERE clause uses the `&&` operator against
-   * the IMMUTABLE wrapper `booking_active_range()`, which lets the planner
-   * use the partial GIST index `booking_active_overlap_gist` (created in
-   * migration 20260508081500_booking_overlap_gist). Same logical filter
-   * as the prior `activeBookingFilter()` + Prisma `startDatetime/endDatetime`
-   * conditions — this is purely a planner-friendly rewrite of an existing
-   * query, not a behavior change.
-   *
-   * The `client` parameter accepts both a regular PrismaClient and a
-   * Prisma.TransactionClient because createBooking() runs the conflict
-   * scan inside its $transaction.
-   */
-  private async findActiveBookingsInRange(
-    client: { $queryRaw: (q: Prisma.Sql) => Promise<unknown> },
-    activityId: string,
-    startDatetime: Date,
-    endDatetime: Date,
-    options: { unitNumber?: number; take?: number } = {},
-  ): Promise<Array<{
-    startDatetime: Date;
-    endDatetime: Date;
-    guests: number;
-    unitNumber: number | null;
-  }>> {
-    const now = new Date();
-    const take = options.take ?? 5000;
-    const unitClause = options.unitNumber !== undefined
-      ? Prisma.sql`AND "unitNumber" = ${options.unitNumber}`
-      : Prisma.empty;
-
-    const sql = Prisma.sql`
-      SELECT
-        "startDatetime",
-        "endDatetime",
-        guests,
-        "unitNumber"
-      FROM bookings
-      WHERE "activityId" = ${activityId}
-        AND status != 'CANCELLED'
-        AND (status != 'PENDING' OR "reservedUntil" IS NULL OR "reservedUntil" >= ${now})
-        ${unitClause}
-        AND booking_active_range("startDatetime", "endDatetime")
-         && booking_active_range(${startDatetime}::timestamptz, ${endDatetime}::timestamptz)
-      LIMIT ${take}
-    `;
-    return client.$queryRaw(sql) as Promise<Array<{
-      startDatetime: Date;
-      endDatetime: Date;
-      guests: number;
-      unitNumber: number | null;
-    }>>;
-  }
-
-  /**
    * Returns availability for an HOURLY activity on a specific date.
    * Each slot shows how many seats remain out of total capacity.
    * Uses RANGE overlap for conflict detection (FIX #22).
@@ -470,13 +411,16 @@ export class BookingsService {
     // (capacity too high, spam, or data corruption) — we'd rather under-report
     // than buffer a gigabyte of rows into memory.
     const DAY_BOOKINGS_CAP = Number(process.env.AVAILABILITY_MAX_DAY_BOOKINGS || 5000);
-    const dayBookings = await this.findActiveBookingsInRange(
-      this.prisma.client,
-      activityId,
-      dayStart,
-      dayEnd,
-      { take: DAY_BOOKINGS_CAP },
-    );
+    const dayBookings = await this.prisma.client.booking.findMany({
+      where: {
+        activityId,
+        ...activeBookingFilter(now),
+        startDatetime: { lt: dayEnd },
+        endDatetime: { gt: dayStart },
+      },
+      select: { startDatetime: true, endDatetime: true, guests: true, unitNumber: true },
+      take: DAY_BOOKINGS_CAP,
+    });
 
     const result = slots.map((slotStart) => {
       const slotEnd = fromMinutes(toMinutes(slotStart) + activity.durationValue! * 60);
@@ -535,27 +479,25 @@ export class BookingsService {
 
     const startDatetime = buildDatetime(checkInDate, activity.checkInTime ?? '14:00');
     const endDatetime = buildDatetime(checkOutDate, activity.checkOutTime ?? '11:00');
+    const now = new Date();
 
-    // Helper: sum guests in active bookings overlapping the window. Same logical
-    // filter as the prior overlapCondition (CANCELLED excluded, PENDING-expired
-    // excluded). Now goes through findActiveBookingsInRange so the planner can
-    // use the GIST index on the bookings table.
-    const sumActiveGuests = async (forUnit?: number): Promise<number> => {
-      const rows = await this.findActiveBookingsInRange(
-        this.prisma.client,
-        activityId,
-        startDatetime,
-        endDatetime,
-        forUnit !== undefined ? { unitNumber: forUnit } : {},
-      );
-      return rows.reduce((s, b) => s + b.guests, 0);
+    // Overlap condition — excludes CANCELLED and expired PENDING reservations
+    const overlapCondition = {
+      activityId,
+      ...activeBookingFilter(now),
+      startDatetime: { lt: endDatetime },
+      endDatetime: { gt: startDatetime },
     };
 
     if (activity.hasUnits) {
       if (!unitNumber) {
         const unitAvailability = await Promise.all(
           Array.from({ length: activity.unitCount }, (_, i) => i + 1).map(async (unitNum) => {
-            const booked = await sumActiveGuests(unitNum);
+            const agg = await this.prisma.client.booking.aggregate({
+              where: { ...overlapCondition, unitNumber: unitNum },
+              _sum: { guests: true },
+            });
+            const booked = agg._sum.guests ?? 0;
             return {
               unitNumber: unitNum,
               capacity: activity.unitCapacity,
@@ -569,7 +511,11 @@ export class BookingsService {
         if (unitNumber < 1 || unitNumber > activity.unitCount) {
           throw new NotFoundException('Unit not found');
         }
-        const booked = await sumActiveGuests(unitNumber);
+        const agg = await this.prisma.client.booking.aggregate({
+          where: { ...overlapCondition, unitNumber },
+          _sum: { guests: true },
+        });
+        const booked = agg._sum.guests ?? 0;
         return {
           bookingType: 'DAILY', checkInDate, checkOutDate, unitNumber,
           capacity: activity.unitCapacity, booked,
@@ -577,7 +523,11 @@ export class BookingsService {
         };
       }
     } else {
-      const booked = await sumActiveGuests();
+      const agg = await this.prisma.client.booking.aggregate({
+        where: overlapCondition,
+        _sum: { guests: true },
+      });
+      const booked = agg._sum.guests ?? 0;
       return {
         bookingType: 'DAILY', checkInDate, checkOutDate,
         capacity: activity.capacity, booked,
@@ -986,21 +936,22 @@ export class BookingsService {
         // inside [startDatetime, endDatetime). This is both correct and
         // safe — the sweep is strictly monotonic in required capacity.
         //
-        // Query routes through findActiveBookingsInRange so the planner
-        // can use the GIST index booking_active_overlap_gist. Functionally
-        // identical to the prior findMany — same activeBookingFilter logic
-        // (CANCELLED excluded, expired-PENDING excluded), same half-open
-        // overlap semantics. Booking-creation conflict scan is bounded by
-        // the same env cap as availability — realistically a few hundred
-        // rows max, but we cap anyway so a pathological misconfig can't
-        // freeze a booking transaction.
-        const windowBookings = await this.findActiveBookingsInRange(
-          tx,
-          dto.activityId,
-          startDatetime,
-          endDatetime,
-          { take: Number(process.env.AVAILABILITY_MAX_DAY_BOOKINGS || 5000) },
-        );
+        // Query stays on indexed fields (activityId + the two datetime columns)
+        // so no new index is required.
+        // Booking-creation conflict scan is bounded by the same env cap as
+        // availability. The query is a single-activity, single-slot-window
+        // window — realistically a few hundred rows max — but we cap anyway
+        // so a pathological misconfig can't freeze a booking transaction.
+        const windowBookings = await tx.booking.findMany({
+          where: {
+            activityId: dto.activityId,
+            ...activeBookingFilter(txNow),
+            startDatetime: { lt: endDatetime },
+            endDatetime: { gt: startDatetime },
+          },
+          select: { startDatetime: true, endDatetime: true, guests: true, unitNumber: true },
+          take: Number(process.env.AVAILABILITY_MAX_DAY_BOOKINGS || 5000),
+        });
 
         if (activity.hasUnits && activity.unitCount > 0) {
           for (let unitNum = 1; unitNum <= activity.unitCount; unitNum++) {
