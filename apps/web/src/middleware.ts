@@ -72,7 +72,7 @@ const IMG_HOSTS = [
   API_ORIGIN,
 ];
 
-const FRAME_HOSTS = ['https://maps.google.com', 'https://www.google.com'];
+const FRAME_HOSTS = ['https://www.google.com'];
 
 /**
  * Build a per-request CSP with a cryptographic nonce.

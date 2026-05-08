@@ -4,6 +4,8 @@ import {
   ConflictException,
   ForbiddenException,
   BadRequestException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { GoogleProfile } from './strategies/google.strategy';
 import { JwtService } from '@nestjs/jwt';
@@ -22,6 +24,7 @@ import { EmailService } from '../email/email.service';
 import { EmailQuotaService } from '../email/email-quota.service';
 import { SmsService } from '../sms/sms.service';
 import { NotificationService } from '../common/services/notification.service';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class AuthService {
@@ -30,6 +33,9 @@ export class AuthService {
   private readonly sessionMaxDays: number;
   private readonly lockoutThreshold: number;
   private readonly lockoutDuration: number;
+  private readonly globalLoginThreshold: number;
+  private readonly globalLoginWindowSec: number;
+  private readonly forgotPasswordCooldownSec: number;
 
   constructor(
     private usersService: UsersService,
@@ -42,6 +48,7 @@ export class AuthService {
     private emailQuota: EmailQuotaService,
     private smsService: SmsService,
     private notificationService: NotificationService,
+    private redisService: RedisService,
   ) {
     this.accessExpiry = Number(this.configService.get('JWT_EXPIRATION', '900'));
     this.refreshExpiry = Number(this.configService.get('REFRESH_TOKEN_EXPIRY_DAYS', '7'));
@@ -54,6 +61,15 @@ export class AuthService {
     this.sessionMaxDays = Number(this.configService.get('SESSION_MAX_DAYS', '7'));
     this.lockoutThreshold = Number(this.configService.get('LOCKOUT_THRESHOLD', '5'));
     this.lockoutDuration = Number(this.configService.get('LOCKOUT_DURATION_MINUTES', '15'));
+    // G1 — multi-IP credential-stuffing defence. Counts ALL login attempts
+    // on a given email across ALL source IPs. Above this in N seconds → 429.
+    // Closes the gap where per-IP throttle (3/min) and per-account DB
+    // lockout (5 fails) miss the rotation pattern (1 attempt per IP × N IPs).
+    this.globalLoginThreshold = Number(this.configService.get('LOGIN_GLOBAL_THRESHOLD', '15'));
+    this.globalLoginWindowSec = Number(this.configService.get('LOGIN_GLOBAL_WINDOW_SEC', '900'));
+    // G6 — per-recipient cooldown on /forgot-password. A given email can
+    // only receive 1 reset request per N seconds regardless of source IP.
+    this.forgotPasswordCooldownSec = Number(this.configService.get('FORGOT_PASSWORD_COOLDOWN_SEC', '300'));
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -78,6 +94,91 @@ export class AuthService {
 
   private hashToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  /**
+   * Hash an email for use as a Redis key (G1 + G6). Lowercased and trimmed
+   * for normalisation; truncated to 32 hex chars (128 bits — collision
+   * probability is negligible at our scale and keeps Redis keys short).
+   * Avoids storing plaintext PII as cache keys.
+   */
+  private hashEmail(email: string): string {
+    return crypto.createHash('sha256').update(email.toLowerCase().trim()).digest('hex').slice(0, 32);
+  }
+
+  /**
+   * G1 — Multi-IP credential-stuffing defence.
+   *
+   * Increments a Redis counter keyed by email-hash on every login attempt
+   * on that account, regardless of source IP or whether the password was
+   * correct. If the counter exceeds the threshold within the window, throws
+   * 429 before the password is even checked.
+   *
+   * This catches the rotation pattern that the per-IP throttler (3/min/IP)
+   * and per-account DB lockout (5 fails) both miss: an attacker hitting one
+   * email from N different IPs at 1 attempt per (IP, user) pair never trips
+   * either defence individually.
+   *
+   * Fail-open on Redis errors — the per-IP throttler and DB lockout remain
+   * as primary defences. CloudWatch alarms (G2) page operators when Redis
+   * is unhealthy so the silent fail-open window is short.
+   */
+  private async checkGlobalLoginRate(
+    email: string,
+    ip: string | undefined,
+    userAgent: string | undefined,
+  ): Promise<void> {
+    const key = `login:global:${this.hashEmail(email)}`;
+    let count: number;
+    try {
+      const redis = this.redisService.getClient();
+      // Atomic INCR+EXPIRE via Lua to prevent the rare race where INCR
+      // returns 1 but a separate EXPIRE call fails or is delayed, leaving
+      // a counter without TTL — that would let an attacker permanently
+      // lock a legitimate user out by hitting threshold once and never
+      // letting the counter roll over. Lua scripts execute atomically on
+      // the Redis server, so EXPIRE is guaranteed to follow INCR=1.
+      const luaScript = [
+        `local current = redis.call('INCR', KEYS[1])`,
+        `if current == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end`,
+        `return current`,
+      ].join('\n');
+      count = (await redis.eval(
+        luaScript,
+        1,
+        key,
+        String(this.globalLoginWindowSec),
+      )) as number;
+    } catch {
+      return;
+    }
+
+    if (count > this.globalLoginThreshold) {
+      await this.securityLogger.log({
+        event: 'LOGIN_GLOBAL_RATE_EXCEEDED',
+        email,
+        ip,
+        userAgent,
+        details: `${count} attempts on this account in ${Math.round(this.globalLoginWindowSec / 60)}min (any IP)`,
+      });
+      throw new HttpException(
+        'Too many login attempts on this account. Please wait a few minutes and try again.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  /**
+   * Reset the G1 global counter on successful login — a verified-correct
+   * password is strong evidence the legit user is the one logging in, so
+   * stale failed attempts shouldn't continue to count against them.
+   */
+  private async resetGlobalLoginRate(email: string): Promise<void> {
+    try {
+      await this.redisService.getClient().del(`login:global:${this.hashEmail(email)}`);
+    } catch {
+      // Silent — not critical; counter expires naturally.
+    }
   }
 
   /** Public accessor for controllers that need to identify the current session */
@@ -128,6 +229,12 @@ export class AuthService {
 
   async loginWithCheck(email: string, password: string, response: Response, req?: Request) {
     const { ip, userAgent } = this.extractClientInfo(req);
+
+    // G1 — Multi-IP credential-stuffing defence. Throws 429 BEFORE we
+    // touch the DB, so a botnet hammering one email from many IPs can't
+    // even cost us user-table reads after the threshold trips.
+    await this.checkGlobalLoginRate(email, ip, userAgent);
+
     const db = this.prisma.client;
 
     // Dummy hash for timing-safe responses when user not found
@@ -204,6 +311,9 @@ export class AuthService {
     if (user.failedLoginAttempts > 0 || user.lockedUntil) {
       await db.user.update({ where: { id: user.id }, data: { failedLoginAttempts: 0, lockedUntil: null } });
     }
+
+    // G1 — clear the global counter on successful auth.
+    await this.resetGlobalLoginRate(email);
 
     // 7. Issue tokens
     await this.securityLogger.log({ event: 'LOGIN_SUCCESS', userId: user.id, email, ip, userAgent });
@@ -671,6 +781,36 @@ export class AuthService {
   // ─── Password Reset ──────────────────────────────────────────────────────
 
   async forgotPassword(email: string, req?: Request) {
+    // G6 — Per-recipient cooldown. Without this, an attacker rotating
+    // source IPs (defeating per-IP 3/min throttle) can demand reset
+    // emails for a victim every few seconds — flooding their inbox and
+    // damaging Jadwal's sender reputation. SET NX is atomic: returns
+    // 'OK' on first set, null when key already exists. Email is
+    // sha256-hashed (no plaintext PII in cache keys).
+    //
+    // On cooldown hit we return the SAME success message as the normal
+    // path — preserves anti-enumeration (no signal that "yes, this email
+    // was already requested recently"). The previous reset email's link
+    // is still valid until its DB token expires, so the user can complete
+    // the reset they actually want without us sending duplicate emails.
+    const cooldownKey = `forgot:cooldown:${this.hashEmail(email)}`;
+    try {
+      const set = await this.redisService.getClient().set(
+        cooldownKey,
+        '1',
+        'EX',
+        this.forgotPasswordCooldownSec,
+        'NX',
+      );
+      if (set !== 'OK') {
+        return { message: 'If an account exists with this email, a password reset link has been sent.' };
+      }
+    } catch {
+      // Redis down — fall through. Per-IP throttle (3/min) and per-account
+      // / per-IP email quotas (already inside the path below) still cap
+      // damage. CloudWatch alarms (G2) page operators on Redis outage.
+    }
+
     const db = this.prisma.client;
 
     // Always return success — never reveal if email exists (anti-enumeration)

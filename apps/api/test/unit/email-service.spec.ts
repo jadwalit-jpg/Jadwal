@@ -34,12 +34,12 @@ const sesMocks = require('@aws-sdk/client-sesv2') as any;
 
 function makeConfig(overrides: Record<string, string> = {}) {
   const defaults: Record<string, string> = {
-    EMAIL_FROM: 'noreply@jadwal.com',
+    EMAIL_FROM: 'noreply@jadwal.qa',
     EMAIL_ENABLED: 'false',
     APP_URL: 'https://app.jadwal.test',
     API_URL: 'https://app.jadwal.test/api',
     AWS_REGION: 'eu-central-1',
-    ADMIN_EMAIL: 'ops@jadwal.com',
+    ADMIN_EMAIL: 'ops@jadwal.qa',
     UNSUBSCRIBE_TOKEN_SECRET: 'a'.repeat(64),
   };
   const merged = { ...defaults, ...overrides };
@@ -250,12 +250,12 @@ describe('EmailService — send dispatching + raw MIME', () => {
     expect(ok).toBe(true);
     expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
     const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
-    expect(cmdArgs.FromEmailAddress).toBe('noreply@jadwal.com');
+    expect(cmdArgs.FromEmailAddress).toBe('noreply@jadwal.qa');
     expect(cmdArgs.Destination.ToAddresses).toEqual(['user@example.com']);
     // v2 ships content as raw bytes via Content.Raw.Data
     expect(cmdArgs.Content?.Raw?.Data).toBeDefined();
     const mime = decodeMime(cmdArgs);
-    expect(mime).toContain('From: noreply@jadwal.com');
+    expect(mime).toContain('From: noreply@jadwal.qa');
     expect(mime).toContain('To: user@example.com');
     expect(mime).toContain('Subject:');
     expect(mime).toContain('Content-Type: text/html');
