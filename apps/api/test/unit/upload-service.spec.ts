@@ -213,10 +213,10 @@ describe('UploadService.upload — magic-byte sniffing + sharp pipeline', () => 
   test('s3 driver + CDN_URL → returns CDN URL instead of raw S3 URL', async () => {
     fileTypeFromBuffer.mockResolvedValue({ mime: 'image/webp', ext: 'webp' });
     const svc = new UploadService(makeConfig({
-      STORAGE_DRIVER: 's3', S3_BUCKET: 'b', CDN_URL: 'https://cdn.jadwal.com',
+      STORAGE_DRIVER: 's3', S3_BUCKET: 'b', CDN_URL: 'https://cdn.jadwal.qa',
     }) as any);
     const url = await svc.upload(fakeMulter(), 'vendors');
-    expect(url).toMatch(/^https:\/\/cdn\.jadwal\.com\/vendors\//);
+    expect(url).toMatch(/^https:\/\/cdn\.jadwal\.qa\/vendors\//);
   });
 });
 
