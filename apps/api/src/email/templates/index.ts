@@ -9,3 +9,5 @@ export { emailVerificationTemplate } from './email-verification';
 export type { EmailVerificationData } from './email-verification';
 export { vendorWelcomeTemplate } from './vendor-welcome';
 export type { VendorWelcomeData } from './vendor-welcome';
+export { adminAlertTemplate, ADMIN_ALERT_SUBJECTS } from './admin-alert';
+export type { AdminAlertData, AdminAlertType } from './admin-alert';

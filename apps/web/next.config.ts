@@ -155,14 +155,16 @@ const nextConfig: NextConfig = {
               ]
             : []),
           {
-            // Deny powerful browser APIs by default. Nothing on this frontend
-            // requests geolocation (we use IP-based detection), camera, mic,
-            // or clipboard — so shut them off so a stored-XSS payload can't
-            // either. If a future feature needs one, allow-list its origin
-            // here: e.g. `geolocation=(self)`.
+            // Deny powerful browser APIs by default. Geolocation is allowed
+            // for same-origin only — the "Near me" / explore features call
+            // navigator.geolocation.getCurrentPosition() (apps/web/src/
+            // context/geo-context.tsx) and the browser blocks the call
+            // entirely if this header omits geolocation=(self). Camera,
+            // mic, clipboard etc. remain shut off so a stored-XSS payload
+            // can't reach them.
             key: "Permissions-Policy",
             value:
-              "geolocation=(), camera=(), microphone=(), payment=(), " +
+              "geolocation=(self), camera=(), microphone=(), payment=(), " +
               "clipboard-read=(), clipboard-write=(), usb=(), magnetometer=(), " +
               "gyroscope=(), accelerometer=(), ambient-light-sensor=(), " +
               "autoplay=(), encrypted-media=(), fullscreen=(self), " +
