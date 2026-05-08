@@ -132,10 +132,23 @@ export class AuthService {
     let count: number;
     try {
       const redis = this.redisService.getClient();
-      count = await redis.incr(key);
-      if (count === 1) {
-        await redis.expire(key, this.globalLoginWindowSec);
-      }
+      // Atomic INCR+EXPIRE via Lua to prevent the rare race where INCR
+      // returns 1 but a separate EXPIRE call fails or is delayed, leaving
+      // a counter without TTL — that would let an attacker permanently
+      // lock a legitimate user out by hitting threshold once and never
+      // letting the counter roll over. Lua scripts execute atomically on
+      // the Redis server, so EXPIRE is guaranteed to follow INCR=1.
+      const luaScript = [
+        `local current = redis.call('INCR', KEYS[1])`,
+        `if current == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end`,
+        `return current`,
+      ].join('\n');
+      count = (await redis.eval(
+        luaScript,
+        1,
+        key,
+        String(this.globalLoginWindowSec),
+      )) as number;
     } catch {
       return;
     }

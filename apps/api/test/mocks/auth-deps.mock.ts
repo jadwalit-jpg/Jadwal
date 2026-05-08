@@ -100,6 +100,15 @@ export function makeRedisMock() {
       store.set(key, next);
       return next;
     }),
+    // eval — simulates the G1 atomic Lua script (INCR + EXPIRE on first
+    // set). We don't parse the actual script body; we just bump the counter
+    // for the key and trust call sites pass the canonical pattern.
+    // Mirrors the real ioredis eval signature: (script, numKeys, ...keysThenArgs).
+    eval: jest.fn(async (_script: string, _numKeys: number, key: string, _ttlSec: string) => {
+      const next = (store.get(key) ?? 0) + 1;
+      store.set(key, next);
+      return next;
+    }),
     expire: jest.fn().mockResolvedValue(1),
     del:    jest.fn(async (key: string) => { store.delete(key); return 1; }),
     set:    jest.fn().mockResolvedValue('OK'),
