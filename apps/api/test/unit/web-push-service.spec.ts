@@ -25,7 +25,7 @@ function makeConfig(overrides: Record<string, string> = {}) {
   const defaults: Record<string, string> = {
     VAPID_PUBLIC_KEY: 'BKagOny0KF_2pCJQ3m...fake',
     VAPID_PRIVATE_KEY: 'UUxI4O8-FbRouAevSmBQ6o18hgE4nSG3qwvJTfKc',
-    VAPID_SUBJECT: 'mailto:support@jadwal.com',
+    VAPID_SUBJECT: 'mailto:support@jadwal.qa',
   };
   const merged = { ...defaults, ...overrides };
   return {
@@ -56,7 +56,7 @@ describe('WebPushService — construction', () => {
   test('keys configured → setVapidDetails called with subject + both keys', () => {
     new WebPushService(makeConfig() as any, makePrismaMock() as any);
     expect(webpush.setVapidDetails).toHaveBeenCalledWith(
-      'mailto:support@jadwal.com',
+      'mailto:support@jadwal.qa',
       expect.any(String),
       expect.any(String),
     );
