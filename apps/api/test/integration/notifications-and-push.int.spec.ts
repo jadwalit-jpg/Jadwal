@@ -39,7 +39,7 @@ function makeWebPush() {
         const c: Record<string, string> = {
           VAPID_PUBLIC_KEY: VAPID_PUBLIC,
           VAPID_PRIVATE_KEY: VAPID_PRIVATE,
-          VAPID_SUBJECT: 'mailto:support@jadwal.com',
+          VAPID_SUBJECT: 'mailto:support@jadwal.qa',
         };
         return c[k] ?? fallback;
       },
