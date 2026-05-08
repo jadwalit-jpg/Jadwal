@@ -7,6 +7,11 @@ import { passwordResetTemplate } from './templates/password-reset';
 import { passwordChangedTemplate } from './templates/password-changed';
 import { emailVerificationTemplate } from './templates/email-verification';
 import { vendorWelcomeTemplate } from './templates/vendor-welcome';
+import {
+  adminAlertTemplate,
+  ADMIN_ALERT_SUBJECTS,
+  type AdminAlertType,
+} from './templates/admin-alert';
 import { EmailSuppressionService } from './email-suppression.service';
 import { EmailQuotaService } from './email-quota.service';
 import { EmailUnsubscribeTokenService } from './email-unsubscribe-token.service';
@@ -176,12 +181,90 @@ export class EmailService {
 
   // ─── Admin Notifications ─────────────────────────────────────────────────
 
+  /**
+   * Per-key value cap. Long values get truncated with a trailing ellipsis.
+   * Keeps a single misbehaving caller from blowing the alert email up to
+   * megabytes (some receivers truncate or reject large mails).
+   */
+  private static readonly ADMIN_ALERT_VALUE_MAX = 200;
+  /** Whole-note cap. Note is for a short narrative line, not log dumps. */
+  private static readonly ADMIN_ALERT_NOTE_MAX = 500;
+  /** Total number of detail entries kept. Anything beyond is dropped. */
+  private static readonly ADMIN_ALERT_DETAILS_MAX_KEYS = 20;
+
+  /**
+   * Strip control chars and cap length on a free-form string. The HTML
+   * template already escapes the value at render time; this layer exists
+   * to keep the email *readable* (control bytes break clients like Outlook)
+   * and to bound size before MIME encoding.
+   */
+  private sanitizeAlertValue(raw: unknown, maxLen: number): string {
+    const s = String(raw ?? '');
+    // eslint-disable-next-line no-control-regex
+    const cleaned = s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+    if (cleaned.length <= maxLen) return cleaned;
+    return cleaned.slice(0, maxLen) + '…';
+  }
+
+  /**
+   * Send a typed operational alert to the admin inbox.
+   *
+   * The signature is intentionally narrow: callers pass an `AdminAlertType`
+   * enum (subject is hardcoded server-side) plus optional sanitized context.
+   * This prevents future code paths from accidentally placing user-controlled
+   * strings into the *subject* of an admin email — a class of bug that
+   * historically enables phishing-template spoofing or ASCII-art injection
+   * into the admin's mailbox.
+   *
+   * @param data.type    Hardcoded event identifier (one of `AdminAlertType`)
+   * @param data.details Optional structured context — keys are static
+   *                     identifiers, values get HTML-escaped + truncated
+   * @param data.note    Optional one-line narrative — sanitized + truncated
+   */
   async sendAdminAlert(data: {
-    subject: string;
-    message: string;
-  }) {
-    const adminEmail = this.config.get('ADMIN_EMAIL', 'Jadwalqtr@gmail.com');
-    return this.send(adminEmail, data.subject, 'admin-alert', data);
+    type: AdminAlertType;
+    details?: Record<string, unknown>;
+    note?: string;
+  }): Promise<boolean> {
+    const subject = ADMIN_ALERT_SUBJECTS[data.type];
+    if (!subject) {
+      // Type-safe at compile time, but defend against a runtime caller that
+      // bypassed types (test fixtures, JSON-deserialized config). Fail-closed:
+      // log and return success-shaped so we don't propagate the error to a
+      // critical path that's already trying to *report* a failure.
+      this.logger.warn(`sendAdminAlert called with unknown type — dropping`);
+      return true;
+    }
+
+    const sanitizedDetails: Record<string, string> = {};
+    if (data.details) {
+      const entries = Object.entries(data.details).slice(
+        0,
+        EmailService.ADMIN_ALERT_DETAILS_MAX_KEYS,
+      );
+      for (const [k, v] of entries) {
+        // Keys must be static identifiers — cap at 60 chars defensively
+        // (the type system does not enforce this; callers using dynamic
+        // keys would be a misuse and we still need to behave sanely).
+        const safeKey = this.sanitizeAlertValue(k, 60);
+        sanitizedDetails[safeKey] = this.sanitizeAlertValue(
+          v,
+          EmailService.ADMIN_ALERT_VALUE_MAX,
+        );
+      }
+    }
+
+    const sanitizedNote = data.note
+      ? this.sanitizeAlertValue(data.note, EmailService.ADMIN_ALERT_NOTE_MAX)
+      : undefined;
+
+    const adminEmail = this.config.get<string>('ADMIN_EMAIL', 'Jadwalqtr@gmail.com');
+    return this.send(adminEmail, subject, 'admin-alert', {
+      type: data.type,
+      details: sanitizedDetails,
+      note: sanitizedNote,
+      generatedAt: new Date().toISOString(),
+    });
   }
 
   // ─── Template Rendering ───────────────────────────────────────────────────
@@ -213,6 +296,9 @@ export class EmailService {
         break;
       case 'vendor-approved':
         html = vendorWelcomeTemplate(data as any);
+        break;
+      case 'admin-alert':
+        html = adminAlertTemplate(data as any);
         break;
       default:
         this.logger.warn(`No HTML template found for "${template}", using plain text fallback`);
