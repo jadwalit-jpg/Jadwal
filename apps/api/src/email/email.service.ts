@@ -258,7 +258,7 @@ export class EmailService {
       ? this.sanitizeAlertValue(data.note, EmailService.ADMIN_ALERT_NOTE_MAX)
       : undefined;
 
-    const adminEmail = this.config.get<string>('ADMIN_EMAIL', 'Jadwalqtr@gmail.com');
+    const adminEmail = this.config.get<string>('ADMIN_EMAIL', 'jadwalit@gmail.com');
     return this.send(adminEmail, subject, 'admin-alert', {
       type: data.type,
       details: sanitizedDetails,
