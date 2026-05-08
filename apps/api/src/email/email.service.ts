@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { bookingConfirmationTemplate } from './templates/booking-confirmation';
 import { bookingCancellationTemplate } from './templates/booking-cancellation';
 import { passwordResetTemplate } from './templates/password-reset';
@@ -9,14 +9,25 @@ import { emailVerificationTemplate } from './templates/email-verification';
 import { vendorWelcomeTemplate } from './templates/vendor-welcome';
 import { EmailSuppressionService } from './email-suppression.service';
 import { EmailQuotaService } from './email-quota.service';
+import { EmailUnsubscribeTokenService } from './email-unsubscribe-token.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 /**
- * Email Service — AWS SES integration.
+ * Email Service — AWS SES v2 integration with RFC 8058 List-Unsubscribe headers.
  *
  * When EMAIL_ENABLED=false (dev): logs to console, never sends.
- * When EMAIL_ENABLED=true (production): sends via AWS SES.
+ * When EMAIL_ENABLED=true (production): sends via AWS SES v2 SDK using raw MIME
+ * so we can attach `List-Unsubscribe` and `List-Unsubscribe-Post` headers
+ * (RFC 8058 + Gmail/Yahoo Feb 2024 bulk-sender requirements).
  *
- * All callers already use this service — no refactoring needed.
+ * Migration history (2026-05-06): switched from `@aws-sdk/client-ses` (v1 API,
+ * SendEmailCommand with Body.Html.Data) to `@aws-sdk/client-sesv2` (v2 API,
+ * SendEmailCommand with Content.Raw.Data). v2 supports custom MIME headers
+ * which v1 does not.
+ *
+ * All callers continue to use the same public methods — no signature changes.
+ * The userId is looked up by email at send-time so the unsubscribe token can
+ * bind to the user record.
  */
 @Injectable()
 export class EmailService {
@@ -24,7 +35,8 @@ export class EmailService {
   private readonly from: string;
   private readonly enabled: boolean;
   private readonly appUrl: string;
-  private readonly sesClient: SESClient | null;
+  private readonly apiUrl: string;
+  private readonly sesClient: SESv2Client | null;
   // Optional — when set, every SendEmailCommand carries this configuration
   // set name. The set is wired in AWS to publish Bounce/Complaint events
   // to two SNS topics; without it, the bounce/complaint feedback loop is
@@ -35,10 +47,15 @@ export class EmailService {
     private config: ConfigService,
     private suppressions: EmailSuppressionService,
     private emailQuota: EmailQuotaService,
+    private prisma: PrismaService,
+    private unsubscribeTokens: EmailUnsubscribeTokenService,
   ) {
     this.from = this.config.get('EMAIL_FROM', 'noreply@jadwal.qa');
     this.enabled = this.config.get('EMAIL_ENABLED', 'false') === 'true';
     this.appUrl = this.config.getOrThrow<string>('APP_URL');
+    // API_URL is where the unsubscribe endpoint lives (e.g. https://jadwal.qa/api).
+    // Used to build the HTTPS variant of List-Unsubscribe.
+    this.apiUrl = this.config.get('API_URL', this.appUrl + '/api');
     this.configSetName = this.config.get<string>('SES_CONFIG_SET_NAME');
 
     // Defence-in-depth: never let production boot with email in log-only mode
@@ -48,7 +65,7 @@ export class EmailService {
 
     // Only initialize SES client when email is enabled (avoids credential errors in dev)
     this.sesClient = this.enabled
-      ? new SESClient({ region: this.config.get('AWS_REGION', 'eu-central-1') })
+      ? new SESv2Client({ region: this.config.get('AWS_REGION', 'eu-central-1') })
       : null;
   }
 
@@ -218,6 +235,95 @@ export class EmailService {
     return `${local[0]}***@${domain}`;
   }
 
+  /**
+   * Encode a string as a MIME header value safe for any 7-bit transport.
+   * Subjects with non-ASCII characters need `=?UTF-8?B?<base64>?=` encoding;
+   * pure-ASCII subjects pass through unchanged. SES re-validates so this is
+   * defence-in-depth.
+   */
+  private encodeHeader(value: string): string {
+    // Fast path: ASCII-only, no special chars → use as-is
+    // eslint-disable-next-line no-control-regex
+    if (/^[\x20-\x7e]+$/.test(value) && !/[=?]/.test(value)) return value;
+    return `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
+  }
+
+  /**
+   * Build the raw MIME message including List-Unsubscribe headers.
+   * Returns a base64-encoded string ready for `Content.Raw.Data`.
+   */
+  private buildRawMime(params: {
+    to: string;
+    subject: string;
+    html: string;
+    unsubscribeToken: string | null;
+  }): string {
+    const { to, subject, html, unsubscribeToken } = params;
+
+    // Build List-Unsubscribe header value. Always include the mailto: variant
+    // (works even without token); add HTTPS variant only when we have a per-
+    // user token (otherwise the URL would unsubscribe nobody — cleaner to omit).
+    // Format per RFC 2369 / 8058:
+    //   List-Unsubscribe: <https://example.com/unsubscribe?t=...>, <mailto:unsubscribe@example.com>
+    const unsubMailto = `<mailto:unsubscribe@jadwal.qa?subject=unsubscribe>`;
+    const listUnsubscribe = unsubscribeToken
+      ? `<${this.apiUrl}/email/unsubscribe?t=${unsubscribeToken}>, ${unsubMailto}`
+      : unsubMailto;
+
+    // Headers section. Each header is a single line ≤1000 chars (RFC 5321).
+    // The order doesn't matter to receivers but `From`, `To`, `Subject`,
+    // `MIME-Version`, `Content-Type` first is conventional.
+    const headers = [
+      `From: ${this.from}`,
+      `To: ${to}`,
+      `Subject: ${this.encodeHeader(subject)}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/html; charset=UTF-8`,
+      // base64, not 7bit: templates may carry non-ASCII (Arabic copy, smart
+      // quotes, currency glyphs) which would violate the RFC 2045 7bit
+      // contract. AWS SES also doesn't guarantee 8bit preservation when it
+      // rewrites the message for open/click tracking — base64 is robust.
+      `Content-Transfer-Encoding: base64`,
+      `List-Unsubscribe: ${listUnsubscribe}`,
+      // List-Unsubscribe-Post is the RFC 8058 marker that says "I support
+      // one-click POST unsubscribe" — receivers (Gmail, Yahoo) only register
+      // the sender as bulk-friendly when this exact header is present.
+      ...(unsubscribeToken ? [`List-Unsubscribe-Post: List-Unsubscribe=One-Click`] : []),
+    ];
+
+    // RFC 2045 §6.8: base64 lines must be ≤76 chars; fold with CRLF.
+    const encodedBody = Buffer.from(html, 'utf8')
+      .toString('base64')
+      .replace(/(.{76})/g, '$1\r\n');
+    const mime = headers.join('\r\n') + '\r\n\r\n' + encodedBody;
+    // SES v2 wants base64-encoded Raw.Data (decoded back to bytes by SES).
+    // The SDK accepts a Buffer or string; we encode explicitly to be unambiguous.
+    return Buffer.from(mime, 'utf8').toString('base64');
+  }
+
+  /**
+   * Look up the userId belonging to this email so we can mint a
+   * recipient-bound unsubscribe token. Returns null for emails not
+   * associated with a User record (admin-alert recipient, non-customer
+   * staff addresses) — those get only the mailto: variant.
+   *
+   * Failure cases (DB error, missing record) fall through to "no token"
+   * rather than throwing — email send must continue regardless.
+   */
+  private async resolveUserId(email: string): Promise<string | null> {
+    try {
+      const u = await this.prisma.client.user.findUnique({
+        where: { email: email.toLowerCase().trim() },
+        select: { id: true },
+      });
+      return u?.id ?? null;
+    } catch (err) {
+      const kind = err instanceof Error ? err.name : 'UnknownError';
+      this.logger.warn(`resolveUserId failed (${kind}) — proceeding without HTTPS unsubscribe URL`);
+      return null;
+    }
+  }
+
   private async send(to: string, subject: string, template: string, _data: any): Promise<boolean> {
     const masked = this.maskEmail(to);
 
@@ -275,13 +381,30 @@ export class EmailService {
       return true;
     }
 
+    // Mint a per-recipient unsubscribe token if we can identify the user.
+    // Resolution failures (admin-alert, non-customer recipients, DB hiccups)
+    // fall through to mailto-only header — mail still goes out.
+    let unsubscribeToken: string | null = null;
+    if (template !== 'admin-alert') {
+      const userId = await this.resolveUserId(to);
+      if (userId) {
+        unsubscribeToken = this.unsubscribeTokens.generate(userId, to);
+      }
+    }
+
+    const rawMime = this.buildRawMime({ to, subject, html, unsubscribeToken });
+
     try {
       const command = new SendEmailCommand({
-        Source: this.from,
+        FromEmailAddress: this.from,
         Destination: { ToAddresses: [to] },
-        Message: {
-          Subject: { Data: subject },
-          Body: { Html: { Data: html } },
+        Content: {
+          Raw: {
+            // SDK v2 accepts Uint8Array or base64 string. We send base64
+            // explicitly — easier to inspect in unit tests and unambiguous
+            // to anyone reading the wire format.
+            Data: Buffer.from(rawMime, 'base64'),
+          },
         },
         // ConfigurationSetName is what causes SES to publish bounce /
         // complaint / reject events to the SNS topics that feed the
@@ -293,7 +416,7 @@ export class EmailService {
         // Tags surface in CloudWatch metrics so we can break down sends
         // by environment + template (e.g. spike on `password-reset` in
         // prod = telltale of a forgot-password attack).
-        Tags: [
+        EmailTags: [
           { Name: 'env', Value: process.env.NODE_ENV ?? 'unknown' },
           { Name: 'template', Value: template },
         ],

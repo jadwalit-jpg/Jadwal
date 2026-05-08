@@ -410,7 +410,9 @@ describe('AWS Service Skeletons (Production Readiness)', () => {
 
   test('Email service has production SES code commented and ready', () => {
     const emailService = readSrc('src/email/email.service.ts');
-    expect(emailService).toContain('SESClient');
+    // Migrated to SES v2 SDK on 2026-05-06 — v1 API can't carry custom MIME
+    // headers (List-Unsubscribe / List-Unsubscribe-Post for RFC 8058).
+    expect(emailService).toContain('SESv2Client');
     expect(emailService).toContain('SendEmailCommand');
     expect(emailService).toContain('EMAIL_ENABLED');
     expect(emailService).toContain('EMAIL_FROM');
@@ -1348,22 +1350,24 @@ webDescribe('REGRESSION: FE — target=_blank carries rel="noopener noreferrer"'
   });
 });
 
-webDescribe('REGRESSION: FE — activity map iframe is sandboxed', () => {
+webDescribe('REGRESSION: FE — activity page iframes (if any) are sandboxed', () => {
+  // The original Google Maps iframe was removed in 2026-05-08 (PR #170)
+  // because Google deprecated the `output=embed` URL pattern; the page now
+  // renders a Leaflet+OSM <div>-based map instead. These assertions stay
+  // as a *forward-looking guard*: if anyone re-adds an iframe to this page
+  // (e.g. a future YouTube preview or Google Maps Embed API switch), they
+  // must sandbox it correctly. Zero iframes is the current happy state.
   const page = readSrcSafe('../../apps/web/src/app/activity/[slug]/page.tsx');
 
-  test('iframe has sandbox attribute (not missing, not empty)', () => {
+  test('any iframe present must carry a sandbox attribute', () => {
     const iframeMatches = page.match(/<iframe[^>]*>/g) || [];
-    expect(iframeMatches.length).toBeGreaterThan(0);
     for (const iframe of iframeMatches) {
       expect(iframe).toMatch(/sandbox=/);
     }
   });
 
-  test('sandbox does NOT grant top-navigation or forms (minimum restrictions)', () => {
-    // Google Maps embed needs allow-scripts + allow-same-origin, but it must
-    // never also grant allow-top-navigation (frame-breakout) or allow-forms.
+  test('any iframe sandbox must not grant top-navigation, forms, or popup-escape', () => {
     const iframeMatches = page.match(/<iframe[^>]*sandbox=[^>]*>/g) || [];
-    expect(iframeMatches.length).toBeGreaterThan(0);
     for (const iframe of iframeMatches) {
       expect(iframe).not.toMatch(/allow-top-navigation/);
       expect(iframe).not.toMatch(/allow-forms/);

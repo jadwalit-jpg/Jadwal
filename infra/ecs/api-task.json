@@ -67,7 +67,8 @@
         { "name": "SNS_TOPIC_ARN_BOUNCES",        "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/SNS_TOPIC_ARN_BOUNCES" },
         { "name": "SNS_TOPIC_ARN_COMPLAINTS",     "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/SNS_TOPIC_ARN_COMPLAINTS" },
         { "name": "EMAIL_QUOTA_PER_IP_PER_DAY",   "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/EMAIL_QUOTA_PER_IP_PER_DAY" },
-        { "name": "EMAIL_QUOTA_PLATFORM_PER_DAY", "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/EMAIL_QUOTA_PLATFORM_PER_DAY" }
+        { "name": "EMAIL_QUOTA_PLATFORM_PER_DAY", "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/EMAIL_QUOTA_PLATFORM_PER_DAY" },
+        { "name": "UNSUBSCRIBE_TOKEN_SECRET",     "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/UNSUBSCRIBE_TOKEN_SECRET" }
       ],
       "mountPoints": [],
       "volumesFrom": [],

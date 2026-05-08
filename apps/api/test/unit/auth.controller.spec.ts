@@ -321,6 +321,29 @@ describe('AuthController — Google OAuth callback', () => {
     expect(redirectUrl).toMatch(/\/$/);
   });
 
+  // Backslash bypass guard — Chrome/Firefox normalize `\` to `/` per WHATWG URL,
+  // so `/\evil.com` could read as `//evil.com` (protocol-relative). The first-pass
+  // sanitizer in google-auth.guard.ts already rejects this; the callback-side
+  // re-validation below must mirror that defence (HIGH-01 audit finding 2026-05-07).
+  test.each([
+    ['/\\evil.com',          'starts with /\\\\'],
+    ['/path\\evil.com',      'embedded backslash in middle'],
+    ['/legit\\..\\evil.com', 'multiple backslashes'],
+  ])('CUSTOMER with backslash callbackUrl (%s) → falls back to /', async (callbackUrl) => {
+    const { ctrl } = await buildCtrl();
+    const res = makeResponseMock();
+    const state = Buffer.from(JSON.stringify({ callbackUrl })).toString('base64url');
+    const req = makeRequestMock() as any;
+    req.user = {};
+    req.query = { state };
+
+    await ctrl.googleCallback(req, res as any);
+    const redirectUrl = res.redirect.mock.calls[0][0];
+    expect(redirectUrl).not.toContain('evil.com');
+    expect(redirectUrl).not.toContain('\\');
+    expect(redirectUrl).toMatch(/\/$/);
+  });
+
   test('authService error → redirects to /login?error=oauth_failed (no message leak)', async () => {
     const { ctrl, authSvc } = await buildCtrl();
     authSvc.handleGoogleAuth.mockRejectedValueOnce(new Error('Some internal error with stack'));
