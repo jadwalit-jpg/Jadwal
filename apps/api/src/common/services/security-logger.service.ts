@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 export type SecurityEvent =
   | 'LOGIN_SUCCESS'
   | 'LOGIN_FAILED'
+  | 'LOGIN_GLOBAL_RATE_EXCEEDED'
   | 'ACCOUNT_LOCKED'
   | 'LOGOUT'
   | 'TOKEN_REFRESH'

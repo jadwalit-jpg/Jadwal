@@ -21,10 +21,12 @@ import { EmailService } from '../../src/email/email.service';
 import { EmailQuotaService } from '../../src/email/email-quota.service';
 import { SmsService } from '../../src/sms/sms.service';
 import { NotificationService } from '../../src/common/services/notification.service';
+import { RedisService } from '../../src/redis/redis.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import {
   makeJwtMock, makeConfigMock, makeUsersMock, makeSecurityLoggerMock,
   makeAuditLoggerMock, makeEmailMock, makeEmailQuotaMock, makeSmsMock, makeNotificationMock,
+  makeRedisMock,
   makeResponseMock, makeRequestMock,
 } from '../mocks/auth-deps.mock';
 
@@ -41,6 +43,7 @@ async function buildSut(configOverrides: Record<string, string> = {}) {
   const emailQuota = makeEmailQuotaMock();
   const sms = makeSmsMock();
   const notif = makeNotificationMock();
+  const redis = makeRedisMock();
 
   const moduleRef = await Test.createTestingModule({
     providers: [
@@ -55,12 +58,13 @@ async function buildSut(configOverrides: Record<string, string> = {}) {
       { provide: EmailQuotaService,     useValue: emailQuota },
       { provide: SmsService,            useValue: sms },
       { provide: NotificationService,   useValue: notif },
+      { provide: RedisService,          useValue: redis },
     ],
   }).compile();
 
   return {
     sut: moduleRef.get(AuthService),
-    prisma, jwt, config, users, sec, audit, email, emailQuota, sms, notif,
+    prisma, jwt, config, users, sec, audit, email, emailQuota, sms, notif, redis,
   };
 }
 
