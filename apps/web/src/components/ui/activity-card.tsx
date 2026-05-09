@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { ArrowRight, Clock, Heart, MapPin } from 'lucide-react';
+import { Clock, Heart, MapPin } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { localized } from '@/lib/localize';
@@ -276,21 +276,18 @@ export function ActivityCard({
               />
             ) : null}
           </div>
-          {/* Glassmorphism CTA — sits below the price/rating row.
-              `aria-label` includes the activity title because the same
-              card already has TWO links to the same href (image + title);
-              a third unlabeled "View" link would read as duplicate to
-              screen-reader users. */}
+          {/* View CTA — matches the solid-blue pill used on /explore so
+              every list of cards (homepage Featured + Near You, /explore
+              grid) shows the same affordance. `aria-label` includes the
+              activity title because the same card already has TWO links
+              to the same href (image + title); a third unlabeled "View"
+              link would read as duplicate to screen-reader users. */}
           <Link
             href={finalHref}
             aria-label={`${t('explore.view', { defaultValue: 'View' })} ${title}`}
-            className="group/view flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/60 bg-white/40 px-3 py-2 text-[13px] font-semibold tracking-[-0.1px] text-jadwal-text shadow-[0_2px_8px_-2px_rgba(15,23,42,0.08)] backdrop-blur-md transition-colors hover:border-jadwal-primary/40 hover:bg-white/60 dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/15"
+            className="inline-flex w-full items-center justify-center rounded-xl bg-blue-600 px-4 py-2 text-xs font-medium text-white transition-all hover:bg-blue-700"
           >
-            <span>{t('explore.view', { defaultValue: 'View' })}</span>
-            <ArrowRight
-              className="h-3.5 w-3.5 transition-transform group-hover/view:translate-x-0.5 rtl:rotate-180 rtl:group-hover/view:-translate-x-0.5"
-              aria-hidden="true"
-            />
+            {t('explore.view', { defaultValue: 'View' })}
           </Link>
         </div>
       </div>
