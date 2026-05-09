@@ -1,12 +1,13 @@
 /**
  * SesEventsController unit tests.
  *
- * Auth model: this controller does NOT cryptographically verify SNS
- * signatures (see controller for full rationale). Auth substitutes are:
+ * Auth model — 4 layers (3 enforced, 1 in WARN mode rollout):
  *   1. Cloudflare WAF AWS-IP allowlist on the path (configured outside
  *      this codebase — runbook entry only)
  *   2. TopicArn pinning (tested here)
  *   3. Content-shape validation (tested here)
+ *   4. SNS RSA signature (own spec at sns-signature-validator.spec.ts —
+ *      this file injects a stub validator that returns valid:true)
  *
  * Tests cover:
  *   - Missing message-type header → 403
@@ -43,8 +44,13 @@ function makeSut() {
     isSuppressed: jest.fn(),
     unsuppress: jest.fn(),
   };
-  const sut = new SesEventsController(config as any, suppressions as any);
-  return { sut, suppressions };
+  // Layer 4 stub — these tests focus on layers 1–3. The signature
+  // validator has its own spec (sns-signature-validator.spec.ts).
+  const snsSignature = {
+    validate: jest.fn().mockResolvedValue({ valid: true }),
+  };
+  const sut = new SesEventsController(config as any, suppressions as any, snsSignature as any);
+  return { sut, suppressions, snsSignature };
 }
 
 function makeBounceMessage(emailAddress: string, bounceType: 'Permanent' | 'Transient' = 'Permanent') {

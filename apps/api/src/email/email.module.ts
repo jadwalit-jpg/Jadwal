@@ -6,6 +6,7 @@ import { EmailSuppressionService } from './email-suppression.service';
 import { EmailUnsubscribeTokenService } from './email-unsubscribe-token.service';
 import { EmailUnsubscribeController } from './email-unsubscribe.controller';
 import { SesEventsController } from './ses-events.controller';
+import { SnsSignatureValidator } from './sns-signature-validator.service';
 import { RedisModule } from '../redis/redis.module';
 import { SecurityLoggerService } from '../common/services/security-logger.service';
 
@@ -19,6 +20,7 @@ import { SecurityLoggerService } from '../common/services/security-logger.servic
     EmailSuppressionService,
     EmailUnsubscribeTokenService,
     SecurityLoggerService,
+    SnsSignatureValidator,
   ],
   exports: [
     EmailService,

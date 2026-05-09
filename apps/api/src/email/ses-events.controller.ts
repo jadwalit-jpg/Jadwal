@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import { RATE_LIMIT_AUTH } from '../common/throttle-config';
 import { EmailSuppressionService } from './email-suppression.service';
+import { SnsSignatureValidator } from './sns-signature-validator.service';
 
 interface SnsMessage {
   Type: 'Notification' | 'SubscriptionConfirmation' | 'UnsubscribeConfirmation';
@@ -25,6 +26,7 @@ interface SnsMessage {
   UnsubscribeURL?: string;
   SubscribeURL?: string;
   Subject?: string;
+  Token?: string;
 }
 
 interface SesBounceMessage {
@@ -65,18 +67,25 @@ type SesNotification = SesBounceMessage | SesComplaintMessage;
  *   4. We parse the inner SES JSON, hash the recipient address, and
  *      upsert into EmailSuppression so future sends are short-circuited.
  *
- * ─── Auth model: multi-layer, no SNS signature verification ──────────
+ * ─── Auth model: 4 layers (3 enforced + 1 in WARN-mode rollout) ─────
  *
- * We do NOT cryptographically verify AWS's SNS signature on the request.
- * Reason: real SES configuration-set Bounce/Complaint events delivered
- * via HTTPS subscription consistently failed signature verification
- * across multiple verifier implementations (hand-rolled + maintained
- * `sns-payload-validator` npm) using the correct AWS public cert and
- * AWS-spec canonical. The body bytes received by our handler differ
- * from what AWS signed at publish time (suspected mutation in
- * Cloudflare or Express body parsing of the inner Message JSON).
+ * We layer 4 independent checks. Three are enforcing today; the 4th
+ * (SNS signature validation) runs in WARN mode pending a bake-in
+ * period. Once SNS_SIGNATURE_ENFORCE=true is set in env, layer 4 hard-
+ * rejects mismatches.
  *
- * Auth substitutes — all three must pass for a request to be accepted:
+ * History on layer 4: a previous attempt at SNS signature validation
+ * (`sns-payload-validator` npm + a hand-rolled variant) silently
+ * rejected every legit SES configuration-set event in production. The
+ * team rolled back and added the 3 substitute layers below. This
+ * iteration ships the validator in WARN mode so we can SEE whether
+ * our implementation handles real production messages without
+ * regressing the suppression loop. After ~7 days of clean
+ * `valid=true` log lines, an operator flips SNS_SIGNATURE_ENFORCE
+ * via SSM + force-new-deployment to make signature mismatches
+ * actually reject.
+ *
+ * Auth layers — all 3 enforcing layers must pass; layer 4 logs only:
  *
  *   1. **Cloudflare WAF allowlist of AWS SNS publish IP ranges**
  *      configured on `/api/webhooks/ses-events` outside this codebase.
@@ -95,7 +104,19 @@ type SesNotification = SesBounceMessage | SesComplaintMessage;
  *      notificationType / eventType). Malformed messages are 200-acked
  *      to stop SNS retries but produce no DB writes.
  *
- * Worst case if all three are bypassed: an attacker can inject
+ *   4. **SNS RSA signature** (WARN mode initially). The validator
+ *      service (sns-signature-validator.service.ts) builds the AWS
+ *      canonical from the parsed message values, fetches the cert at
+ *      SigningCertURL (URL-validated against the AWS SNS host pattern
+ *      first, with cert PEM parsing as a second gate), and verifies
+ *      the RSA signature. Result is logged structured on every call.
+ *      Only enforced when `SNS_SIGNATURE_ENFORCE=true` in env — until
+ *      then a `signature_mismatch` log is emitted but the request
+ *      continues through layers 1–3. This avoids regressing on the
+ *      historical issue where signature verification rejected legit
+ *      production events.
+ *
+ * Worst case if all four are bypassed: an attacker can inject
  * suppression rows for arbitrary email addresses (DoS the suppression
  * list to silently drop legit emails). Mitigated by the planned
  * `DELETE /admin/email-suppressions/:hash` admin endpoint for recovery.
@@ -117,13 +138,18 @@ export class SesEventsController {
   private readonly logger = new Logger(SesEventsController.name);
   private readonly bouncesTopicArn: string | undefined;
   private readonly complaintsTopicArn: string | undefined;
+  private readonly enforceSignature: boolean;
 
   constructor(
     private config: ConfigService,
     private suppressions: EmailSuppressionService,
+    private snsSignature: SnsSignatureValidator,
   ) {
     this.bouncesTopicArn = this.config.get<string>('SNS_TOPIC_ARN_BOUNCES');
     this.complaintsTopicArn = this.config.get<string>('SNS_TOPIC_ARN_COMPLAINTS');
+    // Off by default — runs validator in WARN mode. Flip to "true" via
+    // SSM after ~7 days of clean WARN logs to enforce mismatches.
+    this.enforceSignature = this.config.get<string>('SNS_SIGNATURE_ENFORCE') === 'true';
   }
 
   @Post()
@@ -145,6 +171,38 @@ export class SesEventsController {
     ) {
       this.logger.warn(`ses-events rejected: unknown TopicArn`);
       throw new ForbiddenException();
+    }
+
+    // Layer 4 — SNS RSA signature check (WARN/ENFORCE per env flag).
+    // Run on every accepted message so we get a population sample of
+    // valid=true vs reasons-for-mismatch in CloudWatch. Until we flip
+    // SNS_SIGNATURE_ENFORCE, a mismatch logs but doesn't reject — that
+    // way an implementation bug here can't take the suppression loop
+    // dark like the previous attempt did.
+    const sigResult = await this.snsSignature.validate(body).catch((err) => {
+      // The validator itself is supposed to swallow errors and return
+      // a structured result. If it throws anyway (programmer error,
+      // unexpected runtime), treat it like a mismatch in WARN — never
+      // crash the webhook over a defence-in-depth check.
+      this.logger.error(
+        `ses-events sig-validator threw: ${err instanceof Error ? err.name : 'UnknownError'}`,
+      );
+      return { valid: false as const, reason: 'signature_mismatch' as const };
+    });
+    if (!sigResult.valid) {
+      this.logger.warn(
+        `ses-events signature ${this.enforceSignature ? 'REJECTED' : 'WARN'}: ` +
+          `reason=${sigResult.reason} type=${body.Type} ` +
+          `topicArn=${body.TopicArn} messageId=${body.MessageId} ` +
+          `sigVersion=${body.SignatureVersion}`,
+      );
+      if (this.enforceSignature) {
+        throw new ForbiddenException();
+      }
+    } else {
+      this.logger.log(
+        `ses-events signature valid type=${body.Type} messageId=${body.MessageId}`,
+      );
     }
 
     if (body.Type === 'SubscriptionConfirmation') {
