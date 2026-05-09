@@ -6,6 +6,7 @@ import { HeroEyebrow } from './_home-islands/hero-eyebrow';
 import { HeroTitle } from './_home-islands/hero-title';
 import { HeroSearchBar } from './_home-islands/hero-search-bar';
 import { HeroTrustMetrics } from './_home-islands/hero-trust-metrics';
+import { HeroBrowseCta } from './_home-islands/hero-browse-cta';
 import HomeBelowFoldLoader from './_home-islands/home-below-fold-loader';
 
 export const metadata: Metadata = {
@@ -245,6 +246,7 @@ export default function Page() {
 
           <HeroSearchBar />
           <HeroTrustMetrics />
+          <HeroBrowseCta />
         </div>
 
         {/* Waves (light) */}
