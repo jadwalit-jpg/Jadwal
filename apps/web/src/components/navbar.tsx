@@ -82,9 +82,14 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
           <Link href="/" className="flex items-center gap-2">
             {/* Brand logo — vector keeps crisp at any size; `priority` so it
                 isn't lazy-loaded behind the LCP frame. */}
+            {/* Logo is decorative — the wordmark next to it already carries
+                the link's accessible name. `alt=""` + `aria-hidden` collapses
+                the brand link's accessible name from "Jadwal Jadwal جدول"
+                (repetitive) to "Jadwal جدول" (clean). */}
             <Image
               src="/jadwal-logo.svg"
-              alt="Jadwal"
+              alt=""
+              aria-hidden="true"
               width={36}
               height={36}
               priority
