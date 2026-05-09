@@ -4,11 +4,10 @@
  * auth routes.
  *
  * Why: GeoProvider runs an /api/geo/detect call + an effect to detect the
- * user's country on mount. PhonePrompt + PushPrompt fetch user state via
- * useGeo. Neither is needed on admin / vendor / auth pages — those users
- * don't see "verify your phone" / "enable push" prompts, and admin /
- * vendor flows aren't country-scoped. Skipping the provider on those
- * routes saves ~50-150ms TBT per route.
+ * user's country on mount. PushPrompt fetches user state via useGeo. Not
+ * needed on admin / vendor / auth pages — those users don't see "enable
+ * push" prompts, and admin / vendor flows aren't country-scoped.
+ * Skipping the provider on those routes saves ~50-150ms TBT per route.
  *
  * Verified safe: grepped useGeo usage across the entire app and confirmed
  * only customer-facing files (home, explore, activity/[slug]/book, profile)
