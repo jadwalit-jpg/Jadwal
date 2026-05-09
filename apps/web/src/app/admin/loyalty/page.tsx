@@ -115,7 +115,17 @@ export default function AdminLoyaltyPage() {
 
   const startEditConfig = useCallback(() => {
     if (!config) return;
-    setConfigForm({ ...config });
+    // Extract only the 3 editable fields (NOT a `{ ...config }` spread):
+    //   - The Prisma record carries `id` + `updatedAt` which the backend DTO
+    //     rejects via `forbidNonWhitelisted: true` → 400 Bad Request.
+    //   - Prisma serializes Decimal columns as JSON strings ("1.0000"); the
+    //     DTO requires `@IsNumber()`, so we Number()-coerce here so a save
+    //     without edits doesn't ship strings.
+    setConfigForm({
+      pointsPerQar:  Number(config.pointsPerQar),
+      qarPerPoint:   Number(config.qarPerPoint),
+      minRedemption: Number(config.minRedemption),
+    });
     setEditingConfig(true);
   }, [config]);
 
