@@ -80,18 +80,27 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
       <header className={`fixed top-0 inset-x-0 z-100 transition-all duration-500 ${isOpaque ? 'bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-sky-100 dark:border-slate-800 shadow-sm' : 'bg-transparent border-b border-transparent'}`}>
         <nav className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2">
-            {/* Brand logo. SVG sized at 36px renders crisp on retina; `priority`
-                keeps it out of lazy-loading since it ships in the LCP frame. */}
+            {/* Brand logo — vector keeps crisp at any size; `priority` so it
+                isn't lazy-loaded behind the LCP frame. */}
             <Image
-              src="/jadwal-logo.png"
+              src="/jadwal-logo.svg"
               alt="Jadwal"
-              width={72}
-              height={72}
+              width={36}
+              height={36}
               priority
               className="h-9 w-9 shrink-0 drop-shadow-sm"
             />
-            <span className="text-2xl font-bold tracking-tight drop-shadow-md text-[#C89E3F]">Jadwal</span>
-            <span className="text-2xl font-bold tracking-tight drop-shadow-md text-[#C89E3F]">جدول</span>
+            {/* Rainbow gradient mirrors the six tile colors in the logo —
+                gold → coral → magenta → purple → teal → sky. `bg-clip-text`
+                with `text-transparent` paints the gradient onto the glyph
+                shapes themselves. No drop-shadow on transparent text since
+                it would render against the *clip mask* not the visible glyphs. */}
+            <span className="text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent">
+              Jadwal
+            </span>
+            <span className="text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent">
+              جدول
+            </span>
           </Link>
 
           {/* Glass pill nav links — desktop only */}
