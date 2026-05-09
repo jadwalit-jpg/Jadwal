@@ -60,13 +60,13 @@ export function CategoryPill({
     <Link
       href={finalHref}
       className={cn(
-        'group flex flex-col items-center gap-2 min-w-[88px] shrink-0 focus-visible:outline-none',
+        'group flex flex-col items-center gap-2.5 min-w-[104px] sm:min-w-[128px] shrink-0 focus-visible:outline-none',
         className,
       )}
     >
       <div
         className={cn(
-          'relative h-20 w-20 overflow-hidden rounded-full border transition-transform group-hover:-translate-y-0.5 group-focus-visible:-translate-y-0.5 group-focus-visible:ring-2 group-focus-visible:ring-jadwal-primary/40',
+          'relative h-24 w-24 sm:h-[120px] sm:w-[120px] overflow-hidden rounded-full border transition-transform group-hover:-translate-y-0.5 group-focus-visible:-translate-y-0.5 group-focus-visible:ring-2 group-focus-visible:ring-jadwal-primary/40',
           active
             ? 'border-jadwal-primary shadow-jadwal-primary'
             : 'border-jadwal-border-subtle',
@@ -82,7 +82,7 @@ export function CategoryPill({
               src={image}
               alt=""
               fill
-              sizes="80px"
+              sizes="(max-width: 640px) 96px, 120px"
               loading="lazy"
               // Dev: skip optimizer — Next.js runs inside Docker and can't
               // reach the API at `localhost:4000` from the container.
@@ -98,11 +98,11 @@ export function CategoryPill({
           </>
         ) : (
           <span className="grid h-full w-full place-items-center">
-            <Icon className="h-7 w-7" strokeWidth={1.7} aria-hidden="true" />
+            <Icon className="h-8 w-8 sm:h-10 sm:w-10" strokeWidth={1.7} aria-hidden="true" />
           </span>
         )}
       </div>
-      <div className="text-center text-[12px] font-medium tracking-[-0.1px] text-jadwal-text">
+      <div className="text-center text-[13px] sm:text-[14px] font-medium tracking-[-0.1px] text-jadwal-text">
         {label}
       </div>
     </Link>

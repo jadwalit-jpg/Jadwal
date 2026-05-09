@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
@@ -78,9 +79,19 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
     <>
       <header className={`fixed top-0 inset-x-0 z-100 transition-all duration-500 ${isOpaque ? 'bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-sky-100 dark:border-slate-800 shadow-sm' : 'bg-transparent border-b border-transparent'}`}>
         <nav className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4">
-          <Link href="/" className="flex items-center gap-1">
-            <span className={`text-2xl font-bold tracking-tight drop-shadow-sm ${isOpaque ? 'text-sky-700 dark:text-white' : 'text-white'}`}>Jadwal</span>
-            <span className={`text-2xl font-bold tracking-tight drop-shadow-sm ${isOpaque ? 'text-sky-400 dark:text-blue-200' : 'text-blue-200'}`}>جدول</span>
+          <Link href="/" className="flex items-center gap-2">
+            {/* Brand logo. SVG sized at 36px renders crisp on retina; `priority`
+                keeps it out of lazy-loading since it ships in the LCP frame. */}
+            <Image
+              src="/jadwal-logo.png"
+              alt="Jadwal"
+              width={72}
+              height={72}
+              priority
+              className="h-9 w-9 shrink-0 drop-shadow-sm"
+            />
+            <span className="text-2xl font-bold tracking-tight drop-shadow-md text-[#C89E3F]">Jadwal</span>
+            <span className="text-2xl font-bold tracking-tight drop-shadow-md text-[#C89E3F]">جدول</span>
           </Link>
 
           {/* Glass pill nav links — desktop only */}
