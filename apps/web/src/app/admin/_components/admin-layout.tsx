@@ -2,7 +2,6 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useAuth } from '@/context/auth-context';
-import { useRouter, usePathname } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { AdminSidebar } from './admin-sidebar';
@@ -74,8 +73,6 @@ interface AdminLayoutProps {
 
 export default function AdminLayout({ children, title, subtitle }: AdminLayoutProps) {
   const { user, logout, loading } = useAuth();
-  const router = useRouter();
-  const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
