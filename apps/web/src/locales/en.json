@@ -23,6 +23,7 @@
     "trending": "Trending",
     "company": "Company",
     "about": "About",
+    "contactUs": "Contact Us",
     "becomeVendor": "Become a Vendor",
     "terms": "Terms of Service",
     "privacy": "Privacy Policy",
@@ -344,6 +345,15 @@
     "toast": {
       "claimed": "Offer claimed! You can use it at checkout."
     }
+  },
+  "contactPage": {
+    "title": "Get in touch",
+    "subtitle": "We'd love to hear from you. Reach us by email, phone, or on Instagram and we'll get back as soon as we can.",
+    "emailLabel": "Email",
+    "phoneLabel": "Phone",
+    "instagramLabel": "Instagram",
+    "addressLabel": "Office",
+    "addressValue": "Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar"
   },
   "about": {
     "title": "About",

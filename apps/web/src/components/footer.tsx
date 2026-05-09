@@ -103,6 +103,7 @@ export default function Footer() {
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">{t('footer.company')}</h2>
             <ul className="space-y-2.5">
               <li><Link href="/about" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.about')}</Link></li>
+              <li><Link href="/contact" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.contactUs')}</Link></li>
               <li><Link href="/register/vendor" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.becomeVendor')}</Link></li>
               <li><Link href="/terms" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.terms')}</Link></li>
               <li><Link href="/privacy" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.privacy')}</Link></li>
