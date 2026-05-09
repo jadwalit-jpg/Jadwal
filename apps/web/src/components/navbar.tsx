@@ -79,13 +79,13 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
     <>
       <header className={`fixed top-0 inset-x-0 z-100 transition-all duration-500 ${isOpaque ? 'bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-sky-100 dark:border-slate-800 shadow-sm' : 'bg-transparent border-b border-transparent'}`}>
         <nav className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4">
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-1.5 sm:gap-2">
             {/* Brand logo — vector keeps crisp at any size; `priority` so it
-                isn't lazy-loaded behind the LCP frame. */}
-            {/* Logo is decorative — the wordmark next to it already carries
-                the link's accessible name. `alt=""` + `aria-hidden` collapses
-                the brand link's accessible name from "Jadwal Jadwal جدول"
-                (repetitive) to "Jadwal جدول" (clean). */}
+                isn't lazy-loaded behind the LCP frame. Logo is decorative
+                — the wordmark next to it carries the link's accessible
+                name (alt='' + aria-hidden). Sized smaller on mobile so the
+                brand block doesn't crowd the menu/auth buttons on narrow
+                viewports. */}
             <Image
               src="/jadwal-logo.svg"
               alt=""
@@ -93,17 +93,16 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
               width={36}
               height={36}
               priority
-              className="h-9 w-9 shrink-0 rounded-xl drop-shadow-sm"
+              className="h-7 w-7 sm:h-9 sm:w-9 shrink-0 rounded-xl drop-shadow-sm"
             />
             {/* Rainbow gradient mirrors the six tile colors in the logo —
                 gold → coral → magenta → purple → teal → sky. `bg-clip-text`
                 with `text-transparent` paints the gradient onto the glyph
-                shapes themselves. No drop-shadow on transparent text since
-                it would render against the *clip mask* not the visible glyphs. */}
-            <span className="text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent">
+                shapes themselves. text-xl on mobile, text-2xl from sm: up. */}
+            <span className="text-xl sm:text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent">
               Jadwal
             </span>
-            <span className="text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent">
+            <span className="text-xl sm:text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent">
               جدول
             </span>
           </Link>

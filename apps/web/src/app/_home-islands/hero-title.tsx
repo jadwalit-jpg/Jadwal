@@ -26,7 +26,10 @@ export function HeroTitle() {
           {t('home.heroTitle2')}
         </span>
       </h1>
-      <p className="mt-5 text-base md:text-lg text-white/80 max-w-2xl mx-auto leading-relaxed">
+      {/* Subtitle hidden below `sm` (640px) — on mobile the title +
+          search bar already convey the value prop and the smaller
+          viewport reads more cleanly without the extra paragraph. */}
+      <p className="mt-5 hidden sm:block text-base md:text-lg text-white/80 max-w-2xl mx-auto leading-relaxed">
         {t('home.heroSubtitle')}
       </p>
     </>
