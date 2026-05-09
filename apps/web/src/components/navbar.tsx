@@ -88,7 +88,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
               width={36}
               height={36}
               priority
-              className="h-9 w-9 shrink-0 drop-shadow-sm"
+              className="h-9 w-9 shrink-0 rounded-xl drop-shadow-sm"
             />
             {/* Rainbow gradient mirrors the six tile colors in the logo —
                 gold → coral → magenta → purple → teal → sky. `bg-clip-text`
