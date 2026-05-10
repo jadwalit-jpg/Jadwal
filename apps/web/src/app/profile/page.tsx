@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import Link from 'next/link';
+import { AccountDataControls } from '@/components/account-data-controls';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
@@ -724,6 +725,11 @@ export default function ProfilePage() {
               </div>
             </motion.div>
           ) : null}
+
+          {/* W.127 — PDPL / GDPR self-service: download data + delete account.
+              Sits at the bottom of /profile so it's discoverable but doesn't
+              compete with the primary account-management actions above. */}
+          <AccountDataControls />
         </div>
       </main>
 

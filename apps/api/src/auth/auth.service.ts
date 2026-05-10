@@ -1088,6 +1088,314 @@ export class AuthService {
     }
   }
 
+  // ─── W.127 Self-service account management (PDPL §14 / GDPR Art.17 + 20) ──
+
+  /**
+   * Export every piece of data Jadwal stores about the calling user.
+   *
+   * Returns a single JSON bundle that includes the user's profile,
+   * bookings (with payment summaries), reviews, likes, claimed coupons,
+   * loyalty ledger entries, notifications, and active session metadata.
+   * Sensitive auth state (password hash, refresh tokens, verification
+   * tokens, password-reset tokens, phone OTP hash) is deliberately
+   * excluded — those are auth secrets, not user-owned data.
+   *
+   * Rate-limited at the controller level (RATE_LIMIT_STRICT, 3/min/IP)
+   * AND with a per-user Redis cooldown (1 export per 24 h) so the export
+   * endpoint can't be turned into a data-egress or DoS amplifier.
+   */
+  async exportAccountData(userId: string, req?: Request): Promise<Record<string, unknown>> {
+    const { ip, userAgent } = this.extractClientInfo(req);
+    const db = this.prisma.client;
+
+    // Per-user 24h cooldown. The Redis fail-open pattern matches the rest
+    // of the auth flow (G1 / G6) — if Redis is down, the per-IP throttler
+    // and the underlying anonymisation transaction still bound abuse.
+    try {
+      const redis = this.redisService.getClient();
+      const key = `account:export:${userId}`;
+      const setOk = await redis.set(key, '1', 'EX', 86400, 'NX');
+      if (setOk === null) {
+        throw new HttpException(
+          'You can request an account-data export once every 24 hours.',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      // Silent fail-open on Redis errors — controller throttle remains.
+    }
+
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      // Whitelisted select — never spread a User row, that would leak
+      // password hash / verification tokens / phone OTP fields.
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        profilePicture: true,
+        role: true,
+        emailVerified: true,
+        phoneVerified: true,
+        loyaltyPoints: true,
+        preferredCountryId: true,
+        createdAt: true,
+        updatedAt: true,
+        deletedAt: true,
+      },
+    });
+
+    if (!user || user.deletedAt) {
+      throw new UnauthorizedException('Account not found');
+    }
+
+    const [bookings, reviews, likes, claimedCoupons, loyaltyLedger, notifications, sessions] =
+      await Promise.all([
+        db.booking.findMany({
+          where: { customerId: userId },
+          select: {
+            id: true,
+            ref: true,
+            activityId: true,
+            startDatetime: true,
+            endDatetime: true,
+            guests: true,
+            status: true,
+            totalPrice: true,
+            currencyCode: true,
+            createdAt: true,
+            cancelledAt: true,
+            payment: {
+              select: {
+                id: true,
+                status: true,
+                amount: true,
+                currency: true,
+                method: true,
+                createdAt: true,
+              },
+            },
+          },
+        }),
+        db.review.findMany({
+          where: { customerId: userId },
+          select: {
+            id: true,
+            activityId: true,
+            rating: true,
+            text: true,
+            vendorReply: true,
+            createdAt: true,
+          },
+        }),
+        db.like.findMany({
+          where: { userId },
+          select: { activityId: true, createdAt: true },
+        }),
+        db.claimedCoupon.findMany({
+          where: { userId },
+          select: { couponId: true, claimedAt: true, used: true },
+        }),
+        db.loyaltyLedger.findMany({
+          where: { userId },
+          select: {
+            id: true,
+            delta: true,
+            balanceAfter: true,
+            source: true,
+            reason: true,
+            bookingId: true,
+            createdAt: true,
+          },
+        }),
+        db.notification.findMany({
+          where: { userId },
+          select: {
+            id: true,
+            type: true,
+            title: true,
+            message: true,
+            link: true,
+            read: true,
+            createdAt: true,
+          },
+        }),
+        db.refreshToken.findMany({
+          where: { userId },
+          // tokenHash deliberately excluded — auth secret, not user data.
+          select: {
+            id: true,
+            createdAt: true,
+            expiresAt: true,
+            sessionStartedAt: true,
+            ipAddress: true,
+            userAgent: true,
+          },
+        }),
+      ]);
+
+    await this.securityLogger.log({
+      event: 'ACCOUNT_EXPORT_REQUESTED',
+      userId,
+      ip,
+      userAgent,
+    });
+
+    return {
+      generatedAt: new Date().toISOString(),
+      schemaVersion: 1,
+      user,
+      bookings,
+      reviews,
+      likes,
+      claimedCoupons,
+      loyaltyLedger,
+      notifications,
+      sessions,
+    };
+  }
+
+  /**
+   * Self-service account deletion (PDPL §14 / GDPR Art.17 "right to
+   * erasure"). Anonymises PII on the User row, revokes every active
+   * session, and clears all derived state (notifications, push subs,
+   * likes, claimed coupons). Booking / Payment / Review / LoyaltyLedger
+   * rows are PRESERVED with a now-anonymised user reference because
+   * those are financial / accounting records that have their own
+   * mandatory retention periods.
+   *
+   * Requires the user's current password — defense in depth against
+   * session hijack. Even an attacker with the auth cookie can't trigger
+   * the destructive path without the password. Wrong password is logged
+   * and rate-limited (per-IP throttle + per-user Redis cooldown).
+   *
+   * The pattern mirrors AdminService.deleteUser — same transaction
+   * shape, same `<userId>@deleted.local` sentinel, same field nulling.
+   * Kept as a parallel method (rather than calling AdminService) because
+   * the customer path has different preconditions (password verify,
+   * cooldown, security log event) and no cross-vendor side effects.
+   */
+  async deleteOwnAccount(
+    userId: string,
+    password: string,
+    response: Response,
+    req?: Request,
+  ): Promise<void> {
+    const { ip, userAgent } = this.extractClientInfo(req);
+    const db = this.prisma.client;
+
+    // Per-user 1h cooldown on delete attempts. Pairs with the controller
+    // RATE_LIMIT_STRICT (3/min/IP) — together they bound a brute-force
+    // on the password gate to ~3 tries per hour even from rotated IPs.
+    let cooldownActive = false;
+    try {
+      const redis = this.redisService.getClient();
+      const key = `account:delete:${userId}`;
+      const setOk = await redis.set(key, '1', 'EX', 3600, 'NX');
+      if (setOk === null) cooldownActive = true;
+    } catch {
+      // Fail-open; per-IP throttle still applies.
+    }
+
+    if (cooldownActive) {
+      throw new HttpException(
+        'Too many account-deletion attempts. Please wait and try again later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        password: true,
+        role: true,
+        deletedAt: true,
+        vendorProfile: { select: { id: true } },
+      },
+    });
+
+    if (!user || user.deletedAt) {
+      throw new UnauthorizedException('Account not found');
+    }
+
+    // Vendor accounts have additional teardown (deactivating activities,
+    // cancelling pending bookings, payout reconciliation). Block the
+    // self-service path for vendors and route them to support so we
+    // don't accidentally orphan customer bookings on their activities.
+    if (user.role === 'VENDOR' || user.vendorProfile) {
+      throw new ForbiddenException(
+        'Vendor accounts cannot be self-deleted. Contact support to close your vendor account.',
+      );
+    }
+
+    // OAuth-only accounts have `password=null` — self-service delete
+    // requires a re-auth proof. For Google-only signups, route them
+    // to support OR force them to set a password first.
+    if (!user.password) {
+      throw new ForbiddenException(
+        'This account has no password set. Please set a password first or contact support to close your account.',
+      );
+    }
+
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) {
+      await this.securityLogger.log({
+        event: 'ACCOUNT_DELETE_FAILED',
+        userId,
+        ip,
+        userAgent,
+        details: 'wrong password',
+      });
+      throw new UnauthorizedException('Incorrect password');
+    }
+
+    // Anonymise + revoke in a single transaction. Pattern mirrors
+    // AdminService.deleteUser:455-483 — keep them in sync if you change
+    // either side.
+    await db.$transaction(async (tx) => {
+      await tx.refreshToken.deleteMany({ where: { userId } });
+      await tx.pushSubscription.deleteMany({ where: { userId } });
+      await tx.notification.deleteMany({ where: { userId } });
+      await tx.claimedCoupon.deleteMany({ where: { userId } });
+      await tx.like.deleteMany({ where: { userId } });
+
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          email: `${userId}@deleted.local`,
+          fullName: 'Deleted User',
+          phone: null,
+          profilePicture: null,
+          password: null,
+          googleId: null,
+          verificationToken: null,
+          verificationTokenExpiry: null,
+          passwordResetToken: null,
+          passwordResetExpiry: null,
+          phoneOtpHash: null,
+          phoneOtpExpiry: null,
+          phoneOtpAttempts: 0,
+          isDeactivated: true,
+          emailVerified: false,
+          deletedAt: new Date(),
+        },
+      });
+    });
+
+    this.clearAllCookies(response);
+
+    await this.securityLogger.log({
+      event: 'ACCOUNT_SELF_DELETED',
+      userId,
+      ip,
+      userAgent,
+    });
+  }
+
   // ─── Expired token cleanup ─────────────────────────────────────────────────
 
   /**
