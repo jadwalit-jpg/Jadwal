@@ -39,7 +39,11 @@ function reportError(payload: {
   if (typeof window === 'undefined') return;
 
   // In dev, also surface the stack in DevTools so the workflow stays familiar.
-  if (process.env.NODE_ENV !== 'production') {
+  // Allowlist the explicit dev value rather than `!== 'production'` —
+  // matches the pattern enforced by the security-scan CI rule (any
+  // `if (NODE_ENV !== 'production')` accidentally enables dev behaviour
+  // in non-prod-non-dev envs like `staging` or `test`).
+  if (process.env.NODE_ENV === 'development') {
     console.error('[ErrorBoundary]', payload.message, '\n', payload.stack);
   }
 
