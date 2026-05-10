@@ -123,6 +123,48 @@ function buildCsp(nonce: string, isProd: boolean): string {
   return directives.join('; ');
 }
 
+// ─── Kill switch (Z.144) ───────────────────────────────────────────
+// When `LAUNCH_DISABLED=true` is set on the web task, every public route
+// redirects to `/` (the Coming Soon page). Staff routes (/admin/*,
+// /vendor/*) and auth routes stay reachable so support + engineering
+// can log in and investigate. /api/* is already excluded from this
+// middleware via the matcher config below, so the backend keeps running
+// unchanged.
+//
+// Activation procedure (~3-5 min from flip to all-users-blocked):
+//   1. Edit infra/ecs/web-task.json → set LAUNCH_DISABLED to "true",
+//      register a new task-def revision, force-new-deployment on the
+//      jadwal-web service.
+//   OR (faster, no code change):
+//   1. ECS console → jadwal-web → Update service → Force new deployment
+//      with a task-def revision that overrides LAUNCH_DISABLED=true.
+//
+// Defaults to "off" — the env var is missing in the task-def baseline,
+// so removing the flag (typo, deleted) keeps the site live, not the
+// other way around.
+const LAUNCH_DISABLED = process.env.LAUNCH_DISABLED === 'true';
+
+// Path prefixes/exact paths that stay reachable when the kill switch
+// is on. Order doesn't matter; the check is `some(prefix)`. /api/* is
+// excluded from middleware entirely via the matcher config (no entry
+// needed here).
+const KILL_SWITCH_ALLOWED_PREFIXES = [
+  '/admin',
+  '/vendor',
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/reset-password',
+  '/verify-email',
+];
+
+function isAllowedDuringKillswitch(pathname: string): boolean {
+  if (pathname === '/') return true; // the Coming Soon page itself
+  return KILL_SWITCH_ALLOWED_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  );
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -141,6 +183,11 @@ export function middleware(request: NextRequest) {
     res.headers.set('Content-Security-Policy', csp);
     return res;
   };
+
+  // ─── Kill switch — runs before any auth / route logic ───────
+  if (LAUNCH_DISABLED && !isAllowedDuringKillswitch(pathname)) {
+    return applyCspHeaders(NextResponse.redirect(new URL('/', request.url)));
+  }
 
   const authCookie = request.cookies.get('Authentication');
   const isAuthenticated = !!authCookie?.value;
