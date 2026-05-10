@@ -16,9 +16,12 @@ import api from '@/lib/api';
  *      a JSON file with everything Jadwal stores about the user. Backend
  *      enforces 24h cooldown per user; this UI shows a toast on cooldown
  *      hits and a generic error otherwise.
- *   2. "Delete my account" → opens a confirmation modal that requires
- *      the current password. On success the user is logged out + booted
- *      to the public root.
+ *   2. "Delete my account" → opens a confirmation modal that asks the
+ *      user to type the literal phrase "DELETE" (case-insensitive,
+ *      trimmed). Same UX as GitHub / AWS / Vercel destructive deletion.
+ *      Forces a deliberate action and stops accidental double-clicks.
+ *      Submit button is disabled until the typed phrase matches. On
+ *      success the user is logged out + booted to the public root.
  *
  * Both calls share the existing api axios client (already wired for
  * cookies + CSRF-safe SameSite=Strict). No extra dep needed.
