@@ -9,12 +9,13 @@ import { LoyaltyService } from './services/loyalty.service';
 import { ReconciliationService } from './services/reconciliation.service';
 import { NotificationController } from './controllers/notification.controller';
 import { PushController } from './controllers/push.controller';
+import { ClientErrorController } from './controllers/client-error.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 
 @Global()
 @Module({
   imports: [ScheduleModule.forRoot(), PrismaModule],
-  controllers: [NotificationController, PushController],
+  controllers: [NotificationController, PushController, ClientErrorController],
   providers: [UploadService, CleanupService, AuditLoggerService, NotificationService, WebPushService, LoyaltyService, ReconciliationService],
   exports: [UploadService, CleanupService, AuditLoggerService, NotificationService, WebPushService, LoyaltyService, ReconciliationService],
 })
