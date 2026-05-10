@@ -12,6 +12,7 @@ import { ToastProvider } from "@/components/toast";
 // they don't need country detection or "verify your phone" prompts.
 // Verified safe: 0 useGeo calls in admin / vendor source.
 import { CustomerShell } from "@/components/customer-shell";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { readLangCookieServer } from "@/lib/lang-cookie.server";
 
 const inter = Inter({
@@ -161,17 +162,19 @@ export default async function RootLayout({
       <body
         className={`${inter.variable} ${outfit.variable} ${tajawal.variable} antialiased font-outfit`}
       >
-        <QueryProvider>
-          <I18nProvider initialLang={lang}>
-            <ThemeProvider attribute="class" defaultTheme="system" enableSystem nonce={nonce}>
-              <AuthProvider>
-                <ToastProvider>
-                  <CustomerShell>{children}</CustomerShell>
-                </ToastProvider>
-              </AuthProvider>
-            </ThemeProvider>
-          </I18nProvider>
-        </QueryProvider>
+        <ErrorBoundary>
+          <QueryProvider>
+            <I18nProvider initialLang={lang}>
+              <ThemeProvider attribute="class" defaultTheme="system" enableSystem nonce={nonce}>
+                <AuthProvider>
+                  <ToastProvider>
+                    <CustomerShell>{children}</CustomerShell>
+                  </ToastProvider>
+                </AuthProvider>
+              </ThemeProvider>
+            </I18nProvider>
+          </QueryProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );
