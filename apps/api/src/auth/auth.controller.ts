@@ -19,6 +19,7 @@ import { VerifyPhoneOtpDto } from './dto/verify-phone-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { DeleteAccountDto } from './dto/delete-account.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -191,6 +192,51 @@ export class AuthController {
     });
 
     return { message: `${count} session(s) revoked` };
+  }
+
+  // ─── W.127 PDPL / GDPR self-service account management ──────────────────
+
+  /**
+   * Export every piece of data Jadwal stores about the calling user.
+   * Returns inline JSON (Content-Disposition: attachment) so the browser
+   * triggers a download. Rate-limited per-IP at STRICT (3/min) plus a
+   * per-user 24h cooldown inside the service. Excludes auth secrets
+   * (password hash, refresh tokens, verification tokens, OTP hashes) —
+   * those are not user-owned data.
+   */
+  @Get('account/export')
+  @Throttle(RATE_LIMIT_STRICT)
+  @UseGuards(JwtAuthGuard)
+  async exportAccount(@CurrentUser() user: RequestUser, @Req() req: Request, @Res({ passthrough: true }) response: Response) {
+    const data = await this.authService.exportAccountData(user.id, req);
+    response.setHeader('Content-Type', 'application/json');
+    response.setHeader('Content-Disposition', `attachment; filename="jadwal-account-export-${user.id}.json"`);
+    response.setHeader('Cache-Control', 'no-store');
+    return data;
+  }
+
+  /**
+   * Self-service account deletion. Anonymises PII, revokes all sessions,
+   * clears derived state, preserves financial records (bookings /
+   * payments / loyalty ledger / reviews) with an anonymised user
+   * reference for legal retention. Vendor accounts are excluded — they
+   * route to support so we don't orphan customer bookings.
+   *
+   * Requires current-password confirmation (defense against session
+   * hijack). STRICT throttle (3/min/IP) + per-user 1h Redis cooldown
+   * bound brute-force on the password gate.
+   */
+  @Delete('account')
+  @Throttle(RATE_LIMIT_STRICT)
+  @UseGuards(JwtAuthGuard)
+  async deleteAccount(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: DeleteAccountDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    await this.authService.deleteOwnAccount(user.id, dto.password, response, req);
+    return { message: 'Account deleted' };
   }
 
   // ─── Google OAuth ────────────────────────────────────────────────────────
