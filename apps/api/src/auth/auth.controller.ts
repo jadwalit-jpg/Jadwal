@@ -222,9 +222,10 @@ export class AuthController {
    * reference for legal retention. Vendor accounts are excluded — they
    * route to support so we don't orphan customer bookings.
    *
-   * Requires current-password confirmation (defense against session
-   * hijack). STRICT throttle (3/min/IP) + per-user 1h Redis cooldown
-   * bound brute-force on the password gate.
+   * Confirmation: caller must send `confirmation: "DELETE"` (case-
+   * insensitive, trimmed). STRICT throttle (3/min/IP) bounds abuse;
+   * the per-user Redis cooldown was removed when we switched off the
+   * password gate (no brute-force surface to defend against now).
    */
   @Delete('account')
   @Throttle(RATE_LIMIT_STRICT)
@@ -235,7 +236,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
-    await this.authService.deleteOwnAccount(user.id, dto.password, response, req);
+    await this.authService.deleteOwnAccount(user.id, dto.confirmation, response, req);
     return { message: 'Account deleted' };
   }
 

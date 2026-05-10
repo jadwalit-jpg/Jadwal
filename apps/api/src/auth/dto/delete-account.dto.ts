@@ -1,20 +1,35 @@
-import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
 
 /**
  * Body for `DELETE /auth/account` (self-service account deletion).
  *
- * Requires the user's CURRENT password — defense against session
- * hijack. Even if an attacker has the auth cookie they can't permanently
- * delete the account without also knowing the password. Pairs with the
- * Redis per-user delete-rate-limit (1/hour) so a brute-force on the
- * password gate can't cycle quickly.
+ * The confirmation field MUST contain the literal phrase "DELETE"
+ * (case-insensitive, trimmed). Same UX as GitHub repo deletion +
+ * AWS resource deletion + Vercel project deletion — typing the
+ * exact phrase forces a deliberate action and stops accidental
+ * double-click destruction.
  *
- * Password is NEVER stored or logged; bcrypt-compared against the
- * existing hash and immediately discarded after verification.
+ * Security trade-off vs the earlier password-confirmation design:
+ *   - Password gate stopped session-hijack attackers (cookie theft)
+ *     from triggering destructive flows. Confirmation phrase does
+ *     NOT stop that — anyone with a stolen session can type DELETE
+ *     and submit.
+ *   - Compensating controls: 3/min/IP throttle on the endpoint,
+ *     ACCOUNT_SELF_DELETED audit log captures the IP + UA of the
+ *     destructive call, soft-delete via anonymisation means an
+ *     admin can recover within the 30-day window if the user
+ *     reports an unauthorised deletion.
+ *   - Acceptable for a launch-stage marketplace; revisit if we
+ *     start storing high-value financial state on customer accounts.
+ *
+ * Length cap (50) is generous — the literal expected match is 6
+ * chars. Cap deters payload-size DoS / log-bloat without rejecting
+ * a stray newline or extra whitespace from the client.
  */
 export class DeleteAccountDto {
   @IsString()
   @IsNotEmpty()
-  @MaxLength(128)
-  password!: string;
+  @MinLength(1)
+  @MaxLength(50)
+  confirmation!: string;
 }

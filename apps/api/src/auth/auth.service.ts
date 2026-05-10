@@ -1266,44 +1266,45 @@ export class AuthService {
    * those are financial / accounting records that have their own
    * mandatory retention periods.
    *
-   * Requires the user's current password — defense in depth against
-   * session hijack. Even an attacker with the auth cookie can't trigger
-   * the destructive path without the password. Wrong password is logged
-   * and rate-limited (per-IP throttle + per-user Redis cooldown).
+   * Confirmation: caller must send the literal phrase "DELETE"
+   * (case-insensitive, trimmed). Same UX pattern as GitHub /
+   * AWS / Vercel destructive actions — forces a deliberate action
+   * and stops accidental double-click destruction.
    *
-   * The pattern mirrors AdminService.deleteUser — same transaction
-   * shape, same `<userId>@deleted.local` sentinel, same field nulling.
-   * Kept as a parallel method (rather than calling AdminService) because
-   * the customer path has different preconditions (password verify,
-   * cooldown, security log event) and no cross-vendor side effects.
+   * Security trade-off vs the earlier password-confirmation design
+   * is documented in `dto/delete-account.dto.ts`. Compensating
+   * controls: 3/min/IP throttle on the endpoint, ACCOUNT_SELF_DELETED
+   * audit captures IP + UA, soft-delete is admin-recoverable for the
+   * 30-day retention window.
+   *
+   * The anonymisation pattern mirrors AdminService.deleteUser — same
+   * transaction shape, same `<userId>@deleted.local` sentinel, same
+   * field nulling. Kept as a parallel method (rather than calling
+   * AdminService) because the customer path has different preconditions
+   * and no cross-vendor side effects.
    */
   async deleteOwnAccount(
     userId: string,
-    password: string,
+    confirmation: string,
     response: Response,
     req?: Request,
   ): Promise<void> {
     const { ip, userAgent } = this.extractClientInfo(req);
     const db = this.prisma.client;
 
-    // Per-user 1h cooldown on delete attempts. Pairs with the controller
-    // RATE_LIMIT_STRICT (3/min/IP) — together they bound a brute-force
-    // on the password gate to ~3 tries per hour even from rotated IPs.
-    let cooldownActive = false;
-    try {
-      const redis = this.redisService.getClient();
-      const key = `account:delete:${userId}`;
-      const setOk = await redis.set(key, '1', 'EX', 3600, 'NX');
-      if (setOk === null) cooldownActive = true;
-    } catch {
-      // Fail-open; per-IP throttle still applies.
-    }
-
-    if (cooldownActive) {
-      throw new HttpException(
-        'Too many account-deletion attempts. Please wait and try again later.',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+    // Confirmation phrase check — strict literal match against "DELETE"
+    // after trim + uppercase. Anything else (typos, accidental clicks,
+    // empty body that bypassed DTO validation somehow) triggers a 400
+    // and gets logged, not a destructive transaction.
+    if (confirmation.trim().toUpperCase() !== 'DELETE') {
+      await this.securityLogger.log({
+        event: 'ACCOUNT_DELETE_FAILED',
+        userId,
+        ip,
+        userAgent,
+        details: 'wrong confirmation phrase',
+      });
+      throw new BadRequestException('Type "DELETE" to confirm.');
     }
 
     const user = await db.user.findUnique({
@@ -1311,7 +1312,6 @@ export class AuthService {
       select: {
         id: true,
         email: true,
-        password: true,
         role: true,
         deletedAt: true,
         vendorProfile: { select: { id: true } },
@@ -1330,27 +1330,6 @@ export class AuthService {
       throw new ForbiddenException(
         'Vendor accounts cannot be self-deleted. Contact support to close your vendor account.',
       );
-    }
-
-    // OAuth-only accounts have `password=null` — self-service delete
-    // requires a re-auth proof. For Google-only signups, route them
-    // to support OR force them to set a password first.
-    if (!user.password) {
-      throw new ForbiddenException(
-        'This account has no password set. Please set a password first or contact support to close your account.',
-      );
-    }
-
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) {
-      await this.securityLogger.log({
-        event: 'ACCOUNT_DELETE_FAILED',
-        userId,
-        ip,
-        userAgent,
-        details: 'wrong password',
-      });
-      throw new UnauthorizedException('Incorrect password');
     }
 
     // Anonymise + revoke in a single transaction. Pattern mirrors
