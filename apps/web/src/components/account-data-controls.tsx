@@ -29,9 +29,15 @@ export function AccountDataControls() {
   const { logout } = useAuth();
   const router = useRouter();
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [downloading, setDownloading] = useState(false);
+
+  // Strict literal match against "DELETE" (case-insensitive, trimmed) —
+  // mirrors the server-side check. Disables the destructive button until
+  // the user has typed the exact phrase.
+  const CONFIRM_PHRASE = 'DELETE';
+  const confirmationMatches = confirmation.trim().toUpperCase() === CONFIRM_PHRASE;
 
   async function handleDownload() {
     setDownloading(true);
@@ -68,16 +74,18 @@ export function AccountDataControls() {
   }
 
   async function handleDelete() {
-    if (!password) {
+    if (!confirmationMatches) {
       toast(
-        t('account.deletePasswordRequired', { defaultValue: 'Enter your password to confirm.' }),
+        t('account.deleteConfirmationRequired', {
+          defaultValue: `Type ${CONFIRM_PHRASE} to confirm.`,
+        }),
         'error',
       );
       return;
     }
     setDeleting(true);
     try {
-      await api.delete('/auth/account', { data: { password } });
+      await api.delete('/auth/account', { data: { confirmation } });
       // Server clears cookies; refresh local auth state then route to /.
       await logout().catch(() => undefined);
       toast(
@@ -88,15 +96,17 @@ export function AccountDataControls() {
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       let message: string;
-      if (status === 401) {
-        message = t('account.deleteWrongPassword', { defaultValue: 'Incorrect password.' });
+      if (status === 400) {
+        message = t('account.deleteWrongConfirmation', {
+          defaultValue: `Type ${CONFIRM_PHRASE} to confirm.`,
+        });
       } else if (status === 403) {
         message = t('account.deleteForbidden', {
           defaultValue: 'Vendor accounts cannot be self-deleted. Contact support.',
         });
       } else if (status === 429) {
         message = t('account.deleteCooldown', {
-          defaultValue: 'Too many attempts. Please wait and try again later.',
+          defaultValue: 'Too many attempts. Please wait and try again.',
         });
       } else {
         message = t('account.deleteFailed', { defaultValue: 'Could not delete your account.' });
@@ -191,7 +201,7 @@ export function AccountDataControls() {
                 type="button"
                 onClick={() => {
                   setConfirmOpen(false);
-                  setPassword('');
+                  setConfirmation('');
                 }}
                 className="rounded-full p-1 text-jadwal-text-muted hover:bg-jadwal-surface-muted transition-colors"
                 aria-label={t('common.close', { defaultValue: 'Close' })}
@@ -201,16 +211,27 @@ export function AccountDataControls() {
             </div>
 
             <div className="px-5 pb-5">
-              <label className="block text-xs font-medium text-jadwal-text-muted mb-1.5">
-                {t('account.confirmPasswordLabel', { defaultValue: 'Enter your password to confirm' })}
+              <label
+                htmlFor="delete-account-confirmation"
+                className="block text-xs font-medium text-jadwal-text-muted mb-1.5"
+              >
+                {t('account.confirmPhraseLabel', {
+                  defaultValue: 'Type DELETE to confirm',
+                })}
               </label>
               <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                maxLength={128}
-                className="w-full rounded-xl border border-jadwal-border-subtle bg-white dark:bg-jadwal-surface-raised px-3.5 py-2.5 text-sm text-jadwal-text focus:outline-none focus:ring-2 focus:ring-red-500/40"
+                id="delete-account-confirmation"
+                type="text"
+                value={confirmation}
+                onChange={(e) => setConfirmation(e.target.value)}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                maxLength={50}
+                placeholder={CONFIRM_PHRASE}
+                aria-invalid={confirmation.length > 0 && !confirmationMatches}
+                className="w-full rounded-xl border border-jadwal-border-subtle bg-white dark:bg-jadwal-surface-raised px-3.5 py-2.5 text-sm font-mono tracking-wider text-jadwal-text focus:outline-none focus:ring-2 focus:ring-red-500/40"
               />
 
               <div className="flex flex-col sm:flex-row gap-3 mt-5">
@@ -218,7 +239,7 @@ export function AccountDataControls() {
                   type="button"
                   onClick={() => {
                     setConfirmOpen(false);
-                    setPassword('');
+                    setConfirmation('');
                   }}
                   className="px-5 py-2.5 rounded-xl border border-jadwal-border-strong hover:bg-jadwal-surface-muted text-jadwal-text text-sm font-semibold transition-colors"
                 >
@@ -227,8 +248,8 @@ export function AccountDataControls() {
                 <button
                   type="button"
                   onClick={handleDelete}
-                  disabled={deleting || !password}
-                  className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors disabled:opacity-60"
+                  disabled={deleting || !confirmationMatches}
+                  className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {deleting
                     ? t('account.deleting', { defaultValue: 'Deleting…' })
