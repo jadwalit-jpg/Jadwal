@@ -78,7 +78,6 @@ function reportError(payload: {
 
 interface State {
   hasError: boolean;
-  error: Error | null;
 }
 
 interface Props {
@@ -87,24 +86,39 @@ interface Props {
 }
 
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false, error: null };
+  state: State = { hasError: false };
 
-  static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
+  static getDerivedStateFromError(): State {
+    return { hasError: true };
   }
 
   componentDidCatch(error: Error, errorInfo: { componentStack?: string }) {
+    // Strip query string client-side too — defense in depth alongside the
+    // server-side stripping in /api/log/client-error. An OAuth error landing
+    // on the boundary mid-redirect carries the auth code in the query; a
+    // misconfigured cache layer between client + API could observe the raw
+    // payload before sanitisation runs server-side.
+    let cleanUrl: string | undefined;
+    if (typeof window !== 'undefined') {
+      try {
+        const u = new URL(window.location.href);
+        cleanUrl = `${u.origin}${u.pathname}`;
+      } catch {
+        cleanUrl = undefined;
+      }
+    }
+
     reportError({
       message: error.message || 'Unknown render error',
       stack: error.stack,
       componentStack: errorInfo.componentStack ?? undefined,
-      url: typeof window !== 'undefined' ? window.location.href : undefined,
+      url: cleanUrl,
       userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
     });
   }
 
   handleReset = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState({ hasError: false });
   };
 
   render() {
