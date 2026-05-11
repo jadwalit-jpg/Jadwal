@@ -4,6 +4,23 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { RealIpThrottlerGuard } from './common/guards/real-ip-throttler.guard';
 import { APP_GUARD } from '@nestjs/core';
 import { SentryModule } from '@sentry/nestjs/setup';
+import { LoggerModule } from 'nestjs-pino';
+import { randomUUID } from 'crypto';
+
+// Pino accepts these level strings. NestJS's legacy levels ('log',
+// 'verbose') don't map directly, so we validate the SSM-supplied value
+// instead of trusting it. An invalid LOG_LEVEL silently falls back to
+// the NODE_ENV default — protects against pino throwing at init if an
+// operator typos the SSM value or pastes a NestJS-style level.
+const VALID_PINO_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
+type PinoLevel = (typeof VALID_PINO_LEVELS)[number];
+function resolvePinoLevel(): PinoLevel {
+  const fromEnv = process.env.LOG_LEVEL?.trim().toLowerCase();
+  if (fromEnv && (VALID_PINO_LEVELS as readonly string[]).includes(fromEnv)) {
+    return fromEnv as PinoLevel;
+  }
+  return process.env.NODE_ENV === 'production' ? 'info' : 'debug';
+}
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -29,6 +46,62 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
     // (see src/instrument.ts).
     SentryModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true }),
+    // ─── Structured JSON logging via pino ────────────────────────────────
+    // Replaces Nest's default string-based Logger so every log line emits
+    // JSON. CloudWatch Logs Insights can then query top-level fields
+    // (event, userId, requestId, durationMs) instead of regex-grepping.
+    // Production: raw pino JSON → CloudWatch parses natively.
+    // Dev: pino-pretty for readable console output.
+    // Redact paths defense-in-depth strip secrets even if a careless
+    // log() call passes them — existing audit/security loggers already
+    // hash sensitive fields, this is the second layer.
+    LoggerModule.forRoot({
+      pinoHttp: {
+        // Honor /jadwal/prod/LOG_LEVEL SSM param so an operator can flip
+        // to 'debug' for a debugging window without a code deploy. Invalid
+        // / NestJS-style values fall back to the NODE_ENV default. The
+        // task-def already injects LOG_LEVEL into the container's env
+        // (api-task.json secrets array, line 46).
+        level: resolvePinoLevel(),
+        // Disable pino-http's auto per-request log emission. Our existing
+        // RequestLoggerMiddleware already emits a structured `HTTP_REQUEST`
+        // log on response with custom fields (skip-path-prefixes, userId,
+        // masked ip, etc.) — without this flag we'd double-log every
+        // request, doubling CloudWatch ingest cost.
+        autoLogging: false,
+        transport:
+          process.env.NODE_ENV !== 'production'
+            ? { target: 'pino-pretty', options: { colorize: true, singleLine: true } }
+            : undefined,
+        redact: {
+          paths: [
+            'req.headers.authorization',
+            'req.headers.cookie',
+            'req.headers["x-csrf-token"]',
+            'password',
+            'passwordResetToken',
+            'verificationToken',
+            'tokenHash',
+            '*.password',
+            '*.passwordResetToken',
+          ],
+          remove: true,
+        },
+        customLogLevel: (_req, res, err) => {
+          if (err || res.statusCode >= 500) return 'error';
+          if (res.statusCode >= 400) return 'warn';
+          return 'info';
+        },
+        // Honor any inbound x-request-id (RequestLoggerMiddleware already
+        // validates/generates one); falls back to a fresh UUID otherwise.
+        // Pino's `genReqId` requires a non-undefined ReqId so we always
+        // return a string — never let it default to pino's auto-counter
+        // (would desync from our request-id middleware's header).
+        genReqId: (req) =>
+          (typeof req.headers['x-request-id'] === 'string' && req.headers['x-request-id']) ||
+          randomUUID(),
+      },
+    }),
     RedisModule,
     CommonModule,
     ThrottlerModule.forRootAsync({

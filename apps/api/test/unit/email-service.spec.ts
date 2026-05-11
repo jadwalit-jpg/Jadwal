@@ -141,10 +141,18 @@ describe('EmailService — construction + prod-guard', () => {
     expect(sesMocks.SESv2Client).not.toHaveBeenCalled();
   });
 
-  test('EMAIL_ENABLED=true → SESv2Client instantiated with configured region', () => {
+  test('EMAIL_ENABLED=true → SESv2Client instantiated with region + adaptive retry', () => {
     sesMocks.SESv2Client.mockClear();
     buildSvc({ config: { EMAIL_ENABLED: 'true', AWS_REGION: 'eu-west-1' } });
-    expect(sesMocks.SESv2Client).toHaveBeenCalledWith({ region: 'eu-west-1' });
+    // R2 hardening: adaptive retry + 3 attempts is mandatory on all AWS
+    // SDK v3 clients. Pinning here so a future refactor can't silently
+    // drop the retry config and turn transient AWS edge blips back into
+    // customer-facing email-send failures.
+    expect(sesMocks.SESv2Client).toHaveBeenCalledWith({
+      region: 'eu-west-1',
+      maxAttempts: 3,
+      retryMode: 'adaptive',
+    });
   });
 
   test('production + EMAIL_ENABLED=false → throws at construction (fail-safe)', () => {

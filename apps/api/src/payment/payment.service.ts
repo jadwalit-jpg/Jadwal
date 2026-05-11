@@ -67,24 +67,61 @@ export class PaymentService {
       TXNAMT: amount,
     });
 
-    // Hard 15s timeout — prevents an unreachable PAY2M server from hanging
-    // the NestJS request thread indefinitely. Normalise timeout / DNS /
-    // connection-refused errors to a generic gateway-unavailable response.
-    let response: globalThis.Response;
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Jadwal-API/1.0',
-        },
-        body: body.toString(),
-        signal: AbortSignal.timeout(15000),
-      });
-    } catch (err: unknown) {
-      // Never leak raw error.message or cause.code to the client.
-      const kind = (err as { name?: string })?.name === 'TimeoutError' ? 'timeout' : 'network';
-      this.logger.error(`PAY2M token request ${kind} error`);
+    // R2: retry-with-backoff on transient failures (network blip, 5xx, 429).
+    // Hard 15s timeout per attempt — prevents an unreachable PAY2M server
+    // from hanging the NestJS request thread indefinitely. Normalise
+    // timeout / DNS / connection-refused errors to a generic
+    // gateway-unavailable response.
+    //
+    // getAccessToken is idempotent (read-only token fetch — POSTed only
+    // because PAY2M's API requires POST shape). Retrying is unconditionally
+    // safe. 3 attempts max, ~500ms + jitter between, ~32s worst case
+    // (3 * 15s timeout + ~1.5s backoff) — fits the 60s app-level timeout.
+    //
+    // Inline helper rather than an npm dep: p-retry v5+ is ESM-only and
+    // tsconfig is `module: commonjs`. Pulling p-retry v4 (last CJS) would
+    // add a maintenance signal nobody owns. ~10 lines does what we need.
+    const MAX_ATTEMPTS = 3;
+    let response: globalThis.Response | undefined;
+    let lastErrKind: 'timeout' | 'network' | 'http' = 'network';
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'Jadwal-API/1.0',
+          },
+          body: body.toString(),
+          signal: AbortSignal.timeout(15000),
+        });
+        // 4xx is non-retryable (auth, validation) — break out and let the
+        // outer !response.ok branch handle it. 5xx + 429 retry.
+        if (r.status >= 500 || r.status === 429) {
+          lastErrKind = 'http';
+          this.logger.warn({ event: 'PAY2M_RETRY', attempt, status: r.status });
+          if (attempt < MAX_ATTEMPTS) {
+            await new Promise((res) => setTimeout(res, 500 * 2 ** (attempt - 1) + Math.random() * 100));
+            continue;
+          }
+        }
+        response = r;
+        break;
+      } catch (err: unknown) {
+        lastErrKind = (err as { name?: string })?.name === 'TimeoutError' ? 'timeout' : 'network';
+        this.logger.warn({ event: 'PAY2M_RETRY', attempt, kind: lastErrKind });
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((res) => setTimeout(res, 500 * 2 ** (attempt - 1) + Math.random() * 100));
+          continue;
+        }
+        // All attempts exhausted — never leak raw error.message / cause.code.
+        this.logger.error(`PAY2M token request ${lastErrKind} error after ${MAX_ATTEMPTS} attempts`);
+        throw new BadRequestException('Payment gateway is temporarily unavailable');
+      }
+    }
+    if (!response) {
+      // All attempts returned retryable 5xx/429 — same outcome as exhausted catch.
+      this.logger.error(`PAY2M token request http error after ${MAX_ATTEMPTS} attempts (last kind=${lastErrKind})`);
       throw new BadRequestException('Payment gateway is temporarily unavailable');
     }
 

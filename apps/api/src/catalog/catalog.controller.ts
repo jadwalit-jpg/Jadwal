@@ -1,6 +1,7 @@
 import { Controller, Get, Header, Param, Query, NotFoundException } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { PrismaService } from '../prisma/prisma.service';
+import { ReferenceDataCacheService } from '../redis/reference-data-cache.service';
 import { RATE_LIMIT_VENDOR } from '../common/throttle-config';
 
 /**
@@ -42,24 +43,39 @@ const CACHE_LISTING     = 'public, s-maxage=120,  stale-while-revalidate=600';
  */
 @Controller('catalog')
 export class CatalogController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private refCache: ReferenceDataCacheService,
+  ) {}
+
+  // C1: origin-side cache for slow-changing reference data. CDN handles
+  // edge caching; this prevents thundering-herd Postgres hits on every CDN
+  // refresh / cache miss. Pattern mirrors AvailabilityCacheService.
+  // Cache-aside: on miss → DB → set cache → return. Cache failure is
+  // fail-open (logs, falls through to DB).
 
   @Get('countries')
   @Throttle(RATE_LIMIT_VENDOR)
   @Header('Cache-Control', CACHE_STATIC_LONG)
-  getCountries() {
-    return this.prisma.client.country.findMany({
+  async getCountries() {
+    const cached = await this.refCache.get<unknown[]>('countries', 'active');
+    if (cached) return cached;
+    const data = await this.prisma.client.country.findMany({
       where: { status: 'ACTIVE' },
       select: { id: true, nameEn: true, nameAr: true, isoCode: true, currencyCode: true, defaultTimezone: true },
       orderBy: { nameEn: 'asc' },
     });
+    await this.refCache.set('countries', 'active', data);
+    return data;
   }
 
   @Get('categories')
   @Throttle(RATE_LIMIT_VENDOR)
   @Header('Cache-Control', CACHE_STATIC_LONG)
-  getCategories() {
-    return this.prisma.client.category.findMany({
+  async getCategories() {
+    const cached = await this.refCache.get<unknown[]>('categories', 'roots');
+    if (cached) return cached;
+    const data = await this.prisma.client.category.findMany({
       where: { parentId: null },
       select: {
         id: true, nameEn: true, nameAr: true, slug: true, image: true,
@@ -68,27 +84,40 @@ export class CatalogController {
       },
       orderBy: { nameEn: 'asc' },
     });
+    await this.refCache.set('categories', 'roots', data);
+    return data;
   }
 
   @Get('cities')
   @Throttle(RATE_LIMIT_VENDOR)
   @Header('Cache-Control', CACHE_STATIC_LONG)
-  getAllCities() {
-    return this.prisma.client.city.findMany({
+  async getAllCities() {
+    const cached = await this.refCache.get<unknown[]>('cities', 'all');
+    if (cached) return cached;
+    const data = await this.prisma.client.city.findMany({
       select: { id: true, nameEn: true, nameAr: true, lat: true, lng: true, countryId: true },
       orderBy: { nameEn: 'asc' },
     });
+    await this.refCache.set('cities', 'all', data);
+    return data;
   }
 
   @Get('cities/:countryId')
   @Throttle(RATE_LIMIT_VENDOR)
   @Header('Cache-Control', CACHE_STATIC_LONG)
-  getCitiesByCountry(@Param('countryId') countryId: string) {
-    return this.prisma.client.city.findMany({
+  async getCitiesByCountry(@Param('countryId') countryId: string) {
+    // UUIDs contain dashes which are allowed by KEY_PART_RE; if the param
+    // shape is unsafe the cache no-ops and we just hit the DB. So this is
+    // safe to call with any string — bad inputs fall through cleanly.
+    const cached = await this.refCache.get<unknown[]>('cities', `country-${countryId}`);
+    if (cached) return cached;
+    const data = await this.prisma.client.city.findMany({
       where: { countryId },
       select: { id: true, nameEn: true, nameAr: true, lat: true, lng: true },
       orderBy: { nameEn: 'asc' },
     });
+    await this.refCache.set('cities', `country-${countryId}`, data);
+    return data;
   }
 
   @Get('trending')
@@ -442,6 +471,8 @@ export class CatalogController {
   @Throttle(RATE_LIMIT_VENDOR)
   @Header('Cache-Control', CACHE_STATIC_LONG)
   async getPlatformInfo() {
+    const cached = await this.refCache.get<unknown>('platform-info', 'default');
+    if (cached) return cached;
     const settings = await this.prisma.client.platformSettings.findUnique({
       where: { id: 'default' },
       select: {
@@ -451,6 +482,8 @@ export class CatalogController {
         aboutText: true,
       },
     });
-    return settings ?? { platformName: 'Jadwal', supportEmail: null, supportPhone: null, aboutText: null };
+    const data = settings ?? { platformName: 'Jadwal', supportEmail: null, supportPhone: null, aboutText: null };
+    await this.refCache.set('platform-info', 'default', data);
+    return data;
   }
 }

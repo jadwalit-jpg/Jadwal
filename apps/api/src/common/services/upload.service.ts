@@ -88,7 +88,14 @@ export class UploadService {
     if (this.s3Client) return this.s3Client;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { S3Client } = require('@aws-sdk/client-s3');
-    this.s3Client = new S3Client({ region: this.s3Region });
+    // Adaptive retry (3 attempts) — SDK retries only retryable error types
+    // (network errors pre-request, throttling). PutObject is idempotent on
+    // a fixed key (same upload twice = same result), so retry is safe.
+    this.s3Client = new S3Client({
+      region: this.s3Region,
+      maxAttempts: 3,
+      retryMode: 'adaptive',
+    });
     return this.s3Client;
   }
 

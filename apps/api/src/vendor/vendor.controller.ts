@@ -166,8 +166,16 @@ export class VendorController {
   }
 
   // ─── Image Upload ─────────────────────────────────────────
+  // Allow ADMIN here (overriding the class-level @Roles('VENDOR')) so the
+  // admin panel can upload activity images when moderating / editing a
+  // vendor's activity. No privilege escalation risk: the endpoint only
+  // returns the S3 URL; the admin still has to set it on a specific
+  // activity via the existing /admin/activities/:id PATCH endpoint which
+  // is itself admin-gated. Method-level @Roles overrides class-level via
+  // RolesGuard.getAllAndOverride().
   @Post('upload-image')
   @Throttle(RATE_LIMIT_CALLBACK)
+  @Roles('VENDOR' as any, 'ADMIN' as any)
   @UseInterceptors(FileInterceptor('file', UploadService.diskStorageConfig('activities')))
   async uploadImage(@UploadedFile() file: Express.Multer.File) {
     this.uploadService.validateFile(file);

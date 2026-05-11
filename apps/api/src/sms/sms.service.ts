@@ -25,8 +25,16 @@ export class SmsService {
     }
 
     // Only initialize SNS client when SMS is enabled (avoids credential errors in dev)
+    // Adaptive retry (3 attempts) — SDK only retries network errors before
+    // the request reaches AWS + throttle responses, never application 4xx,
+    // so transient AWS edge blips don't surface as customer-facing OTP
+    // delivery failures. Won't double-publish on a real error.
     this.snsClient = this.enabled
-      ? new SNSClient({ region: this.config.get('AWS_REGION', 'eu-central-1') })
+      ? new SNSClient({
+          region: this.config.get('AWS_REGION', 'eu-central-1'),
+          maxAttempts: 3,
+          retryMode: 'adaptive',
+        })
       : null;
   }
 

@@ -49,20 +49,22 @@ export class ClientErrorController {
     // Hash fragments are stripped automatically (browsers don't send them).
     const url = body.url ? body.url.split('?')[0] : undefined;
 
-    // Single structured log line — CloudWatch Insights can grep for
-    // `[CLIENT_ERROR]` and parse fields. Truncation happens via the DTO's
-    // @MaxLength; no further trim needed here.
-    this.logger.error(
-      JSON.stringify({
-        event: 'CLIENT_ERROR',
-        message: body.message,
-        url,
-        userAgent: body.userAgent,
-        userId: body.userId,
-        ip,
-        stack: body.stack,
-        componentStack: body.componentStack,
-      }),
-    );
+    // Single structured log line — CloudWatch Insights can query top-level
+    // fields. Pino emits this object with `event` at top-level, so the
+    // CloudWatch metric filter `"event":"CLIENT_ERROR"` (on /ecs/jadwal-api,
+    // feeding Jadwal/Web ClientErrorCount) keeps matching. DO NOT
+    // re-introduce JSON.stringify here — that would escape the JSON inside
+    // pino's `msg` field and silently break the metric filter.
+    // Truncation happens via the DTO's @MaxLength; no further trim needed.
+    this.logger.error({
+      event: 'CLIENT_ERROR',
+      message: body.message,
+      url,
+      userAgent: body.userAgent,
+      userId: body.userId,
+      ip,
+      stack: body.stack,
+      componentStack: body.componentStack,
+    });
   }
 }
