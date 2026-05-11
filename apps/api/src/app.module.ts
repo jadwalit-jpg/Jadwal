@@ -6,6 +6,21 @@ import { APP_GUARD } from '@nestjs/core';
 import { SentryModule } from '@sentry/nestjs/setup';
 import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'crypto';
+
+// Pino accepts these level strings. NestJS's legacy levels ('log',
+// 'verbose') don't map directly, so we validate the SSM-supplied value
+// instead of trusting it. An invalid LOG_LEVEL silently falls back to
+// the NODE_ENV default — protects against pino throwing at init if an
+// operator typos the SSM value or pastes a NestJS-style level.
+const VALID_PINO_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
+type PinoLevel = (typeof VALID_PINO_LEVELS)[number];
+function resolvePinoLevel(): PinoLevel {
+  const fromEnv = process.env.LOG_LEVEL?.trim().toLowerCase();
+  if (fromEnv && (VALID_PINO_LEVELS as readonly string[]).includes(fromEnv)) {
+    return fromEnv as PinoLevel;
+  }
+  return process.env.NODE_ENV === 'production' ? 'info' : 'debug';
+}
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -42,7 +57,12 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
     // hash sensitive fields, this is the second layer.
     LoggerModule.forRoot({
       pinoHttp: {
-        level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+        // Honor /jadwal/prod/LOG_LEVEL SSM param so an operator can flip
+        // to 'debug' for a debugging window without a code deploy. Invalid
+        // / NestJS-style values fall back to the NODE_ENV default. The
+        // task-def already injects LOG_LEVEL into the container's env
+        // (api-task.json secrets array, line 46).
+        level: resolvePinoLevel(),
         // Disable pino-http's auto per-request log emission. Our existing
         // RequestLoggerMiddleware already emits a structured `HTTP_REQUEST`
         // log on response with custom fields (skip-path-prefixes, userId,
