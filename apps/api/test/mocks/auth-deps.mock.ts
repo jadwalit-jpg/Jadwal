@@ -68,9 +68,13 @@ export function makeEmailMock() {
 // that exercise the quota path can override the return value per test.
 export function makeEmailQuotaMock() {
   return {
-    tryConsume:               jest.fn().mockResolvedValue(true),
-    tryConsumePerIp:          jest.fn().mockResolvedValue(true),
-    tryConsumePlatformDaily:  jest.fn().mockResolvedValue(true),
+    tryConsume:                jest.fn().mockResolvedValue(true),
+    tryConsumePerIp:           jest.fn().mockResolvedValue(true),
+    tryConsumePlatformDaily:   jest.fn().mockResolvedValue(true),
+    // Default: no cooldown active (0 seconds remaining). Specs exercising
+    // the resend-verification 429 path override this per-test to return a
+    // positive value (e.g. 60 → "wait ~1 min").
+    getCooldownRemainingSec:   jest.fn().mockResolvedValue(0),
   };
 }
 
