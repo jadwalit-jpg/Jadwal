@@ -48,6 +48,10 @@ function LoginFormContent() {
   const [resending, setResending] = useState(false);
   const [resendDone, setResendDone] = useState(false);
   const [resendError, setResendError] = useState(false);
+  // Cooldown message surfaced from the API's 429 response. Distinct
+  // from `resendError` (generic failure) so the UI can render a softer
+  // "try again in N min" hint without the red error styling.
+  const [resendCooldownMessage, setResendCooldownMessage] = useState<string | null>(null);
 
   const { login, user, loading, checkAuth } = useAuth();
   const router = useRouter();
@@ -109,11 +113,27 @@ function LoginFormContent() {
   const handleResend = async () => {
     setResending(true);
     setResendError(false);
+    setResendCooldownMessage(null);
     try {
       await api.post('/auth/resend-verification', { email: unverifiedEmail });
       setResendDone(true);
-    } catch {
-      setResendError(true);
+    } catch (err: unknown) {
+      // 429 surfaces from the backend when the per-recipient progressive
+      // cooldown is active. Render an honest "wait N min" message instead
+      // of the generic red "failed to send" so the user doesn't keep
+      // clicking and pushing the backoff counter further out.
+      const status = (err as { response?: { status?: number; data?: { retryAfterSec?: number } } })?.response?.status;
+      const retryAfterSec = (err as { response?: { data?: { retryAfterSec?: number } } })?.response?.data?.retryAfterSec;
+      if (status === 429 && typeof retryAfterSec === 'number' && retryAfterSec > 0) {
+        const minutes = Math.ceil(retryAfterSec / 60);
+        setResendCooldownMessage(
+          minutes <= 1
+            ? 'Too many attempts. Please wait about a minute and try again.'
+            : `Too many attempts. Please wait about ${minutes} minutes and try again.`,
+        );
+      } else {
+        setResendError(true);
+      }
     } finally {
       setResending(false);
     }
@@ -192,6 +212,9 @@ function LoginFormContent() {
               </button>
               {resendError && (
                 <p className="text-xs text-red-400">{t('auth.failedToSend')}</p>
+              )}
+              {resendCooldownMessage && (
+                <p className="text-xs text-amber-400">{resendCooldownMessage}</p>
               )}
             </>
           )}

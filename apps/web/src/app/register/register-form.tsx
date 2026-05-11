@@ -105,8 +105,24 @@ export default function RegisterForm() {
     try {
       await api.post('/auth/resend-verification', { email: pendingEmail });
       setResendMessage('A new verification link has been sent.');
-    } catch {
-      setResendMessage('Something went wrong. Please try again.');
+    } catch (err: unknown) {
+      // 429 is the cooldown signal from the backend (only fires when the
+      // server has already confirmed the email belongs to a pending user —
+      // anti-enumeration is preserved upstream). Surface honest "wait N min"
+      // copy instead of the generic "something went wrong" so the user
+      // doesn't keep clicking and stacking the backoff counter.
+      const status = (err as { response?: { status?: number; data?: { retryAfterSec?: number } } })?.response?.status;
+      const retryAfterSec = (err as { response?: { data?: { retryAfterSec?: number } } })?.response?.data?.retryAfterSec;
+      if (status === 429 && typeof retryAfterSec === 'number' && retryAfterSec > 0) {
+        const minutes = Math.ceil(retryAfterSec / 60);
+        setResendMessage(
+          minutes <= 1
+            ? 'Too many attempts. Please wait about a minute and try again.'
+            : `Too many attempts. Please wait about ${minutes} minutes and try again.`,
+        );
+      } else {
+        setResendMessage('Something went wrong. Please try again.');
+      }
     } finally {
       setResending(false);
     }
