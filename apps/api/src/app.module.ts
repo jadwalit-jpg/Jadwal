@@ -43,6 +43,12 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+        // Disable pino-http's auto per-request log emission. Our existing
+        // RequestLoggerMiddleware already emits a structured `HTTP_REQUEST`
+        // log on response with custom fields (skip-path-prefixes, userId,
+        // masked ip, etc.) — without this flag we'd double-log every
+        // request, doubling CloudWatch ingest cost.
+        autoLogging: false,
         transport:
           process.env.NODE_ENV !== 'production'
             ? { target: 'pino-pretty', options: { colorize: true, singleLine: true } }
