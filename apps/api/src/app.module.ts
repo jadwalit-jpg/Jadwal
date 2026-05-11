@@ -69,8 +69,17 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
         // masked ip, etc.) — without this flag we'd double-log every
         // request, doubling CloudWatch ingest cost.
         autoLogging: false,
+        // pino-pretty is a devDependency — the production Docker image
+        // installs with `npm ci --omit=dev` so the module isn't in the
+        // image. The transport ONLY kicks in for actual local dev
+        // (NODE_ENV=development). A previous `!== 'production'` denylist
+        // bricked the running app in `staging` because pino tried to
+        // worker-load the missing module → crash on bootstrap → ECS
+        // health-check loop. Match main.ts's "allowlist NODE_ENV in
+        // {development,test}" pattern: only `development` here because
+        // tests don't need colorised pretty output.
         transport:
-          process.env.NODE_ENV !== 'production'
+          process.env.NODE_ENV === 'development'
             ? { target: 'pino-pretty', options: { colorize: true, singleLine: true } }
             : undefined,
         redact: {
