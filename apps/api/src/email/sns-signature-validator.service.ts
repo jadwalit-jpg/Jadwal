@@ -205,7 +205,13 @@ export class SnsSignatureValidator {
     // `redirect: 'manual'` so a hijacked DNS or AWS misconfig can't
     // bounce us to a different host. URL is already regex-validated;
     // any redirect would mean something unexpected is happening.
-    const res = await fetch(url, { redirect: 'manual' });
+    // 5s timeout — AWS edge blip during cert fetch must not hang the
+    // request slot indefinitely. On timeout, fetch throws TimeoutError
+    // → bubbles to the caller's try/catch → cert_fetch_failed result.
+    const res = await fetch(url, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(5_000),
+    });
     if (!res.ok) throw new Error(`cert HTTP ${res.status}`);
     const pem = await res.text();
 

@@ -2,6 +2,7 @@ import { Injectable, ForbiddenException, NotFoundException, BadRequestException,
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaginationDto } from './dto/query-params.dto';
+import { ExportPaginationDto } from '../common/dto/pagination.dto';
 import { LoyaltyUserQueryDto } from './dto/loyalty-user-query.dto';
 import { Prisma } from '@prisma/client';
 import { CreateCountryDto, UpdateCountryDto } from './dto/country.dto';
@@ -1379,10 +1380,19 @@ export class AdminService {
   }
 
   // ─── Countries CRUD ─────────────────────────────────────────
-  async getCountries() {
+  async getCountries(query: PaginationDto = {}) {
+    // Bounded list — admin reference data table grows slowly (GCC = ~6 rows
+    // today). Default 20 / max 100 from PaginationDto caps the blast radius
+    // if the table ever balloons; clients pass ?limit=100 to fetch all.
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
     return this.prisma.client.country.findMany({
       include: { _count: { select: { cities: true, vendors: true, activities: true } } },
-      orderBy: { nameEn: 'asc' },
+      // Stable pagination: id as secondary key breaks ties on nameEn so
+      // a page-1+page-2 fetch can't double-return or skip rows.
+      orderBy: [{ nameEn: 'asc' }, { id: 'asc' }],
+      take: limit,
+      skip: (page - 1) * limit,
     });
   }
 
@@ -1409,13 +1419,19 @@ export class AdminService {
   }
 
   // ─── Categories CRUD ────────────────────────────────────────
-  async getCategories() {
+  async getCategories(query: PaginationDto = {}) {
+    // Same bounded-list pattern as getCountries. Default 20 / max 100.
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
     return this.prisma.client.category.findMany({
       include: {
         parent: { select: { nameEn: true } },
         _count: { select: { activities: true, children: true } },
       },
-      orderBy: { nameEn: 'asc' },
+      // Stable pagination — id as tie-breaker on nameEn.
+      orderBy: [{ nameEn: 'asc' }, { id: 'asc' }],
+      take: limit,
+      skip: (page - 1) * limit,
     });
   }
 
@@ -1592,9 +1608,15 @@ export class AdminService {
   }
 
   // ─── Trending Events CRUD ──────────────────────────────────
-  async getTrendingEvents() {
+  async getTrendingEvents(query: PaginationDto = {}) {
+    // Same bounded-list pattern. Default 20 / max 100.
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
     return this.prisma.client.trendingEvent.findMany({
-      orderBy: { createdAt: 'desc' },
+      // Stable pagination — id as tie-breaker on createdAt.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: (page - 1) * limit,
     });
   }
 
@@ -1925,7 +1947,12 @@ export class AdminService {
     return { reverted: true, paymentId };
   }
 
-  async exportPayouts() {
+  async exportPayouts(query: ExportPaginationDto = {}) {
+    // Export endpoint — higher pagination ceiling (1000 default, 5000 max
+    // per ExportPaginationDto). Admin reporting needs thousands of rows in
+    // one fetch, but still bounded so a runaway query can't pin the DB.
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 1_000;
     return this.prisma.client.payment.findMany({
       where: { status: 'SUCCESS' },
       include: {
@@ -1937,7 +1964,11 @@ export class AdminService {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      // Stable pagination — id as tie-breaker on createdAt so successful
+      // payments made in the same second don't shuffle between pages.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: (page - 1) * limit,
     });
   }
 

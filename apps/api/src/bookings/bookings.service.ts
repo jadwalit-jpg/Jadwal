@@ -1097,7 +1097,20 @@ export class BookingsService {
         if (dto.voucherId) {
           const claimed = await tx.claimedCoupon.findUnique({
             where: { id: dto.voucherId },
-            include: { coupon: true },
+            include: {
+              coupon: {
+                select: {
+                  id: true,
+                  code: true,
+                  status: true,
+                  validTo: true,
+                  minOrderAmount: true,
+                  discountType: true,
+                  discountValue: true,
+                  maxDiscount: true,
+                },
+              },
+            },
           });
 
           if (!claimed) throw new BadRequestException('Voucher not found');

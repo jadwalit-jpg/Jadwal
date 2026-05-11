@@ -231,4 +231,30 @@ describe('SnsSignatureValidator — signature verification', () => {
     msg.Signature = signCanonical(v.buildCanonical(msg)!, 'SHA1');
     await expect(v.validate(msg)).resolves.toEqual({ valid: true });
   });
+
+  test('cert fetch is called with AbortSignal — 5s timeout pinned (regression: must not hang)', async () => {
+    // Real getCert path (not the mocked one in makeValidator). Stub global
+    // fetch so we can assert the second argument carries `signal` — that's
+    // the hang-protection added alongside H2 in the section-1 perf PR.
+    // Returning a malformed body makes the validator surface
+    // `cert_fetch_failed` (X509Certificate parse throws), proving the
+    // assertion ran on the real fetch path and not a different code branch.
+    const fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('not-a-pem', { status: 200 }));
+
+    const v = new SnsSignatureValidator();
+    const msg = makeNotification();
+    msg.Signature = signCanonical(v.buildCanonical(msg)!, 'SHA1');
+
+    const result = await v.validate(msg);
+    expect(result).toEqual({ valid: false, reason: 'cert_fetch_failed' });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [, options] = fetchSpy.mock.calls[0];
+    expect(options?.signal).toBeInstanceOf(AbortSignal);
+    expect(options?.redirect).toBe('manual');
+
+    fetchSpy.mockRestore();
+  });
 });

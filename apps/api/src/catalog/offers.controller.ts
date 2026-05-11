@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Param, UseGuards, ParseUUIDPipe, BadRequestException,
+  Controller, Get, Post, Param, Query, UseGuards, ParseUUIDPipe, BadRequestException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { RATE_LIMIT_READ, RATE_LIMIT_WRITE } from '../common/throttle-config';
@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { PaginationDto } from '../common/dto/pagination.dto';
 
 /**
  * Offers — platform vouchers (admin-created coupons, no vendorId).
@@ -23,8 +24,13 @@ export class OffersController {
    */
   @Get()
   @Throttle(RATE_LIMIT_READ)
-  async listOffers() {
+  async listOffers(@Query() query: PaginationDto) {
     const now = new Date();
+    // Default 50 / max 200 from PaginationDto. Today's offer table is small
+    // (<20 active platform coupons) so default-50 covers every realistic
+    // view; the cap kicks in if the table grows past a few hundred.
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
     const offers = await this.prisma.client.coupon.findMany({
       where: {
         vendorId: null,
@@ -43,7 +49,11 @@ export class OffersController {
         usedCount: true,
         _count: { select: { claimedBy: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      // Stable pagination — id tie-breaker on createdAt so two coupons
+      // created in the same second don't shuffle across pages.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: (page - 1) * limit,
     });
 
     return offers.map((o) => ({
