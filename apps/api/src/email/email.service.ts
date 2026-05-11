@@ -6,7 +6,6 @@ import { bookingCancellationTemplate } from './templates/booking-cancellation';
 import { passwordResetTemplate } from './templates/password-reset';
 import { passwordChangedTemplate } from './templates/password-changed';
 import { emailVerificationTemplate } from './templates/email-verification';
-import { vendorWelcomeTemplate } from './templates/vendor-welcome';
 import {
   adminAlertTemplate,
   ADMIN_ALERT_SUBJECTS,
@@ -121,33 +120,6 @@ export class EmailService {
     bookingId: string;
   }) {
     return this.send(to, 'Refund Processed — Jadwal', 'refund-confirmation', data);
-  }
-
-  // ─── Vendor Emails ───────────────────────────────────────────────────────
-
-  async sendVendorApproval(to: string, data: {
-    vendorName: string;
-    businessName: string;
-  }) {
-    return this.send(to, 'Your Vendor Account is Approved — Jadwal', 'vendor-approved', data);
-  }
-
-  async sendVendorRejection(to: string, data: {
-    vendorName: string;
-    reason?: string;
-  }) {
-    return this.send(to, 'Vendor Application Update — Jadwal', 'vendor-rejected', data);
-  }
-
-  async sendNewBookingNotification(to: string, data: {
-    vendorName: string;
-    activityTitle: string;
-    customerName: string;
-    date: string;
-    guests: number;
-    bookingId: string;
-  }) {
-    return this.send(to, 'New Booking Received — Jadwal', 'vendor-new-booking', data);
   }
 
   // ─── Auth Emails ─────────────────────────────────────────────────────────
@@ -293,9 +265,6 @@ export class EmailService {
         break;
       case 'email-verification':
         html = emailVerificationTemplate(data as any);
-        break;
-      case 'vendor-approved':
-        html = vendorWelcomeTemplate(data as any);
         break;
       case 'admin-alert':
         html = adminAlertTemplate(data as any);
