@@ -229,7 +229,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // flag. Auth flows that legitimately need them (login bcrypt compare,
     // OTP/refresh-token verify) live in auth.service.ts and access them
     // through narrow helpers, not directly from feature controllers.
-    const client = new PrismaClient({
+    const baseClient = new PrismaClient({
       adapter,
       omit: {
         user: {
@@ -243,6 +243,51 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         },
       },
     } as any);
+
+    // ─── O2: slow-query observability via $extends ────────────────────────
+    // Emit a structured warn for queries exceeding 500 ms. CloudWatch Logs
+    // Insights can then filter on `event = "SLOW_QUERY"` to surface
+    // regressions before customers complain.
+    //
+    // PII-safe by design: NEVER log `args` — they contain WHERE clauses
+    // with emails / phone / IDs. The intentional "no log: config" policy
+    // at line 221-225 documents this concern; this middleware is the safe
+    // alternative — model + operation + duration only.
+    //
+    // Prisma 7 removed the deprecated `$use` middleware API; `$extends`
+    // with query.$allModels.$allOperations is the modern equivalent.
+    const SLOW_QUERY_THRESHOLD_MS = 500;
+    const logger = this.logger;
+    const extended = baseClient.$extends({
+      query: {
+        $allModels: {
+          async $allOperations({ args, model, operation, query }) {
+            const start = Date.now();
+            try {
+              return await query(args);
+            } finally {
+              const ms = Date.now() - start;
+              if (ms > SLOW_QUERY_THRESHOLD_MS) {
+                logger.warn({
+                  event: 'SLOW_QUERY',
+                  model,
+                  action: operation,
+                  durationMs: ms,
+                });
+              }
+            }
+          },
+        },
+      },
+    });
+
+    // `$extends` returns a `DynamicClientExtensionThis<...>` that has every
+    // model method (.user.findMany, etc.) but is structurally missing
+    // top-level methods like `$on` from the original PrismaClient. We don't
+    // call `$on` anywhere in this codebase (grep clean) so the cast is
+    // safe — callers see the same API surface. If anyone adds `$on` later,
+    // they'll need to register it on `baseClient` BEFORE this $extends call.
+    const client = extended as unknown as PrismaClient;
 
     return { pool, client };
   }
@@ -283,7 +328,14 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private async fetchSecret(arn: string): Promise<RdsManagedSecret> {
     if (!this.secretsClient) {
       const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
-      this.secretsClient = new SecretsManagerClient(region ? { region } : {});
+      // Adaptive retry (3 attempts) — only retries on retryable error
+      // types (network blips, throttling). GetSecretValue is idempotent
+      // and read-only, so retry is unconditionally safe.
+      this.secretsClient = new SecretsManagerClient({
+        ...(region ? { region } : {}),
+        maxAttempts: 3,
+        retryMode: 'adaptive',
+      });
     }
     const out = await this.secretsClient.send(
       new GetSecretValueCommand({ SecretId: arn, VersionStage: 'AWSCURRENT' }),

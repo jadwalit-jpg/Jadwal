@@ -83,6 +83,7 @@ export class RequestLoggerMiddleware implements NestMiddleware {
       const ip = process.env.NODE_ENV === 'production' ? null : req.ip ?? null;
 
       const payload = {
+        event: 'HTTP_REQUEST',
         requestId,
         method,
         path,
@@ -93,13 +94,16 @@ export class RequestLoggerMiddleware implements NestMiddleware {
         userAgent,
       };
 
-      const line = JSON.stringify(payload);
+      // Object-form (not JSON.stringify) so pino emits each field at
+      // top-level for CloudWatch Logs Insights `filter status = 500` etc.
+      // Stringifying here would escape the JSON inside pino's `msg` field
+      // and lose the queryability win that motivated the O4 migration.
       if (status >= 500) {
-        this.logger.error(line);
+        this.logger.error(payload);
       } else if (status >= 400) {
-        this.logger.warn(line);
+        this.logger.warn(payload);
       } else {
-        this.logger.log(line);
+        this.logger.log(payload);
       }
     });
 

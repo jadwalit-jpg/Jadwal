@@ -15,9 +15,10 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { NotificationService } from '../../src/common/services/notification.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { AvailabilityCacheService } from '../../src/redis/availability-cache.service';
+import { ReferenceDataCacheService } from '../../src/redis/reference-data-cache.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import {
-  makeNotificationMock, makeLoyaltyMock, makeAvailabilityCacheMock,
+  makeNotificationMock, makeLoyaltyMock, makeAvailabilityCacheMock, makeReferenceDataCacheMock,
 } from '../mocks/bookings-deps.mock';
 
 async function buildSut() {
@@ -26,6 +27,7 @@ async function buildSut() {
   // LoyaltyService needs extra methods for admin; extend
   const loyalty = { ...makeLoyaltyMock(), adjust: jest.fn().mockResolvedValue({ appliedDelta: 100 }) };
   const cache = makeAvailabilityCacheMock();
+  const refCache = makeReferenceDataCacheMock();
 
   const mod = await Test.createTestingModule({
     providers: [
@@ -34,10 +36,11 @@ async function buildSut() {
       { provide: NotificationService,       useValue: notif },
       { provide: LoyaltyService,            useValue: loyalty },
       { provide: AvailabilityCacheService,  useValue: cache },
+      { provide: ReferenceDataCacheService, useValue: refCache },
     ],
   }).compile();
 
-  return { sut: mod.get(AdminService), prisma, notif, loyalty, cache };
+  return { sut: mod.get(AdminService), prisma, notif, loyalty, cache, refCache };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

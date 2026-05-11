@@ -5,6 +5,7 @@ import './instrument';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
+import { Logger as PinoLogger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { SanitizePipe } from './common/pipes/sanitize.pipe';
 import { ThrottlerExceptionFilter } from './common/filters/throttler-exception.filter';
@@ -120,13 +121,13 @@ async function bootstrap() {
     }
   }
 
-  // Suppress debug logs in production — saves CloudWatch costs
-  const logLevels: ('log' | 'error' | 'warn' | 'debug' | 'verbose')[] =
-    process.env.NODE_ENV === 'production'
-      ? ['log', 'error', 'warn']
-      : ['log', 'error', 'warn', 'debug', 'verbose'];
-
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger: logLevels });
+  // Pino logging via nestjs-pino — wired in app.module.ts LoggerModule.forRoot.
+  // `bufferLogs: true` queues Nest's bootstrap logs until we install the
+  // pino logger via `app.useLogger(app.get(PinoLogger))`. Levels (info vs
+  // debug) are now controlled inside LoggerModule.forRoot based on
+  // NODE_ENV — no manual array here.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(PinoLogger));
 
   // ─── Trust proxy (real client IP) ───────────────────────────────────────
   // Tells Express how many proxy hops sit in front of us so req.ip resolves

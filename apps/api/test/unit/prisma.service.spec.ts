@@ -31,11 +31,23 @@ jest.mock('@prisma/adapter-pg', () => ({
 // ── @prisma/client ───────────────────────────────────────────────────────
 const prismaConnectMock = jest.fn().mockResolvedValue(undefined);
 const prismaDisconnectMock = jest.fn().mockResolvedValue(undefined);
+// $extends was added when O2 slow-query middleware landed. Mock returns
+// `this` so the extended-client cast preserves $connect / $disconnect.
 jest.mock('@prisma/client', () => ({
-  PrismaClient: jest.fn().mockImplementation(() => ({
-    $connect: prismaConnectMock,
-    $disconnect: prismaDisconnectMock,
-  })),
+  PrismaClient: jest.fn().mockImplementation(function (this: object) {
+    const self = this as {
+      $connect: typeof prismaConnectMock;
+      $disconnect: typeof prismaDisconnectMock;
+      $extends: jest.Mock;
+    };
+    self.$connect = prismaConnectMock;
+    self.$disconnect = prismaDisconnectMock;
+    // Return-self preserves the same mock methods on the "extended" client;
+    // matches what real Prisma does (the extended client is a Proxy that
+    // delegates back to the original for unchanged operations).
+    self.$extends = jest.fn().mockReturnValue(self);
+    return self;
+  }),
   Prisma: {},
 }));
 

@@ -16,9 +16,10 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { NotificationService } from '../../src/common/services/notification.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { AvailabilityCacheService } from '../../src/redis/availability-cache.service';
+import { ReferenceDataCacheService } from '../../src/redis/reference-data-cache.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import {
-  makeNotificationMock, makeLoyaltyMock, makeAvailabilityCacheMock,
+  makeNotificationMock, makeLoyaltyMock, makeAvailabilityCacheMock, makeReferenceDataCacheMock,
 } from '../mocks/bookings-deps.mock';
 
 async function buildSut() {
@@ -30,6 +31,7 @@ async function buildSut() {
       { provide: NotificationService,       useValue: makeNotificationMock() },
       { provide: LoyaltyService,            useValue: makeLoyaltyMock() },
       { provide: AvailabilityCacheService,  useValue: makeAvailabilityCacheMock() },
+      { provide: ReferenceDataCacheService, useValue: makeReferenceDataCacheMock() },
     ],
   }).compile();
   return { sut: mod.get(AdminService), prisma };

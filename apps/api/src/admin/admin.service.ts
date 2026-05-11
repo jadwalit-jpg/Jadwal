@@ -15,6 +15,7 @@ import { UpdateActivityDto } from './dto/update-activity.dto';
 import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
+import { ReferenceDataCacheService } from '../redis/reference-data-cache.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { refundCouponUsage } from '../bookings/bookings.service';
 
@@ -27,6 +28,7 @@ export class AdminService {
     private notificationService: NotificationService,
     private loyalty: LoyaltyService,
     private availabilityCache: AvailabilityCacheService,
+    private refCache: ReferenceDataCacheService,
   ) {}
 
   // ─── Admin Profile ──────────────────────────────────────────
@@ -1397,11 +1399,16 @@ export class AdminService {
   }
 
   async createCountry(dto: CreateCountryDto) {
-    return this.prisma.client.country.create({ data: dto });
+    const result = await this.prisma.client.country.create({ data: dto });
+    // C1 cache: fire-and-forget — cache failure must NEVER fail the write.
+    void this.refCache.invalidate('countries');
+    return result;
   }
 
   async updateCountry(id: string, dto: UpdateCountryDto) {
-    return this.prisma.client.country.update({ where: { id }, data: dto });
+    const result = await this.prisma.client.country.update({ where: { id }, data: dto });
+    void this.refCache.invalidate('countries');
+    return result;
   }
 
   async deleteCountry(id: string) {
@@ -1415,7 +1422,11 @@ export class AdminService {
     }
     // Delete associated cities first, then the country
     await this.prisma.client.city.deleteMany({ where: { countryId: id } });
-    return this.prisma.client.country.delete({ where: { id } });
+    const result = await this.prisma.client.country.delete({ where: { id } });
+    // Country delete cascades cities deletion → invalidate both namespaces.
+    void this.refCache.invalidate('countries');
+    void this.refCache.invalidate('cities');
+    return result;
   }
 
   // ─── Categories CRUD ────────────────────────────────────────
@@ -1436,11 +1447,15 @@ export class AdminService {
   }
 
   async createCategory(dto: CreateCategoryDto) {
-    return this.prisma.client.category.create({ data: dto });
+    const result = await this.prisma.client.category.create({ data: dto });
+    void this.refCache.invalidate('categories');
+    return result;
   }
 
   async updateCategory(id: string, dto: UpdateCategoryDto) {
-    return this.prisma.client.category.update({ where: { id }, data: dto });
+    const result = await this.prisma.client.category.update({ where: { id }, data: dto });
+    void this.refCache.invalidate('categories');
+    return result;
   }
 
   async deleteCategory(id: string) {
@@ -1452,7 +1467,9 @@ export class AdminService {
     if (category._count.activities > 0 || category._count.children > 0) {
       throw new NotFoundException('Cannot delete category with activities or subcategories');
     }
-    return this.prisma.client.category.delete({ where: { id } });
+    const result = await this.prisma.client.category.delete({ where: { id } });
+    void this.refCache.invalidate('categories');
+    return result;
   }
 
   // ─── Cities CRUD ────────────────────────────────────────────
@@ -1467,18 +1484,22 @@ export class AdminService {
   }
 
   async createCity(dto: CreateCityDto) {
-    return this.prisma.client.city.create({
+    const result = await this.prisma.client.city.create({
       data: dto,
       include: { country: { select: { nameEn: true, isoCode: true } } },
     });
+    void this.refCache.invalidate('cities');
+    return result;
   }
 
   async updateCity(id: string, dto: UpdateCityDto) {
-    return this.prisma.client.city.update({
+    const result = await this.prisma.client.city.update({
       where: { id },
       data: dto,
       include: { country: { select: { nameEn: true, isoCode: true } } },
     });
+    void this.refCache.invalidate('cities');
+    return result;
   }
 
   async deleteCity(id: string) {
@@ -1490,7 +1511,9 @@ export class AdminService {
     if (city._count.activities > 0) {
       throw new NotFoundException('Cannot delete city with activities');
     }
-    return this.prisma.client.city.delete({ where: { id } });
+    const result = await this.prisma.client.city.delete({ where: { id } });
+    void this.refCache.invalidate('cities');
+    return result;
   }
 
   // ─── Coupons ────────────────────────────────────────────────
@@ -1591,11 +1614,13 @@ export class AdminService {
   }
 
   async updatePlatformSettings(dto: UpdatePlatformSettingsDto) {
-    return this.prisma.client.platformSettings.upsert({
+    const result = await this.prisma.client.platformSettings.upsert({
       where: { id: 'default' },
       update: dto,
       create: { id: 'default', defaultCommissionPct: dto.defaultCommissionPct ?? 10, ...dto },
     });
+    void this.refCache.invalidate('platform-info');
+    return result;
   }
 
   // kept for backward compat

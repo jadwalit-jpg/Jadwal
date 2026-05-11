@@ -68,8 +68,16 @@ export class EmailService {
     }
 
     // Only initialize SES client when email is enabled (avoids credential errors in dev)
+    // Adaptive retry (3 attempts) — SDK only retries on retryable error
+    // types (network errors pre-request, throttling), so transient AWS
+    // edge blips don't trigger spurious failures. Won't double-send on
+    // a real error (SES 400/403 responses are non-retryable by design).
     this.sesClient = this.enabled
-      ? new SESv2Client({ region: this.config.get('AWS_REGION', 'eu-central-1') })
+      ? new SESv2Client({
+          region: this.config.get('AWS_REGION', 'eu-central-1'),
+          maxAttempts: 3,
+          retryMode: 'adaptive',
+        })
       : null;
   }
 
