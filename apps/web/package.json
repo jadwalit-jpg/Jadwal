@@ -33,14 +33,14 @@
     "react-i18next": "^16.5.4",
     "react-leaflet": "^5.0.0",
     "recharts": "^3.8.1",
-    "tailwind-merge": "^3.0.1"
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",
     "@lhci/cli": "^0.15.1",
     "@next/bundle-analyzer": "^16.2.6",
     "@playwright/test": "^1.59.1",
-    "@tailwindcss/postcss": "^4.2.4",
+    "@tailwindcss/postcss": "^4.3.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
