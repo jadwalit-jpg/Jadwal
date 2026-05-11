@@ -204,7 +204,7 @@ describe('AuthController — delegation', () => {
 describe('AuthController — sessions (vendor/admin only)', () => {
   test('GET /auth/sessions → 403 for CUSTOMER', async () => {
     const { ctrl } = await buildCtrl();
-    await expect(ctrl.getSessions({ id: 'u1', role: 'CUSTOMER' } as any, makeRequestMock() as any))
+    await expect(ctrl.getSessions({ id: 'u1', role: 'CUSTOMER' } as any, makeRequestMock() as any, {}))
       .rejects.toThrow(ForbiddenException);
   });
 
@@ -217,7 +217,7 @@ describe('AuthController — sessions (vendor/admin only)', () => {
     const req = makeRequestMock() as any;
     req.cookies = { RefreshToken: 'rtoken' };
 
-    const r = await ctrl.getSessions({ id: 'u1', role: 'VENDOR' } as any, req);
+    const r = await ctrl.getSessions({ id: 'u1', role: 'VENDOR' } as any, req, {});
 
     expect(authSvc.getTokenHash).toHaveBeenCalledWith('rtoken');
     expect(r).toHaveLength(2);

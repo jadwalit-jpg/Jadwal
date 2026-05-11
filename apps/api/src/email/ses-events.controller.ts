@@ -228,7 +228,13 @@ export class SesEventsController {
       // last belt-and-braces — even if AWS SNS unexpectedly issued a
       // 30x to a different host, fetch returns the redirect response
       // without following it (no second outbound request).
-      await fetch(safeUrl, { redirect: 'manual' }).catch(() => undefined);
+      // 5s timeout — same hang-protection as the cert fetch in
+      // sns-signature-validator. SNS will retry the confirmation if our
+      // ack times out, so swallowing the error and moving on is correct.
+      await fetch(safeUrl, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(5_000),
+      }).catch(() => undefined);
       this.logger.log(`SNS subscription confirmed for topic ${body.TopicArn}`);
       return { ok: true };
     }

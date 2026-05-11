@@ -20,6 +20,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
+import { PaginationDto } from '../common/dto/pagination.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -116,7 +117,11 @@ export class AuthController {
   @Get('sessions')
   @Throttle(RATE_LIMIT_READ)
   @UseGuards(JwtAuthGuard)
-  async getSessions(@CurrentUser() user: RequestUser, @Req() req: Request) {
+  async getSessions(
+    @CurrentUser() user: RequestUser,
+    @Req() req: Request,
+    @Query() query: PaginationDto,
+  ) {
     if (user.role === 'CUSTOMER') {
       throw new ForbiddenException('Sessions management is not available for customers');
     }
@@ -125,6 +130,13 @@ export class AuthController {
       ? this.authService.getTokenHash(req.cookies.RefreshToken)
       : null;
 
+    // Bounded list — refresh-token table grows with login activity (1 row
+    // per device). MAX_SESSIONS_PER_USER = 5 today (see auth.service.ts),
+    // so default 50 / max 200 from PaginationDto is way more than any user
+    // realistically has — but caps blast radius if MAX_SESSIONS_PER_USER
+    // is ever raised or a cleanup job lags.
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
     const sessions = await this.prisma.client.refreshToken.findMany({
       where: { userId: user.id },
       select: {
@@ -137,6 +149,8 @@ export class AuthController {
         tokenHash: true,
       },
       orderBy: { lastUsedAt: 'desc' },
+      take: limit,
+      skip: (page - 1) * limit,
     });
 
     return sessions.map((s) => ({

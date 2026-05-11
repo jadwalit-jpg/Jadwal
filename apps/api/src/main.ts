@@ -13,6 +13,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
 import { PrismaService } from './prisma/prisma.service';
 import helmet from 'helmet';
+import * as compression from 'compression';
 import * as cookieParser from 'cookie-parser';
 import { join } from 'path';
 import { json as bodyJson, urlencoded as bodyUrlencoded } from 'express';
@@ -194,6 +195,25 @@ async function bootstrap() {
     }),
   );
 
+  // ─── Response compression (gzip/deflate) ────────────────────────────────
+  // Big single perf win on list endpoints — typical JSON payloads compress
+  // 5-7×. Cuts NAT egress + improves mobile latency. Skip threshold (1 KB)
+  // avoids compressing tiny health-check / auth-cookie responses where the
+  // CPU cost beats the bandwidth save. Honors Cache-Control: no-transform
+  // per RFC 7234 — rare but correct. BREACH/CRIME-safe because we never
+  // reflect user-controlled input alongside secrets in JSON bodies (JWTs
+  // are HttpOnly cookies, not in the response body). The middleware
+  // auto-sets Vary: Accept-Encoding.
+  app.use(
+    compression({
+      threshold: 1024,
+      filter: (req, res) => {
+        if (req.headers['cache-control']?.includes('no-transform')) return false;
+        return compression.filter(req, res);
+      },
+    }),
+  );
+
   // ─── Static /uploads (DEV ONLY — prod enforces STORAGE_DRIVER=s3) ──────
   //
   // This block is UNREACHABLE in production: the startup guard at the top of
@@ -263,10 +283,30 @@ async function bootstrap() {
 
   // ─── CORS ───────────────────────────────────────────────────────────────
   // Production: CORS_ORIGIN is required (enforced by startup guard above).
+  // maxAge: 24h preflight cache — Chrome/Firefox cap at 86400; higher
+  // values are silently truncated. Safari caps at 5 min regardless.
+  // optionsSuccessStatus: 204 — explicit no-body response on preflight;
+  // some legacy proxies dislike 200 with no body.
   const corsOrigin = process.env.CORS_ORIGIN!;
   app.enableCors({
     origin: corsOrigin.split(',').map((o) => o.trim()),
     credentials: true,
+    maxAge: 86_400,
+    optionsSuccessStatus: 204,
+  });
+
+  // ─── App-level request timeout (defense-in-depth) ───────────────────────
+  // 60s matches the ALB idle timeout — a request still running by 60s is
+  // dead in the water anyway. Killing it here releases the request slot
+  // earlier and returns a clean 503 instead of an ALB 504. Headroom for
+  // long-but-legit operations (S3 streaming uploads via upload.service.ts,
+  // admin export endpoints) sits at 60s; nothing legitimate exceeds it.
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    req.setTimeout(60_000, () => {
+      if (!res.headersSent) res.status(503).json({ message: 'Request timeout' });
+      req.destroy();
+    });
+    next();
   });
 
   // ─── Global exception filters ──────────────────────────────────────────

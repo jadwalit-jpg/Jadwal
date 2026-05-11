@@ -25,6 +25,7 @@ import { RequestUser } from '../auth/interfaces/request-user.interface';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { PaginationDto } from './dto/query-params.dto';
+import { ExportPaginationDto } from '../common/dto/pagination.dto';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { DeactivateUserDto } from './dto/deactivate-user.dto';
 import { UpdateVendorStatusDto } from './dto/update-vendor-status.dto';
@@ -312,14 +313,14 @@ export class AdminController {
   }
 
   @Get('payouts/export')
-  exportPayouts() {
-    return this.adminService.exportPayouts();
+  exportPayouts(@Query() query: ExportPaginationDto) {
+    return this.adminService.exportPayouts(query);
   }
 
   // ─── Countries CRUD ─────────────────────────────────────────
   @Get('settings/countries')
-  getCountries() {
-    return this.adminService.getCountries();
+  getCountries(@Query() query: PaginationDto) {
+    return this.adminService.getCountries(query);
   }
 
   @Post('settings/countries')
@@ -342,8 +343,8 @@ export class AdminController {
 
   // ─── Categories CRUD ────────────────────────────────────────
   @Get('settings/categories')
-  getCategories() {
-    return this.adminService.getCategories();
+  getCategories(@Query() query: PaginationDto) {
+    return this.adminService.getCategories(query);
   }
 
   @Post('settings/categories')
@@ -456,8 +457,8 @@ export class AdminController {
   }
 
   @Get('settings/trending')
-  getTrendingEvents() {
-    return this.adminService.getTrendingEvents();
+  getTrendingEvents(@Query() query: PaginationDto) {
+    return this.adminService.getTrendingEvents(query);
   }
 
   @Post('settings/trending')
