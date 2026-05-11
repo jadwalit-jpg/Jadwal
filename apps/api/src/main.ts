@@ -301,11 +301,28 @@ async function bootstrap() {
   // earlier and returns a clean 503 instead of an ALB 504. Headroom for
   // long-but-legit operations (S3 streaming uploads via upload.service.ts,
   // admin export endpoints) sits at 60s; nothing legitimate exceeds it.
+  //
+  // Keep-alive cleanup (CodeRabbit PR #201): req.setTimeout sets the
+  // timeout on the underlying socket and the 'timeout' event listener
+  // does NOT auto-clear when the response finishes. On HTTP/1.1
+  // keep-alive sockets behind the ALB that means an idle-but-healthy
+  // socket would be destroyed 60s after the last response, forcing the
+  // ALB to redo the TCP+TLS handshake on the next request. And every
+  // request would stack another 'timeout' listener on the same socket.
+  // We clear the timeout + remove the listener on res 'finish' and
+  // 'close' so the protection only fires on actually-hung requests.
   app.use((req: Request, res: Response, next: NextFunction) => {
-    req.setTimeout(60_000, () => {
+    const onTimeout = () => {
       if (!res.headersSent) res.status(503).json({ message: 'Request timeout' });
       req.destroy();
-    });
+    };
+    req.setTimeout(60_000, onTimeout);
+    const clear = () => {
+      req.setTimeout(0);
+      req.removeListener('timeout', onTimeout);
+    };
+    res.on('finish', clear);
+    res.on('close', clear);
     next();
   });
 

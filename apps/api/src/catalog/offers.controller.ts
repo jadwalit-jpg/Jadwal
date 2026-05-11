@@ -49,7 +49,9 @@ export class OffersController {
         usedCount: true,
         _count: { select: { claimedBy: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      // Stable pagination — id tie-breaker on createdAt so two coupons
+      // created in the same second don't shuffle across pages.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit,
       skip: (page - 1) * limit,
     });

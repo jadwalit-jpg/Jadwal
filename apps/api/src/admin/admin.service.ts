@@ -1388,7 +1388,9 @@ export class AdminService {
     const limit = query.limit ?? 20;
     return this.prisma.client.country.findMany({
       include: { _count: { select: { cities: true, vendors: true, activities: true } } },
-      orderBy: { nameEn: 'asc' },
+      // Stable pagination: id as secondary key breaks ties on nameEn so
+      // a page-1+page-2 fetch can't double-return or skip rows.
+      orderBy: [{ nameEn: 'asc' }, { id: 'asc' }],
       take: limit,
       skip: (page - 1) * limit,
     });
@@ -1426,7 +1428,8 @@ export class AdminService {
         parent: { select: { nameEn: true } },
         _count: { select: { activities: true, children: true } },
       },
-      orderBy: { nameEn: 'asc' },
+      // Stable pagination — id as tie-breaker on nameEn.
+      orderBy: [{ nameEn: 'asc' }, { id: 'asc' }],
       take: limit,
       skip: (page - 1) * limit,
     });
@@ -1610,7 +1613,8 @@ export class AdminService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     return this.prisma.client.trendingEvent.findMany({
-      orderBy: { createdAt: 'desc' },
+      // Stable pagination — id as tie-breaker on createdAt.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit,
       skip: (page - 1) * limit,
     });
@@ -1960,7 +1964,9 @@ export class AdminService {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      // Stable pagination — id as tie-breaker on createdAt so successful
+      // payments made in the same second don't shuffle between pages.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit,
       skip: (page - 1) * limit,
     });

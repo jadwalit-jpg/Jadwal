@@ -148,7 +148,8 @@ export class AuthController {
         expiresAt: true,
         tokenHash: true,
       },
-      orderBy: { lastUsedAt: 'desc' },
+      // Stable pagination — id tie-breaker on lastUsedAt.
+      orderBy: [{ lastUsedAt: 'desc' }, { id: 'desc' }],
       take: limit,
       skip: (page - 1) * limit,
     });
