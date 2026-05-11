@@ -581,8 +581,34 @@ export class AuthService {
       where: { email },
       select: { id: true, email: true, fullName: true, role: true, emailVerified: true },
     });
+    // Anti-enumeration: nonexistent + already-verified emails get the
+    // generic message. No cooldown info leaks for those — an attacker
+    // probing arbitrary addresses can't distinguish "doesn't exist" from
+    // "exists but already verified".
     if (!user || user.role !== 'CUSTOMER') return genericResponse;
     if (user.emailVerified) return genericResponse;
+
+    // For confirmed pending-verification accounts ONLY, surface the
+    // EmailQuotaService cooldown honestly. The user has already proven
+    // the email exists (by registering moments before) — hiding the
+    // cooldown behind a fake "sent" message creates a silent-failure UX
+    // where they keep clicking and never learn why nothing arrives.
+    //
+    // Anti-enumeration is preserved because the early-return above
+    // serves the generic response for any address NOT in pending state.
+    // The 429 below only fires for the specific case "email exists +
+    // unverified + cooldown active" — an attacker cannot reach this
+    // path without already knowing the email is a real pending user.
+    const cooldownSec = await this.emailQuota.getCooldownRemainingSec(email, 'verification');
+    if (cooldownSec > 0) {
+      throw new HttpException(
+        {
+          message: 'Too many attempts. Please wait before requesting another verification email.',
+          retryAfterSec: cooldownSec,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
 
     const { ip: resendIp } = this.extractClientInfo(req);
     await this.sendVerificationEmail(db, user.id, user.email, user.fullName, resendIp);

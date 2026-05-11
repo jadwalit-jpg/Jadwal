@@ -151,6 +151,47 @@ export class EmailQuotaService {
     return this.defaults[type];
   }
 
+  /**
+   * Read-only check: how many seconds until the next send to this recipient
+   * is allowed under the progressive cooldown rules.
+   *
+   * Returns 0 if no cooldown is active (the next send would pass).
+   * Returns a positive number of seconds if the recipient is currently in
+   * cooldown. Does NOT bump the counter — purely a read.
+   *
+   * Used by `resendVerification` to surface honest "wait N min" UX to a
+   * user who has already proven the email exists (by registering or
+   * logging in to a pending account). For anti-enumeration-sensitive
+   * flows (forgot-password, signup-with-existing-email) — DO NOT call
+   * this; keep the silent-drop behaviour inside `tryConsume`.
+   *
+   * Fails open: on Redis error, returns 0 (i.e. "no cooldown active").
+   * Matches the failure mode of `tryConsume` so a Redis outage never
+   * locks a user out of legitimate retries.
+   */
+  async getCooldownRemainingSec(email: string, type: EmailQuotaType): Promise<number> {
+    try {
+      const client = this.redis.getClient();
+      const [lastSentRaw, prevCountRaw] = await client.mget(
+        this.makeLastSentKey(email, type),
+        this.makeKey(email, type),
+      );
+      const lastSent = lastSentRaw ? Number(lastSentRaw) : 0;
+      const prevCount = prevCountRaw ? Number(prevCountRaw) : 0;
+      if (lastSent <= 0 || prevCount <= 0 || prevCount >= this.cooldownAfterSendMs.length) {
+        return 0;
+      }
+      const requiredWait = this.cooldownAfterSendMs[prevCount];
+      const elapsed = Date.now() - lastSent;
+      if (elapsed >= requiredWait) return 0;
+      return Math.ceil((requiredWait - elapsed) / 1000);
+    } catch (err) {
+      const kind = err instanceof Error ? err.name : 'UnknownError';
+      this.logger.error(`email-quota cooldown check failed (${kind}) — assuming none`);
+      return 0;
+    }
+  }
+
   // We hash the email so Redis (and any log spill) never carries the raw
   // recipient address. Lower-cased + trimmed first to make `User@x.com` and
   // `user@x.com` collide on the same counter.
