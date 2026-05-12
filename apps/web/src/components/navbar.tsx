@@ -6,7 +6,7 @@ import { useTheme } from 'next-themes';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from 'react-i18next';
 import { Sun, Moon, Menu, X, Home, Compass, Tag, Store, CalendarDays, Heart, User, LogOut, ChevronDown } from 'lucide-react';
-import { memo, useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import NotificationBell from '@/components/notification-bell';
 
 // Small enter-only animations (CSS, not framer-motion — this component is on
@@ -14,7 +14,13 @@ import NotificationBell from '@/components/notification-bell';
 // dropdown fade isn't worth it). Exit is instant — standard for menus, and CSS
 // can't cheaply do exit animations without re-introducing JS state. Keyframes
 // (`dropdownIn`, `fadeIn`, `slideDownIn`) live in globals.css.
-function NavbarComponent({ variant = 'transparent' }: { variant?: 'transparent' | 'solid' }) {
+//
+// Not wrapped in React.memo: its re-renders are driven by context (useAuth /
+// useTheme / i18n), not props — memo doesn't help those, and the re-render
+// itself is cheap (the theme-toggle lag was the CSS transitions, fixed by
+// `disableTransitionOnChange` + `transition-colors`, not this component
+// re-rendering).
+export default function Navbar({ variant = 'transparent' }: { variant?: 'transparent' | 'solid' }) {
   const router = useRouter();
   const { user, logout, loading: authLoading } = useAuth();
   const { theme, setTheme } = useTheme();
@@ -355,6 +361,3 @@ function NavbarComponent({ variant = 'transparent' }: { variant?: 'transparent' 
     </>
   );
 }
-
-const Navbar = memo(NavbarComponent);
-export default Navbar;
