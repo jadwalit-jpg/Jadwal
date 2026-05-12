@@ -212,7 +212,7 @@ export class EmailService {
       // bypassed types (test fixtures, JSON-deserialized config). Fail-closed:
       // log and return success-shaped so we don't propagate the error to a
       // critical path that's already trying to *report* a failure.
-      this.logger.warn(`sendAdminAlert called with unknown type — dropping`);
+      this.logger.warn({ event: 'EMAIL_ADMIN_ALERT_UNKNOWN_TYPE' });
       return true;
     }
 
@@ -278,7 +278,7 @@ export class EmailService {
         html = adminAlertTemplate(data as any);
         break;
       default:
-        this.logger.warn(`No HTML template found for "${template}", using plain text fallback`);
+        this.logger.warn({ event: 'EMAIL_TEMPLATE_MISSING', template });
         html = `<html><body><p>${template}</p></body></html>`;
         break;
     }
@@ -382,7 +382,7 @@ export class EmailService {
       return u?.id ?? null;
     } catch (err) {
       const kind = err instanceof Error ? err.name : 'UnknownError';
-      this.logger.warn(`resolveUserId failed (${kind}) — proceeding without HTTPS unsubscribe URL`);
+      this.logger.warn({ event: 'EMAIL_RESOLVE_USER_FAILED', kind });
       return null;
     }
   }
@@ -405,7 +405,7 @@ export class EmailService {
     if (template !== 'admin-alert') {
       const suppressed = await this.suppressions.isSuppressed(to);
       if (suppressed) {
-        this.logger.warn(`Email to ${masked} dropped — recipient suppressed (${template})`);
+        this.logger.warn({ event: 'EMAIL_SUPPRESSED', recipientMasked: masked, template });
         return true;
       }
 
@@ -419,9 +419,7 @@ export class EmailService {
         // Success-shaped return preserves anti-enumeration on
         // /forgot-password etc. Caller cannot distinguish "we hit the
         // platform cap" from "the email actually sent".
-        this.logger.warn(
-          `Email to ${masked} dropped — platform daily cap exceeded (${template})`,
-        );
+        this.logger.warn({ event: 'EMAIL_PLATFORM_CAP_EXCEEDED', recipientMasked: masked, template });
         return true;
       }
     }
@@ -436,11 +434,11 @@ export class EmailService {
     // sink retains data. Only `html.length` is safe to emit. If you need
     // to debug template output locally, use `EMAIL_ENABLED=false` + a
     // local file dump GUARDED by `process.env.NODE_ENV !== 'production'`.
-    this.logger.debug(`Rendered template="${template}" | html_length=${html.length}`);
+    this.logger.debug({ event: 'EMAIL_RENDERED', template, htmlLength: html.length });
 
     if (!this.enabled || !this.sesClient) {
       // NEVER log `_data` — it carries verification tokens, reset links, OTP codes.
-      this.logger.debug(`[DEV] Email to ${masked} | template=${template} | subject=${subject}`);
+      this.logger.debug({ event: 'EMAIL_DEV_SKIP_SEND', recipientMasked: masked, template, subject });
       return true;
     }
 
@@ -486,14 +484,14 @@ export class EmailService {
       });
       await this.sesClient.send(command);
 
-      this.logger.log(`Email sent to ${masked} (${template})`);
+      this.logger.log({ event: 'EMAIL_SENT', recipientMasked: masked, template });
       return true;
     } catch (error: unknown) {
       // Log error class only. SES error.message can carry request IDs and
       // account fingerprints; nothing the receiver can act on. For
       // operational debug, inspect CloudTrail / SES bounce dashboard.
       const kind = error instanceof Error ? error.name : 'UnknownError';
-      this.logger.error(`Email failed to ${masked} (${template}, ${kind})`);
+      this.logger.error({ event: 'EMAIL_SEND_FAILED', recipientMasked: masked, template, kind });
       return false;
     }
   }

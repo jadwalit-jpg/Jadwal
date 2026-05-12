@@ -116,18 +116,18 @@ export class PaymentService {
           continue;
         }
         // All attempts exhausted — never leak raw error.message / cause.code.
-        this.logger.error(`PAY2M token request ${lastErrKind} error after ${MAX_ATTEMPTS} attempts`);
+        this.logger.error({ event: 'PAY2M_TOKEN_FAILED', kind: lastErrKind, attempts: MAX_ATTEMPTS });
         throw new BadRequestException('Payment gateway is temporarily unavailable');
       }
     }
     if (!response) {
       // All attempts returned retryable 5xx/429 — same outcome as exhausted catch.
-      this.logger.error(`PAY2M token request http error after ${MAX_ATTEMPTS} attempts (last kind=${lastErrKind})`);
+      this.logger.error({ event: 'PAY2M_TOKEN_FAILED', kind: 'http', attempts: MAX_ATTEMPTS, lastKind: lastErrKind });
       throw new BadRequestException('Payment gateway is temporarily unavailable');
     }
 
     if (!response.ok) {
-      this.logger.error(`PAY2M token request failed: HTTP ${response.status}`);
+      this.logger.error({ event: 'PAY2M_TOKEN_HTTP_ERROR', status: response.status });
       throw new BadRequestException('Payment gateway is temporarily unavailable');
     }
 
@@ -145,13 +145,13 @@ export class PaymentService {
     // Manual stream reading + byteLength accounting fixes both.
     const contentLength = Number(response.headers.get('content-length') ?? '0');
     if (contentLength > PaymentService.PAY2M_MAX_RESPONSE_BYTES) {
-      this.logger.error(`PAY2M response too large (${contentLength} bytes)`);
+      this.logger.error({ event: 'PAY2M_RESPONSE_TOO_LARGE', bytes: contentLength });
       throw new BadRequestException('Payment gateway is temporarily unavailable');
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
-      this.logger.error('PAY2M response has no readable body');
+      this.logger.error({ event: 'PAY2M_RESPONSE_NO_BODY' });
       throw new BadRequestException('Payment gateway is temporarily unavailable');
     }
 
@@ -167,7 +167,7 @@ export class PaymentService {
           // Cancel the stream so we don't keep pulling bytes — frees memory
           // immediately and signals upstream we're done.
           await reader.cancel();
-          this.logger.error(`PAY2M streamed response exceeded cap (>${PaymentService.PAY2M_MAX_RESPONSE_BYTES} bytes)`);
+          this.logger.error({ event: 'PAY2M_RESPONSE_TOO_LARGE', capBytes: PaymentService.PAY2M_MAX_RESPONSE_BYTES });
           throw new BadRequestException('Payment gateway is temporarily unavailable');
         }
         chunks.push(value);
@@ -181,12 +181,12 @@ export class PaymentService {
       const text = Buffer.concat(chunks).toString('utf-8');
       data = JSON.parse(text);
     } catch {
-      this.logger.error('PAY2M returned non-JSON response');
+      this.logger.error({ event: 'PAY2M_RESPONSE_NOT_JSON' });
       throw new BadRequestException('Payment gateway is temporarily unavailable');
     }
 
     if (!data.ACCESS_TOKEN) {
-      this.logger.error('PAY2M returned empty access token');
+      this.logger.error({ event: 'PAY2M_TOKEN_EMPTY' });
       throw new BadRequestException('Payment gateway is temporarily unavailable');
     }
 
@@ -418,7 +418,7 @@ export class PaymentService {
   }): Promise<{ bookingId: string; status: 'success' | 'failed'; error?: string }> {
     // 0. Reject callbacks when payment is disabled (maintenance, misconfiguration)
     if (!this.enabled) {
-      this.logger.warn('Callback received while PAYMENT_ENABLED=false — rejecting');
+      this.logger.warn({ event: 'PAY2M_CALLBACK_WHILE_DISABLED' });
       throw new BadRequestException('Payment service is not available');
     }
 
@@ -445,7 +445,7 @@ export class PaymentService {
     });
 
     if (!payment) {
-      this.logger.warn('Callback received for unknown basket_id');
+      this.logger.warn({ event: 'PAY2M_CALLBACK_UNKNOWN_BASKET' });
       throw new BadRequestException('Payment not found');
     }
 
@@ -490,7 +490,7 @@ export class PaymentService {
     // legitimate cancels and declines too — the previous "be lenient on
     // failures" was the only deviation, and it's now closed.
     if (!hashValid) {
-      this.logger.warn(`Invalid Response_Key for payment ${payment.id} (err_code=${params.err_code})`);
+      this.logger.warn({ event: 'PAY2M_HASH_MISMATCH', paymentId: payment.id, errCode: params.err_code });
       await this.auditLogger.log({
         actorType: 'SYSTEM',
         actorId: 'pay2m-callback',
@@ -538,7 +538,7 @@ export class PaymentService {
           details: `couponCode: ${payment.booking.couponCode}, discount: ${payment.booking.couponDiscount}, status: ${liveCoupon?.status ?? 'NOT_FOUND'}, validTo: ${liveCoupon?.validTo?.toISOString() ?? 'N/A'}, usedCount/limit: ${liveCoupon?.usedCount ?? 'N/A'}/${liveCoupon?.usageLimit ?? '∞'}`,
           actionCategory: 'FINANCIAL',
         });
-        this.logger.warn(`Coupon ${payment.booking.couponCode} no longer valid at payment confirmation for payment ${payment.id} — honoring price as charged; audit emitted for reconciliation`);
+        this.logger.warn({ event: 'PAY2M_COUPON_INVALID_AT_CONFIRMATION', paymentId: payment.id, couponCode: payment.booking.couponCode });
       }
     }
 
@@ -787,7 +787,7 @@ export class PaymentService {
           });
         } catch (err: unknown) {
           const kind = err instanceof Error ? err.name : 'UnknownError';
-          this.logger.error(`Booking confirmation email enqueue failed (${kind}) for booking ${payment.bookingId}`);
+          this.logger.error({ event: 'EMAIL_OUTBOX_ENQUEUE_FAILED', bookingId: payment.bookingId, kind });
         }
       }
     }
@@ -1028,7 +1028,7 @@ export class PaymentService {
       }
       // Any other failure: log + queue refund. We never silently swallow.
       const kind = err instanceof Error ? err.name : 'UnknownError';
-      this.logger.error(`B2 orphan recovery failed for payment ${paymentId} (${kind})`);
+      this.logger.error({ event: 'PAY2M_B2_RECOVERY_FAILED', paymentId, kind });
       await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, `RECOVERY_ERROR:${kind}`);
     }
   }

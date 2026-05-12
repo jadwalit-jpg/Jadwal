@@ -88,7 +88,7 @@ export class CleanupService {
     // (24× safety vs typical 30s run, but auto-expires before next
     // 24-hour iteration so a crashed leader doesn't permanently silence).
     await this.lock.withLeaderLock('cron:daily-cleanup', 60 * 60_000, async () => {
-      this.logger.log('Starting daily cleanup...');
+      this.logger.log({ event: 'CLEANUP_DAILY_START' });
 
       const results = await Promise.allSettled([
         this.cleanExpiredRefreshTokens(),
@@ -101,17 +101,17 @@ export class CleanupService {
       const names = ['RefreshTokens', 'SecurityLogs', 'AuditLogs', 'Coupons', 'EmailOutbox'];
       results.forEach((result, i) => {
         if (result.status === 'fulfilled') {
-          this.logger.log(`  ${names[i]}: ${result.value} rows deleted`);
+          this.logger.log({ event: 'CLEANUP_TASK_DONE', task: names[i], deleted: result.value });
         } else {
           // Don't interpolate the raw rejection reason — Prisma errors can
           // include query fragments, column values, and connection strings.
           const reasonName =
             result.reason instanceof Error ? result.reason.name : 'UnknownError';
-          this.logger.error(`  ${names[i]}: failed (${reasonName})`);
+          this.logger.error({ event: 'CLEANUP_TASK_FAILED', task: names[i], kind: reasonName });
         }
       });
 
-      this.logger.log('Daily cleanup complete.');
+      this.logger.log({ event: 'CLEANUP_DAILY_DONE' });
     });
   }
 
@@ -231,7 +231,7 @@ export class CleanupService {
       });
     });
 
-    this.logger.log(`Deleted ${staleBookings.length} expired reservation(s)`);
+    this.logger.log({ event: 'CLEANUP_STALE_PENDING_CANCELLED', count: staleBookings.length });
 
     // Batch-invalidate availability for every affected activity. Dedup happens
     // inside invalidateMany; pipelined INCRs keep Redis round-trips bounded.
@@ -329,16 +329,16 @@ export class CleanupService {
           // Prisma query context. Log class name + booking ID only; the
           // transaction has already rolled back by this point.
           const kind = err instanceof Error ? err.name : 'UnknownError';
-          this.logger.error(`Failed to award points for booking ${booking.id} (${kind})`);
+          this.logger.error({ event: 'LOYALTY_AWARD_FAILED', bookingId: booking.id, kind });
         }
       }
 
       if (totalPointsAwarded > 0) {
-        this.logger.log(`Awarded ${totalPointsAwarded} loyalty points across ${eligibleBookings.length} booking(s)`);
+        this.logger.log({ event: 'LOYALTY_AWARD_BATCH', pointsAwarded: totalPointsAwarded, bookings: eligibleBookings.length });
       }
     }
 
-    this.logger.log(`Auto-completed ${bookingsToComplete.length} past booking(s)`);
+    this.logger.log({ event: 'BOOKINGS_AUTO_COMPLETED', count: bookingsToComplete.length });
     this.auditLogger.log({
       actorType: 'SYSTEM',
       actorId: 'cron',
@@ -374,7 +374,7 @@ export class CleanupService {
     });
 
     if (count > 0) {
-      this.logger.log(`Auto-expired ${count} coupon(s) past validTo`);
+      this.logger.log({ event: 'COUPONS_AUTO_EXPIRED', count });
       this.auditLogger.log({
         actorType: 'SYSTEM',
         actorId: 'cron',
