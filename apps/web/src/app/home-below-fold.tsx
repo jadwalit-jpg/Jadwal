@@ -24,6 +24,7 @@ import { localized } from '@/lib/localize';
 import { useGeo } from '@/context/geo-context';
 import {
   ActivityCard,
+  ActivityCardSkeleton,
   type ActivityCardActivity,
   CategoryPill,
   PatternDivider,
@@ -84,7 +85,7 @@ export default function HomeBelowFold() {
   const featuredParams = new URLSearchParams({ limit: '6', featured: 'true' });
   if (country?.id) featuredParams.set('countryId', country.id);
 
-  const { data: featuredActivitiesData } = useQuery<{ data: HomeActivity[] }>({
+  const { data: featuredActivitiesData, isLoading: featuredLoading } = useQuery<{ data: HomeActivity[] }>({
     queryKey: ['public-activities-featured', country?.id],
     queryFn: () => api.get(`/catalog/activities?${featuredParams}`).then((r) => r.data),
     staleTime: 5 * 60 * 1000,
@@ -99,7 +100,7 @@ export default function HomeBelowFold() {
     nearYouParams.set('lng', String(location.lng));
   }
 
-  const { data: nearYouData } = useQuery<{ data: HomeActivity[] }>({
+  const { data: nearYouData, isLoading: nearYouLoading } = useQuery<{ data: HomeActivity[] }>({
     queryKey: ['public-activities-near', country?.id, location?.lat, location?.lng],
     queryFn: () => api.get(`/catalog/activities?${nearYouParams}`).then((r) => r.data),
     staleTime: 5 * 60 * 1000,
@@ -242,6 +243,14 @@ export default function HomeBelowFold() {
                 <ActivityCard key={activity.id} activity={activity} size="fill" />
               ))}
             </div>
+          ) : isDetecting || featuredLoading ? (
+            // Skeleton grid (not a short text placeholder) so the section height
+            // stays ~constant when the real cards arrive — avoids the CLS jump.
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <ActivityCardSkeleton key={i} />
+              ))}
+            </div>
           ) : (
             <div className="text-center py-12 text-jadwal-text-faint text-sm">
               {t('home.noFeatured', { defaultValue: 'No featured activities yet' })}
@@ -307,6 +316,16 @@ export default function HomeBelowFold() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
               {nearYouActivities.map((activity) => (
                 <ActivityCard key={activity.id} activity={activity} size="fill" />
+              ))}
+            </div>
+          ) : isDetecting || (!!country && nearYouLoading) ? (
+            // Skeleton grid while detecting location / fetching — keeps this
+            // section's height ~constant so the real cards don't shove the rest
+            // of the page (this was the homepage's main CLS source). The short
+            // box below is only for the genuinely-empty / no-geo case.
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <ActivityCardSkeleton key={i} />
               ))}
             </div>
           ) : (
