@@ -126,7 +126,7 @@ export default function CustomSelect({
         <div
           ref={dropdownRef}
           style={dropdownStyle}
-          className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-xl shadow-gray-200/60 dark:shadow-black/40 overflow-hidden animate-[dropdown-in_0.15s_ease-out]"
+          className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-xl shadow-gray-200/60 dark:shadow-black/40 overflow-hidden animate-[dropdown-in_0.15s_ease-out] motion-reduce:animate-none"
         >
           <div className="max-h-64 overflow-y-auto py-1.5">
             {!required && (

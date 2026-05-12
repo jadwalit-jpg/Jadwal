@@ -180,7 +180,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
 
                 {userMenuOpen && (
                     <div
-                      className="absolute inset-e-0 mt-2 w-48 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200/60 dark:border-slate-700/60 shadow-xl shadow-black/10 dark:shadow-black/30 overflow-hidden z-50 animate-[dropdown-in_0.15s_ease-out]"
+                      className="absolute inset-e-0 mt-2 w-48 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200/60 dark:border-slate-700/60 shadow-xl shadow-black/10 dark:shadow-black/30 overflow-hidden z-50 animate-[dropdown-in_0.15s_ease-out] motion-reduce:animate-none"
                     >
                       {/* User info */}
                       <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-800">
@@ -263,12 +263,12 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
           <>
             {/* Backdrop */}
             <div
-              className="fixed inset-0 z-99 bg-black/40 backdrop-blur-sm md:hidden animate-[fade-in_0.2s_ease-out]"
+              className="fixed inset-0 z-99 bg-black/40 backdrop-blur-sm md:hidden animate-[fade-in_0.2s_ease-out] motion-reduce:animate-none"
               onClick={() => setMobileOpen(false)}
             />
 
             {/* Menu panel */}
-            <div className="fixed top-[72px] inset-x-4 z-101 md:hidden animate-[slide-down-in_0.25s_ease-out]">
+            <div className="fixed top-[72px] inset-x-4 z-101 md:hidden animate-[slide-down-in_0.25s_ease-out] motion-reduce:animate-none">
               <div className="rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-gray-200/50 dark:border-slate-700/50 shadow-2xl shadow-black/10 dark:shadow-black/30 overflow-hidden">
                 <div className="p-3 space-y-1">
                   {mobileLinks.map((link) => (

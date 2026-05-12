@@ -155,7 +155,7 @@ export default function NotificationBell({ align = 'end' }: { align?: 'start' | 
           closes instantly, standard for menus. */}
       {open && (
           <div
-            className={`absolute top-full mt-2 w-80 sm:w-96 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-2xl dark:shadow-black/40 z-50 overflow-hidden animate-[dropdown-in_0.15s_ease-out] ${align === 'start' ? 'inset-s-0' : 'inset-e-0'}`}
+            className={`absolute top-full mt-2 w-80 sm:w-96 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-2xl dark:shadow-black/40 z-50 overflow-hidden animate-[dropdown-in_0.15s_ease-out] motion-reduce:animate-none ${align === 'start' ? 'inset-s-0' : 'inset-e-0'}`}
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-slate-800">
