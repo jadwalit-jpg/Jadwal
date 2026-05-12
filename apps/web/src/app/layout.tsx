@@ -165,7 +165,12 @@ export default async function RootLayout({
         <ErrorBoundary>
           <QueryProvider>
             <I18nProvider initialLang={lang}>
-              <ThemeProvider attribute="class" defaultTheme="system" enableSystem nonce={nonce}>
+              {/* disableTransitionOnChange: next-themes injects `* { transition: none }`
+                  for one frame during the light↔dark flip, so the page snaps to the
+                  new theme instead of crossfading every transitioned element (the
+                  navbar's transitions + the hero's `dark:` swaps were the "theme
+                  toggle lag" on /home). */}
+              <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange nonce={nonce}>
                 <AuthProvider>
                   <ToastProvider>
                     <CustomerShell>{children}</CustomerShell>

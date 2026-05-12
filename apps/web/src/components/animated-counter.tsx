@@ -9,11 +9,15 @@
  * otherwise reflow as the digits widen during the count-up, which on
  * RTL mobile reads as a "shake". With the min-width reserved the box
  * is fixed and the digits center within it.
+ *
+ * Plain `IntersectionObserver` + `requestAnimationFrame` (no framer-motion
+ * — this component is in the homepage hero chunk; pulling the animation
+ * engine in for a number tween isn't worth it). Honors `prefers-reduced-
+ * motion: reduce` by jumping straight to the final value.
  */
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { animate, useInView } from 'framer-motion';
 
 type Props = {
   value: number;
@@ -22,20 +26,46 @@ type Props = {
   prefix?: string;
 };
 
+const DURATION_MS = 3000;
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
 export function AnimatedCounter({ value, decimals = 0, suffix = '', prefix = '' }: Props) {
   const ref = useRef<HTMLSpanElement>(null);
-  const inView = useInView(ref, { once: true, amount: 0.5 });
   const [display, setDisplay] = useState(decimals > 0 ? '0.0' : '0');
 
   useEffect(() => {
-    if (!inView) return;
-    const controls = animate(0, value, {
-      duration: 3,
-      ease: 'easeOut',
-      onUpdate: (v) => setDisplay(v.toFixed(decimals)),
-    });
-    return () => controls.stop();
-  }, [inView, value, decimals]);
+    const el = ref.current;
+    if (!el) return;
+    let rafId = 0;
+    let done = false;
+    const reduce =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting || done) return;
+        done = true;
+        io.disconnect();
+        if (reduce) {
+          setDisplay(value.toFixed(decimals));
+          return;
+        }
+        const start = performance.now();
+        const tick = (now: number) => {
+          const p = Math.min(1, (now - start) / DURATION_MS);
+          setDisplay((value * easeOutCubic(p)).toFixed(decimals));
+          if (p < 1) rafId = requestAnimationFrame(tick);
+        };
+        rafId = requestAnimationFrame(tick);
+      },
+      { threshold: 0.5 },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [value, decimals]);
 
   const finalChars = `${prefix}${value.toFixed(decimals)}${suffix}`.length;
   const widthClass =

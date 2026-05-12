@@ -5,7 +5,6 @@ import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 import { Search, MapPin, Star, Clock, Users, ChevronLeft, ChevronRight, SlidersHorizontal, X } from 'lucide-react';
 import { useEffect, useState, useMemo, useCallback, Suspense } from 'react';
-import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import api from '@/lib/api';
@@ -287,12 +286,10 @@ function ExploreContent() {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Filters Panel */}
+        {/* Filters Panel — no JS height animation (animating `height` is the
+            costliest kind; it shows/hides instantly, which is fine). */}
         {showFilters && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
+          <div
             className="mb-8 p-6 rounded-2xl border border-gray-200/80 dark:border-slate-800/60 bg-white dark:bg-slate-900/50"
           >
             <div className="flex items-center justify-between mb-4">
@@ -413,7 +410,7 @@ function ExploreContent() {
                 </div>
               </div>
             </div>
-          </motion.div>
+          </div>
         )}
 
         {/* Results Header */}
@@ -452,18 +449,13 @@ function ExploreContent() {
           </div>
         ) : activities.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {activities.map((activity, i) => (
-              // Opacity-only fade-in — `y: 20` transform here was contributing
-              // ~0.15 CLS (Lighthouse pinned the footer as the shift target,
-              // but the trigger was each card moving 20px on mount). Pure
-              // opacity fade has the same visual feel without layout shift.
-              <motion.div
-                key={activity.id}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.3, delay: i * 0.05 }}
-              >
+            {activities.map((activity) => (
+              // No per-card JS animation — wrapping each of up to 20 cards in a
+              // `motion.div` with a staggered delay mounted 20 motion components
+              // and queued ~1 s of animation, which hurt INP. The cards just
+              // render; the grid is fine without a fade.
                 <Link
+                  key={activity.id}
                   href={`/activity/${activity.slug}`}
                   className="group block rounded-2xl border border-gray-200/80 dark:border-slate-800/60 bg-white dark:bg-slate-900/50 overflow-hidden hover:shadow-lg hover:shadow-gray-200/50 dark:hover:shadow-none hover:border-blue-200 dark:hover:border-blue-800/50 transition-all"
                 >
@@ -560,7 +552,6 @@ function ExploreContent() {
                     </div>
                   </div>
                 </Link>
-              </motion.div>
             ))}
           </div>
         ) : (

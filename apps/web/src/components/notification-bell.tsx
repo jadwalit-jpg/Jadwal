@@ -5,7 +5,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Bell, CheckCheck, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { motion, AnimatePresence } from 'framer-motion';
 import api from '@/lib/api';
 import { isSafeRelativePath } from '@/lib/utils';
 
@@ -152,15 +151,11 @@ export default function NotificationBell({ align = 'end' }: { align?: 'start' | 
         )}
       </button>
 
-      {/* Dropdown */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -8, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.95 }}
-            transition={{ duration: 0.15 }}
-            className={`absolute top-full mt-2 w-80 sm:w-96 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-2xl dark:shadow-black/40 z-50 overflow-hidden ${align === 'start' ? 'inset-s-0' : 'inset-e-0'}`}
+      {/* Dropdown — enter animation via CSS (dropdown-in keyframes in globals.css);
+          closes instantly, standard for menus. */}
+      {open && (
+          <div
+            className={`absolute top-full mt-2 w-80 sm:w-96 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-2xl dark:shadow-black/40 z-50 overflow-hidden animate-[dropdown-in_0.15s_ease-out] motion-reduce:animate-none ${align === 'start' ? 'inset-s-0' : 'inset-e-0'}`}
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-slate-800">
@@ -227,9 +222,8 @@ export default function NotificationBell({ align = 'end' }: { align?: 'start' | 
                 ))
               )}
             </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
     </div>
   );
 }

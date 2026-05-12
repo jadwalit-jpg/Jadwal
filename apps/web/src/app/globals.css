@@ -302,7 +302,7 @@ body {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 0.75rem;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .glass-input:focus {
   background: rgba(255, 255, 255, 0.1);
@@ -315,116 +315,69 @@ body {
   background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 0.75rem;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .glass-btn:hover {
   background: rgba(255, 255, 255, 0.14);
   border-color: rgba(255, 255, 255, 0.22);
 }
 
-/* ── Hero Animations ── */
+/* ── Navbar / menu enter animations (CSS, replaces framer-motion) ── */
+@keyframes dropdown-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-down-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Hero Animations ──
+   Trimmed for mobile perf: only the boat float, one wave drift, and one
+   cloud drift run continuously — the other cloud/wave layers and the
+   sun-bob / sun-glow / moon-glow pulses were ~10 always-on GPU-layer
+   animations that made /home's hero janky on low-power phones. The
+   `.hero-sun-glow` / `.hero-moon-glow` glows keep their resting opacity
+   statically. All the running animations are gated behind
+   `prefers-reduced-motion: no-preference` so reduced-motion users get a
+   fully static hero. (The wave SVG is 200% wide and drifts `translateX(-50%)`
+   for a seamless loop — `overflow-hidden` on its parent in page.tsx clips
+   the off-box half so mobile-RTL overflow tracking doesn't surface a shake.) */
 @keyframes float-boat {
   0%, 100% { transform: translateY(0) rotate(-1.5deg); }
   50% { transform: translateY(-14px) rotate(1.5deg); }
 }
-
 @keyframes wave-drift {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
 }
-
-@keyframes wave-drift-slow {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-
-.hero-boat {
-  animation: float-boat 4s ease-in-out infinite;
-  will-change: transform;
-}
-
-/* The wave SVGs are 200% of their parent's width and animate
-   `translateX(-50%)` for a seamless drift loop. Mobile RTL was
-   sensitive to that 100vw overflow — the browser tracks the off-
-   parent half against the document's right-to-left flow and the
-   resulting layout recalc surfaced as the hero "shake". Adding
-   `overflow-hidden` on the wave parents (page.tsx) clips the
-   overflow at the parent box, isolating the animated SVG from
-   the section's overflow tracking. The animation itself runs as
-   designed. */
-.hero-wave {
-  animation: wave-drift 12s linear infinite;
-  will-change: transform;
-}
-
-.hero-wave-slow {
-  animation: wave-drift-slow 18s linear infinite;
-  will-change: transform;
-}
-
-/* ── Cloud Animations ── */
-@keyframes cloud-drift-slow {
-  from { transform: translateX(0); }
-  to { transform: translateX(60vw); }
-}
-
 @keyframes cloud-drift-mid {
   from { transform: translateX(0); }
   to { transform: translateX(50vw); }
 }
 
-@keyframes cloud-drift-fast {
-  from { transform: translateX(0); }
-  to { transform: translateX(70vw); }
-}
+/* Static resting state for the de-animated glows (matches the 0%/100% frame
+   of the old pulse keyframes). The other de-animated decorations
+   (.hero-cloud-slow, .hero-cloud-fast, .hero-wave-slow, .hero-sun) get all
+   their styling from Tailwind classes on the element, so they need no rule. */
+.hero-sun-glow { opacity: 0.3; }
+.hero-moon-glow { opacity: 0.2; }
 
-.hero-cloud-slow {
-  animation: cloud-drift-slow 45s linear infinite;
-  will-change: transform;
+@media (prefers-reduced-motion: no-preference) {
+  .hero-boat {
+    animation: float-boat 4s ease-in-out infinite;
+    will-change: transform;
+  }
+  .hero-wave {
+    animation: wave-drift 12s linear infinite;
+    will-change: transform;
+  }
+  .hero-cloud-mid {
+    animation: cloud-drift-mid 30s linear infinite;
+    will-change: transform;
+  }
 }
-
-.hero-cloud-mid {
-  animation: cloud-drift-mid 30s linear infinite;
-  will-change: transform;
-}
-
-.hero-cloud-fast {
-  animation: cloud-drift-fast 20s linear infinite;
-  will-change: transform;
-}
-
-/* ── Sun / Moon Animations ── */
-@keyframes sun-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-18px); }
-}
-
-@keyframes sun-glow-pulse {
-  0%, 100% { opacity: 0.3; transform: scale(1); }
-  50% { opacity: 0.55; transform: scale(1.15); }
-}
-
-@keyframes moon-glow-pulse {
-  0%, 100% { opacity: 0.2; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(1.08); }
-}
-
-.hero-sun {
-  animation: sun-bob 6s ease-in-out infinite;
-  will-change: transform;
-}
-
-.hero-sun-glow {
-  animation: sun-glow-pulse 6s ease-in-out infinite;
-  will-change: opacity, transform;
-}
-
-.hero-moon-glow {
-  animation: moon-glow-pulse 8s ease-in-out infinite;
-  will-change: opacity, transform;
-}
-
-/* All hero animations always run. Waves are the only thing currently
-   off (commented in their .hero-wave / .hero-wave-slow rules above) —
-   testing whether the wave-drift keyframes were the actual mobile-
-   Arabic shake cause. */
