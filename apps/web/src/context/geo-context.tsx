@@ -199,6 +199,7 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
     setCityState(null);
     setSource('manual');
     setHasGeo(true);
+    setRevalidate(false); // a manual pick wins — stop any /geo/detect (re)fetch
     countryRef.current = c;
     sourceRef.current = 'manual';
     writeGeoCache(c, null, 'manual');
@@ -207,6 +208,7 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
   const setCity = useCallback((c: GeoCity | null) => {
     setCityState(c);
     setSource('manual');
+    setRevalidate(false); // ditto — don't auto-revalidate over a manual choice
     // Plain side effect using the country ref — not inside a setState updater
     // (those must be pure / may run more than once).
     writeGeoCache(countryRef.current, c, 'manual');
