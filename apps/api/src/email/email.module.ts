@@ -7,6 +7,7 @@ import { EmailUnsubscribeTokenService } from './email-unsubscribe-token.service'
 import { EmailUnsubscribeController } from './email-unsubscribe.controller';
 import { SesEventsController } from './ses-events.controller';
 import { SnsSignatureValidator } from './sns-signature-validator.service';
+import { OutboxDrainService } from './outbox-drain.service';
 import { RedisModule } from '../redis/redis.module';
 import { SecurityLoggerService } from '../common/services/security-logger.service';
 
@@ -21,6 +22,10 @@ import { SecurityLoggerService } from '../common/services/security-logger.servic
     EmailUnsubscribeTokenService,
     SecurityLoggerService,
     SnsSignatureValidator,
+    // R4 — cron worker that drains the EmailOutbox (leader-locked). PrismaService
+    // + RedisLockService come from the global Prisma/Redis modules; EmailService
+    // is in this module. @Cron works via ScheduleModule.forRoot() in CommonModule.
+    OutboxDrainService,
   ],
   exports: [
     EmailService,

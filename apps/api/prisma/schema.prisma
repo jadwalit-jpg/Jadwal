@@ -831,3 +831,49 @@ model ReconciliationLog {
   @@index([passed, runDate])
   @@map("reconciliation_logs")
 }
+
+/// R4 — transactional-ish outbox for booking-confirmation emails.
+///
+/// When a PAY2M callback flips a booking to CONFIRMED, the customer has been
+/// charged. The confirmation email used to be a fire-and-forget
+/// `emailService.send().catch(log)` — if SES was throttled / down / the pod
+/// died mid-send, the customer was charged with no email and no retry. Now we
+/// enqueue a row here immediately after the success commit; OutboxDrainService
+/// (a leader-locked cron) drains it with jittered backoff and marks SENT /
+/// FAILED. (The enqueue is right-after-commit, not inside the Serializable
+/// payment tx — the residual sub-second crash window is an accepted tradeoff
+/// against restructuring a money-critical transaction; the customer always has
+/// their CONFIRMED booking + in-app PAYMENT_SUCCESS notification regardless.)
+///
+/// `payload` is the exact typed object EmailService.sendBookingConfirmation
+/// expects (customerName, activityTitle, date, time?, guests, totalAmount,
+/// currency, bookingId, locationAddress?, mapsLink?). `lastError` stores the
+/// error CLASS only — never the raw message (SES errors can echo the recipient
+/// / AWS request IDs).
+model EmailOutbox {
+  id            String            @id @default(uuid())
+  emailType     EmailOutboxType
+  recipient     String            @db.VarChar(320)  // RFC 5321 max local+domain
+  payload       Json                                // typed data object for EmailService
+  bookingId     String?                             // correlation only — deliberately NOT an FK (a deleted booking must not block draining/pruning)
+  status        EmailOutboxStatus @default(PENDING)
+  attempts      Int               @default(0)
+  nextAttemptAt DateTime          @default(now())   // due-time; the drain picks rows where this <= now
+  lastError     String?           @db.VarChar(300)  // error class only, never the raw message (PII)
+  sentAt        DateTime?
+  failedAt      DateTime?
+  createdAt     DateTime          @default(now())
+
+  @@index([status, nextAttemptAt])  // the drain query's exact predicate
+  @@map("email_outbox")
+}
+
+enum EmailOutboxType {
+  BOOKING_CONFIRMATION
+}
+
+enum EmailOutboxStatus {
+  PENDING   // awaiting (or between) send attempts
+  SENT      // delivered to SES
+  FAILED    // gave up after the max attempts — needs ops attention
+}

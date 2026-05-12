@@ -739,7 +739,16 @@ export class PaymentService {
         link: '/admin/bookings',
       });
 
-      // Send booking confirmation email with details + Google Maps link
+      // R4 — enqueue the booking-confirmation email into the outbox instead of
+      // a fire-and-forget SES send. OutboxDrainService picks it up within ~1
+      // min and retries with backoff. This runs immediately after the payment-
+      // success commit (and after the §B2/§M6 recovery dispatch, so it sees
+      // the final booking state) — not inside the Serializable tx itself; the
+      // residual sub-second crash window is an accepted tradeoff against
+      // restructuring a money-critical transaction. If even the enqueue fails,
+      // we log and move on: the customer still has a CONFIRMED booking + the
+      // in-app PAYMENT_SUCCESS notification above, and reconciliation can spot
+      // a confirmed-but-never-emailed booking.
       const total = Number(bookingForNotify.totalPrice) + Number(bookingForNotify.serviceFee) - Number(bookingForNotify.couponDiscount);
       const startDate = new Date(bookingForNotify.startDatetime);
       const dateStr = startDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -750,33 +759,37 @@ export class PaymentService {
         ? `https://maps.google.com/maps?q=${bookingForNotify.activity.locationLat},${bookingForNotify.activity.locationLng}`
         : undefined;
 
-      // §B9 follow-up — skip the SES send to anonymised addresses. The
-      // booking row may have been recreated by the §B2 path while the
-      // customer was being soft-deleted in another tab; the customer
-      // email is then `<id>@deleted.local`, a non-routable sentinel that
-      // would bounce at SES and degrade our sender-reputation score.
+      // §B9 follow-up — don't enqueue for anonymised addresses. The booking row
+      // may have been recreated by the §B2 path while the customer was being
+      // soft-deleted in another tab; the customer email is then
+      // `<id>@deleted.local`, a non-routable sentinel that would bounce at SES.
       const customerEmail = bookingForNotify.customer.email;
       if (!customerEmail.endsWith('@deleted.local')) {
-        this.emailService.sendBookingConfirmation(customerEmail, {
-        customerName: bookingForNotify.customer.fullName,
-        activityTitle: bookingForNotify.activity?.titleEn ?? 'Activity',
-        date: dateStr,
-        time: timeStr,
-        guests: bookingForNotify.guests,
-        totalAmount: total.toFixed(2),
-        currency: bookingForNotify.currencyCode,
-        bookingId: payment.bookingId!,
-        locationAddress: bookingForNotify.activity?.locationAddress ?? undefined,
-        mapsLink,
-      }).catch((err: unknown) => {
-        // Never embed raw err.message — SES / SMTP errors can contain
-        // AWS request IDs, account numbers, hostnames, or the recipient
-        // email verbatim. Log the error class only; the full object is
-        // already logged by the EmailService's own catch for forensics.
-        const kind = err instanceof Error ? err.name : 'UnknownError';
-        this.logger.error(`Booking confirmation email failed (${kind}) for booking ${payment.bookingId}`);
-      });
-      } // close `if (!customerEmail.endsWith('@deleted.local'))`
+        try {
+          await db.emailOutbox.create({
+            data: {
+              emailType: 'BOOKING_CONFIRMATION',
+              recipient: customerEmail,
+              bookingId: payment.bookingId,
+              payload: {
+                customerName: bookingForNotify.customer.fullName,
+                activityTitle: bookingForNotify.activity?.titleEn ?? 'Activity',
+                date: dateStr,
+                ...(timeStr ? { time: timeStr } : {}),
+                guests: bookingForNotify.guests,
+                totalAmount: total.toFixed(2),
+                currency: bookingForNotify.currencyCode,
+                bookingId: payment.bookingId!,
+                ...(bookingForNotify.activity?.locationAddress ? { locationAddress: bookingForNotify.activity.locationAddress } : {}),
+                ...(mapsLink ? { mapsLink } : {}),
+              },
+            },
+          });
+        } catch (err: unknown) {
+          const kind = err instanceof Error ? err.name : 'UnknownError';
+          this.logger.error(`Booking confirmation email enqueue failed (${kind}) for booking ${payment.bookingId}`);
+        }
+      }
     }
 
     return { bookingId: savedBookingId!, status: 'success' as const };

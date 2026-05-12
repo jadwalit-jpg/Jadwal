@@ -220,6 +220,48 @@ describe('PaymentService.handleCallback — SUCCESS path', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// R4 — booking-confirmation email goes to the outbox, not a fire-and-forget send
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('PaymentService.handleCallback — email outbox (R4)', () => {
+  test('SUCCESS enqueues exactly one PENDING email_outbox row with the booking payload', async () => {
+    const { svc, emailService } = makePaymentService();
+    const { basketId, bookingId, amountStr } = await seedPendingPayment(200);
+
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'TXN-OUTBOX', Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    // No direct SES send on the hot path anymore — the worker owns it.
+    expect(emailService.sendBookingConfirmation).not.toHaveBeenCalled();
+
+    const rows = await ctx.prisma.emailOutbox.findMany({ where: { bookingId } });
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.status).toBe('PENDING');
+    expect(row.emailType).toBe('BOOKING_CONFIRMATION');
+    expect(row.attempts).toBe(0);
+    const payload = row.payload as Record<string, unknown>;
+    expect(payload.bookingId).toBe(bookingId);
+    expect(payload.currency).toBe('QAR');
+    expect(typeof payload.totalAmount).toBe('string');
+  });
+
+  test('FAILURE callback enqueues nothing (booking is deleted)', async () => {
+    const { svc } = makePaymentService();
+    const { basketId, amountStr } = await seedPendingPayment(150);
+
+    await svc.handleCallback({
+      err_code: '99', basket_id: basketId,
+      Response_Key: signCallback(basketId, amountStr, '99'),
+    });
+
+    expect(await ctx.prisma.emailOutbox.count()).toBe(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Tamper detection
 // ═══════════════════════════════════════════════════════════════════════════
 

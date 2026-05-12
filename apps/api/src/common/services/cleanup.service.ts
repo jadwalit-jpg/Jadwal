@@ -39,6 +39,10 @@ export class CleanupService {
   /// satisfies the major regulatory regimes.
   private readonly AUDIT_LOG_FINANCIAL_RETENTION: number;
   private readonly EXPIRED_COUPON_RETENTION: number;
+  /// Days to keep terminal (SENT/FAILED) EmailOutbox rows before pruning.
+  /// PENDING rows are never pruned here — they're still being retried (or have
+  /// given up to FAILED, which IS pruned after the window). Default 30 days.
+  private readonly EMAIL_OUTBOX_RETENTION: number;
 
   // Business rules — all read from env so ops can tune without a code deploy
   private readonly PENDING_BOOKING_FALLBACK_HOURS: number;
@@ -58,6 +62,11 @@ export class CleanupService {
       this.configService.get('RETENTION_AUDIT_LOG_FINANCIAL_DAYS', '2555'), // 7 years
     );
     this.EXPIRED_COUPON_RETENTION = Number(this.configService.get('RETENTION_EXPIRED_COUPON_DAYS', '30'));
+    // Clamp to a positive integer — a typo in the SSM value (NaN / negative)
+    // would otherwise turn the cutoff into an Invalid Date (cron fails every
+    // run) or prune the wrong rows. Falls back to 30 days.
+    const outboxRetention = Number(this.configService.get('RETENTION_EMAIL_OUTBOX_DAYS', '30'));
+    this.EMAIL_OUTBOX_RETENTION = Number.isInteger(outboxRetention) && outboxRetention > 0 ? outboxRetention : 30;
 
     // Primary: cancel PENDING bookings whose reservedUntil has passed (set at booking creation)
     // Fallback: cancel PENDING bookings with no reservedUntil after N hours (legacy / safety net)
@@ -86,9 +95,10 @@ export class CleanupService {
         this.cleanOldSecurityLogs(),
         this.cleanOldAuditLogs(),
         this.cleanOldExpiredCoupons(),
+        this.cleanOldOutboxRows(),
       ]);
 
-      const names = ['RefreshTokens', 'SecurityLogs', 'AuditLogs', 'Coupons'];
+      const names = ['RefreshTokens', 'SecurityLogs', 'AuditLogs', 'Coupons', 'EmailOutbox'];
       results.forEach((result, i) => {
         if (result.status === 'fulfilled') {
           this.logger.log(`  ${names[i]}: ${result.value} rows deleted`);
@@ -436,6 +446,26 @@ export class CleanupService {
     cutoff.setDate(cutoff.getDate() - this.EXPIRED_COUPON_RETENTION);
     const { count } = await this.prisma.client.coupon.deleteMany({
       where: { status: 'EXPIRED', validTo: { lt: cutoff } },
+    });
+    return count;
+  }
+
+  /// R4 — prune terminal EmailOutbox rows older than the retention window,
+  /// counted from when the row REACHED its terminal state (sentAt / failedAt),
+  /// not from createdAt — so a row that retried for a while and only just
+  /// succeeded isn't deleted prematurely. PENDING rows are untouched: they're
+  /// still in the retry cycle (the drain worker moves them to FAILED once it
+  /// gives up, and those then age out here). `where`-scoped — never a bare deleteMany.
+  async cleanOldOutboxRows(): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - this.EMAIL_OUTBOX_RETENTION);
+    const { count } = await this.prisma.client.emailOutbox.deleteMany({
+      where: {
+        OR: [
+          { status: 'SENT', sentAt: { lt: cutoff } },
+          { status: 'FAILED', failedAt: { lt: cutoff } },
+        ],
+      },
     });
     return count;
   }
