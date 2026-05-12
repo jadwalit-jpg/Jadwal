@@ -26,9 +26,20 @@
  * + carry a `Content-Security-Policy` header with a `'nonce-…'` token; anything
  * else passes through untouched.
  *
- * `'strict-dynamic'` note: only the inline `<script>` tags in the HTML need the
- * nonce — the chunks they pull in (`/_next/static/...`) are trusted via
- * `'strict-dynamic'`, so we don't need to chase those.
+ * Next stamps the nonce on `<script>` tags AND on a few `<link>` tags
+ * (`rel=stylesheet`, `rel=preload as=script`); we rewrite both. The `<link
+ * rel=preload as=script nonce>` in particular: under `script-src … 'nonce-X'
+ * 'strict-dynamic'` a preload whose nonce ≠ X is *blocked* (console CSP error
+ * + the preload is wasted, though the page still works via the real
+ * `<script nonce=X>` + `strict-dynamic`), so it must match too.
+ *
+ * What we DON'T touch: the nonce values serialized inside the `self.__next_f`
+ * flight-data scripts (React's preload hints + the next-themes `nonce` prop) —
+ * those are string contents, not real elements; they don't gate script
+ * execution and don't break hydration (React tolerates `nonce` attr diffs).
+ *
+ * `'strict-dynamic'`: once a nonce-trusted `<script>` runs, the chunks it loads
+ * (`/_next/static/...`) are trusted automatically — no need to chase those.
  */
 
 const NONCE_BYTES = 16;
@@ -79,12 +90,16 @@ export default {
     // no-store), but be explicit in case the rule changes.
     newHeaders.set('cache-control', 'private, no-store, max-age=0, must-revalidate');
 
-    // Stream-rewrite the <script nonce="…"> attributes to the new nonce.
-    const rewriter = new HTMLRewriter().on('script[nonce]', {
+    // Stream-rewrite the nonce attribute on every <script> and <link> that
+    // carries one, to the fresh nonce.
+    const restamp = {
       element(el) {
         el.setAttribute('nonce', newNonce);
       },
-    });
+    };
+    const rewriter = new HTMLRewriter()
+      .on('script[nonce]', restamp)
+      .on('link[nonce]', restamp);
 
     return rewriter.transform(
       new Response(response.body, {
