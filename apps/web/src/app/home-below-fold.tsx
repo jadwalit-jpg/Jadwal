@@ -37,6 +37,7 @@ import {
   PatternDivider,
   SectionHeader,
 } from '@/components/ui';
+import { CategoriesRowSkeleton, TrendingRowSkeleton } from './_home-islands/below-fold-skeleton';
 
 interface TrendingEvent {
   id: string;
@@ -73,7 +74,7 @@ export default function HomeBelowFold() {
   const trendingParams = new URLSearchParams();
   if (country?.id) trendingParams.set('countryId', country.id);
 
-  const { data: trendingEvents = [] } = useQuery<TrendingEvent[]>({
+  const { data: trendingEvents = [], isLoading: trendingLoading } = useQuery<TrendingEvent[]>({
     queryKey: ['public-trending', country?.id],
     queryFn: () =>
       api
@@ -83,7 +84,7 @@ export default function HomeBelowFold() {
     enabled: !isDetecting,
   });
 
-  const { data: categories = [] } = useQuery<Category[]>({
+  const { data: categories = [], isLoading: categoriesLoading } = useQuery<Category[]>({
     queryKey: ['public-categories'],
     queryFn: () => api.get('/catalog/categories').then((r) => r.data),
     staleTime: 10 * 60 * 1000,
@@ -123,21 +124,24 @@ export default function HomeBelowFold() {
           <h2 className="font-display text-[22px] sm:text-[26px] font-semibold tracking-[-0.6px] sm:tracking-[-0.8px] text-jadwal-text m-0 mb-6 md:mb-8">
             {t('home.browseByCategory', { defaultValue: 'Browse by category' })}
           </h2>
-          <div className="flex gap-4 md:gap-6 overflow-x-auto pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-            {categories.slice(0, 12).map((cat) => (
-              <CategoryPill
-                key={cat.id}
-                label={localized(cat, 'name')}
-                slug={cat.slug}
-                image={cat.image}
-              />
-            ))}
-            {categories.length === 0 ? (
-              <div className="py-8 text-sm text-jadwal-text-faint">
-                {t('home.noCategories', { defaultValue: 'No categories available yet' })}
-              </div>
-            ) : null}
-          </div>
+          {categoriesLoading ? (
+            <CategoriesRowSkeleton />
+          ) : categories.length > 0 ? (
+            <div className="flex gap-4 md:gap-6 overflow-x-auto pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+              {categories.slice(0, 12).map((cat) => (
+                <CategoryPill
+                  key={cat.id}
+                  label={localized(cat, 'name')}
+                  slug={cat.slug}
+                  image={cat.image}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="py-8 text-sm text-jadwal-text-faint">
+              {t('home.noCategories', { defaultValue: 'No categories available yet' })}
+            </div>
+          )}
         </div>
       </section>
 
@@ -154,7 +158,9 @@ export default function HomeBelowFold() {
             seeAllLabel={t('home.viewAll')}
             rtl={isRtl}
           />
-          {trendingEvents.length > 0 ? (
+          {isDetecting || trendingLoading ? (
+            <TrendingRowSkeleton />
+          ) : trendingEvents.length > 0 ? (
             <div className="flex gap-4 md:gap-5 overflow-x-auto pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
               {trendingEvents.map((event) => (
                 <article
