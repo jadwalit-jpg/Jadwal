@@ -12,4 +12,5 @@ export {
   type ActivityCardProps,
   type ActivityCardActivity,
 } from './activity-card';
+export { ActivityCardSkeleton } from './activity-card-skeleton';
 export { CategoryPill, type CategoryPillProps } from './category-pill';
