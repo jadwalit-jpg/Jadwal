@@ -62,7 +62,11 @@ export class CleanupService {
       this.configService.get('RETENTION_AUDIT_LOG_FINANCIAL_DAYS', '2555'), // 7 years
     );
     this.EXPIRED_COUPON_RETENTION = Number(this.configService.get('RETENTION_EXPIRED_COUPON_DAYS', '30'));
-    this.EMAIL_OUTBOX_RETENTION = Number(this.configService.get('RETENTION_EMAIL_OUTBOX_DAYS', '30'));
+    // Clamp to a positive integer — a typo in the SSM value (NaN / negative)
+    // would otherwise turn the cutoff into an Invalid Date (cron fails every
+    // run) or prune the wrong rows. Falls back to 30 days.
+    const outboxRetention = Number(this.configService.get('RETENTION_EMAIL_OUTBOX_DAYS', '30'));
+    this.EMAIL_OUTBOX_RETENTION = Number.isInteger(outboxRetention) && outboxRetention > 0 ? outboxRetention : 30;
 
     // Primary: cancel PENDING bookings whose reservedUntil has passed (set at booking creation)
     // Fallback: cancel PENDING bookings with no reservedUntil after N hours (legacy / safety net)

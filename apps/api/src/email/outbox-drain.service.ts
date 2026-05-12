@@ -55,6 +55,7 @@ export class OutboxDrainService {
       let sent = 0;
       let retried = 0;
       let gaveUp = 0;
+      let skipped = 0; // row was already moved off PENDING by another drainer (rare — only if the leader lock expired mid-run)
       // Sequential — SES has its own adaptive retry; we don't want a thundering
       // batch hammering it (and a transient SES blip would otherwise burn the
       // whole batch's attempt counters at once).
@@ -62,24 +63,32 @@ export class OutboxDrainService {
         try {
           const ok = await this.dispatch(row);
           if (ok) {
-            await this.prisma.client.emailOutbox.update({
-              where: { id: row.id },
+            // Optimistic lock: only commit SENT if the row is still in the
+            // state we picked it up in. If a concurrent drainer already moved
+            // it (SENT/FAILED/another attempt), count==0 → leave it alone
+            // rather than clobber a newer state with a stale snapshot.
+            const { count } = await this.prisma.client.emailOutbox.updateMany({
+              where: { id: row.id, status: 'PENDING', attempts: row.attempts },
               data: { status: 'SENT', sentAt: new Date(), attempts: row.attempts + 1, lastError: null },
             });
+            if (count === 0) { skipped++; continue; }
+            // NOTE: at-least-once — if SES accepted the message but this UPDATE
+            // raced/failed and the row stays PENDING, the next drain re-sends.
+            // A duplicate confirmation email is harmless.
             sent++;
             continue;
           }
-          if (await this.scheduleRetryOrGiveUp(row, 'SES_SEND_FAILED')) gaveUp++;
-          else retried++;
+          const outcome = await this.scheduleRetryOrGiveUp(row, 'SES_SEND_FAILED');
+          if (outcome === 'gaveup') gaveUp++; else if (outcome === 'retried') retried++; else skipped++;
         } catch (err: unknown) {
           // Never persist the raw error — SES errors can echo the recipient,
           // AWS request IDs, hostnames. Error class only.
           const kind = err instanceof Error ? err.name : 'UnknownError';
-          if (await this.scheduleRetryOrGiveUp(row, kind)) gaveUp++;
-          else retried++;
+          const outcome = await this.scheduleRetryOrGiveUp(row, kind);
+          if (outcome === 'gaveup') gaveUp++; else if (outcome === 'retried') retried++; else skipped++;
         }
       }
-      this.logger.log({ event: 'EMAIL_OUTBOX_DRAIN', picked: due.length, sent, retried, gaveUp });
+      this.logger.log({ event: 'EMAIL_OUTBOX_DRAIN', picked: due.length, sent, retried, gaveUp, skipped });
     });
   }
 
@@ -100,27 +109,30 @@ export class OutboxDrainService {
 
   /** Bump the attempt counter; either schedule the next retry (jittered
    *  exponential backoff: ~1m, ~4m, ~16m, ~1h cap) or, if we've hit
-   *  MAX_ATTEMPTS, mark the row FAILED. Returns true iff it gave up. */
+   *  MAX_ATTEMPTS, mark the row FAILED. All writes are optimistically locked
+   *  on `(status: 'PENDING', attempts: <picked>)` so a concurrent drainer's
+   *  stale snapshot can't clobber a newer state — count==0 ⇒ 'skipped'. */
   private async scheduleRetryOrGiveUp(
     row: { id: string; attempts: number; emailType: string },
     errKind: string,
-  ): Promise<boolean> {
+  ): Promise<'gaveup' | 'retried' | 'skipped'> {
     const attempts = row.attempts + 1;
     const lastError = errKind.slice(0, 300);
     if (attempts >= OutboxDrainService.MAX_ATTEMPTS) {
-      await this.prisma.client.emailOutbox.update({
-        where: { id: row.id },
+      const { count } = await this.prisma.client.emailOutbox.updateMany({
+        where: { id: row.id, status: 'PENDING', attempts: row.attempts },
         data: { status: 'FAILED', failedAt: new Date(), attempts, lastError },
       });
+      if (count === 0) return 'skipped';
       this.logger.error({ event: 'EMAIL_OUTBOX_GAVE_UP', outboxId: row.id, emailType: row.emailType, attempts, lastError });
-      return true;
+      return 'gaveup';
     }
     const base = Math.min(60_000 * 4 ** (attempts - 1), 60 * 60_000);
     const delay = base + Math.floor(Math.random() * Math.min(base * 0.2, 30_000));
-    await this.prisma.client.emailOutbox.update({
-      where: { id: row.id },
+    const { count } = await this.prisma.client.emailOutbox.updateMany({
+      where: { id: row.id, status: 'PENDING', attempts: row.attempts },
       data: { attempts, lastError, nextAttemptAt: new Date(Date.now() + delay) },
     });
-    return false;
+    return count === 0 ? 'skipped' : 'retried';
   }
 }
