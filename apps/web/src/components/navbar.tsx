@@ -23,7 +23,12 @@ import NotificationBell from '@/components/notification-bell';
 export default function Navbar({ variant = 'transparent' }: { variant?: 'transparent' | 'solid' }) {
   const router = useRouter();
   const { user, logout, loading: authLoading } = useAuth();
-  const { theme, setTheme } = useTheme();
+  // `resolvedTheme` (not `theme`) is the *effective* light/dark. `theme` can be
+  // the literal `'system'` (the default), so `theme === 'dark'` is false even
+  // when the page is rendered dark — using `theme` here was a bug: system-theme
+  // users got the wrong toggle icon and their first click did nothing visible
+  // (it set `theme` to `'dark'` while the page was already dark).
+  const { setTheme, resolvedTheme } = useTheme();
   const { t, i18n } = useTranslation();
   const [mounted, setMounted] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -134,19 +139,18 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
               </span>
             </button>
 
-            {/* Theme toggle */}
+            {/* Theme toggle. Icon is CSS-driven (`dark:` against `<html class>`,
+                which next-themes sets pre-hydration) so the correct icon shows
+                on first paint with no `mounted` gate, and it's right even on
+                `system` theme. The click is gated on `mounted` so `resolvedTheme`
+                is known before we flip. */}
             <button
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onClick={() => { if (mounted) setTheme(resolvedTheme === 'dark' ? 'light' : 'dark'); }}
               className={`p-2 rounded-lg border transition-all ${isOpaque ? 'text-gray-400 hover:text-sky-600 border-gray-200 hover:border-sky-300 dark:text-slate-500 dark:hover:text-white dark:border-slate-700 dark:hover:border-slate-500' : 'text-white/60 hover:text-white border-white/20 hover:border-white/40'}`}
               aria-label="Toggle theme"
             >
-              {!mounted ? (
-                <span className="h-4 w-4 block" />
-              ) : theme === 'dark' ? (
-                <Sun className="h-4 w-4" />
-              ) : (
-                <Moon className="h-4 w-4" />
-              )}
+              <Sun className="hidden h-4 w-4 dark:block" aria-hidden="true" />
+              <Moon className="block h-4 w-4 dark:hidden" aria-hidden="true" />
             </button>
 
             {/* Admin / Vendor — simple Dashboard button */}

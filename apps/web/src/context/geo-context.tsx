@@ -59,7 +59,11 @@ const GeoContext = createContext<GeoState>({
 // for the precise GPS coords — those stay in sessionStorage (jadwal_location),
 // session-scoped, set only via an explicit button press.
 const GEO_CACHE_KEY = 'jadwal_geo';
-const GEO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const GEO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — older than this → re-detect fresh
+// If the cached value is younger than this, trust it and DON'T re-fire
+// /geo/detect on load — so a plain refresh makes zero geo requests. Older →
+// re-validate in the background (catches travel / VPN / ISP changes).
+const GEO_REVALIDATE_AFTER_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 type CachedGeo = { country: GeoCountry | null; city: GeoCity | null; source: string; ts: number };
 
@@ -98,6 +102,13 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
   // so the homepage skeletons clear / the country-scoped queries fire the
   // moment we have something, not only after the /geo/detect round-trip.
   const [hasGeo, setHasGeo] = useState(false);
+  // `geoChecked` flips true once the restore effect below has run — so render 1
+  // (before we've looked at the cache) still counts as "detecting". `revalidate`
+  // gates the /geo/detect query: it only fires when there's no cache, the cache
+  // is stale (> GEO_REVALIDATE_AFTER_MS), or a manual override is absent — so a
+  // plain refresh with a fresh cache makes ZERO /geo/detect requests.
+  const [geoChecked, setGeoChecked] = useState(false);
+  const [revalidate, setRevalidate] = useState(false);
 
   // Live mirrors of `source` / `country` so the effects + callbacks below can
   // read the current value without taking them as effect deps (which would
@@ -121,8 +132,8 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
       }
     } catch { /* ignore */ }
 
-    // IP-derived (or previously manual) country/city — persisted, re-validated
-    // below. Paint it immediately so /home doesn't wait on /geo/detect.
+    // IP-derived (or previously manual) country/city — persisted, conditionally
+    // re-validated below. Paint it immediately so /home doesn't wait on /geo/detect.
     const cached = readGeoCache();
     if (cached?.country) {
       const restoredSource = cached.source === 'manual' ? 'manual' : 'ip';
@@ -135,14 +146,23 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
       sourceRef.current = restoredSource;
       countryRef.current = cached.country;
       setHasGeo(true);
+      // Re-validate only if the cached value is getting old. A fresh cache → skip
+      // the /geo/detect round-trip entirely (a plain refresh = no geo request).
+      // A manual pick is never auto-revalidated (the user chose it deliberately).
+      if (restoredSource !== 'manual' && Date.now() - cached.ts >= GEO_REVALIDATE_AFTER_MS) {
+        setRevalidate(true);
+      }
+    } else {
+      // No usable cache → must detect.
+      setRevalidate(true);
     }
+    setGeoChecked(true);
   }, []);
 
-  // Always re-detect on load. With a cached value we've already painted, this
-  // just confirms / corrects it (e.g. after travel or a VPN change). React
-  // Query's in-session cache (`['geo-detect']`) won't refire within staleTime,
-  // but it isn't persisted, so a fresh page load fetches once — that's the call
-  // we no longer block the UI on.
+  // /geo/detect — only fires when the restore effect decided it's needed
+  // (`revalidate`): no cache, a stale cache, or first-ever visit. With a fresh
+  // cache this query never fires, so a refresh costs zero geo requests. When it
+  // does fire, it confirms / corrects the painted value (travel, VPN, …).
   const { data: geoData, isLoading } = useQuery<{
     country: GeoCountry | null;
     city: GeoCity | null;
@@ -152,6 +172,7 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
     queryFn: () => api.get('/geo/detect').then(r => r.data),
     staleTime: 30 * 60 * 1000,
     retry: 1,
+    enabled: revalidate,
   });
 
   useEffect(() => {
@@ -228,15 +249,16 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
     country,
     city,
     source,
-    // "detecting" only until we have some country (cached counts) — so on a
-    // refresh this is false almost immediately.
-    isDetecting: isLoading && !hasGeo,
+    // "detecting" until the restore effect has run, and after that only while a
+    // (needed) /geo/detect call is still in flight with nothing painted yet.
+    // With a fresh cache this is false almost immediately and stays false.
+    isDetecting: !geoChecked || (isLoading && !hasGeo),
     setCountry,
     setCity,
     location,
     locationStatus,
     requestLocation,
-  }), [country, city, source, isLoading, hasGeo, setCountry, setCity, location, locationStatus, requestLocation]);
+  }), [country, city, source, geoChecked, isLoading, hasGeo, setCountry, setCity, location, locationStatus, requestLocation]);
 
   return <GeoContext.Provider value={value}>{children}</GeoContext.Provider>;
 }
