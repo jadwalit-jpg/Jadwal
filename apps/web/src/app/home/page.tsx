@@ -125,101 +125,16 @@ export default function Page() {
           </div>
         </div>
 
-        {/* Moon (dark mode). */}
-        <div className="hidden dark:block absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none">
-          <div className="hero-moon-glow absolute -inset-16 sm:-inset-20 bg-blue-300/15 rounded-full blur-[60px]" />
-          <div className="hero-moon-glow absolute -inset-8 sm:-inset-10 bg-slate-200/10 rounded-full blur-[30px]" />
-          <svg
-            width="80"
-            height="80"
-            viewBox="0 0 100 100"
-            className="w-14 h-14 sm:w-[72px] sm:h-[72px] md:w-20 md:h-20 drop-shadow-[0_0_25px_rgba(148,163,184,0.4)]"
-          >
-            <circle cx="50" cy="50" r="28" fill="url(#moonGrad)" />
-            <circle cx="62" cy="40" r="22" fill="#111827" />
-            <circle cx="40" cy="55" r="4" fill="#CBD5E1" opacity="0.15" />
-            <circle cx="48" cy="65" r="2.5" fill="#CBD5E1" opacity="0.1" />
-            <circle cx="35" cy="45" r="2" fill="#CBD5E1" opacity="0.12" />
-            <circle cx="15" cy="20" r="1.2" fill="white" opacity="0.7" />
-            <circle cx="80" cy="75" r="1" fill="white" opacity="0.5" />
-            <circle cx="25" cy="80" r="0.8" fill="white" opacity="0.4" />
-            <circle cx="78" cy="18" r="1.5" fill="white" opacity="0.6" />
-            <circle cx="10" cy="60" r="0.7" fill="white" opacity="0.3" />
-            <defs>
-              <radialGradient id="moonGrad" cx="40%" cy="40%">
-                <stop offset="0%" stopColor="#F1F5F9" />
-                <stop offset="50%" stopColor="#CBD5E1" />
-                <stop offset="100%" stopColor="#94A3B8" />
-              </radialGradient>
-            </defs>
-          </svg>
-        </div>
+        {/* PERF TEST 2026-05-12 — moon (dark mode) temporarily removed to
+            measure its contribution to mobile /home render cost. REVERT this
+            commit when the test is done (do not re-type the SVG by hand). */}
 
         {/* Glow blob behind hero text. */}
         <div className="absolute top-16 left-1/2 -translate-x-1/2 w-[500px] h-[300px] bg-amber-300/20 dark:bg-blue-400/10 rounded-full blur-[100px] pointer-events-none" />
 
-        {/* Clouds — drift via CSS `hero-cloud-*` keyframes.
-            `dir="ltr"` is mandatory: the cloud animations use
-            translateX(NNvw) and the children are absolutely positioned
-            with `left-[N%]`. Inside a `dir="rtl"` document, the browser
-            treats those positions as RTL-relative for overflow / hit-
-            testing purposes, and on mobile (where `vw`-based translations
-            push the clouds near or past the viewport edge) this triggers
-            continuous sub-pixel layout recalculation that surfaces as a
-            "shake" of the entire hero content area. The sibling wave
-            blocks already use the same trick for the same reason. */}
-        <div dir="ltr" className="absolute inset-0 z-5 pointer-events-none overflow-hidden">
-          <div className="hero-cloud-slow absolute top-[10%] left-[3%]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/images/userhero/cloud.svg"
-              alt=""
-              width={279}
-              height={181}
-              className="w-36 sm:w-44 md:w-52 opacity-25 dark:opacity-10 invert"
-            />
-          </div>
-          <div className="hero-cloud-mid absolute top-[18%] left-1/2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/images/userhero/cloud.svg"
-              alt=""
-              width={279}
-              height={181}
-              className="w-28 sm:w-36 md:w-44 opacity-20 dark:opacity-8 invert scale-x-[-1]"
-            />
-          </div>
-          <div className="hero-cloud-fast absolute top-[6%] left-[70%]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/images/userhero/cloud.svg"
-              alt=""
-              width={279}
-              height={181}
-              className="w-20 sm:w-24 md:w-28 opacity-15 dark:opacity-6 invert"
-            />
-          </div>
-          <div className="hero-cloud-slow absolute top-[28%] left-[25%]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/images/userhero/cloud.svg"
-              alt=""
-              width={279}
-              height={181}
-              className="w-24 sm:w-28 md:w-36 opacity-12 dark:opacity-5 invert scale-x-[-1]"
-            />
-          </div>
-          <div className="hero-cloud-mid absolute top-[4%] left-[35%]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/images/userhero/cloud.svg"
-              alt=""
-              width={279}
-              height={181}
-              className="w-16 sm:w-20 md:w-24 opacity-10 dark:opacity-4 invert"
-            />
-          </div>
-        </div>
+        {/* PERF TEST 2026-05-12 — the 5 drifting cloud <img>s temporarily
+            removed to measure their contribution to mobile /home render cost.
+            REVERT this commit when the test is done. */}
 
         {/* Hero content. Static markup; only the search bar + trust metrics
             below are client islands.
@@ -253,77 +168,9 @@ export default function Page() {
           <HeroBrowseCta />
         </div>
 
-        {/* Waves (light) */}
-        <div
-          dir="ltr"
-          className="dark:hidden absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden"
-        >
-          <svg
-            className="w-[200%] h-24 md:h-32 hero-wave-slow opacity-50"
-            viewBox="0 0 2400 120"
-            preserveAspectRatio="none"
-          >
-            <path
-              d="M0,40 C200,0 400,80 600,40 C800,0 1000,80 1200,40 C1400,0 1600,80 1800,40 C2000,0 2200,80 2400,40 L2400,120 L0,120 Z"
-              fill="#87D6F7"
-            />
-          </svg>
-        </div>
-        <div
-          dir="ltr"
-          className="dark:hidden absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden"
-        >
-          <svg
-            className="w-[200%] h-20 md:h-28 hero-wave"
-            viewBox="0 0 2400 120"
-            preserveAspectRatio="none"
-          >
-            <path
-              d="M0,30 C200,100 400,20 600,60 C800,100 1000,30 1200,70 C1400,100 1600,30 1800,60 C2000,100 2200,30 2400,70 L2400,120 L0,120 Z"
-              fill="#3FC8F4"
-            />
-            <path
-              d="M0,60 C150,90 350,50 600,80 C850,100 1050,50 1200,80 C1400,100 1600,50 1800,80 C2050,100 2200,60 2400,80 L2400,120 L0,120 Z"
-              fill="#00B9F1"
-            />
-          </svg>
-        </div>
-
-        {/* Waves (dark) */}
-        <div
-          dir="ltr"
-          className="hidden dark:block absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden"
-        >
-          <svg
-            className="w-[200%] h-24 md:h-32 hero-wave-slow opacity-50"
-            viewBox="0 0 2400 120"
-            preserveAspectRatio="none"
-          >
-            <path
-              d="M0,40 C200,0 400,80 600,40 C800,0 1000,80 1200,40 C1400,0 1600,80 1800,40 C2000,0 2200,80 2400,40 L2400,120 L0,120 Z"
-              fill="#1e3a5f"
-            />
-          </svg>
-        </div>
-        <div
-          dir="ltr"
-          className="hidden dark:block absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden"
-        >
-          <svg
-            className="w-[200%] h-20 md:h-28 hero-wave"
-            viewBox="0 0 2400 120"
-            preserveAspectRatio="none"
-          >
-            <path
-              d="M0,30 C200,100 400,20 600,60 C800,100 1000,30 1200,70 C1400,100 1600,30 1800,60 C2000,100 2200,30 2400,70 L2400,120 L0,120 Z"
-              fill="#1e3a5f"
-            />
-            <path
-              d="M0,60 C150,90 350,50 600,80 C850,100 1050,50 1200,80 C1400,100 1600,50 1800,80 C2050,100 2200,60 2400,80 L2400,120 L0,120 Z"
-              fill="#162d4a"
-            />
-          </svg>
-        </div>
+        {/* PERF TEST 2026-05-12 — the wave SVGs (2 light + 2 dark, 200%-wide,
+            bézier paths) temporarily removed to measure their contribution to
+            mobile /home render cost. REVERT this commit when the test is done. */}
 
         {/* Boat — split into TWO divs so the centering transform
             (`-translate-x-1/2`) and the float animation (`hero-boat`)
