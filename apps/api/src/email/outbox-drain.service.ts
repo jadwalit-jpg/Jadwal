@@ -61,8 +61,8 @@ export class OutboxDrainService {
       // whole batch's attempt counters at once).
       for (const row of due) {
         try {
-          const ok = await this.dispatch(row);
-          if (ok) {
+          const result = await this.dispatch(row);
+          if (result === 'sent') {
             // Optimistic lock: only commit SENT if the row is still in the
             // state we picked it up in. If a concurrent drainer already moved
             // it (SENT/FAILED/another attempt), count==0 → leave it alone
@@ -78,7 +78,11 @@ export class OutboxDrainService {
             sent++;
             continue;
           }
-          const outcome = await this.scheduleRetryOrGiveUp(row, 'SES_SEND_FAILED');
+          // Preserve the real failure kind: a misconfigured email type lands as
+          // EMAIL_OUTBOX_UNKNOWN_TYPE (a poison row, not a transient blip) so it
+          // doesn't masquerade as an SES outage in lastError / EMAIL_OUTBOX_GAVE_UP.
+          const errKind = result === 'unknown_type' ? 'EMAIL_OUTBOX_UNKNOWN_TYPE' : 'SES_SEND_FAILED';
+          const outcome = await this.scheduleRetryOrGiveUp(row, errKind);
           if (outcome === 'gaveup') gaveUp++; else if (outcome === 'retried') retried++; else skipped++;
         } catch (err: unknown) {
           // Never persist the raw error — SES errors can echo the recipient,
@@ -92,18 +96,24 @@ export class OutboxDrainService {
     });
   }
 
-  /** Route a row to the right EmailService call. Returns `false` for an
-   *  unknown type so it gives up after MAX_ATTEMPTS rather than looping. */
-  private async dispatch(row: { emailType: string; recipient: string; payload: unknown }): Promise<boolean> {
+  /** Route a row to the right EmailService call. Distinguishes a transient
+   *  send failure (`'send_failed'`) from a poison row (`'unknown_type'`) so the
+   *  caller can record an honest `lastError` — an unknown type still gives up
+   *  after MAX_ATTEMPTS rather than looping. */
+  private async dispatch(
+    row: { emailType: string; recipient: string; payload: unknown },
+  ): Promise<'sent' | 'send_failed' | 'unknown_type'> {
     switch (row.emailType) {
-      case 'BOOKING_CONFIRMATION':
-        return this.emailService.sendBookingConfirmation(
+      case 'BOOKING_CONFIRMATION': {
+        const ok = await this.emailService.sendBookingConfirmation(
           row.recipient,
           row.payload as Parameters<EmailService['sendBookingConfirmation']>[1],
         );
+        return ok ? 'sent' : 'send_failed';
+      }
       default:
         this.logger.error({ event: 'EMAIL_OUTBOX_UNKNOWN_TYPE', emailType: row.emailType });
-        return false;
+        return 'unknown_type';
     }
   }
 

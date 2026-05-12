@@ -450,15 +450,22 @@ export class CleanupService {
     return count;
   }
 
-  /// R4 — prune terminal EmailOutbox rows (SENT or FAILED) older than the
-  /// retention window. PENDING rows are deliberately untouched: they're still
-  /// in the retry cycle (the drain worker moves them to FAILED once it gives
-  /// up, and those then age out here). `where`-scoped — never a bare deleteMany.
+  /// R4 — prune terminal EmailOutbox rows older than the retention window,
+  /// counted from when the row REACHED its terminal state (sentAt / failedAt),
+  /// not from createdAt — so a row that retried for a while and only just
+  /// succeeded isn't deleted prematurely. PENDING rows are untouched: they're
+  /// still in the retry cycle (the drain worker moves them to FAILED once it
+  /// gives up, and those then age out here). `where`-scoped — never a bare deleteMany.
   async cleanOldOutboxRows(): Promise<number> {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - this.EMAIL_OUTBOX_RETENTION);
     const { count } = await this.prisma.client.emailOutbox.deleteMany({
-      where: { status: { in: ['SENT', 'FAILED'] }, createdAt: { lt: cutoff } },
+      where: {
+        OR: [
+          { status: 'SENT', sentAt: { lt: cutoff } },
+          { status: 'FAILED', failedAt: { lt: cutoff } },
+        ],
+      },
     });
     return count;
   }
