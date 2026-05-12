@@ -149,6 +149,47 @@ describe('BookingsService.getDailyAvailability', () => {
       svc.getDailyAvailability(seed.activity.id, futureDate(1), futureDate(5)),
     ).rejects.toThrow();
   });
+
+  // Regression for the N-aggregate → single-groupBy refactor: a multi-unit
+  // DAILY activity must report per-unit booked/available correctly, including
+  // units with zero overlapping bookings (which groupBy omits → filled as 0).
+  test('multi-unit DAILY: per-unit availability built from one groupBy, zero-fill included', async () => {
+    const seed = await seedReference(ctx.prisma);
+    await ctx.prisma.activity.update({
+      where: { id: seed.activity.id },
+      data: { bookingType: 'DAILY', hasUnits: true, unitCount: 3, unitCapacity: 2 },
+    });
+    const checkIn = futureDate(1);
+    const checkOut = futureDate(3);
+    // Bookings must overlap the [checkIn 09:00, checkOut 21:00] window.
+    const mkBooking = (unitNumber: number, guests: number) =>
+      ctx.prisma.booking.create({
+        data: {
+          ref: `JDWL-UNIT-${crypto.randomUUID().slice(0, 6)}`,
+          currencyCode: 'QAR', guests,
+          totalPrice: 200, serviceFee: 5, commissionAmount: 20,
+          status: 'CONFIRMED',
+          startDatetime: new Date(`${checkIn}T14:00:00Z`),
+          endDatetime:   new Date(`${futureDate(2)}T11:00:00Z`),
+          activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+          unitNumber,
+        },
+      });
+    await mkBooking(1, 1); // unit 1: 1 of 2 booked
+    await mkBooking(3, 2); // unit 3: full
+    // unit 2: no bookings
+
+    const svc = makeBookingsService();
+    const res = (await svc.getDailyAvailability(seed.activity.id, checkIn, checkOut)) as any;
+
+    expect(res.bookingType).toBe('DAILY');
+    expect(Array.isArray(res.units)).toBe(true);
+    expect(res.units).toHaveLength(3);
+    const byUnit = new Map(res.units.map((u: any) => [u.unitNumber, u]));
+    expect(byUnit.get(1)).toMatchObject({ unitNumber: 1, capacity: 2, booked: 1, available: 1 });
+    expect(byUnit.get(2)).toMatchObject({ unitNumber: 2, capacity: 2, booked: 0, available: 2 });
+    expect(byUnit.get(3)).toMatchObject({ unitNumber: 3, capacity: 2, booked: 2, available: 0 });
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

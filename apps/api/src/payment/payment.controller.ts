@@ -38,7 +38,7 @@ export class PaymentController {
     @CurrentUser() user: RequestUser,
     @Body() dto: InitiatePaymentDto,
   ) {
-    return this.paymentService.initiatePayment(dto.bookingId, user.id);
+    return this.paymentService.initiatePayment(dto.bookingId, user.id, dto.idempotencyKey);
   }
 
   /**
