@@ -342,11 +342,11 @@ body {
    sun-bob / sun-glow / moon-glow pulses were ~10 always-on GPU-layer
    animations that made /home's hero janky on low-power phones. The
    `.hero-sun-glow` / `.hero-moon-glow` glows keep their resting opacity
-   statically. All the running animations are gated behind
-   `prefers-reduced-motion: no-preference` so reduced-motion users get a
-   fully static hero. (The wave SVG is 200% wide and drifts `translateX(-50%)`
-   for a seamless loop — `overflow-hidden` on its parent in page.tsx clips
-   the off-box half so mobile-RTL overflow tracking doesn't surface a shake.) */
+   statically. These three remaining loops are slow, subtle ambient motion
+   (not interaction-triggered), so they run for everyone. (The wave SVG is 200% wide and
+   drifts `translateX(-50%)` for a seamless loop — `overflow-hidden` on its
+   parent in page.tsx clips the off-box half so mobile-RTL overflow tracking
+   doesn't surface a shake.) */
 @keyframes float-boat {
   0%, 100% { transform: translateY(0) rotate(-1.5deg); }
   50% { transform: translateY(-14px) rotate(1.5deg); }
@@ -367,17 +367,15 @@ body {
 .hero-sun-glow { opacity: 0.3; }
 .hero-moon-glow { opacity: 0.2; }
 
-@media (prefers-reduced-motion: no-preference) {
-  .hero-boat {
-    animation: float-boat 4s ease-in-out infinite;
-    will-change: transform;
-  }
-  .hero-wave {
-    animation: wave-drift 12s linear infinite;
-    will-change: transform;
-  }
-  .hero-cloud-mid {
-    animation: cloud-drift-mid 30s linear infinite;
-    will-change: transform;
-  }
+.hero-boat {
+  animation: float-boat 4s ease-in-out infinite;
+  will-change: transform;
+}
+.hero-wave {
+  animation: wave-drift 12s linear infinite;
+  will-change: transform;
+}
+.hero-cloud-mid {
+  animation: cloud-drift-mid 30s linear infinite;
+  will-change: transform;
 }
