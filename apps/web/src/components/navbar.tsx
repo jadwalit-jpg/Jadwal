@@ -6,11 +6,15 @@ import { useTheme } from 'next-themes';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from 'react-i18next';
 import { Sun, Moon, Menu, X, Home, Compass, Tag, Store, CalendarDays, Heart, User, LogOut, ChevronDown } from 'lucide-react';
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { memo, useEffect, useRef, useState, useCallback } from 'react';
 import NotificationBell from '@/components/notification-bell';
 
-export default function Navbar({ variant = 'transparent' }: { variant?: 'transparent' | 'solid' }) {
+// Small enter-only animations (CSS, not framer-motion — this component is on
+// every page; pulling ~170 KB of animation engine into the shared chunk for a
+// dropdown fade isn't worth it). Exit is instant — standard for menus, and CSS
+// can't cheaply do exit animations without re-introducing JS state. Keyframes
+// (`dropdownIn`, `fadeIn`, `slideDownIn`) live in globals.css.
+function NavbarComponent({ variant = 'transparent' }: { variant?: 'transparent' | 'solid' }) {
   const router = useRouter();
   const { user, logout, loading: authLoading } = useAuth();
   const { theme, setTheme } = useTheme();
@@ -76,7 +80,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
 
   return (
     <>
-      <header className={`fixed top-0 inset-x-0 z-100 transition-all duration-500 ${isOpaque ? 'bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-sky-100 dark:border-slate-800 shadow-sm' : 'bg-transparent border-b border-transparent'}`}>
+      <header className={`fixed top-0 inset-x-0 z-100 transition-colors duration-300 ${isOpaque ? 'bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-sky-100 dark:border-slate-800 shadow-sm' : 'bg-transparent border-b border-transparent'}`}>
         <nav className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-1.5 sm:gap-2">
             {/* Wordmark only — logo image dropped per user request. Rainbow
@@ -94,14 +98,14 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
 
           {/* Glass pill nav links — desktop only */}
           {authLoading ? (
-            <div className={`hidden md:flex items-center gap-2 rounded-full px-3 py-2 transition-all duration-500 ${isOpaque ? 'bg-gray-100/80 dark:bg-slate-800/80 border border-gray-200/50 dark:border-slate-700/50' : 'bg-white/10 border border-white/20'}`}>
+            <div className={`hidden md:flex items-center gap-2 rounded-full px-3 py-2 transition-colors duration-300 ${isOpaque ? 'bg-gray-100/80 dark:bg-slate-800/80 border border-gray-200/50 dark:border-slate-700/50' : 'bg-white/10 border border-white/20'}`}>
               <div className={`h-7 w-14 rounded-full animate-pulse ${isOpaque ? 'bg-gray-200/80 dark:bg-slate-700/60' : 'bg-white/15'}`} />
               <div className={`h-7 w-16 rounded-full animate-pulse ${isOpaque ? 'bg-gray-200/80 dark:bg-slate-700/60' : 'bg-white/15'}`} />
               <div className={`h-7 w-28 rounded-full animate-pulse ${isOpaque ? 'bg-gray-200/80 dark:bg-slate-700/60' : 'bg-white/15'}`} />
               <div className={`h-7 w-28 rounded-full animate-pulse ${isOpaque ? 'bg-gray-200/80 dark:bg-slate-700/60' : 'bg-white/15'}`} />
             </div>
           ) : (
-            <div className={`hidden md:flex items-center gap-1 rounded-full px-1.5 py-1.5 transition-all duration-500 ${isOpaque ? 'bg-gray-100/80 dark:bg-slate-800/80 border border-gray-200/50 dark:border-slate-700/50' : 'bg-white/10 backdrop-blur-md border border-white/20 shadow-lg shadow-black/5'}`}>
+            <div className={`hidden md:flex items-center gap-1 rounded-full px-1.5 py-1.5 transition-colors duration-300 ${isOpaque ? 'bg-gray-100/80 dark:bg-slate-800/80 border border-gray-200/50 dark:border-slate-700/50' : 'bg-white/10 backdrop-blur-md border border-white/20 shadow-lg shadow-black/5'}`}>
               <Link href="/" className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${isOpaque ? 'text-gray-700 hover:bg-white hover:shadow-sm dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white' : 'text-white/90 hover:bg-white/15 hover:text-white'}`}>{t('nav.home')}</Link>
               <Link href="/explore" className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${isOpaque ? 'text-gray-500 hover:bg-white hover:text-gray-900 hover:shadow-sm dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white' : 'text-white/70 hover:bg-white/15 hover:text-white'}`}>{t('nav.explore')}</Link>
               <Link href="/offers" className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all whitespace-nowrap ${isOpaque ? 'text-gray-500 hover:bg-white hover:text-gray-900 hover:shadow-sm dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white' : 'text-white/70 hover:bg-white/15 hover:text-white'}`}>{t('nav.offers')}</Link>
@@ -168,14 +172,9 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
                   <ChevronDown className={`w-3.5 h-3.5 transition-transform ${userMenuOpen ? 'rotate-180' : ''} ${isOpaque ? 'text-gray-400 dark:text-slate-500' : 'text-white/60'}`} />
                 </button>
 
-                <AnimatePresence>
-                  {userMenuOpen && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 6, scale: 0.97 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 6, scale: 0.97 }}
-                      transition={{ duration: 0.15 }}
-                      className="absolute inset-e-0 mt-2 w-48 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200/60 dark:border-slate-700/60 shadow-xl shadow-black/10 dark:shadow-black/30 overflow-hidden z-50"
+                {userMenuOpen && (
+                    <div
+                      className="absolute inset-e-0 mt-2 w-48 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200/60 dark:border-slate-700/60 shadow-xl shadow-black/10 dark:shadow-black/30 overflow-hidden z-50 animate-[dropdownIn_0.15s_ease-out]"
                     >
                       {/* User info */}
                       <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-800">
@@ -219,9 +218,8 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
                           {t('nav.logout')}
                         </button>
                       </div>
-                    </motion.div>
+                    </div>
                   )}
-                </AnimatePresence>
               </div>
             )}
 
@@ -255,45 +253,28 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
       </header>
 
       {/* Mobile menu overlay */}
-      <AnimatePresence>
-        {mobileOpen && (
+      {mobileOpen && (
           <>
             {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-99 bg-black/40 backdrop-blur-sm md:hidden"
+            <div
+              className="fixed inset-0 z-99 bg-black/40 backdrop-blur-sm md:hidden animate-[fadeIn_0.2s_ease-out]"
               onClick={() => setMobileOpen(false)}
             />
 
             {/* Menu panel */}
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.25, ease: 'easeOut' }}
-              className="fixed top-[72px] inset-x-4 z-101 md:hidden"
-            >
+            <div className="fixed top-[72px] inset-x-4 z-101 md:hidden animate-[slideDownIn_0.25s_ease-out]">
               <div className="rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-gray-200/50 dark:border-slate-700/50 shadow-2xl shadow-black/10 dark:shadow-black/30 overflow-hidden">
                 <div className="p-3 space-y-1">
-                  {mobileLinks.map((link, i) => (
-                    <motion.div
+                  {mobileLinks.map((link) => (
+                    <Link
                       key={link.href}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.05, duration: 0.2 }}
+                      href={link.href}
+                      onClick={() => setMobileOpen(false)}
+                      className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800 hover:text-sky-600 dark:hover:text-white transition-colors"
                     >
-                      <Link
-                        href={link.href}
-                        onClick={() => setMobileOpen(false)}
-                        className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800 hover:text-sky-600 dark:hover:text-white transition-all"
-                      >
-                        <link.icon className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                        {link.label}
-                      </Link>
-                    </motion.div>
+                      <link.icon className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                      {link.label}
+                    </Link>
                   ))}
                 </div>
 
@@ -368,10 +349,12 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
                   </div>
                 )}
               </div>
-            </motion.div>
+            </div>
           </>
         )}
-      </AnimatePresence>
     </>
   );
 }
+
+const Navbar = memo(NavbarComponent);
+export default Navbar;

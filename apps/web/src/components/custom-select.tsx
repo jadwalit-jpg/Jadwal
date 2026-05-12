@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Check } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
 
 export interface SelectOption {
   value: string;
@@ -122,16 +121,12 @@ export default function CustomSelect({
     : value ? selectedLabel : placeholder;
 
   const dropdown = (
-    <AnimatePresence>
+    <>
       {open && !disabled && (
-        <motion.div
+        <div
           ref={dropdownRef}
           style={dropdownStyle}
-          initial={{ opacity: 0, y: -6, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -6, scale: 0.98 }}
-          transition={{ duration: 0.15, ease: 'easeOut' }}
-          className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-xl shadow-gray-200/60 dark:shadow-black/40 overflow-hidden"
+          className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-xl shadow-gray-200/60 dark:shadow-black/40 overflow-hidden animate-[dropdownIn_0.15s_ease-out]"
         >
           <div className="max-h-64 overflow-y-auto py-1.5">
             {!required && (
@@ -174,9 +169,9 @@ export default function CustomSelect({
               </div>
             ))}
           </div>
-        </motion.div>
+        </div>
       )}
-    </AnimatePresence>
+    </>
   );
 
   return (

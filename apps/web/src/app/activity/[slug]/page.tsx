@@ -21,13 +21,19 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useState, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import api from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
-import ActivityLocationMap from '@/components/activity-location-map';
+// Lazy-load the Leaflet map (+ its ~14 KB CSS) — it only renders far below
+// the fold and only when the activity has coordinates, so it shouldn't be in
+// this page's first-load JS. ssr:false because Leaflet needs `window`.
+const ActivityLocationMap = dynamic(() => import('@/components/activity-location-map'), {
+  ssr: false,
+  loading: () => <div className="h-64 w-full rounded-2xl bg-gray-100 dark:bg-slate-800 animate-pulse" />,
+});
 import { getApiError } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import { localized } from '@/lib/localize';
@@ -1080,14 +1086,8 @@ export default function ActivityDetailPage() {
                 {t('activity.youMightAlsoLike')}
               </h2>
               <div className="flex gap-4 overflow-x-auto pb-2 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-                {related.map((item, i) => (
-                  <motion.div
-                    key={item.id}
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.08 }}
-                    className="shrink-0 w-64"
-                  >
+                {related.map((item) => (
+                  <div key={item.id} className="shrink-0 w-64">
                     <Link
                       href={`/activity/${item.slug}`}
                       className="group block rounded-2xl overflow-hidden border border-jadwal-border-subtle bg-jadwal-surface shadow-jadwal hover:shadow-jadwal-lg transition-shadow"
@@ -1128,7 +1128,7 @@ export default function ActivityDetailPage() {
                         </div>
                       </div>
                     </Link>
-                  </motion.div>
+                  </div>
                 ))}
               </div>
             </section>
@@ -1138,12 +1138,7 @@ export default function ActivityDetailPage() {
         {/* Right rail — sticky booking card */}
         <aside className="hidden lg:block">
           <div className="sticky top-24">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-              className="rounded-[20px] border border-jadwal-border-subtle bg-jadwal-surface shadow-jadwal-lg p-5"
-            >
+            <div className="rounded-[20px] border border-jadwal-border-subtle bg-jadwal-surface shadow-jadwal-lg p-5">
               <div>
                 <div className="text-[11px] text-jadwal-text-muted uppercase tracking-[0.4px] mb-0.5">
                   {t('activity.from', { defaultValue: 'from' })}
@@ -1302,7 +1297,7 @@ export default function ActivityDetailPage() {
                   />
                 ) : null}
               </div>
-            </motion.div>
+            </div>
           </div>
         </aside>
       </div>

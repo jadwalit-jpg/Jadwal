@@ -55,6 +55,14 @@ const UPLOADS_PROXY_TARGET = (() => {
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: resolve(__dirname, "../../"),
+  // Per-import code-splitting / tree-shaking for these barrel-ish packages so
+  // a page that only uses one icon / one `motion` component doesn't pull the
+  // whole library into its first-load JS. (framer-motion is the big one — see
+  // also: it's been removed from the always-loaded navbar/notification-bell/
+  // custom-select/animated-counter so it's no longer in the shared chunk.)
+  experimental: {
+    optimizePackageImports: ["framer-motion", "lucide-react", "date-fns"],
+  },
   // Strip `X-Powered-By: Next.js` header. ZAP baseline flagged it as a
   // low-risk software-version disclosure; removing it makes drive-by
   // scanners' job marginally harder.
