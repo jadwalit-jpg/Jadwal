@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ConflictException,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -255,7 +256,7 @@ export class PaymentService {
 
   // ─── Initiate Payment ───────────────────────────────────────────────────
 
-  async initiatePayment(bookingId: string, userId: string) {
+  async initiatePayment(bookingId: string, userId: string, idempotencyKey?: string) {
     // 0. Check payment gateway is enabled before any DB work
     if (!this.enabled) {
       throw new BadRequestException('Payment service is not available');
@@ -295,10 +296,32 @@ export class PaymentService {
 
     const payment = await db.payment.findUnique({
       where: { id: booking.paymentId },
-      select: { id: true, amount: true, currency: true, status: true, gatewayBasketId: true },
+      select: { id: true, amount: true, currency: true, status: true, gatewayBasketId: true, idempotencyKey: true },
     });
     if (!payment) throw new BadRequestException(NOT_PAYABLE);
     if (payment.status !== 'PENDING') throw new BadRequestException(NOT_PAYABLE);
+
+    // 1b. Idempotency key (R3). Mirrors the Booking.idempotencyKey pattern.
+    // A key the same user already used: if it points at THIS payment it's a
+    // legit retry (carry on — we re-use the set-once basket and fetch a fresh
+    // token below; we deliberately do NOT cache+replay the form, since the
+    // PAY2M token expires). If it points at a DIFFERENT payment, the client
+    // reused a key across bookings → reject. A key first seen under another
+    // user looks like "not found" here; the @unique column is the backstop
+    // (P2002 → 409 via PrismaExceptionFilter) when we try to stamp it below.
+    let idempotentRetry = false;
+    if (idempotencyKey) {
+      const prior = await db.payment.findFirst({
+        where: { idempotencyKey, booking: { is: { customerId: userId } } },
+        select: { id: true },
+      });
+      if (prior) {
+        if (prior.id !== payment.id) {
+          throw new ConflictException('This idempotency key was already used for a different booking.');
+        }
+        idempotentRetry = true;
+      }
+    }
 
     // 2. Redis lock to prevent double-pay from multiple tabs
     const lockKey = `payment_lock:${payment.id}`;
@@ -323,6 +346,12 @@ export class PaymentService {
           ...(existingBasket
             ? {}
             : { gatewayBasketId: basketId, paymentFirstInitiatedAt: now }),
+          // Stamp the idempotency key the first time we see one for this
+          // payment. Never overwrite (if the row already carries a key — even
+          // a different one from an inconsistent client — leave it; the
+          // payment is still a single payment). The @unique column rejects a
+          // cross-payment collision here with P2002 → 409.
+          ...(payment.idempotencyKey || !idempotencyKey ? {} : { idempotencyKey }),
           // paymentInitiatedAt re-stamps every retry — useful for forensics
           // ("when did the customer last try to hand off to PAY2M?").
           paymentInitiatedAt: now,
@@ -367,6 +396,10 @@ export class PaymentService {
       return {
         formAction: `${this.apiUrl}/PostTransaction`,
         formFields,
+        // true when this call matched a previously-seen idempotency key for
+        // the same payment (a recognized retry). The form is still rebuilt
+        // with a fresh PAY2M token — only the basket is re-used.
+        idempotent: idempotentRetry,
       };
     } finally {
       await this.redisLock.release(lockKey, lockToken);

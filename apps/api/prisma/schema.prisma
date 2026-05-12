@@ -473,6 +473,13 @@ model Payment {
   /// vary). Nullable in schema for backwards-compat with legacy rows that
   /// were marked PAID before this column existed.
   bankTransferRef    String?       @db.VarChar(120)
+  /// Client-supplied idempotency key for POST /payment/initiate. Optional
+  /// UUID v4. Stamped ONCE on the first initiate call. A repeat call with the
+  /// same key for the same booking+owner is treated as a legit retry (re-uses
+  /// the set-once gatewayBasketId, fetches a fresh PAY2M token); a key that
+  /// collides with a different booking/owner is rejected (the @unique below is
+  /// the race safety-net → P2002 → 409). Nullable for backwards-compat.
+  idempotencyKey     String?       @unique @db.VarChar(64)
   createdAt          DateTime      @default(now())
 
   @@index([status])

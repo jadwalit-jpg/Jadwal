@@ -491,20 +491,32 @@ export class BookingsService {
 
     if (activity.hasUnits) {
       if (!unitNumber) {
-        const unitAvailability = await Promise.all(
-          Array.from({ length: activity.unitCount }, (_, i) => i + 1).map(async (unitNum) => {
-            const agg = await this.prisma.client.booking.aggregate({
-              where: { ...overlapCondition, unitNumber: unitNum },
-              _sum: { guests: true },
-            });
-            const booked = agg._sum.guests ?? 0;
+        // One query for all units instead of N parallel aggregates (one per
+        // unit). groupBy returns only the units that actually have overlapping
+        // bookings; we fill 0 for the rest below. `unitNumber` is nullable on
+        // Booking, but rows with null can't appear here — overlapCondition is
+        // scoped to a hasUnits activity, whose bookings always carry a unit —
+        // so we defensively skip a null group when building the map.
+        const grouped = await this.prisma.client.booking.groupBy({
+          by: ['unitNumber'],
+          where: overlapCondition,
+          _sum: { guests: true },
+        });
+        const bookedByUnit = new Map<number, number>();
+        for (const g of grouped) {
+          if (g.unitNumber == null) continue;
+          bookedByUnit.set(g.unitNumber, g._sum.guests ?? 0);
+        }
+        const unitAvailability = Array.from({ length: activity.unitCount }, (_, i) => i + 1).map(
+          (unitNum) => {
+            const booked = bookedByUnit.get(unitNum) ?? 0;
             return {
               unitNumber: unitNum,
               capacity: activity.unitCapacity,
               booked,
               available: Math.max(0, activity.unitCapacity - booked),
             };
-          }),
+          },
         );
         return { bookingType: 'DAILY', checkInDate, checkOutDate, units: unitAvailability };
       } else {
