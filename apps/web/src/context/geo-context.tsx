@@ -99,6 +99,16 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
   // moment we have something, not only after the /geo/detect round-trip.
   const [hasGeo, setHasGeo] = useState(false);
 
+  // Live mirrors of `source` / `country` so the effects + callbacks below can
+  // read the current value without taking them as effect deps (which would
+  // re-run the merge effect on every change, risking a re-apply of geoData
+  // after a manual pick) and without doing side effects inside a setState
+  // updater (React may call updaters more than once).
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const countryRef = useRef(country);
+  countryRef.current = country;
+
   // Restore from storage after mount to avoid SSR hydration mismatch.
   useEffect(() => {
     // Precise GPS coords — session-scoped (cleared on tab close), only ever set
@@ -115,9 +125,15 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
     // below. Paint it immediately so /home doesn't wait on /geo/detect.
     const cached = readGeoCache();
     if (cached?.country) {
+      const restoredSource = cached.source === 'manual' ? 'manual' : 'ip';
       setCountryState(cached.country);
       setCityState(cached.city ?? null);
-      setSource(cached.source === 'manual' ? 'manual' : 'ip');
+      setSource(restoredSource);
+      // Set the refs now — effects run in declaration order, so this lands
+      // before the merge effect below in the same commit, ensuring a restored
+      // manual pick isn't clobbered if /geo/detect happened to be warm on mount.
+      sourceRef.current = restoredSource;
+      countryRef.current = cached.country;
       setHasGeo(true);
     }
   }, []);
@@ -137,12 +153,6 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
     staleTime: 30 * 60 * 1000,
     retry: 1,
   });
-
-  // Read the live `source` via a ref so the merge effect doesn't need it as a
-  // dep (re-running it on every source change would risk re-applying geoData
-  // after a manual pick).
-  const sourceRef = useRef(source);
-  sourceRef.current = source;
 
   useEffect(() => {
     if (!geoData) return;
@@ -168,16 +178,17 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
     setCityState(null);
     setSource('manual');
     setHasGeo(true);
+    countryRef.current = c;
+    sourceRef.current = 'manual';
     writeGeoCache(c, null, 'manual');
   }, []);
 
   const setCity = useCallback((c: GeoCity | null) => {
     setCityState(c);
     setSource('manual');
-    setCountryState((prev) => {
-      writeGeoCache(prev, c, 'manual');
-      return prev;
-    });
+    // Plain side effect using the country ref — not inside a setState updater
+    // (those must be pure / may run more than once).
+    writeGeoCache(countryRef.current, c, 'manual');
   }, []);
 
   /**
