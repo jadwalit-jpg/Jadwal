@@ -2,9 +2,17 @@
  * Below-the-fold sections of the homepage `/`.
  *
  * Extracted from home-client.tsx so it can be lazy-loaded via
- * next/dynamic({ ssr: false }) — defers ~half the page's JS chunk until
- * the user scrolls past the hero. Same UI, same queries, same animations;
- * just delivered as a separate webpack chunk that's not on the LCP path.
+ * next/dynamic({ ssr: false }) — keeps ~half the page's JS off the
+ * hero/LCP chunk; the chunk loads as soon as the page hydrates (not on
+ * scroll), so the sections render and start fetching immediately.
+ *
+ * No scroll-gated entrance animations: these sections used to be
+ * `motion.section` with `whileInView` + `initial={{ opacity: 0 }}`, which
+ * meant everything below a full-height hero stayed invisible until the
+ * user scrolled it into view — it read as "the page only loads when I
+ * scroll". They now render plainly (loading states are the React Query
+ * skeletons below). Removing framer-motion here also drops it from the
+ * homepage entirely.
  *
  * Queries here re-use the QueryClient from the parent provider — same
  * queryKey shape as home-client so the hero's `categories` fetch and this
@@ -14,7 +22,6 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Calendar, Gift, MapPin, ShieldCheck, Zap } from 'lucide-react';
@@ -111,13 +118,7 @@ export default function HomeBelowFold() {
   return (
     <>
       {/* ─── Browse by category ─────────────────────────────────── */}
-      <motion.section
-        initial={{ opacity: 0, y: 30 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.2 }}
-        transition={{ duration: 0.6, ease: 'easeOut' }}
-        className="bg-jadwal-bg"
-      >
+      <section className="bg-jadwal-bg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 md:py-16">
           <h2 className="font-display text-[22px] sm:text-[26px] font-semibold tracking-[-0.6px] sm:tracking-[-0.8px] text-jadwal-text m-0 mb-6 md:mb-8">
             {t('home.browseByCategory', { defaultValue: 'Browse by category' })}
@@ -138,17 +139,10 @@ export default function HomeBelowFold() {
             ) : null}
           </div>
         </div>
-      </motion.section>
+      </section>
 
       {/* ─── Trending ─────────────────────────────────────────── */}
-      <motion.section
-        id="trending"
-        initial={{ opacity: 0, y: 30 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.2 }}
-        transition={{ duration: 0.6, ease: 'easeOut' }}
-        className="bg-jadwal-bg scroll-mt-24"
-      >
+      <section id="trending" className="bg-jadwal-bg scroll-mt-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
           <SectionHeader
             title={
@@ -217,19 +211,12 @@ export default function HomeBelowFold() {
             </div>
           )}
         </div>
-      </motion.section>
+      </section>
 
       <PatternDivider />
 
       {/* ─── Featured (Handpicked for you) ──────────────────────── */}
-      <motion.section
-        id="featured"
-        initial={{ opacity: 0, y: 30 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.2 }}
-        transition={{ duration: 0.6, ease: 'easeOut' }}
-        className="bg-jadwal-bg scroll-mt-24"
-      >
+      <section id="featured" className="bg-jadwal-bg scroll-mt-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
           <SectionHeader
             title={t('home.featured')}
@@ -257,16 +244,10 @@ export default function HomeBelowFold() {
             </div>
           )}
         </div>
-      </motion.section>
+      </section>
 
       {/* ─── Near You ─────────────────────────────────────────── */}
-      <motion.section
-        initial={{ opacity: 0, y: 30 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.2 }}
-        transition={{ duration: 0.6, ease: 'easeOut' }}
-        className="bg-jadwal-bg-soft"
-      >
+      <section className="bg-jadwal-bg-soft">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
           <div className="flex items-end justify-between mb-5 gap-3 flex-wrap">
             <div>
@@ -350,16 +331,10 @@ export default function HomeBelowFold() {
             </div>
           )}
         </div>
-      </motion.section>
+      </section>
 
       {/* ─── Why Jadwal (Trust strip) ─────────────────────────── */}
-      <motion.section
-        initial={{ opacity: 0, y: 30 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.2 }}
-        transition={{ duration: 0.6, ease: 'easeOut' }}
-        className="bg-jadwal-surface-muted border-y border-jadwal-border-subtle"
-      >
+      <section className="bg-jadwal-surface-muted border-y border-jadwal-border-subtle">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 md:py-14">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-10">
             {[
@@ -409,16 +384,10 @@ export default function HomeBelowFold() {
             ))}
           </div>
         </div>
-      </motion.section>
+      </section>
 
       {/* ─── CTA ────────────────────────────────────────────── */}
-      <motion.section
-        initial={{ opacity: 0, y: 30 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.2 }}
-        transition={{ duration: 0.6, ease: 'easeOut' }}
-        className="relative overflow-hidden"
-      >
+      <section className="relative overflow-hidden">
         <div className="absolute inset-0 bg-linear-to-br from-sky-600 to-indigo-700" />
         <div
           aria-hidden="true"
@@ -442,7 +411,7 @@ export default function HomeBelowFold() {
             {t('home.getStarted')}
           </Link>
         </div>
-      </motion.section>
+      </section>
     </>
   );
 }
