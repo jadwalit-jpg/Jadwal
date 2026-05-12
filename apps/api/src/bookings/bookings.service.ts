@@ -497,6 +497,15 @@ export class BookingsService {
         // Booking, but rows with null can't appear here — overlapCondition is
         // scoped to a hasUnits activity, whose bookings always carry a unit —
         // so we defensively skip a null group when building the map.
+        //
+        // NOTE: this SUMs guests across every booking that overlaps the
+        // requested window — same semantics as the createBooking DAILY
+        // capacity check and the per-unit aggregate this replaced. Two
+        // staggered (time-disjoint) stays in the same unit therefore both
+        // count, which can under-report availability for a wide window. That
+        // pre-dates this refactor (and matches the booking-creation path, so
+        // they agree); switching DAILY to per-instant peak concurrency like
+        // the HOURLY path would be a behaviour change for a separate PR.
         const grouped = await this.prisma.client.booking.groupBy({
           by: ['unitNumber'],
           where: overlapCondition,

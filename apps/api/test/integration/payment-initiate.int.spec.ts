@@ -108,7 +108,9 @@ describe('PaymentService.initiatePayment — R3 idempotency', () => {
     expect(second.idempotent).toBe(true);
     const p2 = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(p2.gatewayBasketId).toBe(p1.gatewayBasketId); // re-used, not regenerated
-    expect(await ctx.prisma.payment.count()).toBe(1);
+    // No second payment was spun up. Scope the count to this scenario's key so
+    // it stays robust if a shared fixture ever seeds unrelated payment rows.
+    expect(await ctx.prisma.payment.count({ where: { idempotencyKey: key } })).toBe(1);
   });
 
   test('same key reused for a DIFFERENT booking of the same user → 409', async () => {
