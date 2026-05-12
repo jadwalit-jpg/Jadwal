@@ -336,9 +336,12 @@ export default function HomeBelowFold() {
                   aria-hidden="true"
                 />
                 <p className="text-jadwal-text-muted font-medium">
-                  {isDetecting
-                    ? t('home.detectingLocation', { defaultValue: 'Detecting your location...' })
-                    : t('home.noNearYou', { defaultValue: 'No activities in your area yet' })}
+                  {/* Reached only when !isDetecting && !nearYouLoading && no
+                      activities — the detecting/loading state shows the
+                      skeleton grid above, so there's no "detecting…" branch
+                      to take here (CodeQL flagged the old ternary as a
+                      useless conditional, correctly). */}
+                  {t('home.noNearYou', { defaultValue: 'No activities in your area yet' })}
                 </p>
                 <p className="text-xs text-jadwal-text-faint mt-1">
                   {t('home.checkBackSoon', { defaultValue: 'Check back soon for new experiences' })}
