@@ -231,7 +231,7 @@ export function middleware(request: NextRequest) {
   // accidentally gate hypothetical future routes like `/bookings-survey`
   // that share a prefix with a protected route; the explicit `=== p` /
   // `p + '/'` test rules that out.
-  const customerProtectedPaths = ['/bookings', '/profile', '/my-account', '/cart', '/favorites', '/notifications', '/likes'];
+  const customerProtectedPaths = ['/bookings', '/profile', '/my-account', '/cart', '/favorites', '/notifications', '/likes', '/account'];
   if (customerProtectedPaths.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
     if (!isAuthenticated) {
       const loginUrl = new URL('/login', request.url);
