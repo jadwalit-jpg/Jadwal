@@ -53,6 +53,39 @@ function freshNonce() {
   return btoa(bin);
 }
 
+/**
+ * Per-country eyebrow rewrite — same pattern as the nonce restamp, but for
+ * the hero's country line. We only need this because Cloudflare's free plan
+ * Cache Rules cannot include a header in the cache key — so cached HTML
+ * would otherwise carry whichever country the cache-populator was in (e.g.
+ * frozen to "Qatar" forever once a QA visitor warmed the cache). On every
+ * request the Worker reads `CF-IPCountry` + the `jadwal_lang` cookie and
+ * rewrites the eyebrow `<p data-eyebrow="country">…</p>`. Mirrors the
+ * server-side map in `apps/web/src/app/_home-islands/hero-eyebrow.tsx`;
+ * keep the two in sync.
+ */
+const COUNTRY_NAMES = {
+  QA: { en: 'Qatar', ar: 'قطر' },
+  SA: { en: 'Saudi Arabia', ar: 'السعودية' },
+  AE: { en: 'United Arab Emirates', ar: 'الإمارات' },
+  KW: { en: 'Kuwait', ar: 'الكويت' },
+  BH: { en: 'Bahrain', ar: 'البحرين' },
+  OM: { en: 'Oman', ar: 'عُمان' },
+};
+
+function eyebrowText(countryCode, isAr) {
+  const name = COUNTRY_NAMES[countryCode]?.[isAr ? 'ar' : 'en'];
+  if (isAr) return name ? `${name} · تجارب محلية` : 'تجارب محلية في الخليج';
+  return name ? `${name} · Local experiences` : 'Local experiences in the Gulf';
+}
+
+/** Tiny cookie reader — pulls `jadwal_lang` out of a `Cookie:` header value. */
+function readLangCookie(cookieHeader) {
+  if (!cookieHeader) return 'en';
+  const m = cookieHeader.match(/(?:^|;\s*)jadwal_lang=([^;]+)/);
+  return m && m[1] === 'ar' ? 'ar' : 'en';
+}
+
 export default {
   /**
    * @param {Request} request
@@ -97,9 +130,29 @@ export default {
         el.setAttribute('nonce', newNonce);
       },
     };
+
+    // Per-visitor eyebrow text — see `eyebrowText` above for the rationale.
+    // We always rewrite (not only on cache HIT) because the lang-cookie
+    // bypass means EN-cookie / AR-cookie traffic doesn't hit the cache, but
+    // the Worker still runs on those requests; rewriting in those cases is a
+    // safe no-op that overwrites the correct text with the same correct text.
+    const countryCode = (request.headers.get('CF-IPCountry') || '').toUpperCase();
+    const isAr = readLangCookie(request.headers.get('Cookie')) === 'ar';
+    const newEyebrow = eyebrowText(countryCode, isAr);
+    const eyebrowRewriter = {
+      element(el) {
+        // `setInnerContent(text)` HTML-escapes by default — fine since the
+        // map values are plain strings (Arabic / Latin letters + `·` and
+        // spaces). The eyebrow `<p>` has only the text node we render in
+        // hero-eyebrow.tsx; no child elements to preserve.
+        el.setInnerContent(newEyebrow);
+      },
+    };
+
     const rewriter = new HTMLRewriter()
       .on('script[nonce]', restamp)
-      .on('link[nonce]', restamp);
+      .on('link[nonce]', restamp)
+      .on('p[data-eyebrow="country"]', eyebrowRewriter);
 
     return rewriter.transform(
       new Response(response.body, {
