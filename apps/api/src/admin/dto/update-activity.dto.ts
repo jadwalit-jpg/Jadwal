@@ -10,10 +10,12 @@ import {
   Min,
   Max,
   MaxLength,
+  Matches,
   ValidateNested,
   ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ACTIVITY_TITLE_REGEX, ACTIVITY_TITLE_MESSAGE } from '../../common/validators/name-allowlist';
 
 enum BookingType {
   HOURLY = 'HOURLY',
@@ -45,10 +47,10 @@ class ExtraServiceItem {
 }
 
 export class UpdateActivityDto {
-  @IsString() @IsNotEmpty() @MaxLength(200) @IsOptional()
+  @IsString() @IsNotEmpty() @MaxLength(200) @Matches(ACTIVITY_TITLE_REGEX, { message: ACTIVITY_TITLE_MESSAGE }) @IsOptional()
   titleEn?: string;
 
-  @IsString() @IsNotEmpty() @MaxLength(200) @IsOptional()
+  @IsString() @IsNotEmpty() @MaxLength(200) @Matches(ACTIVITY_TITLE_REGEX, { message: ACTIVITY_TITLE_MESSAGE }) @IsOptional()
   titleAr?: string;
 
   @IsString() @IsNotEmpty() @MaxLength(120) @IsOptional()

@@ -226,7 +226,7 @@ export function middleware(request: NextRequest) {
   }
 
   // ─── Customer Protected Routes ─────────────────────────────
-  const customerProtectedPaths = ['/bookings', '/profile', '/my-account', '/cart', '/favorites'];
+  const customerProtectedPaths = ['/bookings', '/profile', '/my-account', '/cart', '/favorites', '/notifications'];
   if (customerProtectedPaths.some((p) => pathname.startsWith(p))) {
     if (!isAuthenticated) {
       const loginUrl = new URL('/login', request.url);
