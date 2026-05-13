@@ -13,11 +13,11 @@
  * position + z-index against the menu panel).
  */
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Bell, CheckCheck, Trash2 } from 'lucide-react';
+import { Bell, CheckCheck, Trash2, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useAuth } from '@/context/auth-context';
 import api from '@/lib/api';
 import { isSafeRelativePath } from '@/lib/utils';
@@ -91,6 +91,11 @@ function NotificationRowSkeleton() {
   );
 }
 
+// Page size — backend caps `limit` at 50 per request (notification.controller.ts).
+// 20/page keeps the initial paint small + lets users scroll/load-more for
+// long histories instead of dumping 50+ rows on first render.
+const PAGE_SIZE = 20;
+
 export default function NotificationsPage() {
   const { t } = useTranslation();
   const { user, loading: authLoading } = useAuth();
@@ -98,14 +103,41 @@ export default function NotificationsPage() {
   const queryClient = useQueryClient();
 
   // Hooks must run before the redirect early-return — keep order stable
-  // across renders. Fetch is gated by `enabled` so it's a no-op pre-auth.
+  // across renders. Fetches are gated by `enabled` so they're no-ops pre-auth.
   const isCustomer = !!user && user.role === 'CUSTOMER';
 
-  const { data: notifData, isLoading, isError } = useQuery<NotificationsResponse>({
-    queryKey: ['notifications', 'list'],
-    queryFn: () => api.get('/notifications', { params: { limit: 50 } }).then(r => r.data),
+  // Paginated list — `useInfiniteQuery` so "Load more" appends pages without
+  // re-fetching what we already have. Same `queryKey` namespace as the bell
+  // (`['notifications', ...]`) — invalidating after a mutation wipes both the
+  // page's list cache *and* the bell's unread-count cache in one call.
+  const {
+    data: notifData,
+    isLoading,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery<NotificationsResponse>({
+    queryKey: ['notifications', 'list', { pageSize: PAGE_SIZE }],
+    queryFn: ({ pageParam = 1 }) =>
+      api
+        .get('/notifications', { params: { page: pageParam, limit: PAGE_SIZE } })
+        .then(r => r.data),
     enabled: isCustomer,
     staleTime: 5_000,
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.page < last.totalPages ? last.page + 1 : undefined),
+  });
+
+  // Unread count — separate small query so the header re-renders the unread
+  // badge without re-fetching pages. Same `queryKey` as `<NotificationBell/>`,
+  // so the bell's cache stays in sync with this page (and vice-versa).
+  const { data: countData } = useQuery<{ unreadCount: number }>({
+    queryKey: ['notifications', 'unread-count'],
+    queryFn: () => api.get('/notifications/unread-count').then(r => r.data),
+    enabled: isCustomer,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
   });
 
   const markReadMutation = useMutation({
@@ -129,6 +161,17 @@ export default function NotificationsPage() {
     },
   });
 
+  // Per-notification delete. Backend endpoint: `DELETE /notifications/:id`
+  // (added in this PR). RATE_LIMIT_WRITE on the server; ownership enforced
+  // via WHERE clause (`{id, userId}` in `deleteMany`) so a tampered id
+  // belonging to another user is a no-op, not an error.
+  const deleteOneMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/notifications/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+
   const handleClick = useCallback((notif: Notification) => {
     if (!notif.read) markReadMutation.mutate(notif.id);
     // SECURITY: same as `<NotificationBell/>` — `notif.link` comes from the
@@ -141,22 +184,34 @@ export default function NotificationsPage() {
     }
   }, [markReadMutation, router]);
 
-  // Redirect to login if not authenticated — same pattern as `/likes`,
-  // `/bookings`, `/profile`. Hook calls above are already done, so we can
-  // early-return here without violating rules-of-hooks.
-  if (!authLoading && !user) {
-    router.push('/login?callbackUrl=/notifications');
-    return null;
-  }
-  // Logged-in but non-customer (admin/vendor) — bounce them home; the
-  // notifications endpoint is customer-scoped on the API.
-  if (!authLoading && user && !isCustomer) {
-    router.push('/');
+  // Auth-redirect lives in an effect rather than inline in render — calling
+  // `router.push` during render is a side-effect and re-fires every paint
+  // (twice under Strict Mode), polluting browser history and causing console
+  // warnings. `replace` (not `push`) so the auth-gated URL doesn't sit in
+  // back-stack between the user and where they came from.
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      router.replace('/login?callbackUrl=/notifications');
+    } else if (!isCustomer) {
+      // Logged-in but non-customer (admin/vendor) — bounce them home; the
+      // notifications endpoint is customer-scoped on the API.
+      router.replace('/');
+    }
+  }, [authLoading, user, isCustomer, router]);
+
+  // Don't render the page content while the effect is about to redirect —
+  // avoids a flash of the auth-gated layout for non-customers.
+  if (!authLoading && (!user || !isCustomer)) {
     return null;
   }
 
-  const unread = notifData?.unreadCount ?? 0;
-  const notifications = notifData?.data ?? [];
+  // Flatten infinite pages into a single list for rendering. Latest unread
+  // count comes from the dedicated query so it's always fresh (poll = 30 s)
+  // even between page-loads.
+  const unread = countData?.unreadCount ?? 0;
+  const notifications = notifData?.pages.flatMap((p) => p.data) ?? [];
+  const total = notifData?.pages[0]?.total ?? 0;
 
   return (
     <div className="min-h-screen bg-jadwal-bg flex flex-col font-outfit">
@@ -174,7 +229,7 @@ export default function NotificationsPage() {
               </h1>
               {unread > 0 && (
                 <p className="text-sm text-jadwal-text-muted mt-1">
-                  {unread} {unread === 1 ? 'unread' : 'unread'}
+                  {unread} unread
                 </p>
               )}
             </div>
@@ -228,40 +283,89 @@ export default function NotificationsPage() {
             </div>
           )}
 
-          {/* List */}
+          {/* List. Each row is a `<div>` (not a `<button>`) so the per-row
+              Delete button can be a *nested* `<button>` — nested buttons in
+              the DOM are invalid HTML and break a11y. The row's tap target
+              is the inner clickable area; the trash icon is a sibling. */}
           {notifications.length > 0 && (
             <ul className="space-y-2">
               {notifications.map((n) => {
                 const dot = TYPE_COLORS[n.type] || 'bg-slate-500';
                 const clickable = !!n.link && isSafeRelativePath(n.link);
+                const isDeleting = deleteOneMutation.isPending && deleteOneMutation.variables === n.id;
                 return (
                   <li key={n.id}>
-                    <button
-                      type="button"
-                      onClick={() => handleClick(n)}
-                      className={`w-full text-start flex items-start gap-3 p-4 rounded-2xl border transition-colors ${
+                    <div
+                      className={`relative flex items-start gap-3 p-4 pe-12 rounded-2xl border transition-colors ${
                         n.read
                           ? 'bg-jadwal-surface border-jadwal-border-subtle hover:bg-gray-50 dark:hover:bg-slate-800/60'
                           : 'bg-blue-50/60 dark:bg-blue-500/5 border-blue-100 dark:border-blue-500/20 hover:bg-blue-50 dark:hover:bg-blue-500/10'
-                      } ${clickable ? 'cursor-pointer' : 'cursor-default'}`}
+                      } ${isDeleting ? 'opacity-50 pointer-events-none' : ''}`}
                     >
-                      <span className={`mt-1.5 w-2.5 h-2.5 rounded-full shrink-0 ${dot}`} aria-hidden="true" />
-                      <div className="flex-1 min-w-0">
+                      {/* Clickable face — full-row tap target via the
+                          `absolute inset-0` overlay button. Trash button sits
+                          on top with a higher stacking context. */}
+                      <button
+                        type="button"
+                        onClick={() => handleClick(n)}
+                        className={`absolute inset-0 rounded-2xl ${clickable ? 'cursor-pointer' : 'cursor-default'}`}
+                        aria-label={clickable ? `Open: ${n.title}` : n.title}
+                      />
+                      <span className={`relative mt-1.5 w-2.5 h-2.5 rounded-full shrink-0 ${dot}`} aria-hidden="true" />
+                      <div className="relative flex-1 min-w-0 pointer-events-none">
                         <div className="flex items-start justify-between gap-3">
-                          <p className={`text-sm leading-snug ${n.read ? 'text-jadwal-text' : 'font-semibold text-jadwal-text'}`}>
+                          <p className={`text-sm leading-snug text-start ${n.read ? 'text-jadwal-text' : 'font-semibold text-jadwal-text'}`}>
                             {n.title}
                           </p>
                           <span className="text-xs text-jadwal-text-muted shrink-0 mt-0.5">{timeAgo(n.createdAt)}</span>
                         </div>
                         {n.message && (
-                          <p className="text-sm text-jadwal-text-muted mt-1 leading-snug">{n.message}</p>
+                          <p className="text-sm text-jadwal-text-muted mt-1 leading-snug text-start">{n.message}</p>
                         )}
                       </div>
-                    </button>
+                      {/* Per-row delete — relative-positioned so it sits over
+                          the `absolute inset-0` row-button. Calls
+                          `DELETE /notifications/:id` (RATE_LIMIT_WRITE,
+                          ownership-via-WHERE). */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteOneMutation.mutate(n.id);
+                        }}
+                        disabled={isDeleting}
+                        aria-label={`Delete notification: ${n.title}`}
+                        className="relative -me-1 p-2 rounded-full text-jadwal-text-muted hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        <X aria-hidden="true" className="h-4 w-4" />
+                      </button>
+                    </div>
                   </li>
                 );
               })}
             </ul>
+          )}
+
+          {/* Load more — only renders when the backend reports more pages.
+              Backend caps page size at 50; we use 20 (see PAGE_SIZE) for
+              snappier first paint. */}
+          {notifications.length > 0 && hasNextPage && (
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={() => fetchNextPage()}
+                disabled={isFetchingNextPage}
+                className="px-5 py-2.5 rounded-full text-sm font-medium text-jadwal-text bg-jadwal-surface border border-jadwal-border-subtle hover:bg-gray-50 dark:hover:bg-slate-800/60 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                {isFetchingNextPage ? 'Loading…' : 'Load more'}
+              </button>
+            </div>
+          )}
+          {/* End-of-list hint when we've fetched everything */}
+          {notifications.length > 0 && !hasNextPage && total > PAGE_SIZE && (
+            <p className="mt-6 text-center text-xs text-jadwal-text-muted">
+              {`Showing all ${total}`}
+            </p>
           )}
         </div>
       </main>
