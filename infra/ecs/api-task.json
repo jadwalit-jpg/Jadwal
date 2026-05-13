@@ -49,6 +49,7 @@
         { "name": "SMS_ENABLED",                  "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/SMS_ENABLED" },
         { "name": "PAYMENT_ENABLED",              "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/PAYMENT_ENABLED" },
         { "name": "RETENTION_REFRESH_TOKEN_DAYS", "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/RETENTION_REFRESH_TOKEN_DAYS" },
+        { "name": "RETENTION_EMAIL_OUTBOX_DAYS",  "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/RETENTION_EMAIL_OUTBOX_DAYS" },
         { "name": "GOOGLE_CLIENT_ID",             "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/GOOGLE_CLIENT_ID" },
         { "name": "GOOGLE_CLIENT_SECRET",         "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/GOOGLE_CLIENT_SECRET" },
         { "name": "GOOGLE_CALLBACK_URL",          "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/GOOGLE_CALLBACK_URL" },
