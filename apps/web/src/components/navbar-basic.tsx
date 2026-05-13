@@ -1,18 +1,24 @@
 'use client';
 
 /**
- * Navbar for `/home-test`.
+ * Lighter navbar used by `/home` (the perf-readied marketplace homepage).
  *
  * Same *features* as the full `<Navbar/>` (auth-aware login/avatar dropdown,
- * Become-a-Vendor link, desktop language toggle, theme toggle, mobile menu)
- * but a *lighter visual style*: no glass pill wrapping the desktop links, no
- * `backdrop-blur` on the header or the mobile menu, the same overlay-vs-scroll
- * pattern (transparent over the hero, opaque past it) so the navbar and hero
- * read as one piece. No notification bell — `/home-test` is a perf-test build
- * and the bell is a heavier subscription we don't need here.
+ * Become-a-Vendor link, desktop language toggle, theme toggle, mobile menu
+ * with a Notifications row for customers) — but a *lighter visual style*:
+ * no glass pill wrapping the desktop nav links, no `backdrop-blur` on the
+ * header or the mobile menu, same overlay-vs-scroll pattern (transparent
+ * over the hero, opaque past it) so the navbar and hero read as one piece.
  *
  * Mobile menu items each have a leading lucide icon (Home / Compass / Tag /
- * Store / Globe / LogIn / etc.) — mirrors `<Navbar/>`'s pattern.
+ * Store / Bell / Globe / etc.) — mirrors `<Navbar/>`'s pattern. The mobile
+ * menu is a floating overlay with `role="dialog"`, body-scroll lock, and
+ * Escape-to-close — matches `/explore`'s overlay style.
+ *
+ * The bar-mounted notification bell that `<Navbar/>` uses on other routes
+ * isn't here — for customers, notifications live inside the mobile menu (a
+ * row that links to `/notifications`), so we don't pay for the bar bell's
+ * popover JS on this homepage.
  */
 
 import Link from 'next/link';

@@ -31,11 +31,11 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 1.0,
     },
     {
-      // The perf-readied homepage variant. Listed at priority 0.95 (just
-      // below the root `/`) so it surfaces in search until it formally
-      // replaces `/home`, at which point this entry can move back to the
-      // root URL.
-      url: `${BASE_URL}/home-test`,
+      // `/home` — the marketplace homepage (replaced the old build; the
+      // legacy code is preserved under `app/_archive/home-page.tsx` and is
+      // not routed). Priority 0.95 — just below the root `/` (which is
+      // still the Coming Soon landing for now).
+      url: `${BASE_URL}/home`,
       lastModified: now,
       changeFrequency: 'daily',
       priority: 0.95,
