@@ -24,7 +24,7 @@ import { useAuth } from '@/context/auth-context';
 import {
   Sun, Moon, Menu, X, Globe,
   Home, Compass, Tag, Store,
-  CalendarDays, Heart, User, LogOut, ChevronDown,
+  CalendarDays, Heart, User, LogIn, LogOut, ChevronDown,
 } from 'lucide-react';
 
 export function NavbarBasic() {
@@ -263,48 +263,22 @@ export function NavbarBasic() {
             </div>
           )}
 
-          {/* Auth-loading skeletons. Desktop reserves the width of Login +
-              Signup together (fixed width is fine — the desktop skeleton spans
-              two labels at once and a few px of locale-driven jitter is
-              invisible in that footprint). Mobile renders the actual
-              translated `t('nav.login')` label invisibly inside the skeleton
-              so the placeholder matches the real button's width exactly
-              (matters for Arabic — `تسجيل الدخول` is noticeably wider than
-              `Login`). Hamburger handles its own state below. */}
+          {/* Auth-loading skeleton — desktop only. Reserves the width of
+              Login + Signup combined so the row doesn't jump when auth
+              resolves. Mobile has no auth-related elements on the bar (Login
+              / Logout live inside the hamburger menu), so no mobile skeleton
+              is needed here. */}
           {authLoading && (
-            <>
-              <div className={`hidden md:block w-32 h-9 rounded-xl animate-pulse ${
-                scrolled ? 'bg-gray-100 dark:bg-slate-700' : 'bg-white/10'
-              }`} />
-              <div
-                aria-hidden="true"
-                className={`md:hidden inline-flex items-center px-3 py-1.5 rounded-lg animate-pulse ${
-                  scrolled ? 'bg-gray-100 dark:bg-slate-700' : 'bg-white/10'
-                }`}
-              >
-                <span className="invisible text-sm font-medium">{t('nav.login')}</span>
-              </div>
-            </>
+            <div className={`hidden md:block w-32 h-9 rounded-xl animate-pulse ${
+              scrolled ? 'bg-gray-100 dark:bg-slate-700' : 'bg-white/10'
+            }`} />
           )}
 
-          {/* Logged-out — Login is visible on the mobile bar too (user
-              feedback: "the login button should be on mobile outside the menu
-              next to dark mood and light mood button"). Sign Up stays
-              desktop-only on the bar; on mobile it lives in the hamburger
-              menu (a heavier CTA, less essential to surface on the small
-              header). */}
+          {/* Logged-out — Login + Signup. Desktop only on the bar; on mobile
+              the user opens the hamburger menu to log in (see the menu below).
+              Logout when logged-in is also menu-only on mobile. */}
           {!authLoading && !user && (
             <>
-              <Link
-                href="/login"
-                className={`md:hidden px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                  scrolled
-                    ? 'text-gray-600 hover:text-sky-600 dark:text-slate-400 dark:hover:text-white'
-                    : 'text-white/90 hover:text-white'
-                }`}
-              >
-                {t('nav.login')}
-              </Link>
               <Link
                 href="/login"
                 className={`hidden md:inline-flex px-4 py-2 text-sm font-medium transition-colors ${
@@ -386,11 +360,20 @@ export function NavbarBasic() {
             <span>{!mounted ? '' : isAr ? 'English' : 'العربية'}</span>
           </button>
 
-          {/* Logged-out — Sign Up. (Login lives on the mobile *bar* now, next
-              to the theme toggle — removed from this menu to avoid a
-              duplicate. Sign Up is the heavier CTA and stays in here.) */}
+          {/* Logged-out — Login + Sign Up. Mobile auth lives entirely in this
+              menu (user feedback: "if he want to log in he will go through
+              the menu as before"). Login is a regular icon-row; Sign Up
+              keeps its filled-CTA emphasis below it. */}
           {!authLoading && !user && (
-            <div className="pt-2 mt-1 border-t border-gray-100 dark:border-slate-800">
+            <div className="pt-2 mt-1 border-t border-gray-100 dark:border-slate-800 space-y-1">
+              <Link
+                href="/login"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800 hover:text-sky-600 dark:hover:text-white transition-colors"
+              >
+                <LogIn aria-hidden="true" className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                {t('nav.login')}
+              </Link>
               <Link
                 href="/register"
                 onClick={() => setOpen(false)}
@@ -401,9 +384,12 @@ export function NavbarBasic() {
             </div>
           )}
 
-          {/* Admin / Vendor dashboard */}
+          {/* Admin / Vendor — Dashboard CTA + Logout. Both menu-only on
+              mobile (mirrors the customer block below; ensures a logged-in
+              admin / vendor can sign out from the menu without having to
+              hunt for it). */}
           {user && (user.role === 'ADMIN' || user.role === 'VENDOR') && (
-            <div className="pt-2 mt-1 border-t border-gray-100 dark:border-slate-800">
+            <div className="pt-2 mt-1 border-t border-gray-100 dark:border-slate-800 space-y-1">
               <Link
                 href={user.role === 'ADMIN' ? '/admin/dashboard' : `/vendor/${user.vendor?.slug ?? 'portal'}/dashboard`}
                 onClick={() => setOpen(false)}
@@ -411,6 +397,14 @@ export function NavbarBasic() {
               >
                 {t('nav.dashboard')}
               </Link>
+              <button
+                type="button"
+                onClick={() => { setOpen(false); logout(); }}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+              >
+                <LogOut aria-hidden="true" className="h-4 w-4" />
+                {t('nav.logout')}
+              </button>
             </div>
           )}
 
