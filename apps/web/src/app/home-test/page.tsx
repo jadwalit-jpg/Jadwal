@@ -21,11 +21,11 @@ import HomeBelowFoldLoader from '../_home-islands/home-below-fold-loader';
  *  - `<NavbarBasic/>` (overlay, transparent over hero, scroll-to-opaque past the
  *    hero) instead of the full `<Navbar/>` (no notification bell, no user
  *    dropdown, no auth-loading skeleton, no admin/vendor button, no glass).
- *  - Hero decorations are *minimal*: sun (light) / moon (dark) with **no glow
- *    halos** and no drop-shadow glow on the shapes, **3 clouds** instead of 5
- *    (the larger ones), the boat, and the waves — all the same SVGs and the
- *    same CSS animations as `/home` (boat-float, wave-drift, cloud-drift-mid)
- *    that live in `globals.css`. No `blur-[100px]` glow blob behind the text.
+ *  - Hero decorations: sun (light) / moon (dark) with the same glow halos and
+ *    drop-shadow as `/home`, **3 clouds** instead of 5 (the larger ones), the
+ *    boat, and the waves — all the same SVGs and the same CSS animations as
+ *    `/home` (boat-float, wave-drift, cloud-drift-mid) from `globals.css`. No
+ *    `blur-[100px]` glow blob behind the text — we still skip that one.
  *  - The dynamic country-detecting `<HeroEyebrow/>` is here (`/home-test` isn't
  *    edge-cached, so no flash concern from caching).
  *  - Lighter solid-pill CTA (`<HeroBrowseCtaBasic/>`) — no glass, no
@@ -42,29 +42,54 @@ export default function HomeTestPage() {
       <NavbarBasic />
 
       <section className="relative overflow-hidden min-h-svh flex flex-col bg-linear-to-b from-[#1a3a5c] via-[#2a6496] to-[#4ab0d8] dark:from-[#0a0f1a] dark:via-[#111827] dark:to-[#1e3a5f]">
-        {/* Sun (light mode) — shape only, no glow halos, no glow drop-shadow. */}
+        {/* Sun (light mode) — same shape as `/home`, with the two static glow
+            halos (`hero-sun-glow` resting opacities defined in globals.css —
+            no animation, just a soft amber bloom around the disk) and the
+            same `drop-shadow-[0_0_30px_rgba(251,191,36,0.6)]` warm spill on
+            the SVG itself. The inner `.hero-sun` wrapper is `relative` so the
+            disk paints above the absolutely-positioned halos behind it. */}
         <div aria-hidden="true" className="dark:hidden absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none">
-          <svg focusable="false" width="90" height="90" viewBox="0 0 100 100" className="w-16 h-16 sm:w-20 sm:h-20 md:w-[90px] md:h-[90px]">
-            <g opacity="0.5">
-              {Array.from({ length: 12 }).map((_, i) => (
-                <line key={i} x1="50" y1="5" x2="50" y2="15" stroke="#FCD34D" strokeWidth="2.5" strokeLinecap="round" transform={`rotate(${i * 30} 50 50)`} />
-              ))}
-            </g>
-            <circle cx="50" cy="50" r="24" fill="url(#htSunGrad)" />
-            <ellipse cx="43" cy="43" rx="8" ry="6" fill="white" opacity="0.3" transform="rotate(-20 43 43)" />
-            <defs>
-              <radialGradient id="htSunGrad" cx="45%" cy="40%">
-                <stop offset="0%" stopColor="#FEF08A" />
-                <stop offset="60%" stopColor="#FBBF24" />
-                <stop offset="100%" stopColor="#F59E0B" />
-              </radialGradient>
-            </defs>
-          </svg>
+          <div className="hero-sun-glow absolute -inset-16 sm:-inset-20 bg-amber-300/30 rounded-full blur-[60px]" />
+          <div className="hero-sun-glow absolute -inset-8 sm:-inset-10 bg-yellow-200/40 rounded-full blur-[30px]" />
+          <div className="hero-sun relative">
+            <svg
+              focusable="false"
+              width="90"
+              height="90"
+              viewBox="0 0 100 100"
+              className="w-16 h-16 sm:w-20 sm:h-20 md:w-[90px] md:h-[90px] drop-shadow-[0_0_30px_rgba(251,191,36,0.6)]"
+            >
+              <g opacity="0.5">
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <line key={i} x1="50" y1="5" x2="50" y2="15" stroke="#FCD34D" strokeWidth="2.5" strokeLinecap="round" transform={`rotate(${i * 30} 50 50)`} />
+                ))}
+              </g>
+              <circle cx="50" cy="50" r="24" fill="url(#htSunGrad)" />
+              <ellipse cx="43" cy="43" rx="8" ry="6" fill="white" opacity="0.3" transform="rotate(-20 43 43)" />
+              <defs>
+                <radialGradient id="htSunGrad" cx="45%" cy="40%">
+                  <stop offset="0%" stopColor="#FEF08A" />
+                  <stop offset="60%" stopColor="#FBBF24" />
+                  <stop offset="100%" stopColor="#F59E0B" />
+                </radialGradient>
+              </defs>
+            </svg>
+          </div>
         </div>
 
-        {/* Moon (dark mode) — shape only, no glow halos, no glow drop-shadow. */}
+        {/* Moon (dark mode) — same pattern as Sun but cooler tones: two static
+            `hero-moon-glow` halos in blue/slate, and a slate `drop-shadow` on
+            the disk for the night-sky bloom. */}
         <div aria-hidden="true" className="hidden dark:block absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none">
-          <svg focusable="false" width="80" height="80" viewBox="0 0 100 100" className="w-14 h-14 sm:w-[72px] sm:h-[72px] md:w-20 md:h-20">
+          <div className="hero-moon-glow absolute -inset-16 sm:-inset-20 bg-blue-300/15 rounded-full blur-[60px]" />
+          <div className="hero-moon-glow absolute -inset-8 sm:-inset-10 bg-slate-200/10 rounded-full blur-[30px]" />
+          <svg
+            focusable="false"
+            width="80"
+            height="80"
+            viewBox="0 0 100 100"
+            className="relative w-14 h-14 sm:w-[72px] sm:h-[72px] md:w-20 md:h-20 drop-shadow-[0_0_25px_rgba(148,163,184,0.4)]"
+          >
             <circle cx="50" cy="50" r="28" fill="url(#htMoonGrad)" />
             <circle cx="62" cy="40" r="22" fill="#111827" />
             <circle cx="40" cy="55" r="4" fill="#CBD5E1" opacity="0.15" />
@@ -120,9 +145,12 @@ export default function HomeTestPage() {
           </div>
         </div>
 
-        {/* Hero content. `pt-20 pb-32` shifts the centered block up a little so
-            it doesn't crowd the waves at the bottom. */}
-        <div className="relative z-20 flex-1 flex flex-col items-center justify-center max-w-6xl mx-auto w-full px-6 pt-20 pb-32 text-center">
+        {/* Hero content. Same pt/pb scale as `/home` (`pt-16 sm:pt-20 md:pt-0
+            pb-56 md:pb-64`): the asymmetric bottom padding lifts the centered
+            block well above the waves and the boat at the bottom of the
+            section, on every breakpoint. On md+ we drop pt to 0 so the
+            content centers naturally in the larger viewport. */}
+        <div className="relative z-20 flex-1 flex flex-col items-center justify-center max-w-6xl mx-auto w-full px-6 pt-16 sm:pt-20 md:pt-0 pb-56 md:pb-64 text-center">
           <HeroEyebrow />
           <HeroTitle />
           <HeroSearchBar />
