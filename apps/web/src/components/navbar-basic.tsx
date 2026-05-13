@@ -24,7 +24,7 @@ import { useAuth } from '@/context/auth-context';
 import {
   Sun, Moon, Menu, X, Globe,
   Home, Compass, Tag, Store,
-  CalendarDays, Heart, User, LogOut, LogIn, ChevronDown,
+  CalendarDays, Heart, User, LogOut, ChevronDown,
 } from 'lucide-react';
 
 export function NavbarBasic() {
@@ -263,19 +263,48 @@ export function NavbarBasic() {
             </div>
           )}
 
-          {/* Auth-loading skeleton — same width as Login + Signup combined so
-              the layout doesn't jump when auth resolves. Desktop only — the
-              hamburger handles its own state. */}
+          {/* Auth-loading skeletons. Desktop reserves the width of Login +
+              Signup together (fixed width is fine — the desktop skeleton spans
+              two labels at once and a few px of locale-driven jitter is
+              invisible in that footprint). Mobile renders the actual
+              translated `t('nav.login')` label invisibly inside the skeleton
+              so the placeholder matches the real button's width exactly
+              (matters for Arabic — `تسجيل الدخول` is noticeably wider than
+              `Login`). Hamburger handles its own state below. */}
           {authLoading && (
-            <div className={`hidden md:block w-32 h-9 rounded-xl animate-pulse ${
-              scrolled ? 'bg-gray-100 dark:bg-slate-700' : 'bg-white/10'
-            }`} />
+            <>
+              <div className={`hidden md:block w-32 h-9 rounded-xl animate-pulse ${
+                scrolled ? 'bg-gray-100 dark:bg-slate-700' : 'bg-white/10'
+              }`} />
+              <div
+                aria-hidden="true"
+                className={`md:hidden inline-flex items-center px-3 py-1.5 rounded-lg animate-pulse ${
+                  scrolled ? 'bg-gray-100 dark:bg-slate-700' : 'bg-white/10'
+                }`}
+              >
+                <span className="invisible text-sm font-medium">{t('nav.login')}</span>
+              </div>
+            </>
           )}
 
-          {/* Logged-out — Login + Signup, desktop only. Mobile gets them in the
-              hamburger menu below. */}
+          {/* Logged-out — Login is visible on the mobile bar too (user
+              feedback: "the login button should be on mobile outside the menu
+              next to dark mood and light mood button"). Sign Up stays
+              desktop-only on the bar; on mobile it lives in the hamburger
+              menu (a heavier CTA, less essential to surface on the small
+              header). */}
           {!authLoading && !user && (
             <>
+              <Link
+                href="/login"
+                className={`md:hidden px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                  scrolled
+                    ? 'text-gray-600 hover:text-sky-600 dark:text-slate-400 dark:hover:text-white'
+                    : 'text-white/90 hover:text-white'
+                }`}
+              >
+                {t('nav.login')}
+              </Link>
               <Link
                 href="/login"
                 className={`hidden md:inline-flex px-4 py-2 text-sm font-medium transition-colors ${
@@ -357,17 +386,11 @@ export function NavbarBasic() {
             <span>{!mounted ? '' : isAr ? 'English' : 'العربية'}</span>
           </button>
 
-          {/* Logged-out — Login + Signup */}
+          {/* Logged-out — Sign Up. (Login lives on the mobile *bar* now, next
+              to the theme toggle — removed from this menu to avoid a
+              duplicate. Sign Up is the heavier CTA and stays in here.) */}
           {!authLoading && !user && (
-            <div className="pt-2 mt-1 border-t border-gray-100 dark:border-slate-800 space-y-1">
-              <Link
-                href="/login"
-                onClick={() => setOpen(false)}
-                className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800 hover:text-sky-600 dark:hover:text-white transition-colors"
-              >
-                <LogIn aria-hidden="true" className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                {t('nav.login')}
-              </Link>
+            <div className="pt-2 mt-1 border-t border-gray-100 dark:border-slate-800">
               <Link
                 href="/register"
                 onClick={() => setOpen(false)}
