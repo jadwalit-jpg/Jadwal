@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from 'react-i18next';
-import { Sun, Moon, Menu, X, Home, Compass, Tag, Store, CalendarDays, Heart, User, LogOut, ChevronDown } from 'lucide-react';
+import { Sun, Moon, Menu, X, Home, Compass, Tag, Store, CalendarDays, Heart, User, LogOut, ChevronDown, Globe } from 'lucide-react';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import NotificationBell from '@/components/notification-bell';
 
@@ -127,10 +127,12 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
           )}
 
           <div className="flex items-center gap-3">
-            {/* Language toggle — deferred until mount to prevent SSR hydration mismatch */}
+            {/* Language toggle — desktop only (`md:+`); on mobile it lives in the
+                hamburger menu below (keeps the mobile header uncluttered). The
+                inner span text is gated on `mounted` to avoid an SSR mismatch. */}
             <button
               onClick={toggleLanguage}
-              className={`p-2 rounded-lg border transition-all ${isOpaque ? 'text-gray-400 hover:text-sky-600 border-gray-200 hover:border-sky-300 dark:text-slate-500 dark:hover:text-white dark:border-slate-700 dark:hover:border-slate-500' : 'text-white/60 hover:text-white border-white/20 hover:border-white/40'}`}
+              className={`hidden md:block p-2 rounded-lg border transition-all ${isOpaque ? 'text-gray-400 hover:text-sky-600 border-gray-200 hover:border-sky-300 dark:text-slate-500 dark:hover:text-white dark:border-slate-700 dark:hover:border-slate-500' : 'text-white/60 hover:text-white border-white/20 hover:border-white/40'}`}
               aria-label={!mounted ? 'Switch language' : isAr ? 'Switch to English' : 'التبديل إلى العربية'}
               title={!mounted ? '' : isAr ? 'English' : 'العربية'}
             >
@@ -286,6 +288,16 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
                       {link.label}
                     </Link>
                   ))}
+                  {/* Language toggle — lives here on mobile (the header copy is `md:+` only). */}
+                  <button
+                    type="button"
+                    onClick={() => { toggleLanguage(); setMobileOpen(false); }}
+                    className="flex w-full items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800 hover:text-sky-600 dark:hover:text-white transition-colors"
+                    aria-label={!mounted ? 'Switch language' : isAr ? 'Switch to English' : 'التبديل إلى العربية'}
+                  >
+                    <Globe className="h-4 w-4 text-gray-400 dark:text-slate-500" aria-hidden="true" />
+                    <span>{!mounted ? ' ' : isAr ? 'English' : 'العربية'}</span>
+                  </button>
                 </div>
 
                 {/* Sign Up in mobile menu */}
