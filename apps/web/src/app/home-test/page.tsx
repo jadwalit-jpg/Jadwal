@@ -1,5 +1,7 @@
 import { Metadata } from 'next';
+import Footer from '@/components/footer';
 import { NavbarBasic } from '@/components/navbar-basic';
+import { HeroEyebrow } from '../_home-islands/hero-eyebrow';
 import { HeroTitle } from '../_home-islands/hero-title';
 import { HeroSearchBar } from '../_home-islands/hero-search-bar';
 import { HeroTrustMetrics } from '../_home-islands/hero-trust-metrics';
@@ -44,12 +46,14 @@ export default function HomeTestPage() {
       {/* Plain hero — solid CSS gradient only; no SVG decorations, no animations. */}
       <section className="relative min-h-svh flex flex-col items-center justify-center bg-linear-to-b from-[#1a3a5c] via-[#2a6496] to-[#4ab0d8] dark:from-[#0a0f1a] dark:via-[#111827] dark:to-[#1e3a5f] px-6 pt-24 pb-16 text-center">
         <div className="relative z-10 max-w-6xl mx-auto w-full">
+          <HeroEyebrow />
           <HeroTitle />
           <HeroSearchBar />
           <HeroTrustMetrics />
         </div>
       </section>
       <HomeBelowFoldLoader />
+      <Footer />
     </div>
   );
 }
