@@ -3,6 +3,8 @@
  * names, activity titles. Defence-in-depth on top of React's JSX text-node
  * auto-escaping (which protects against rendering raw HTML/JS from a
  * compromised admin write). The constraints below also reject characters
+ *
+ * Added 2026-05-13 (PR #245 — backend audit-finding follow-up).
  * that look like HTML/JS injection, so a tampered DB row never gets the
  * chance to ride through to the client.
  *
