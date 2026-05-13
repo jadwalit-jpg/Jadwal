@@ -1,7 +1,7 @@
 import { Metadata } from 'next';
 import Image from 'next/image';
 import Footer from '@/components/footer';
-import { NavbarBasic } from '@/components/navbar-basic';
+import Navbar from '@/components/navbar';
 import { HeroEyebrow } from '../_home-islands/hero-eyebrow';
 import { HeroTitle } from '../_home-islands/hero-title';
 import { HeroSearchBar } from '../_home-islands/hero-search-bar';
@@ -40,7 +40,7 @@ export const metadata: Metadata = {
 export default function HomePage() {
   return (
     <div className="relative min-h-screen bg-jadwal-bg font-outfit">
-      <NavbarBasic />
+      <Navbar />
 
       <section className="relative overflow-hidden min-h-svh flex flex-col bg-linear-to-b from-[#1a3a5c] via-[#2a6496] to-[#4ab0d8] dark:from-[#0a0f1a] dark:via-[#111827] dark:to-[#1e3a5f]">
         {/* Sun (light mode) — same shape as `/home`, with the two static glow
