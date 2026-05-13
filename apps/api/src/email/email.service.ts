@@ -15,6 +15,7 @@ import { EmailSuppressionService } from './email-suppression.service';
 import { EmailQuotaService } from './email-quota.service';
 import { EmailUnsubscribeTokenService } from './email-unsubscribe-token.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CircuitBreaker, withTimeout } from '../common/utils/circuit-breaker';
 
 /**
  * Email Service — AWS SES v2 integration with RFC 8058 List-Unsubscribe headers.
@@ -46,6 +47,17 @@ export class EmailService {
   // to two SNS topics; without it, the bounce/complaint feedback loop is
   // a no-op even though SES still sends the email.
   private readonly configSetName: string | undefined;
+  // Per-call timeout for the SES SDK request (in ms). Combined with the
+  // SDK's `maxAttempts: 3` retry, worst-case time-to-give-up is roughly
+  // 3 × this. Defaults are generous (10s request); SES is normally <300ms.
+  private readonly sendTimeoutMs: number;
+  // Circuit breaker around the .send() call. Opens after `failureThreshold`
+  // consecutive failures (each "failure" = post-SDK-retry outcome, so it
+  // takes a sustained SES outage to trip — not one bad request). When OPEN,
+  // calls fail-fast with `CircuitBreakerOpenError` → caller's catch logs
+  // `kind: 'CircuitBreakerOpenError'` and returns false. Default is paranoid
+  // (10 failures, 30s open) so it doesn't trip on traffic spikes.
+  private readonly breaker: CircuitBreaker;
 
   constructor(
     private config: ConfigService,
@@ -79,6 +91,25 @@ export class EmailService {
           retryMode: 'adaptive',
         })
       : null;
+
+    // Resilience config: explicit per-call timeout + circuit breaker. Defaults
+    // are paranoid (don't open on a single slow request). All knobs are env
+    // overridable; `EXTERNAL_BREAKER_DISABLED=true` is the SSM kill switch.
+    this.sendTimeoutMs = Number(this.config.get('SES_SEND_TIMEOUT_MS', '10000'));
+    this.breaker = new CircuitBreaker({
+      name: 'ses-send',
+      failureThreshold: Number(this.config.get('SES_BREAKER_FAILURE_THRESHOLD', '10')),
+      openTimeoutMs: Number(this.config.get('SES_BREAKER_OPEN_MS', '30000')),
+      disabled: this.config.get('EXTERNAL_BREAKER_DISABLED', 'false') === 'true',
+      onStateChange: (e) =>
+        this.logger.warn({
+          event: 'CIRCUIT_BREAKER_STATE_CHANGE',
+          breaker: e.name,
+          from: e.from,
+          to: e.to,
+          consecutiveFailures: e.consecutiveFailures,
+        }),
+    });
   }
 
   // ─── Booking Emails ──────────────────────────────────────────────────────
@@ -482,7 +513,20 @@ export class EmailService {
           { Name: 'template', Value: template },
         ],
       });
-      await this.sesClient.send(command);
+      // Resilience layering:
+      //   1) `breaker.run()` short-circuits if SES has been failing for
+      //      `failureThreshold` consecutive calls — throws
+      //      `CircuitBreakerOpenError` immediately (caught below, returns
+      //      false; outbox/quota callers retry next drain cycle).
+      //   2) `withTimeout()` creates an AbortController and aborts the SDK
+      //      call after `sendTimeoutMs`. The SDK's own retries (maxAttempts:
+      //      3) still apply *within* each attempt, but a hung TCP connection
+      //      can't pin a Node worker forever.
+      //   3) The SDK itself retries network errors / throttling with
+      //      adaptive backoff.
+      await this.breaker.run(() =>
+        withTimeout((signal) => this.sesClient!.send(command, { abortSignal: signal }), this.sendTimeoutMs),
+      );
 
       this.logger.log({ event: 'EMAIL_SENT', recipientMasked: masked, template });
       return true;
@@ -490,6 +534,10 @@ export class EmailService {
       // Log error class only. SES error.message can carry request IDs and
       // account fingerprints; nothing the receiver can act on. For
       // operational debug, inspect CloudTrail / SES bounce dashboard.
+      // `kind` will be one of:
+      //   - 'CircuitBreakerOpenError' (breaker open — sustained SES failure)
+      //   - 'AbortError' / 'Error' with 'Timed out…' message (per-call timeout)
+      //   - AWS SDK error names (`ThrottlingException`, `MessageRejected`, …)
       const kind = error instanceof Error ? error.name : 'UnknownError';
       this.logger.error({ event: 'EMAIL_SEND_FAILED', recipientMasked: masked, template, kind });
       return false;

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
+import { CircuitBreaker, withTimeout } from '../common/utils/circuit-breaker';
 
 /**
  * SMS Service — AWS SNS integration.
@@ -15,6 +16,12 @@ export class SmsService {
   private readonly logger = new Logger(SmsService.name);
   private readonly enabled: boolean;
   private readonly snsClient: SNSClient | null;
+  // Per-call timeout for SNS publish + circuit breaker around it. See
+  // `EmailService` for the long-form rationale — same resilience layering.
+  // Paranoid defaults: must sustain `failureThreshold` consecutive failures
+  // before the breaker opens (so a single throttled OTP doesn't trip it).
+  private readonly publishTimeoutMs: number;
+  private readonly breaker: CircuitBreaker;
 
   constructor(private config: ConfigService) {
     this.enabled = this.config.get('SMS_ENABLED', 'false') === 'true';
@@ -36,6 +43,21 @@ export class SmsService {
           retryMode: 'adaptive',
         })
       : null;
+
+    // Resilience knobs (env overridable). `EXTERNAL_BREAKER_DISABLED=true`
+    // is the SSM kill switch — flips both SES + SNS breakers off without a
+    // code change.
+    this.publishTimeoutMs = Number(this.config.get('SNS_PUBLISH_TIMEOUT_MS', '10000'));
+    this.breaker = new CircuitBreaker({
+      name: 'sns-publish',
+      failureThreshold: Number(this.config.get('SNS_BREAKER_FAILURE_THRESHOLD', '10')),
+      openTimeoutMs: Number(this.config.get('SNS_BREAKER_OPEN_MS', '30000')),
+      disabled: this.config.get('EXTERNAL_BREAKER_DISABLED', 'false') === 'true',
+      onStateChange: (e) =>
+        this.logger.warn(
+          `CIRCUIT_BREAKER_STATE_CHANGE breaker=${e.name} from=${e.from} to=${e.to} consecutiveFailures=${e.consecutiveFailures}`,
+        ),
+    });
   }
 
   async sendOtp(to: string, data: { code: string }): Promise<boolean> {
@@ -68,14 +90,24 @@ export class SmsService {
           'AWS.SNS.SMS.SMSType': { DataType: 'String', StringValue: 'Transactional' },
         },
       });
-      await this.snsClient.send(command);
+      // Resilience layering — see EmailService.send for the long-form
+      // rationale. Same three layers: breaker (fail-fast on sustained
+      // outage), withTimeout (abort hung connections), SDK adaptive retry.
+      await this.breaker.run(() =>
+        withTimeout(
+          (signal) => this.snsClient!.send(command, { abortSignal: signal }),
+          this.publishTimeoutMs,
+        ),
+      );
 
       this.logger.log(`SMS sent to ${masked}`);
       return true;
     } catch (error: unknown) {
       // Log error class only. SNS error.message leaks AWS request IDs and
       // sometimes the full MessageId. For diagnostics, use CloudWatch metrics
-      // or the SNS delivery-status dashboard.
+      // or the SNS delivery-status dashboard. `kind` will surface
+      // 'CircuitBreakerOpenError' when the breaker is OPEN — observable in
+      // CloudWatch as a distinct signal from a regular SNS failure.
       const kind = error instanceof Error ? error.name : 'UnknownError';
       this.logger.error(`SMS failed to ${masked} (${kind})`);
       return false;
