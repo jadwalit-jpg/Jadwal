@@ -11,9 +11,10 @@
 # ── Rollout order (IMPORTANT — Worker FIRST, cache SECOND) ────────────────────
 #   1. Deploy this Worker. While /home is NOT yet edge-cached this is a no-op:
 #      it re-stamps an already-fresh nonce. Verify /home still loads + hydrates.
-#   2. THEN turn on edge-caching for /home with a Cloudflare Cache Rule
-#      (http_request_cache_settings phase):
-#        expression : (http.request.uri.path eq "/home" and not http.cookie contains "jadwal_lang")
+#   2. THEN turn on edge-caching for the homepage routes with a Cloudflare
+#      Cache Rule (http_request_cache_settings phase). The expression covers
+#      BOTH /home and /home-test in one rule:
+#        expression : (http.request.uri.path in {"/home" "/home-test"} and not http.cookie contains "jadwal_lang")
 #        action     : cache = true
 #                     edge_ttl    = { mode: "override_origin", default: 60 }   # cache 60s even though origin says no-store
 #                     browser_ttl = { mode: "respect_origin" }                 # browser keeps no-store → always re-fetches → fresh nonce
@@ -35,7 +36,13 @@ name = "jadwal-home-nonce-injector"
 main = "worker.js"
 compatibility_date = "2025-05-01"
 
-# Run only on the /home page. (Exact path — there are no /home/* sub-routes.)
+# Run on the homepage routes — /home (production) and /home-test (the
+# lighter perf-test build). Exact paths each, not a glob, so we don't catch
+# unrelated paths that happen to start with `home`.
 [[routes]]
 pattern = "jadwal.qa/home"
+zone_name = "jadwal.qa"
+
+[[routes]]
+pattern = "jadwal.qa/home-test"
 zone_name = "jadwal.qa"
