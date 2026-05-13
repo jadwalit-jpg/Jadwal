@@ -226,8 +226,13 @@ export function middleware(request: NextRequest) {
   }
 
   // ─── Customer Protected Routes ─────────────────────────────
-  const customerProtectedPaths = ['/bookings', '/profile', '/my-account', '/cart', '/favorites', '/notifications'];
-  if (customerProtectedPaths.some((p) => pathname.startsWith(p))) {
+  // Match exact path OR a `/<path>/...` sub-route — same pattern as
+  // `isAllowedDuringKillswitch()` above. Plain `startsWith(p)` would
+  // accidentally gate hypothetical future routes like `/bookings-survey`
+  // that share a prefix with a protected route; the explicit `=== p` /
+  // `p + '/'` test rules that out.
+  const customerProtectedPaths = ['/bookings', '/profile', '/my-account', '/cart', '/favorites', '/notifications', '/likes'];
+  if (customerProtectedPaths.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
     if (!isAuthenticated) {
       const loginUrl = new URL('/login', request.url);
       loginUrl.searchParams.set('callbackUrl', pathname);
