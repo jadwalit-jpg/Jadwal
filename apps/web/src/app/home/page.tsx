@@ -2,7 +2,6 @@ import { Metadata } from 'next';
 import Image from 'next/image';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
-import { HeroEyebrow } from '../_home-islands/hero-eyebrow';
 import { HeroTitle } from '../_home-islands/hero-title';
 import { HeroSearchBar } from '../_home-islands/hero-search-bar';
 import { HeroTrustMetrics } from '../_home-islands/hero-trust-metrics';
@@ -248,7 +247,6 @@ export default function Page() {
                 where Latin metrics no longer apply).
             Net effect: identical behavior on English; stable hero on Arabic.
           */}
-          <HeroEyebrow />
           <HeroTitle />
 
           <HeroSearchBar />
