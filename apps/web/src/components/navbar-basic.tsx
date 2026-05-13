@@ -68,6 +68,8 @@ export function NavbarBasic() {
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-label="Toggle menu"
+            aria-expanded={open}
+            aria-controls="navbar-basic-mobile-menu"
             className="md:hidden p-2 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400"
           >
             {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -75,7 +77,7 @@ export function NavbarBasic() {
         </div>
       </nav>
       {open && (
-        <div className="md:hidden border-t border-gray-100 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 px-3 py-2 space-y-1">
+        <div id="navbar-basic-mobile-menu" className="md:hidden border-t border-gray-100 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 px-3 py-2 space-y-1">
           {links.map((l) => (
             <Link
               key={l.href}
