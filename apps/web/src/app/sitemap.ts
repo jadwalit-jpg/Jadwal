@@ -31,6 +31,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 1.0,
     },
     {
+      // The perf-readied homepage variant. Listed at priority 0.95 (just
+      // below the root `/`) so it surfaces in search until it formally
+      // replaces `/home`, at which point this entry can move back to the
+      // root URL.
+      url: `${BASE_URL}/home-test`,
+      lastModified: now,
+      changeFrequency: 'daily',
+      priority: 0.95,
+    },
+    {
       url: `${BASE_URL}/explore`,
       lastModified: now,
       changeFrequency: 'daily',

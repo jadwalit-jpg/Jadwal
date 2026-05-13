@@ -1,43 +1,63 @@
-'use client';
-
 /**
- * Eyebrow for the home hero — the country-detecting version: it reads the
- * detected country from the geo context and prepends its name ("Saudi Arabia ·
- * Local experiences" / "قطر · تجارب محلية"). The country resolves async, so
- * this is a client component; `min-h-5` reserves one line of `text-xs`/`text-sm`
- * so the layout doesn't shift when it fills in. On a hard refresh the country
- * is restored from localStorage in ~the first frame after hydration (see
- * geo-context.tsx), so the no-country fallback ("Local experiences in the Gulf")
- * shows only briefly. `suppressHydrationWarning` because SSR has no `country`.
+ * Eyebrow for the home hero — server component now.
  *
- * Currently used on /home-test only. (It's *not* on /home because /home is
- * edge-cached one-size-fits-all — a cached copy can't carry the visitor's
- * country, so on /home this would flash the fallback → country on every load.)
+ * Reads `CF-IPCountry` from the request headers Cloudflare attaches to every
+ * request that reaches the origin (or `Cf-Ipcountry`, depending on the lib's
+ * casing), maps the ISO code to a localized country name, and renders the
+ * eyebrow text server-side. Removes the "flash" the old client version had
+ * where the text flipped from "Local experiences in the Gulf" →
+ * "Qatar · Local experiences" once `useGeo()` resolved.
+ *
+ * Cache-key note (S3, swap-day): when this page goes behind an edge-cache
+ * Rule, the cached HTML carries whichever `CF-IPCountry` the first
+ * cache-populator's request had. For Qatar-first launch (most prod traffic
+ * is QA-based) this is fine — the cached eyebrow text matches the
+ * majority country. If we ever need true per-country cached HTML, the
+ * cache key must include the country header (Cloudflare Cache Rule:
+ * `Cache Key → Custom Cache Key → Header → cf-ipcountry`). For now the
+ * single-country cache is the right trade-off.
+ *
+ * The country-name strings are hard-coded for the GCC + a few common visitor
+ * countries — small, stable, fixed list. A DB lookup at SSR time would be
+ * the more "general" approach but would block every page render on a Prisma
+ * round-trip just to translate one ISO code; the hard-coded map is
+ * effectively free.
  */
 
-import { useTranslation } from 'react-i18next';
-import { useGeo } from '@/context/geo-context';
-import { localized } from '@/lib/localize';
+import { headers } from 'next/headers';
+import { readLangCookieServer } from '@/lib/lang-cookie.server';
 
-export function HeroEyebrow() {
-  const { i18n } = useTranslation();
-  const { country } = useGeo();
-  const isRtl = i18n.language === 'ar';
+// Country-code → localized name. Covers GCC + the visitor countries we
+// expect the most. Anything outside this map falls back to the no-country
+// gulf-experience line, which is correct behavior for unknown audiences.
+const COUNTRY_NAMES: Record<string, { en: string; ar: string }> = {
+  QA: { en: 'Qatar', ar: 'قطر' },
+  SA: { en: 'Saudi Arabia', ar: 'السعودية' },
+  AE: { en: 'United Arab Emirates', ar: 'الإمارات' },
+  KW: { en: 'Kuwait', ar: 'الكويت' },
+  BH: { en: 'Bahrain', ar: 'البحرين' },
+  OM: { en: 'Oman', ar: 'عُمان' },
+};
 
-  const countryName = country ? localized(country, 'name') : '';
-  const text = isRtl
-    ? countryName
-      ? `${countryName} · تجارب محلية`
+export async function HeroEyebrow() {
+  const hdrs = await headers();
+  // Cloudflare's header. Two casings are the same value, but Next normalizes
+  // to lowercase get-by-name — using the canonical lowercase form.
+  const countryCode = (hdrs.get('cf-ipcountry') ?? '').toUpperCase();
+  const lang = await readLangCookieServer();
+  const isAr = lang === 'ar';
+
+  const name = COUNTRY_NAMES[countryCode]?.[isAr ? 'ar' : 'en'];
+  const text = isAr
+    ? name
+      ? `${name} · تجارب محلية`
       : 'تجارب محلية في الخليج'
-    : countryName
-      ? `${countryName} · Local experiences`
+    : name
+      ? `${name} · Local experiences`
       : 'Local experiences in the Gulf';
 
   return (
-    <p
-      className="text-xs sm:text-sm font-semibold ltr:tracking-[0.2em] ltr:uppercase text-white/85 mb-4 drop-shadow min-h-5"
-      suppressHydrationWarning
-    >
+    <p className="text-xs sm:text-sm font-semibold ltr:tracking-[0.2em] ltr:uppercase text-white/85 mb-4 drop-shadow min-h-5">
       {text}
     </p>
   );

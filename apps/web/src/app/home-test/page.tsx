@@ -31,9 +31,11 @@ import HomeBelowFoldLoader from '../_home-islands/home-below-fold-loader';
  *  - Lighter solid-pill CTA (`<HeroBrowseCtaBasic/>`) — no glass, no
  *    `animate-bounce`.
  */
+// Indexable now (audit-fix batch). `/home-test` is the perf-readied homepage
+// variant; once it formally replaces `/home` (or moves to `/`), it should be
+// crawlable. Parent layout already provides site-level title/theme metadata.
 export const metadata: Metadata = {
-  title: 'Jadwal — /home perf test build',
-  robots: { index: false, follow: false },
+  title: 'Jadwal — Local experiences in the Gulf',
 };
 
 export default function HomeTestPage() {
