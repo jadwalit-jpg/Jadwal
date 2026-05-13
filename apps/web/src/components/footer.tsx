@@ -71,7 +71,7 @@ export default function Footer() {
                       const top = el.getBoundingClientRect().top + window.scrollY - 96;
                       smoothScrollTo(top);
                     } else {
-                      window.location.href = '/home-test#featured';
+                      window.location.href = '/home#featured';
                     }
                   }}
                   className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
@@ -87,7 +87,7 @@ export default function Footer() {
                       const top = el.getBoundingClientRect().top + window.scrollY - 96;
                       smoothScrollTo(top);
                     } else {
-                      window.location.href = '/home-test#trending';
+                      window.location.href = '/home#trending';
                     }
                   }}
                   className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
