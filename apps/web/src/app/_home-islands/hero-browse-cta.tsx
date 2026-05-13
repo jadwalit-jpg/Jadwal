@@ -1,18 +1,18 @@
-'use client';
+/**
+ * Hero CTA — server component (no `'use client'`): renders the translated
+ * label from the lang cookie, ships zero JS. Sits between HeroTrustMetrics and
+ * the boat, inside the hero's padded zone (`pb-56 md:pb-64`) so it never
+ * overlaps the boat / sun / moon / cloud / wave layers. The pill bounces via
+ * Tailwind's `animate-bounce` (CSS keyframes — no JS); clicking navigates to
+ * /explore. `next/link` works fine in server components.
+ */
 
 import Link from 'next/link';
-import { useTranslation } from 'react-i18next';
+import { readLangCookieServer } from '@/lib/lang-cookie.server';
+import { getServerT } from '@/lib/i18n.server';
 
-/**
- * Hero CTA island. Sits between HeroTrustMetrics and the boat — entirely
- * inside the hero's padded zone (`pb-56 md:pb-64`) so it never touches the
- * boat / sun / moon / cloud / wave layers. Pill itself bounces (Tailwind's
- * default 1s animate-bounce so the @keyframes bounce rule is guaranteed
- * to ship); clicking navigates to /explore.
- */
-export function HeroBrowseCta() {
-  const { t } = useTranslation();
-
+export async function HeroBrowseCta() {
+  const t = getServerT(await readLangCookieServer());
   return (
     <Link
       href="/explore"

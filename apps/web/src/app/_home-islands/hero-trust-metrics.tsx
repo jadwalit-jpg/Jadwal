@@ -1,18 +1,17 @@
-'use client';
-
 /**
- * Trust-metrics row for the home hero. Static numbers — no count-up
- * animation (it added 4 IntersectionObservers + a rAF loop to the hero
- * for no real benefit, and read as jittery on mobile). Stays a client
- * component only because the labels come from the i18n singleton, so they
- * re-translate synchronously on a language toggle.
+ * Trust-metrics row for the home hero — server component (no `'use client'`):
+ * static numbers + translated labels from the lang cookie, ships zero JS.
+ * (lucide-react icons are plain SVG components with no client hooks — fine in
+ * a server component.) No count-up animation (dropped in an earlier change —
+ * it added IntersectionObservers + a rAF loop to the hero for no benefit).
  */
 
-import { useTranslation } from 'react-i18next';
 import { ShieldCheck, Star, Users, Headphones } from 'lucide-react';
+import { readLangCookieServer } from '@/lib/lang-cookie.server';
+import { getServerT } from '@/lib/i18n.server';
 
-export function HeroTrustMetrics() {
-  const { t } = useTranslation();
+export async function HeroTrustMetrics() {
+  const t = getServerT(await readLangCookieServer());
   return (
     <div className="mt-10 flex flex-wrap items-center justify-center gap-6 md:gap-10">
       <div className="flex items-center gap-2 text-sm text-white/80">
