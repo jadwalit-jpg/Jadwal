@@ -1,20 +1,22 @@
 'use client';
 
 /**
- * Minimal navbar — for the `/home-test` diagnostic route only.
+ * Minimal navbar — for the `/home-test` route only.
  *
- * Deliberately stripped vs the production `<Navbar/>`: no transparent/scroll
- * variant (so no scroll `useEffect`), no notification bell, no user/avatar
- * dropdown, no auth-loading skeleton, no admin/vendor dashboard button, no
- * glass/`backdrop-blur`. Just a logo, three links, the theme toggle, and a
- * mobile hamburger with the links + the language toggle. ~1/5th the code of the
- * real navbar → much less to hydrate. Used to A/B against the full navbar on
- * mobile and see how much of `/home`'s hydration/INP cost is the navbar.
+ * Deliberately stripped vs the production `<Navbar/>`: no notification bell, no
+ * user/avatar dropdown, no auth-loading skeleton, no admin/vendor dashboard
+ * button, no glass/`backdrop-blur`. Just a logo, three links, the theme toggle,
+ * and a mobile hamburger with the links + the language toggle.
+ *
+ * Like the real navbar it's an *overlay* navbar: transparent (no bg/border) over
+ * the hero, going opaque (white bar) once you scroll past it — so the navbar and
+ * hero read as one piece. The wordmark switches "Al Jadwal" ↔ "الجدول" with the
+ * language.
  */
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTheme } from 'next-themes';
 import { useTranslation } from 'react-i18next';
 import { Sun, Moon, Menu, X, Globe } from 'lucide-react';
@@ -24,7 +26,15 @@ export function NavbarBasic() {
   const { setTheme, resolvedTheme } = useTheme();
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const isAr = i18n.language === 'ar';
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 50);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   const links = [
     { href: '/', label: t('nav.home') },
     { href: '/explore', label: t('nav.explore') },
@@ -34,21 +44,35 @@ export function NavbarBasic() {
     i18n.changeLanguage(isAr ? 'en' : 'ar');
     router.refresh();
   };
+
+  const linkCls = scrolled
+    ? 'text-gray-600 hover:bg-gray-100 dark:text-slate-300 dark:hover:bg-slate-800'
+    : 'text-white/80 hover:bg-white/15 hover:text-white';
+  const iconBtnCls = scrolled
+    ? 'border-gray-200 text-gray-500 dark:border-slate-700 dark:text-slate-400'
+    : 'border-white/20 text-white/70 hover:bg-white/10';
+
   return (
-    <header className="fixed top-0 inset-x-0 z-100 bg-white/95 dark:bg-slate-900/95 border-b border-sky-100 dark:border-slate-800 shadow-sm">
+    <header
+      className={`fixed top-0 inset-x-0 z-100 transition-colors duration-300 ${
+        scrolled
+          ? 'bg-white/95 dark:bg-slate-900/95 border-b border-sky-100 dark:border-slate-800 shadow-sm'
+          : 'bg-transparent border-b border-transparent'
+      }`}
+    >
       <nav className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4">
         <Link
           href="/"
           className="text-lg sm:text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent"
         >
-          Al Jadwal
+          {isAr ? 'الجدول' : 'Al Jadwal'}
         </Link>
         <div className="hidden md:flex items-center gap-1">
           {links.map((l) => (
             <Link
               key={l.href}
               href={l.href}
-              className="px-4 py-1.5 rounded-full text-sm font-medium text-gray-600 hover:bg-gray-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${linkCls}`}
             >
               {l.label}
             </Link>
@@ -59,7 +83,7 @@ export function NavbarBasic() {
             type="button"
             onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
             aria-label="Toggle theme"
-            className="p-2 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400"
+            className={`p-2 rounded-lg border transition-colors ${iconBtnCls}`}
           >
             <Sun className="hidden h-4 w-4 dark:block" aria-hidden="true" />
             <Moon className="block h-4 w-4 dark:hidden" aria-hidden="true" />
@@ -70,14 +94,17 @@ export function NavbarBasic() {
             aria-label="Toggle menu"
             aria-expanded={open}
             aria-controls="navbar-basic-mobile-menu"
-            className="md:hidden p-2 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400"
+            className={`md:hidden p-2 rounded-lg border transition-colors ${iconBtnCls}`}
           >
             {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
       </nav>
       {open && (
-        <div id="navbar-basic-mobile-menu" className="md:hidden border-t border-gray-100 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 px-3 py-2 space-y-1">
+        <div
+          id="navbar-basic-mobile-menu"
+          className="md:hidden border-t border-gray-100 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 px-3 py-2 space-y-1"
+        >
           {links.map((l) => (
             <Link
               key={l.href}
