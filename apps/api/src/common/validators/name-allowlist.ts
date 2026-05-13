@@ -25,10 +25,16 @@
  * focus on the *shape* of allowed input.
  */
 
-export const COUNTRY_NAME_REGEX = /^[\p{L}\p{M}0-9 \-'(),.]+$/u;
+// Both patterns lead with a positive lookahead `(?=.*[\p{L}0-9])` — without it,
+// strings of only spaces / punctuation / combining marks would pass (the
+// trailing `+` quantifier just requires *one* allowed character, and spaces
+// are allowed). The lookahead forces *at least one* real letter or digit in
+// the value, rejecting blank-looking input like `"   "` or `"----"` upstream
+// of `@MinLength(1)`.
+export const COUNTRY_NAME_REGEX = /^(?=.*[\p{L}0-9])[\p{L}\p{M}0-9 \-'(),.]+$/u;
 export const COUNTRY_NAME_MESSAGE =
   "Name may only contain letters, digits, spaces, and the punctuation - ' ( ) , .";
 
-export const ACTIVITY_TITLE_REGEX = /^[\p{L}\p{M}0-9 \-'(),.+&:]+$/u;
+export const ACTIVITY_TITLE_REGEX = /^(?=.*[\p{L}0-9])[\p{L}\p{M}0-9 \-'(),.+&:]+$/u;
 export const ACTIVITY_TITLE_MESSAGE =
   "Title may only contain letters, digits, spaces, and the punctuation - ' ( ) , . + & :";
