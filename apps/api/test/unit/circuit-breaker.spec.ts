@@ -100,6 +100,85 @@ describe('CircuitBreaker', () => {
     await expect(cb.run(async () => { throw new Error('b'); })).rejects.toThrow();
     expect(cb.getState()).toBe('CLOSED');
   });
+
+  describe('constructor validation', () => {
+    it('throws on NaN failureThreshold (typical env-parse footgun)', () => {
+      expect(() => new CircuitBreaker({ name: 't', failureThreshold: Number('not-a-number') })).toThrow(
+        /failureThreshold must be a positive integer/,
+      );
+    });
+
+    it('throws on zero or negative failureThreshold', () => {
+      expect(() => new CircuitBreaker({ name: 't', failureThreshold: 0 })).toThrow(/positive integer/);
+      expect(() => new CircuitBreaker({ name: 't', failureThreshold: -5 })).toThrow(/positive integer/);
+    });
+
+    it('throws on non-integer failureThreshold (silent disable hazard)', () => {
+      expect(() => new CircuitBreaker({ name: 't', failureThreshold: 2.5 })).toThrow(/positive integer/);
+    });
+
+    it('throws on NaN or negative openTimeoutMs', () => {
+      expect(() => new CircuitBreaker({ name: 't', openTimeoutMs: Number.NaN })).toThrow(
+        /openTimeoutMs must be a non-negative finite number/,
+      );
+      expect(() => new CircuitBreaker({ name: 't', openTimeoutMs: -1 })).toThrow(/non-negative/);
+      expect(() => new CircuitBreaker({ name: 't', openTimeoutMs: Number.POSITIVE_INFINITY })).toThrow(/finite/);
+    });
+
+    it('accepts the defaults (no opts beyond name) and works correctly', async () => {
+      const cb = new CircuitBreaker({ name: 't' });
+      await expect(cb.run(async () => 'ok')).resolves.toBe('ok');
+    });
+  });
+
+  describe('HALF_OPEN single-probe invariant', () => {
+    it('only the first concurrent caller probes; the rest fail-fast', async () => {
+      const cb = new CircuitBreaker({ name: 't', failureThreshold: 1, openTimeoutMs: 30 });
+      await expect(cb.run(async () => { throw new Error('initial'); })).rejects.toThrow();
+      expect(cb.getState()).toBe('OPEN');
+
+      // Wait past the cooldown
+      await new Promise((r) => setTimeout(r, 40));
+
+      // Three concurrent callers — only one should reach `fn`, the other two
+      // should get CircuitBreakerOpenError immediately.
+      const calls = jest.fn(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        return 'probe-ok';
+      });
+
+      const results = await Promise.allSettled([cb.run(calls), cb.run(calls), cb.run(calls)]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+
+      // Exactly one probe ran and succeeded; the other two were rejected fast.
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(2);
+      expect(calls).toHaveBeenCalledTimes(1);
+      for (const r of rejected) {
+        expect(r.reason).toBeInstanceOf(CircuitBreakerOpenError);
+      }
+      // After the successful probe completes, breaker should be CLOSED again.
+      expect(cb.getState()).toBe('CLOSED');
+    });
+
+    it('releases the probe slot when the probe fails (re-opens cleanly)', async () => {
+      const cb = new CircuitBreaker({ name: 't', failureThreshold: 1, openTimeoutMs: 30 });
+      await expect(cb.run(async () => { throw new Error('initial'); })).rejects.toThrow();
+      await new Promise((r) => setTimeout(r, 40));
+
+      // Probe fails — state goes back to OPEN, slot is released so the NEXT
+      // cooldown lets a new probe through.
+      await expect(cb.run(async () => { throw new Error('still broken'); })).rejects.toThrow('still broken');
+      expect(cb.getState()).toBe('OPEN');
+
+      // Wait past second cooldown
+      await new Promise((r) => setTimeout(r, 40));
+      await expect(cb.run(async () => 'now-fixed')).resolves.toBe('now-fixed');
+      expect(cb.getState()).toBe('CLOSED');
+    });
+  });
 });
 
 describe('withTimeout', () => {

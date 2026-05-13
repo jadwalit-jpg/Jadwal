@@ -58,6 +58,14 @@ export class CircuitBreaker {
   private state: CircuitBreakerState = 'CLOSED';
   private consecutiveFailures = 0;
   private openedAt = 0;
+  // Guard for the single-probe invariant in HALF_OPEN. The first call to
+  // arrive after the OPEN cooldown sets this true and runs the probe;
+  // concurrent arrivals see it and fail-fast as if the breaker were still
+  // OPEN. Cleared in `finally`, so the next legitimate caller can
+  // re-probe if needed. JavaScript is single-threaded → the
+  // check-then-set in `run()` is atomic with respect to other callers
+  // that haven't yet `await`ed.
+  private halfOpenProbeInFlight = false;
   private readonly name: string;
   private readonly failureThreshold: number;
   private readonly openTimeoutMs: number;
@@ -66,8 +74,24 @@ export class CircuitBreaker {
 
   constructor(opts: CircuitBreakerOptions) {
     this.name = opts.name;
-    this.failureThreshold = opts.failureThreshold ?? 10;
-    this.openTimeoutMs = opts.openTimeoutMs ?? 30_000;
+    // Validate up front. Env-parsing easily produces `NaN` / `0` / negative
+    // numbers (e.g. `Number(undefined)` is NaN, `Number("")` is 0). A
+    // misconfigured threshold can silently disable the breaker — fail loud
+    // at boot instead.
+    const failureThreshold = opts.failureThreshold ?? 10;
+    const openTimeoutMs = opts.openTimeoutMs ?? 30_000;
+    if (!Number.isInteger(failureThreshold) || failureThreshold < 1) {
+      throw new Error(
+        `CircuitBreaker[${opts.name}]: failureThreshold must be a positive integer, got ${failureThreshold}`,
+      );
+    }
+    if (!Number.isFinite(openTimeoutMs) || openTimeoutMs < 0) {
+      throw new Error(
+        `CircuitBreaker[${opts.name}]: openTimeoutMs must be a non-negative finite number, got ${openTimeoutMs}`,
+      );
+    }
+    this.failureThreshold = failureThreshold;
+    this.openTimeoutMs = openTimeoutMs;
     this.disabled = opts.disabled ?? false;
     this.onStateChange = opts.onStateChange;
   }
@@ -90,8 +114,24 @@ export class CircuitBreaker {
       if (elapsed < this.openTimeoutMs) {
         throw new CircuitBreakerOpenError(this.name, this.openTimeoutMs - elapsed);
       }
-      // Cooldown elapsed — transition to HALF_OPEN and let this call probe.
+      // Cooldown elapsed. Claim the probe slot atomically — second concurrent
+      // caller in this tick will see `halfOpenProbeInFlight === true` below
+      // and fail-fast instead of double-probing the upstream.
+      if (this.halfOpenProbeInFlight) {
+        throw new CircuitBreakerOpenError(this.name, 0);
+      }
+      this.halfOpenProbeInFlight = true;
       this.transition('HALF_OPEN');
+    } else if (this.state === 'HALF_OPEN') {
+      // Already mid-probe by another async caller — fail-fast (single-probe
+      // invariant).
+      if (this.halfOpenProbeInFlight) {
+        throw new CircuitBreakerOpenError(this.name, 0);
+      }
+      // Defensive: shouldn't reach here in normal flow (transitions out of
+      // HALF_OPEN happen synchronously in recordSuccess/recordFailure), but
+      // claim the slot if state somehow leaked HALF_OPEN with no probe.
+      this.halfOpenProbeInFlight = true;
     }
 
     try {
@@ -101,6 +141,9 @@ export class CircuitBreaker {
     } catch (err) {
       this.recordFailure();
       throw err;
+    } finally {
+      // Always release the probe slot, regardless of outcome.
+      this.halfOpenProbeInFlight = false;
     }
   }
 
