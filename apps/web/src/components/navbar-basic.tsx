@@ -40,6 +40,10 @@ export function NavbarBasic() {
   const [scrolled, setScrolled] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  // Stash the body's prior `overflow` value when we lock the page scroll for
+  // the mobile menu, so we can restore exactly that on close — not just `''`,
+  // which would clobber any other overlay's lock that happened to be active.
+  const prevBodyOverflowRef = useRef<string | null>(null);
   const isAr = i18n.language === 'ar';
   const isCustomer = user?.role === 'CUSTOMER';
 
@@ -68,14 +72,36 @@ export function NavbarBasic() {
 
   // Lock body scroll while the mobile menu is open — the menu is a fixed
   // overlay panel on top of the page; without this, scrolling the panel ends
-  // up scrolling the page underneath. Same pattern as the full `<Navbar/>`.
+  // up scrolling the page underneath. Restore the *previous* overflow value
+  // on close (not just `''`) so we don't clobber any other component that
+  // also locked the scroll.
   useEffect(() => {
     if (open) {
+      if (prevBodyOverflowRef.current === null) {
+        prevBodyOverflowRef.current = document.body.style.overflow;
+      }
       document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
+    } else if (prevBodyOverflowRef.current !== null) {
+      document.body.style.overflow = prevBodyOverflowRef.current;
+      prevBodyOverflowRef.current = null;
     }
-    return () => { document.body.style.overflow = ''; };
+    return () => {
+      if (prevBodyOverflowRef.current !== null) {
+        document.body.style.overflow = prevBodyOverflowRef.current;
+        prevBodyOverflowRef.current = null;
+      }
+    };
+  }, [open]);
+
+  // Escape closes the mobile menu — overlay is modal-like, so a keyboard user
+  // who can't reach the hamburger toggle needs a way out without a click.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
   }, [open]);
 
   const toggleLanguage = useCallback(() => {
@@ -344,8 +370,15 @@ export function NavbarBasic() {
             aria-hidden="true"
           />
           <div className="fixed top-[72px] inset-x-4 z-101 md:hidden animate-[slide-down-in_0.25s_ease-out] motion-reduce:animate-none">
+            {/* The overlay is modal-like (locks body scroll, closes on
+                backdrop / Escape), so mark it as such for AT users. Labelled
+                with `aria-label` rather than `aria-labelledby` since the menu
+                has no visible title element — `<Menu>` is the common pattern. */}
             <div
               id="navbar-basic-mobile-menu"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Menu"
               className="rounded-2xl bg-white/95 dark:bg-slate-900/95 border border-gray-200/50 dark:border-slate-700/50 shadow-2xl shadow-black/10 dark:shadow-black/30 overflow-hidden"
             >
               <div className="p-3 space-y-1">
