@@ -1,6 +1,9 @@
 import { Metadata } from 'next';
 import Image from 'next/image';
-import Navbar from '@/components/navbar';
+// Imports the *legacy* heavy navbar — `@/components/navbar` is the lighter
+// canonical now (used everywhere else); this archived page is kept for
+// reference only (Next ignores `_archive/` folders).
+import Navbar from '@/components/_archive/navbar-legacy';
 import Footer from '@/components/footer';
 import { HeroTitle } from '../_home-islands/hero-title';
 import { HeroSearchBar } from '../_home-islands/hero-search-bar';
