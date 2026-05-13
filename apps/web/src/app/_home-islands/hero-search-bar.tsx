@@ -46,7 +46,10 @@ export function HeroSearchBar() {
 
   return (
     <div className="mt-10 max-w-3xl mx-auto w-full">
-      <div className="flex items-center bg-white/95 dark:bg-jadwal-surface/95 backdrop-blur-xl border border-white/60 dark:border-jadwal-border-subtle rounded-2xl shadow-[0_20px_60px_-20px_rgba(0,0,0,0.4)] overflow-hidden">
+      {/* No `backdrop-blur-xl`: the bar is 95% opaque, so the blur contributes
+          ~5% of the visible colour — imperceptible, but it still forces the GPU
+          to rasterize-and-blur everything behind it. Dropped (zero visual change). */}
+      <div className="flex items-center bg-white/95 dark:bg-jadwal-surface/95 border border-white/60 dark:border-jadwal-border-subtle rounded-2xl shadow-[0_20px_60px_-20px_rgba(0,0,0,0.4)] overflow-hidden">
         <div className="hidden sm:block border-e border-jadwal-border-subtle min-w-[180px]">
           <CustomSelect
             options={[

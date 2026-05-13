@@ -91,7 +91,12 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
 
   return (
     <>
-      <header className={`fixed top-0 inset-x-0 z-100 transition-colors duration-300 ${isOpaque ? 'bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-sky-100 dark:border-slate-800 shadow-sm' : 'bg-transparent border-b border-transparent'}`}>
+      {/* `md:backdrop-blur-xl` not plain `backdrop-blur-xl`: on a phone a *fixed*
+          blurred bar re-rasterizes everything behind it on every scroll frame —
+          expensive. On mobile it's a solid-translucent bar instead (bumped to
+          /90 so it stays readable without the blur); the frosted look stays on
+          desktop. (Mirrors globals.css's `.glass-surface` mobile carve-out.) */}
+      <header className={`fixed top-0 inset-x-0 z-100 transition-colors duration-300 ${isOpaque ? 'bg-white/90 dark:bg-slate-900/90 md:backdrop-blur-xl border-b border-sky-100 dark:border-slate-800 shadow-sm' : 'bg-transparent border-b border-transparent'}`}>
         <nav className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-1.5 sm:gap-2">
             {/* Wordmark only — logo image dropped per user request. Rainbow
@@ -267,15 +272,19 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
       {/* Mobile menu overlay */}
       {mobileOpen && (
           <>
-            {/* Backdrop */}
+            {/* Backdrop — no `backdrop-blur` (a full-screen blur of the page
+                behind a dark overlay is pricey on a phone GPU; the bg-black/40
+                dimming alone is enough). */}
             <div
-              className="fixed inset-0 z-99 bg-black/40 backdrop-blur-sm md:hidden animate-[fade-in_0.2s_ease-out] motion-reduce:animate-none"
+              className="fixed inset-0 z-99 bg-black/40 md:hidden animate-[fade-in_0.2s_ease-out] motion-reduce:animate-none"
               onClick={() => setMobileOpen(false)}
             />
 
-            {/* Menu panel */}
+            {/* Menu panel — solid-translucent (bumped to /95), no `backdrop-blur`
+                (this panel is `md:hidden`, i.e. mobile-only, and sits over the
+                dark backdrop above, so it's plenty opaque without the blur). */}
             <div className="fixed top-[72px] inset-x-4 z-101 md:hidden animate-[slide-down-in_0.25s_ease-out] motion-reduce:animate-none">
-              <div className="rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-gray-200/50 dark:border-slate-700/50 shadow-2xl shadow-black/10 dark:shadow-black/30 overflow-hidden">
+              <div className="rounded-2xl bg-white/95 dark:bg-slate-900/95 border border-gray-200/50 dark:border-slate-700/50 shadow-2xl shadow-black/10 dark:shadow-black/30 overflow-hidden">
                 <div className="p-3 space-y-1">
                   {mobileLinks.map((link) => (
                     <Link
