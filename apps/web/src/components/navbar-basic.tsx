@@ -264,17 +264,26 @@ export function NavbarBasic() {
           )}
 
           {/* Auth-loading skeletons. Desktop reserves the width of Login +
-              Signup together; mobile reserves the width of the bar Login link
-              so the row doesn't jump when auth resolves. Hamburger handles
-              its own state below. */}
+              Signup together (fixed width is fine — the desktop skeleton spans
+              two labels at once and a few px of locale-driven jitter is
+              invisible in that footprint). Mobile renders the actual
+              translated `t('nav.login')` label invisibly inside the skeleton
+              so the placeholder matches the real button's width exactly
+              (matters for Arabic — `تسجيل الدخول` is noticeably wider than
+              `Login`). Hamburger handles its own state below. */}
           {authLoading && (
             <>
               <div className={`hidden md:block w-32 h-9 rounded-xl animate-pulse ${
                 scrolled ? 'bg-gray-100 dark:bg-slate-700' : 'bg-white/10'
               }`} />
-              <div className={`md:hidden w-14 h-7 rounded-lg animate-pulse ${
-                scrolled ? 'bg-gray-100 dark:bg-slate-700' : 'bg-white/10'
-              }`} />
+              <div
+                aria-hidden="true"
+                className={`md:hidden inline-flex items-center px-3 py-1.5 rounded-lg animate-pulse ${
+                  scrolled ? 'bg-gray-100 dark:bg-slate-700' : 'bg-white/10'
+                }`}
+              >
+                <span className="invisible text-sm font-medium">{t('nav.login')}</span>
+              </div>
             </>
           )}
 
