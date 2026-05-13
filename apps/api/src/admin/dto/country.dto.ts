@@ -11,7 +11,7 @@ import { Type } from 'class-transformer';
 // a compromised admin account can't plant XSS payloads in
 // `countries.nameEn` / `nameAr` rows that downstream pages then render
 // (the hero eyebrow being the obvious one).
-const COUNTRY_NAME_REGEX = /^[\p{L}\p{M}0-9\s\-'(),.]+$/u;
+const COUNTRY_NAME_REGEX = /^[\p{L}\p{M}0-9 \-'(),.]+$/u;
 const COUNTRY_NAME_MESSAGE = 'Country name may only contain letters, digits, spaces, and the punctuation - \' ( ) , .';
 
 export class CreateCountryDto {

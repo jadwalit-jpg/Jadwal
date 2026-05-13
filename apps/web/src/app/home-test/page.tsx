@@ -10,8 +10,8 @@ import { HeroBrowseCtaBasic } from '../_home-islands/hero-browse-cta-basic';
 import HomeBelowFoldLoader from '../_home-islands/home-below-fold-loader';
 
 /**
- * `/home-test` — a slimmed copy of `/home`, kept for ongoing perf testing.
- * NOT linked anywhere; noindex.
+ * `/home-test` — a slimmed copy of `/home`, the perf-readied homepage variant.
+ * Indexable and listed in `sitemap.ts` (audit-fix batch).
  *
  * Same data + same job: same `<HeroSearchBar/>`, same SSR'd `<HeroTitle/>` /
  * `<HeroTrustMetrics/>`, same `<HomeBelowFoldLoader/>` (geo-scoped via the same
