@@ -20,11 +20,13 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTheme } from 'next-themes';
 import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/auth-context';
+import api from '@/lib/api';
 import {
   Sun, Moon, Menu, X, Globe,
   Home, Compass, Tag, Store,
-  CalendarDays, Heart, User, LogOut, ChevronDown,
+  Bell, CalendarDays, Heart, User, LogOut, ChevronDown,
 } from 'lucide-react';
 
 export function NavbarBasic() {
@@ -111,6 +113,20 @@ export function NavbarBasic() {
     i18n.changeLanguage(isAr ? 'en' : 'ar');
     router.refresh();
   }, [i18n, isAr, router]);
+
+  // Unread-count for the Notifications row inside the mobile menu (customer
+  // only). *Same `queryKey` as `<NotificationBell/>` uses on the production
+  // navbar* (`['notifications', 'unread-count']`), so the cache is shared —
+  // no duplicate polling between `/home`'s `<Navbar/>` and this menu.
+  // Gated on `isCustomer` because admins/vendors don't see a Notifications row.
+  const { data: unreadData } = useQuery<{ unreadCount: number }>({
+    queryKey: ['notifications', 'unread-count'],
+    queryFn: () => api.get('/notifications/unread-count').then(r => r.data),
+    enabled: isCustomer,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+  const unreadCount = unreadData?.unreadCount ?? 0;
 
   const links = [
     { href: '/', label: t('nav.home'), icon: Home },
@@ -459,7 +475,7 @@ export function NavbarBasic() {
                 </div>
               )}
 
-              {/* Customer — name / email header + bookings / likes / profile / logout. */}
+              {/* Customer — name / email header + notifications / bookings / likes / profile / logout. */}
               {user && user.role === 'CUSTOMER' && (
                 <div className="p-3 pt-0">
                   <div className="border-t border-gray-100 dark:border-slate-800 pt-3 space-y-1">
@@ -467,6 +483,27 @@ export function NavbarBasic() {
                       <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{user.fullName}</p>
                       <p className="text-xs text-gray-400 dark:text-slate-500 truncate">{user.email}</p>
                     </div>
+                    {/* Notifications row — replaces the missing bar bell on
+                        `/home-test`. Links to the full-page list (`/notifications`)
+                        rather than embedding the bell's popover here (the popover
+                        is desktop-bar-anchored — nesting it inside a fixed mobile
+                        overlay creates positioning fights). Unread badge reads
+                        from the shared `useQuery` above. */}
+                    <Link
+                      href="/notifications"
+                      onClick={() => setOpen(false)}
+                      className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800 hover:text-sky-600 dark:hover:text-white transition-all"
+                    >
+                      <span className="flex items-center gap-3">
+                        <Bell aria-hidden="true" className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                        {t('notifications.title')}
+                      </span>
+                      {unreadCount > 0 && (
+                        <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 bg-red-500 text-white text-[10px] font-bold rounded-full">
+                          {unreadCount > 99 ? '99+' : unreadCount}
+                        </span>
+                      )}
+                    </Link>
                     <Link
                       href="/bookings"
                       onClick={() => setOpen(false)}

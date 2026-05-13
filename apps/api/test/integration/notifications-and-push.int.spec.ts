@@ -158,6 +158,44 @@ describe('NotificationService basic CRUD against real DB', () => {
     expect(res.deleted).toBe(3);
     expect(await svc.getUnreadCount(seed.customer.id)).toBe(0);
   });
+
+  test('deleteOne removes a single notification, leaving the user\'s other rows intact', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const svc = makeNotification();
+    await svc.send({ userId: seed.customer.id, type: 'SYSTEM', title: 'a', message: 'a' });
+    await svc.send({ userId: seed.customer.id, type: 'SYSTEM', title: 'b', message: 'b' });
+
+    const before = await svc.getNotifications(seed.customer.id);
+    const victim = before.data[0];
+
+    const res = await svc.deleteOne(seed.customer.id, victim.id);
+    expect(res.deleted).toBe(1);
+
+    const after = await svc.getNotifications(seed.customer.id);
+    expect(after.total).toBe(1);
+    expect(after.data.find((r: any) => r.id === victim.id)).toBeUndefined();
+  });
+
+  test('deleteOne refuses to delete another user\'s notification (scoped by userId in deleteMany)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const svc = makeNotification();
+    const other = await ctx.prisma.user.create({
+      data: {
+        fullName: 'Other', email: `o-${crypto.randomUUID().slice(0, 6)}@t.com`,
+        password: '$2b$10$dummy', role: 'CUSTOMER', emailVerified: true,
+      },
+    });
+    await svc.send({ userId: other.id, type: 'SYSTEM', title: 'x', message: 'y' });
+    const foreignNotif = await ctx.prisma.notification.findFirstOrThrow();
+
+    // Attempt to delete as the wrong user — no-op (deleted: 0), no throw
+    const res = await svc.deleteOne(seed.customer.id, foreignNotif.id);
+    expect(res.deleted).toBe(0);
+
+    // Row is still there
+    const stillThere = await ctx.prisma.notification.findUnique({ where: { id: foreignNotif.id } });
+    expect(stillThere).not.toBeNull();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

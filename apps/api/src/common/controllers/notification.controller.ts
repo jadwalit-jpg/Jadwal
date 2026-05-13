@@ -52,4 +52,19 @@ export class NotificationController {
   clearAll(@CurrentUser() user: RequestUser) {
     return this.notificationService.clearAll(user.id);
   }
+
+  // Per-notification delete — same shape as `markAsRead`: ownership is
+  // enforced through the WHERE clause in `deleteOne`, so a user can only
+  // ever delete their own rows even if they guess another user's UUID.
+  // RATE_LIMIT_WRITE (not the stricter RATE_LIMIT_AUTH used by clear-all)
+  // because deleting one row is far less destructive than wiping every
+  // notification at once — matches the markAsRead tier.
+  @Delete(':id')
+  @Throttle(RATE_LIMIT_WRITE)
+  deleteOne(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.notificationService.deleteOne(user.id, id);
+  }
 }

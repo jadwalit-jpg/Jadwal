@@ -164,4 +164,18 @@ export class NotificationService {
     });
     return { deleted: result.count };
   }
+
+  /**
+   * Delete a single notification. `deleteMany` (not `delete`) keeps the
+   * ownership check inside the WHERE — Prisma matches zero rows and is a
+   * no-op rather than throwing P2025 if the id belongs to another user or
+   * doesn't exist. Returns the count so the caller can distinguish
+   * "deleted yours" from "wasn't yours / not found".
+   */
+  async deleteOne(userId: string, notificationId: string): Promise<{ deleted: number }> {
+    const result = await this.prisma.client.notification.deleteMany({
+      where: { id: notificationId, userId },
+    });
+    return { deleted: result.count };
+  }
 }
