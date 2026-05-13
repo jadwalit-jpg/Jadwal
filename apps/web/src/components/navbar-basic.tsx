@@ -30,7 +30,12 @@ export function NavbarBasic() {
   const isAr = i18n.language === 'ar';
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 50);
+    // Go opaque only once you've scrolled (roughly) past the full-viewport hero
+    // — so the navbar stays transparent *over* the hero (reads as one piece) and
+    // turns into a solid bar when it's over the below-fold content. Init on mount
+    // too, in case the page loads already scrolled (refresh mid-page).
+    const onScroll = () => setScrolled(window.scrollY > window.innerHeight - 80);
+    onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
