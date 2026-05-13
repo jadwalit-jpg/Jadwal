@@ -112,8 +112,13 @@ export class BookingsController {
    * Validate a coupon code before booking — returns discount info or error.
    * Does NOT consume the coupon (that happens in createBooking).
    */
+  // RATE_LIMIT_AUTH (5/min) — class-level JwtAuthGuard already gates to logged-in
+  // customers, but 15/min was generous for what is essentially a "is this code
+  // valid?" probe (a checkout flow uses this once or twice). 5/min defends against
+  // a compromised customer account being used to scrape coupon codes without
+  // affecting the legitimate one-click "apply coupon" UI flow.
   @Get('validate-coupon')
-  @Throttle(RATE_LIMIT_READ)
+  @Throttle(RATE_LIMIT_AUTH)
   async validateCoupon(
     @Query('code') code: string,
     @Query('activityId') activityId: string,
