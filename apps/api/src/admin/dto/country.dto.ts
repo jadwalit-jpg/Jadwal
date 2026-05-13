@@ -1,18 +1,10 @@
 import { IsString, IsOptional, IsEnum, IsNumber, Min, Max, MaxLength, MinLength, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
-
-// Country-name character allow-list — defence-in-depth on top of React's
-// JSX text-node auto-escaping. `\p{L}` matches Unicode letters across
-// scripts (English, Arabic, etc.); `\p{M}` matches combining marks like
-// the Arabic damma in `عُمان` and the circumflex in decomposed-form
-// `Côte d'Ivoire`. Digits, whitespace, and the small set of real-world
-// punctuation are also allowed (`-`, `'`, `(`, `)`, `,`, `.`). Rejects
-// anything HTML/JS-shaped — `<`, `>`, `=`, `/`, `;`, `{`, `}`, etc. — so
-// a compromised admin account can't plant XSS payloads in
-// `countries.nameEn` / `nameAr` rows that downstream pages then render
-// (the hero eyebrow being the obvious one).
-const COUNTRY_NAME_REGEX = /^[\p{L}\p{M}0-9 \-'(),.]+$/u;
-const COUNTRY_NAME_MESSAGE = 'Country name may only contain letters, digits, spaces, and the punctuation - \' ( ) , .';
+// Shared name-allowlist constants — same regex now reused by city.dto.ts so
+// every short identifier field uses the same defence-in-depth XSS allow-list.
+// Activity titles use the slightly looser `ACTIVITY_TITLE_REGEX` from the
+// same module.
+import { COUNTRY_NAME_REGEX, COUNTRY_NAME_MESSAGE } from '../../common/validators/name-allowlist';
 
 export class CreateCountryDto {
   @IsString()
