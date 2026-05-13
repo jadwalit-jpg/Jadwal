@@ -49,7 +49,7 @@ import { UpdateAdminProfileDto, ChangeAdminPasswordDto } from './dto/admin-profi
 import { UpdateLoyaltyConfigDto, AdjustUserPointsDto } from './dto/loyalty.dto';
 import { LoyaltyUserQueryDto } from './dto/loyalty-user-query.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { SkipThrottle, Throttle } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import { RATE_LIMIT_ADMIN, RATE_LIMIT_WRITE, RATE_LIMIT_CALLBACK, RATE_LIMIT_AUTH, RATE_LIMIT_STRICT, RATE_LIMIT_MINIMAL, RATE_LIMIT_READ } from '../common/throttle-config';
 import { AdminAuditInterceptor } from './interceptors/audit.interceptor';
 
@@ -498,8 +498,10 @@ export class AdminController {
   }
 
   // ─── Audit Logs ───────────────────────────────────────────────
+  // RATE_LIMIT_READ (15/min) overrides the class-level RATE_LIMIT_ADMIN (120/min)
+  // — audit-log queries are high-volume reads but not as critical as dashboard
+  // stats, so a tighter bucket is appropriate.
   @Get('audit-logs')
-  @SkipThrottle({ default: false })
   @Throttle(RATE_LIMIT_READ)
   getAuditLogs(
     @Query() query: PaginationDto,

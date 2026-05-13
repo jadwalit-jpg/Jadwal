@@ -256,14 +256,21 @@ export class AuthController {
   }
 
   // ─── Google OAuth ────────────────────────────────────────────────────────
+  //
+  // Both endpoints are explicitly throttled at RATE_LIMIT_AUTH (5/min/IP). Without
+  // an explicit @Throttle they would fall back to the global short/long buckets
+  // (20/min, 100/10min) — generous for an auth-completing endpoint that mints
+  // session cookies. RATE_LIMIT_AUTH brings them in line with the rest of /auth/*.
 
   @Get('google')
+  @Throttle(RATE_LIMIT_AUTH)
   @UseGuards(GoogleAuthGuard)
   googleAuth() {
     // GoogleAuthGuard embeds callbackUrl in OAuth state, then Passport redirects to Google
   }
 
   @Get('google/callback')
+  @Throttle(RATE_LIMIT_AUTH)
   @UseGuards(GoogleAuthGuard)
   async googleCallback(@Req() req: Request, @Res() response: Response) {
     const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
