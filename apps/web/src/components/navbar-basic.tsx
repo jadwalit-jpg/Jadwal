@@ -180,7 +180,7 @@ export function NavbarBasic() {
                   : 'bg-white/20 hover:bg-white/30 text-white border-white/20'
               }`}
             >
-              Dashboard
+              {t('nav.dashboard')}
             </Link>
           )}
 
@@ -190,7 +190,6 @@ export function NavbarBasic() {
               <button
                 type="button"
                 onClick={() => setUserMenuOpen((v) => !v)}
-                aria-haspopup="menu"
                 aria-expanded={userMenuOpen}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-colors border ${
                   scrolled
@@ -217,7 +216,6 @@ export function NavbarBasic() {
               </button>
               {userMenuOpen && (
                 <div
-                  role="menu"
                   className="absolute inset-e-0 mt-2 w-52 rounded-2xl bg-white dark:bg-slate-900 border border-gray-200/60 dark:border-slate-700/60 shadow-xl shadow-black/10 dark:shadow-black/30 overflow-hidden z-50"
                 >
                   <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-800">
@@ -388,7 +386,7 @@ export function NavbarBasic() {
                 onClick={() => setOpen(false)}
                 className="block w-full py-3 text-center bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold rounded-xl transition-colors"
               >
-                Dashboard
+                {t('nav.dashboard')}
               </Link>
             </div>
           )}
