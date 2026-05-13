@@ -43,8 +43,8 @@ export default function HomeTestPage() {
 
       <section className="relative overflow-hidden min-h-svh flex flex-col bg-linear-to-b from-[#1a3a5c] via-[#2a6496] to-[#4ab0d8] dark:from-[#0a0f1a] dark:via-[#111827] dark:to-[#1e3a5f]">
         {/* Sun (light mode) — shape only, no glow halos, no glow drop-shadow. */}
-        <div className="dark:hidden absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none">
-          <svg width="90" height="90" viewBox="0 0 100 100" className="w-16 h-16 sm:w-20 sm:h-20 md:w-[90px] md:h-[90px]">
+        <div aria-hidden="true" className="dark:hidden absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none">
+          <svg focusable="false" width="90" height="90" viewBox="0 0 100 100" className="w-16 h-16 sm:w-20 sm:h-20 md:w-[90px] md:h-[90px]">
             <g opacity="0.5">
               {Array.from({ length: 12 }).map((_, i) => (
                 <line key={i} x1="50" y1="5" x2="50" y2="15" stroke="#FCD34D" strokeWidth="2.5" strokeLinecap="round" transform={`rotate(${i * 30} 50 50)`} />
@@ -63,8 +63,8 @@ export default function HomeTestPage() {
         </div>
 
         {/* Moon (dark mode) — shape only, no glow halos, no glow drop-shadow. */}
-        <div className="hidden dark:block absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none">
-          <svg width="80" height="80" viewBox="0 0 100 100" className="w-14 h-14 sm:w-[72px] sm:h-[72px] md:w-20 md:h-20">
+        <div aria-hidden="true" className="hidden dark:block absolute top-20 sm:top-28 md:top-32 right-[12%] z-6 pointer-events-none">
+          <svg focusable="false" width="80" height="80" viewBox="0 0 100 100" className="w-14 h-14 sm:w-[72px] sm:h-[72px] md:w-20 md:h-20">
             <circle cx="50" cy="50" r="28" fill="url(#htMoonGrad)" />
             <circle cx="62" cy="40" r="22" fill="#111827" />
             <circle cx="40" cy="55" r="4" fill="#CBD5E1" opacity="0.15" />
@@ -87,7 +87,7 @@ export default function HomeTestPage() {
 
         {/* 3 clouds — the larger ones from `/home`. `dir="ltr"` for the same
             reason as `/home`: the cloud-drift translateX is LTR-relative. */}
-        <div dir="ltr" className="absolute inset-0 z-5 pointer-events-none overflow-hidden">
+        <div aria-hidden="true" dir="ltr" className="absolute inset-0 z-5 pointer-events-none overflow-hidden">
           <div className="hero-cloud-slow absolute top-[10%] left-[3%]">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -131,26 +131,26 @@ export default function HomeTestPage() {
         </div>
 
         {/* Waves (light) */}
-        <div dir="ltr" className="dark:hidden absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden">
-          <svg className="w-[200%] h-24 md:h-32 hero-wave-slow opacity-50" viewBox="0 0 2400 120" preserveAspectRatio="none">
+        <div aria-hidden="true" dir="ltr" className="dark:hidden absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden">
+          <svg focusable="false" className="w-[200%] h-24 md:h-32 hero-wave-slow opacity-50" viewBox="0 0 2400 120" preserveAspectRatio="none">
             <path d="M0,40 C200,0 400,80 600,40 C800,0 1000,80 1200,40 C1400,0 1600,80 1800,40 C2000,0 2200,80 2400,40 L2400,120 L0,120 Z" fill="#87D6F7" />
           </svg>
         </div>
-        <div dir="ltr" className="dark:hidden absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden">
-          <svg className="w-[200%] h-20 md:h-28 hero-wave" viewBox="0 0 2400 120" preserveAspectRatio="none">
+        <div aria-hidden="true" dir="ltr" className="dark:hidden absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden">
+          <svg focusable="false" className="w-[200%] h-20 md:h-28 hero-wave" viewBox="0 0 2400 120" preserveAspectRatio="none">
             <path d="M0,30 C200,100 400,20 600,60 C800,100 1000,30 1200,70 C1400,100 1600,30 1800,60 C2000,100 2200,30 2400,70 L2400,120 L0,120 Z" fill="#3FC8F4" />
             <path d="M0,60 C150,90 350,50 600,80 C850,100 1050,50 1200,80 C1400,100 1600,50 1800,80 C2050,100 2200,60 2400,80 L2400,120 L0,120 Z" fill="#00B9F1" />
           </svg>
         </div>
 
         {/* Waves (dark) */}
-        <div dir="ltr" className="hidden dark:block absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden">
-          <svg className="w-[200%] h-24 md:h-32 hero-wave-slow opacity-50" viewBox="0 0 2400 120" preserveAspectRatio="none">
+        <div aria-hidden="true" dir="ltr" className="hidden dark:block absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden">
+          <svg focusable="false" className="w-[200%] h-24 md:h-32 hero-wave-slow opacity-50" viewBox="0 0 2400 120" preserveAspectRatio="none">
             <path d="M0,40 C200,0 400,80 600,40 C800,0 1000,80 1200,40 C1400,0 1600,80 1800,40 C2000,0 2200,80 2400,40 L2400,120 L0,120 Z" fill="#1e3a5f" />
           </svg>
         </div>
-        <div dir="ltr" className="hidden dark:block absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden">
-          <svg className="w-[200%] h-20 md:h-28 hero-wave" viewBox="0 0 2400 120" preserveAspectRatio="none">
+        <div aria-hidden="true" dir="ltr" className="hidden dark:block absolute bottom-0 inset-x-0 z-10 pointer-events-none overflow-hidden">
+          <svg focusable="false" className="w-[200%] h-20 md:h-28 hero-wave" viewBox="0 0 2400 120" preserveAspectRatio="none">
             <path d="M0,30 C200,100 400,20 600,60 C800,100 1000,30 1200,70 C1400,100 1600,30 1800,60 C2000,100 2200,30 2400,70 L2400,120 L0,120 Z" fill="#1e3a5f" />
             <path d="M0,60 C150,90 350,50 600,80 C850,100 1050,50 1200,80 C1400,100 1600,50 1800,80 C2050,100 2200,60 2400,80 L2400,120 L0,120 Z" fill="#162d4a" />
           </svg>
@@ -158,7 +158,7 @@ export default function HomeTestPage() {
 
         {/* Boat — same split-div pattern as `/home` (outer owns centering;
             inner owns the float animation, so the two transforms don't fight). */}
-        <div className="absolute bottom-10 md:bottom-14 left-1/2 -translate-x-1/2 z-20 w-28 sm:w-36 md:w-44 pointer-events-none">
+        <div aria-hidden="true" className="absolute bottom-10 md:bottom-14 left-1/2 -translate-x-1/2 z-20 w-28 sm:w-36 md:w-44 pointer-events-none">
           <div className="hero-boat">
             <Image
               src="/images/userhero/boat.svg"
