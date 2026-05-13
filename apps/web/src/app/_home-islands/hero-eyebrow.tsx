@@ -57,7 +57,18 @@ export async function HeroEyebrow() {
       : 'Local experiences in the Gulf';
 
   return (
-    <p className="text-xs sm:text-sm font-semibold ltr:tracking-[0.2em] ltr:uppercase text-white/85 mb-4 drop-shadow min-h-5">
+    // `data-eyebrow="country"` is the stable selector the nonce-injector Worker
+    // uses to rewrite this element's text per-request from `CF-IPCountry`.
+    // Free-plan Cloudflare can't put a header in the cache key, so the cached
+    // HTML's country would otherwise be frozen to whichever country the cache-
+    // populator was in — the Worker rewrite restores per-visitor accuracy on
+    // top of the cache HIT. Removing the attribute is the kill switch (the
+    // Worker's `on('p[data-eyebrow="country"]', …)` then matches nothing and
+    // the server-rendered text shows through).
+    <p
+      data-eyebrow="country"
+      className="text-xs sm:text-sm font-semibold ltr:tracking-[0.2em] ltr:uppercase text-white/85 mb-4 drop-shadow min-h-5"
+    >
       {text}
     </p>
   );
