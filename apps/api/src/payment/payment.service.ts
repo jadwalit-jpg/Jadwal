@@ -83,11 +83,19 @@ export class PaymentService {
     // checkout doesn't trip it. `EXTERNAL_BREAKER_DISABLED=true` is the
     // SSM kill switch shared with SES + SNS — flips all three breakers
     // off without a code change.
-    this.tokenTimeoutMs = Number(this.config.get('PAY2M_TOKEN_TIMEOUT_MS', '15000'));
+    // A malformed env value (empty string, "abc", "0", "-5") would coerce to
+    // NaN/0/negative and AbortSignal.timeout would abort immediately on every
+    // PAY2M call — fail-fast at construction so a misconfig surfaces in logs
+    // rather than masquerading as a gateway outage.
+    const parsePositiveInt = (raw: unknown, fallback: number): number => {
+      const n = Number(raw);
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+    this.tokenTimeoutMs = parsePositiveInt(this.config.get('PAY2M_TOKEN_TIMEOUT_MS'), 15000);
     this.breaker = new CircuitBreaker({
       name: 'pay2m-token',
-      failureThreshold: Number(this.config.get('PAY2M_BREAKER_FAILURE_THRESHOLD', '10')),
-      openTimeoutMs: Number(this.config.get('PAY2M_BREAKER_OPEN_MS', '30000')),
+      failureThreshold: parsePositiveInt(this.config.get('PAY2M_BREAKER_FAILURE_THRESHOLD'), 10),
+      openTimeoutMs: parsePositiveInt(this.config.get('PAY2M_BREAKER_OPEN_MS'), 30000),
       disabled: this.config.get('EXTERNAL_BREAKER_DISABLED', 'false') === 'true',
       onStateChange: (e) =>
         this.logger.warn({
