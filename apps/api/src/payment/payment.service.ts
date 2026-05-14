@@ -13,6 +13,7 @@ import { AuditLoggerService } from '../common/services/audit-logger.service';
 import { refundCouponUsage } from '../bookings/bookings.service';
 import { NotificationService } from '../common/services/notification.service';
 import { EmailService } from '../email/email.service';
+import { CircuitBreaker, CircuitBreakerOpenError, withTimeout } from '../common/utils/circuit-breaker';
 import * as crypto from 'crypto';
 
 interface Pay2mTokenResponse {
@@ -32,6 +33,32 @@ export class PaymentService {
   private readonly secretWord: string;
   private readonly apiUrl: string;
   private readonly returnUrl: string;
+  // Per-attempt timeout for the PAY2M token-fetch HTTP call (in ms).
+  // Replaces the inline `AbortSignal.timeout(15000)`. Worst-case wall time
+  // for a single initiatePayment is roughly `MAX_ATTEMPTS * tokenTimeoutMs`
+  // plus the (~500ms × 2^n) exponential backoff between retries. Keep this
+  // generous (PAY2M's hosted-checkout pre-auth is normally <500ms but card-
+  // network handoff can stall briefly). Same shape as `EmailService.sendTimeoutMs`.
+  private readonly tokenTimeoutMs: number;
+  // Circuit breaker around PAY2M token fetches. Opens after `failureThreshold`
+  // consecutive failures (each "failure" = a single attempt — see retry-loop
+  // note in `getAccessToken`). When OPEN, callers fail-fast with
+  // `CircuitBreakerOpenError` → caller turns it into a 503-shaped
+  // `BadRequestException('Payment gateway is temporarily unavailable')`
+  // identical to what an exhausted retry loop produces. Default is paranoid
+  // (10 failures, 30s open) — must sustain real outage to trip.
+  //
+  // Why a breaker on top of the existing retry loop:
+  //   - The retry loop already bounds latency for a single customer (~32s
+  //     worst case across 3 attempts). The breaker bounds aggregate cost
+  //     when PAY2M is down for many concurrent customers — instead of every
+  //     checkout burning 32s of NestJS worker time, after the threshold is
+  //     reached subsequent attempts return in <1ms. Saves the API worker
+  //     pool from pile-up under a sustained gateway outage.
+  //   - Single-probe invariant in HALF_OPEN (see CircuitBreaker class doc)
+  //     means we only test the gateway once per 30s cooldown — gentle on
+  //     PAY2M when it's recovering.
+  private readonly breaker: CircuitBreaker;
 
   constructor(
     private config: ConfigService,
@@ -49,6 +76,28 @@ export class PaymentService {
     this.returnUrl = this.config.getOrThrow<string>('PAY2M_RETURN_URL');
     this.apiUrl = this.config.getOrThrow<string>('PAY2M_API_URL');
     this.merchantName = this.config.getOrThrow<string>('PAY2M_MERCHANT_NAME');
+
+    // Resilience config — explicit per-attempt timeout + circuit breaker.
+    // Mirrors `EmailService` / `SmsService`: defaults are paranoid (10
+    // consecutive failures, 30s open cooldown) so a single misbehaving
+    // checkout doesn't trip it. `EXTERNAL_BREAKER_DISABLED=true` is the
+    // SSM kill switch shared with SES + SNS — flips all three breakers
+    // off without a code change.
+    this.tokenTimeoutMs = Number(this.config.get('PAY2M_TOKEN_TIMEOUT_MS', '15000'));
+    this.breaker = new CircuitBreaker({
+      name: 'pay2m-token',
+      failureThreshold: Number(this.config.get('PAY2M_BREAKER_FAILURE_THRESHOLD', '10')),
+      openTimeoutMs: Number(this.config.get('PAY2M_BREAKER_OPEN_MS', '30000')),
+      disabled: this.config.get('EXTERNAL_BREAKER_DISABLED', 'false') === 'true',
+      onStateChange: (e) =>
+        this.logger.warn({
+          event: 'CIRCUIT_BREAKER_STATE_CHANGE',
+          breaker: e.name,
+          from: e.from,
+          to: e.to,
+          consecutiveFailures: e.consecutiveFailures,
+        }),
+    });
   }
 
   // ─── Get PAY2M Access Token ─────────────────────────────────────────────
@@ -68,16 +117,27 @@ export class PaymentService {
       TXNAMT: amount,
     });
 
-    // R2: retry-with-backoff on transient failures (network blip, 5xx, 429).
-    // Hard 15s timeout per attempt — prevents an unreachable PAY2M server
-    // from hanging the NestJS request thread indefinitely. Normalise
-    // timeout / DNS / connection-refused errors to a generic
-    // gateway-unavailable response.
+    // R2 + O.92/O.93: retry-with-backoff on transient failures (network
+    // blip, 5xx, 429), each attempt wrapped in a circuit breaker + explicit
+    // timeout. Layering, outermost-first:
+    //   1) Retry loop — 3 attempts with exponential backoff. Bounds latency
+    //      for a single customer. Skipped entirely if the breaker is OPEN
+    //      (no point retrying when the breaker just told us the gateway is
+    //      sustainedly broken — would just burn 3 × ~1ms with the same
+    //      fail-fast outcome).
+    //   2) `breaker.run()` — short-circuits if PAY2M has been failing for
+    //      `failureThreshold` consecutive attempts. Throws
+    //      `CircuitBreakerOpenError`, caught below → bail out of loop.
+    //   3) `withTimeout` — AbortController-backed per-attempt deadline. The
+    //      signal is forwarded to `fetch()` so an in-flight TCP connection
+    //      is actually cancelled (not just orphaned).
+    //   4) `fetch()` itself.
     //
     // getAccessToken is idempotent (read-only token fetch — POSTed only
     // because PAY2M's API requires POST shape). Retrying is unconditionally
-    // safe. 3 attempts max, ~500ms + jitter between, ~32s worst case
-    // (3 * 15s timeout + ~1.5s backoff) — fits the 60s app-level timeout.
+    // safe. 3 attempts max, ~500ms + jitter between, ~46s worst case
+    // (3 × tokenTimeoutMs default 15s + ~1.5s backoff) — fits the 60s
+    // app-level timeout.
     //
     // Inline helper rather than an npm dep: p-retry v5+ is ESM-only and
     // tsconfig is `module: commonjs`. Pulling p-retry v4 (last CJS) would
@@ -87,30 +147,59 @@ export class PaymentService {
     let lastErrKind: 'timeout' | 'network' | 'http' = 'network';
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'Jadwal-API/1.0',
-          },
-          body: body.toString(),
-          signal: AbortSignal.timeout(15000),
-        });
-        // 4xx is non-retryable (auth, validation) — break out and let the
-        // outer !response.ok branch handle it. 5xx + 429 retry.
-        if (r.status >= 500 || r.status === 429) {
-          lastErrKind = 'http';
-          this.logger.warn({ event: 'PAY2M_RETRY', attempt, status: r.status });
-          if (attempt < MAX_ATTEMPTS) {
-            await new Promise((res) => setTimeout(res, 500 * 2 ** (attempt - 1) + Math.random() * 100));
-            continue;
+        const r = await this.breaker.run(async () => {
+          const res = await withTimeout(
+            (signal) =>
+              fetch(url, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                  'User-Agent': 'Jadwal-API/1.0',
+                },
+                body: body.toString(),
+                signal,
+              }),
+            this.tokenTimeoutMs,
+          );
+          // The breaker counts whatever the callback throws as a failure.
+          // 5xx + 429 are gateway-health signals (PAY2M is up but its app
+          // is sick / throttling us) — surface them as breaker failures
+          // so a sustained 500-storm trips the breaker. 4xx is client-side
+          // (bad credential, validation) and never trips the breaker —
+          // we let it fall through and the outer `!response.ok` branch
+          // throws a clean BadRequestException for it.
+          if (res.status >= 500 || res.status === 429) {
+            const upstreamErr = new Error(`PAY2M_UPSTREAM_${res.status}`);
+            upstreamErr.name = 'Pay2mUpstreamError';
+            (upstreamErr as Error & { status?: number }).status = res.status;
+            throw upstreamErr;
           }
-        }
+          return res;
+        });
         response = r;
         break;
       } catch (err: unknown) {
-        lastErrKind = (err as { name?: string })?.name === 'TimeoutError' ? 'timeout' : 'network';
-        this.logger.warn({ event: 'PAY2M_RETRY', attempt, kind: lastErrKind });
+        // Breaker OPEN — gateway is sustainedly broken. Don't burn the
+        // remaining retry attempts; every subsequent breaker.run() in this
+        // tick would throw the same error in <1ms anyway.
+        if (err instanceof CircuitBreakerOpenError) {
+          this.logger.warn({ event: 'PAY2M_BREAKER_OPEN', attempt });
+          throw new BadRequestException('Payment gateway is temporarily unavailable');
+        }
+        const errName = (err as { name?: string })?.name;
+        if (errName === 'Pay2mUpstreamError') {
+          lastErrKind = 'http';
+          const status = (err as { status?: number }).status;
+          this.logger.warn({ event: 'PAY2M_RETRY', attempt, status });
+        } else if (errName === 'TimeoutError' || (err as { message?: string })?.message?.startsWith('Timed out')) {
+          // `withTimeout` aborts with `new Error('Timed out after Nms')` —
+          // not a true `TimeoutError`, so accept either form.
+          lastErrKind = 'timeout';
+          this.logger.warn({ event: 'PAY2M_RETRY', attempt, kind: 'timeout' });
+        } else {
+          lastErrKind = 'network';
+          this.logger.warn({ event: 'PAY2M_RETRY', attempt, kind: 'network' });
+        }
         if (attempt < MAX_ATTEMPTS) {
           await new Promise((res) => setTimeout(res, 500 * 2 ** (attempt - 1) + Math.random() * 100));
           continue;
@@ -121,7 +210,9 @@ export class PaymentService {
       }
     }
     if (!response) {
-      // All attempts returned retryable 5xx/429 — same outcome as exhausted catch.
+      // Defensive: we should always have either a `response` or have thrown
+      // above. If somehow we exit the loop with neither, treat it the same
+      // as an exhausted-retry path.
       this.logger.error({ event: 'PAY2M_TOKEN_FAILED', kind: 'http', attempts: MAX_ATTEMPTS, lastKind: lastErrKind });
       throw new BadRequestException('Payment gateway is temporarily unavailable');
     }
