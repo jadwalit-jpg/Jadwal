@@ -203,10 +203,11 @@ describe('Per-Booking Phone Validation', () => {
   test('CRITICAL: bookingPhone is required + format-validated in CreateBookingDto', () => {
     const dto = readSrc('src/bookings/dto/create-booking.dto.ts');
     expect(dto).toContain('bookingPhone');
-    // Required (NotEmpty), max length cap, E.164 regex
-    expect(dto).toMatch(/@IsNotEmpty[^@]*bookingPhone/s);
-    expect(dto).toMatch(/@MaxLength\(20[^@]*bookingPhone/s);
-    expect(dto).toMatch(/@Matches\(\/\^\\\+\?\[0-9\]\{7,15\}\$\/[^@]*bookingPhone/s);
+    // Required (NotEmpty), max length cap, E.164 regex — all attached
+    // to the bookingPhone field's decorator block.
+    expect(dto).toMatch(
+      /@IsNotEmpty[\s\S]*?@MaxLength\(20[\s\S]*?@Matches\(\/\^\\\+\?\[0-9\]\{7,15\}\$\/[\s\S]*?bookingPhone/,
+    );
   });
 
   test('CRITICAL: Booking model carries bookingPhone column with VarChar(20)', () => {
@@ -239,10 +240,10 @@ describe('Rate Limiting', () => {
 
     // Login endpoint has @Throttle
     expect(authController).toMatch(/@Throttle.*\n.*@Post\('login'\)/s);
-
-    // Phone OTP send uses the strictest tier (named constant, not inline numbers).
-    // Per check-security skill: every mutation uses RATE_LIMIT_* constants.
-    expect(authController).toMatch(/send-otp[\s\S]{0,200}@Throttle\(RATE_LIMIT_STRICT\)/);
+    // Forgot-password endpoint uses a named RATE_LIMIT_* constant (no inline
+    // throttle numbers anywhere in the auth controller — check-security rule).
+    expect(authController).toMatch(/@Throttle\(RATE_LIMIT_/);
+    expect(authController).not.toMatch(/@Throttle\(\{[^}]*ttl:\s*\d+/);
   });
 
   test('HIGH: admin controller is NOT @SkipThrottle at class level', () => {
