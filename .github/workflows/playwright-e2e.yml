@@ -153,7 +153,7 @@ jobs:
         run: npx ts-node prisma/seed-e2e-reference.ts
 
       # Admin user with the credentials e2e/_fixtures/auth.ts expects
-      # (admin@jadwal.com / Admin123!). seed-admin.ts has a NODE_ENV=
+      # (admin@jadwal.qa / Admin123!). seed-admin.ts has a NODE_ENV=
       # production guard that requires SEED_ADMIN_EMAIL/PASSWORD when
       # in prod — here we're in NODE_ENV=test so the dev defaults apply,
       # but we override with the auth-fixture creds so the storage-state
@@ -161,7 +161,7 @@ jobs:
       - name: Seed admin
         working-directory: apps/api
         env:
-          SEED_ADMIN_EMAIL: admin@jadwal.com
+          SEED_ADMIN_EMAIL: admin@jadwal.qa
           SEED_ADMIN_PASSWORD: Admin123!
           SEED_ADMIN_ALLOW_UPDATE: 'true'
         run: npx ts-node prisma/seed-admin.ts

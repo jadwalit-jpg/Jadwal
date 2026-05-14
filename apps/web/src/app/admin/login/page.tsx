@@ -93,7 +93,7 @@ export default function AdminLoginPage() {
                   autoComplete="email"
                   required
                   className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-900/50 border border-gray-200 dark:border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl text-sm text-gray-900 dark:text-white outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-slate-600"
-                  placeholder="admin@jadwal.com"
+                  placeholder="admin@jadwal.qa"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                 />

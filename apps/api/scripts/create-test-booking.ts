@@ -7,7 +7,7 @@
  *   docker exec jadwal-api sh -c "cd /app/apps/api && npx ts-node scripts/create-test-booking.ts"
  *
  *   Optional flags:
- *     --email=<addr>    Reuse a different customer (default: testcustomer@jadwal.com)
+ *     --email=<addr>    Reuse a different customer (default: testcustomer@jadwal.qa)
  *     --guests=<n>      Guest count (default: 1)
  *     --activity=<slug> Override activity slug (default: first ACTIVE activity found)
  *     --days=<n>        Days from now for the booking (default: 7)
@@ -46,7 +46,7 @@ function parseArgs(): {
   daysFromNow: number;
 } {
   const defaults = {
-    email: 'testcustomer@jadwal.com',
+    email: 'testcustomer@jadwal.qa',
     guests: 1,
     activitySlug: null as string | null,
     daysFromNow: 7,

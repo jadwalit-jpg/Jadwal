@@ -51,7 +51,7 @@ describe('<Navbar />', () => {
 
   it('hides login + signup links when a customer is logged in', () => {
     useAuthMock.mockReturnValue({
-      user: { id: 'u', email: 'c@jadwal.com', fullName: 'C', role: 'CUSTOMER' },
+      user: { id: 'u', email: 'c@jadwal.qa', fullName: 'C', role: 'CUSTOMER' },
       loading: false,
       logout: jest.fn(),
     });
@@ -92,7 +92,7 @@ describe('<Navbar />', () => {
 
   it('surfaces a Notifications link for logged-in customers (replaces the bar bell)', () => {
     useAuthMock.mockReturnValue({
-      user: { id: 'u', email: 'c@jadwal.com', fullName: 'C', role: 'CUSTOMER' },
+      user: { id: 'u', email: 'c@jadwal.qa', fullName: 'C', role: 'CUSTOMER' },
       loading: false,
       logout: jest.fn(),
     });
