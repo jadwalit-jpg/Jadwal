@@ -247,6 +247,28 @@ export function ProfilePageSkeleton() {
   );
 }
 
+// Shape-matching skeleton for `/bookings/[id]`. Mirrors the inline
+// `BookingDetailSkeleton` used inside page.tsx — a back-link + 4
+// stacked content blocks (header, body, breakdown, actions). The page
+// itself already does the shell-unconditional + inline skeleton pattern
+// for its `useQuery` state — this only sharpens the cold-navigation
+// flash from a generic spinner to a shape preview.
+export function BookingDetailPageSkeleton() {
+  return (
+    <SkeletonPage
+      className="bg-jadwal-bg px-4 sm:px-6 pt-24 pb-16"
+      label="Loading booking"
+    >
+      <div className="max-w-3xl mx-auto space-y-4">
+        <Skeleton className="h-8 w-48 rounded-xl" />
+        <Skeleton className="h-24 rounded-2xl" />
+        <Skeleton className="h-64 rounded-2xl" />
+        <Skeleton className="h-32 rounded-2xl" />
+      </div>
+    </SkeletonPage>
+  );
+}
+
 // Minimal page loader for simple / legal / callback routes.
 export function PageShellSkeleton() {
   return (
