@@ -1,4 +1,4 @@
-import { IsOptional, IsInt, IsString, Min, Max } from 'class-validator';
+import { IsOptional, IsInt, IsString, Min, Max, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class VendorPaginationDto {
@@ -17,6 +17,7 @@ export class VendorPaginationDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   search?: string;
 
   @IsOptional()
