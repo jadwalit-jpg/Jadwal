@@ -112,7 +112,7 @@ async function seedPendingPayment(amountQar = 200) {
     data: {
       ref: `JDWL-PAY-${crypto.randomUUID().slice(0, 6)}`,
       currencyCode: 'QAR',
-      guests: 2, totalPrice: amountQar, serviceFee: 5, commissionAmount: 20,
+      guests: 2, bookingPhone: '+97455123456', totalPrice: amountQar, serviceFee: 5, commissionAmount: 20,
       status: 'PENDING',
       startDatetime: new Date('2030-09-01T10:00:00Z'),
       endDatetime:   new Date('2030-09-01T12:00:00Z'),

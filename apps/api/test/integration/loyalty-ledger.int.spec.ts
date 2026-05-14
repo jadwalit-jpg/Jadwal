@@ -84,7 +84,7 @@ describe('LoyaltyService — double-entry invariant', () => {
       data: {
         ref: 'JDWL-LEDG1', currencyCode: 'QAR',
         activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: userId,
-        guests: 1, totalPrice: 100, serviceFee: 5,
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5,
         status: 'COMPLETED',
         startDatetime: new Date('2030-01-01T10:00:00Z'),
         endDatetime:   new Date('2030-01-01T12:00:00Z'),
@@ -133,7 +133,7 @@ describe('LoyaltyService — double-entry invariant', () => {
       data: {
         ref: 'JDWL-LEDG2', currencyCode: 'QAR',
         activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: userId,
-        guests: 1, totalPrice: 100, serviceFee: 5, status: 'CONFIRMED',
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, status: 'CONFIRMED',
         startDatetime: new Date('2030-01-02T10:00:00Z'),
         endDatetime:   new Date('2030-01-02T12:00:00Z'),
       },
@@ -171,7 +171,7 @@ describe('LoyaltyService.redeem — TOCTOU-safe under parallel race', () => {
       data: {
         ref: 'JDWL-RACE-1', currencyCode: 'QAR',
         activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: userId,
-        guests: 1, totalPrice: 60, serviceFee: 5, status: 'CONFIRMED',
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 60, serviceFee: 5, status: 'CONFIRMED',
         startDatetime: new Date('2030-01-03T10:00:00Z'),
         endDatetime:   new Date('2030-01-03T12:00:00Z'),
       },
@@ -213,7 +213,7 @@ describe('LoyaltyService.redeem — TOCTOU-safe under parallel race', () => {
       data: {
         ref: 'JDWL-RACE-2', currencyCode: 'QAR',
         activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: userId,
-        guests: 1, totalPrice: 60, serviceFee: 5, status: 'CONFIRMED',
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 60, serviceFee: 5, status: 'CONFIRMED',
         startDatetime: new Date('2030-01-04T10:00:00Z'),
         endDatetime:   new Date('2030-01-04T12:00:00Z'),
       },
@@ -305,7 +305,7 @@ describe('LoyaltyService — balance + ledger in one transaction', () => {
       data: {
         ref: 'JDWL-ROLLBACK', currencyCode: 'QAR',
         activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: userId,
-        guests: 1, totalPrice: 50, serviceFee: 5, status: 'CONFIRMED',
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 50, serviceFee: 5, status: 'CONFIRMED',
         startDatetime: new Date('2030-01-05T10:00:00Z'),
         endDatetime:   new Date('2030-01-05T12:00:00Z'),
       },
