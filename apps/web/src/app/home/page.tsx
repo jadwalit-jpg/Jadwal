@@ -2,7 +2,6 @@ import { Metadata } from 'next';
 import Image from 'next/image';
 import Footer from '@/components/footer';
 import Navbar from '@/components/navbar';
-import { HeroEyebrow } from '../_home-islands/hero-eyebrow';
 import { HeroTitle } from '../_home-islands/hero-title';
 import { HeroSearchBar } from '../_home-islands/hero-search-bar';
 import { HeroTrustMetrics } from '../_home-islands/hero-trust-metrics';
@@ -28,8 +27,6 @@ import HomeBelowFoldLoader from '../_home-islands/home-below-fold-loader';
  *    `blur-[100px]` glow blob behind the hero text is dropped (most expensive
  *    of the three glows; the sun/moon halos and the boat float already give
  *    the scene depth).
- *  - `<HeroEyebrow/>` is a *server component* (reads `CF-IPCountry` and
- *    renders the country name into the SSR HTML) — no flash on first paint.
  *  - Solid-pill `<HeroBrowseCtaBasic/>` (no glass, no `animate-bounce`)
  *    instead of the heavier `<HeroBrowseCta/>`.
  */
@@ -152,7 +149,6 @@ export default function HomePage() {
             section, on every breakpoint. On md+ we drop pt to 0 so the
             content centers naturally in the larger viewport. */}
         <div className="relative z-20 flex-1 flex flex-col items-center justify-center max-w-6xl mx-auto w-full px-6 pt-16 sm:pt-20 md:pt-0 pb-56 md:pb-64 text-center">
-          <HeroEyebrow />
           <HeroTitle />
           <HeroSearchBar />
           <HeroTrustMetrics />
