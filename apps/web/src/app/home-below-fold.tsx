@@ -22,6 +22,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Calendar, Gift, MapPin, ShieldCheck, Zap } from 'lucide-react';
@@ -38,6 +39,15 @@ import {
   SectionHeader,
 } from '@/components/ui';
 import { CategoriesRowSkeleton, TrendingRowSkeleton } from './_home-islands/below-fold-skeleton';
+import { TrendingEventModal } from './_home-islands/trending-event-modal';
+
+// Heuristic for "the description is likely truncated by line-clamp-2 and
+// worth a Read more affordance". Trending cards are 280-320px wide and use
+// `text-[13px] leading-relaxed`, which fits roughly 90-110 characters across
+// two lines. 100 chars is the conservative cutoff: shorter descriptions fit
+// fully on the card (no need for a modal), longer ones are guaranteed to be
+// clipped. Cheaper + more deterministic than a runtime scrollHeight check.
+const READ_MORE_THRESHOLD = 100;
 
 interface TrendingEvent {
   id: string;
@@ -68,6 +78,11 @@ export default function HomeBelowFold() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === 'ar';
   const { country, city, isDetecting, location, locationStatus, requestLocation } = useGeo();
+
+  // Open trending event for the "Read more" modal. null = modal closed.
+  // Keeping the state at this level (rather than per-card) means only one
+  // modal is mounted at a time and we don't have N <dialog>s in the DOM.
+  const [openTrendingEvent, setOpenTrendingEvent] = useState<TrendingEvent | null>(null);
 
   // Same queryKeys as home-client → shared TanStack cache, no duplicate request.
 
@@ -191,9 +206,31 @@ export default function HomeBelowFold() {
                       {localized(event, 'title')}
                     </h3>
                     {event.description ? (
-                      <p className="text-[13px] text-jadwal-text-muted leading-relaxed line-clamp-2">
-                        {event.description}
-                      </p>
+                      <>
+                        <p className="text-[13px] text-jadwal-text-muted leading-relaxed line-clamp-2">
+                          {event.description}
+                        </p>
+                        {event.description.length > READ_MORE_THRESHOLD ? (
+                          // Inline link-style trigger (NOT a button-styled CTA).
+                          // Sits on its own line so it doesn't get clipped by the
+                          // line-clamp above. Underline + accent color reads as a
+                          // link; `text-start` keeps it left-aligned in LTR and
+                          // right-aligned in RTL via the logical property.
+                          <button
+                            type="button"
+                            onClick={() => setOpenTrendingEvent(event)}
+                            className="
+                              self-start text-start
+                              text-[12px] font-medium text-jadwal-accent
+                              underline underline-offset-2 decoration-jadwal-accent/40
+                              hover:decoration-jadwal-accent transition-colors
+                              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent rounded
+                            "
+                          >
+                            {t('home.readMore', { defaultValue: 'Read more' })}
+                          </button>
+                        ) : null}
+                      </>
                     ) : null}
                     {event.eventDate ? (
                       <div
@@ -217,6 +254,16 @@ export default function HomeBelowFold() {
             </div>
           )}
         </div>
+
+        {/* Permanently mounted; opens via openTrendingEvent state. Uses the
+            native <dialog> element — Escape + backdrop click + focus trap
+            handled by the browser. See trending-event-modal.tsx. */}
+        <TrendingEventModal
+          event={openTrendingEvent}
+          onClose={() => setOpenTrendingEvent(null)}
+          isRtl={isRtl}
+          closeLabel={t('home.close', { defaultValue: 'Close' })}
+        />
       </section>
 
       <PatternDivider />
