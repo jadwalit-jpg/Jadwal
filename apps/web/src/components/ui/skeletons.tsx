@@ -295,6 +295,29 @@ export function ActivityDetailPageSkeleton() {
   );
 }
 
+// Shape-matching skeleton for `/activity/[slug]/book`. Same dual-context
+// pattern as ActivityDetailPageSkeleton — composed by loading.tsx alone
+// (route boundary) and by page.tsx's early-return wrapped with Navbar
+// (during the activity-fetch query). 5-column grid mirrors the book
+// form's layout: 3-col form on the left, 2-col summary card on the right.
+export function BookActivityPageSkeleton() {
+  return (
+    <SkeletonPage className="bg-jadwal-bg" label="Loading booking form">
+      <div className="pt-24 max-w-6xl mx-auto px-4 sm:px-6">
+        <Skeleton className="h-8 w-64 mb-8 rounded" />
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 md:gap-8">
+          <div className="lg:col-span-3 space-y-4">
+            <Skeleton className="h-12 rounded-xl" />
+            <Skeleton className="h-80 rounded-2xl" />
+            <Skeleton className="h-24 rounded-xl" />
+          </div>
+          <Skeleton className="lg:col-span-2 h-96 rounded-2xl" />
+        </div>
+      </div>
+    </SkeletonPage>
+  );
+}
+
 // Minimal page loader for simple / legal / callback routes.
 export function PageShellSkeleton() {
   return (
