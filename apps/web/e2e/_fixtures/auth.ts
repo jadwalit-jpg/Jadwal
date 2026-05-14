@@ -90,22 +90,22 @@ async function loginAdminWith(page: Page, cred: Cred): Promise<boolean> {
 
 const ADMIN_CANDIDATES = uniqueCreds([
   ...envCred('ADMIN'),
-  { email: 'admin@jadwal.com', password: 'Admin123!' },
-  { email: 'admin@jadwal.com', password: 'admin123Password' },
+  { email: 'admin@jadwal.qa', password: 'Admin123!' },
+  { email: 'admin@jadwal.qa', password: 'admin123Password' },
 ]);
 
 const CUSTOMER_CANDIDATES = uniqueCreds([
   ...envCred('CUSTOMER'),
   { email: 'customer@jadwal-test.local', password: 'S3cure!Pass1' },
-  { email: 'customer@jadwal.com', password: 'Customer123!' },
-  { email: 'customer@jadwal.com', password: 'Admin123!' },
+  { email: 'customer@jadwal.qa', password: 'Customer123!' },
+  { email: 'customer@jadwal.qa', password: 'Admin123!' },
 ]);
 
 const VENDOR_CANDIDATES = uniqueCreds([
   ...envCred('VENDOR'),
   { email: 'vendor@jadwal-test.local', password: 'S3cure!Pass1' },
-  { email: 'vendor@jadwal.com', password: 'Vendor123!' },
-  { email: 'vendor@jadwal.com', password: 'Admin123!' },
+  { email: 'vendor@jadwal.qa', password: 'Vendor123!' },
+  { email: 'vendor@jadwal.qa', password: 'Admin123!' },
 ]);
 
 export async function loginAsAdmin(page: Page): Promise<Cred> {

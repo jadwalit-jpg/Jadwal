@@ -118,7 +118,7 @@ describe('useAuth', () => {
   it('logout() clears user and redirects admins to /admin/login', async () => {
     mockedApi.get.mockResolvedValueOnce({
       status: 200,
-      data: { id: 'a1', email: 'admin@jadwal.com', fullName: 'A', role: 'ADMIN' },
+      data: { id: 'a1', email: 'admin@jadwal.qa', fullName: 'A', role: 'ADMIN' },
     });
     mockedApi.post.mockResolvedValueOnce({ data: { ok: true } });
 
@@ -136,7 +136,7 @@ describe('useAuth', () => {
   it('logout() redirects vendors to /login and customers to /', async () => {
     mockedApi.get.mockResolvedValueOnce({
       status: 200,
-      data: { id: 'v1', email: 'vendor@jadwal.com', fullName: 'V', role: 'VENDOR' },
+      data: { id: 'v1', email: 'vendor@jadwal.qa', fullName: 'V', role: 'VENDOR' },
     });
     mockedApi.post.mockResolvedValueOnce({ data: { ok: true } });
 
@@ -153,12 +153,12 @@ describe('useAuth', () => {
   it('still clears local state if the logout API call fails', async () => {
     mockedApi.get.mockResolvedValueOnce({
       status: 200,
-      data: { id: 'u3', email: 'c@jadwal.com', fullName: 'C', role: 'CUSTOMER' },
+      data: { id: 'u3', email: 'c@jadwal.qa', fullName: 'C', role: 'CUSTOMER' },
     });
     mockedApi.post.mockRejectedValueOnce(new Error('Network Error'));
 
     render(wrap(<Consumer />));
-    await waitFor(() => expect(screen.getByTestId('user')).toHaveTextContent('c@jadwal.com'));
+    await waitFor(() => expect(screen.getByTestId('user')).toHaveTextContent('c@jadwal.qa'));
 
     await act(async () => {
       screen.getByTestId('logout').click();
@@ -171,11 +171,11 @@ describe('useAuth', () => {
   it('responds to the global auth:session-expired event by clearing the user', async () => {
     mockedApi.get.mockResolvedValueOnce({
       status: 200,
-      data: { id: 'u4', email: 'x@jadwal.com', fullName: 'X', role: 'CUSTOMER' },
+      data: { id: 'u4', email: 'x@jadwal.qa', fullName: 'X', role: 'CUSTOMER' },
     });
 
     render(wrap(<Consumer />));
-    await waitFor(() => expect(screen.getByTestId('user')).toHaveTextContent('x@jadwal.com'));
+    await waitFor(() => expect(screen.getByTestId('user')).toHaveTextContent('x@jadwal.qa'));
 
     await act(async () => {
       window.dispatchEvent(new Event('auth:session-expired'));

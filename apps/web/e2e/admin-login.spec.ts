@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-const ADMIN_EMAIL = 'admin@jadwal.com';
+const ADMIN_EMAIL = 'admin@jadwal.qa';
 const ADMIN_PASSWORD = 'Admin123!';
 
 test.describe('Admin login', () => {
