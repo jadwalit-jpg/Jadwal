@@ -163,6 +163,7 @@ async function main() {
           vendorId: activity.vendorId,
           customerId: customer.id,
           guests,
+          bookingPhone: '+97455123456',
           totalPrice: vendorSubtotal,
           serviceFee,
           commissionPct,

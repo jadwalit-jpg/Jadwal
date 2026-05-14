@@ -17,7 +17,6 @@ import { AuthService } from '../../src/auth/auth.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { RolesGuard } from '../../src/auth/guards/roles.guard';
-import { ROLES_KEY } from '../../src/auth/decorators/roles.decorator';
 import { Reflector } from '@nestjs/core';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import { makeConfigMock, makeResponseMock, makeRequestMock } from '../mocks/auth-deps.mock';
@@ -35,8 +34,6 @@ function makeAuthSvcMock() {
     forgotPassword:     jest.fn().mockResolvedValue({ message: 'ok' }),
     resetPassword:      jest.fn().mockResolvedValue({ message: 'ok' }),
     changePassword:     jest.fn().mockResolvedValue({ message: 'Password changed successfully. Other sessions have been signed out.' }),
-    sendPhoneOtp:       jest.fn().mockResolvedValue({ sent: true }),
-    verifyPhoneOtp:     jest.fn().mockResolvedValue({ verified: true }),
     getTokenHash:       jest.fn((t: string) => `hash(${t})`),
   };
 }
@@ -184,17 +181,6 @@ describe('AuthController — delegation', () => {
     expect(authSvc.resetPassword).toHaveBeenCalledWith('a'.repeat(64), 'NewPw123');
   });
 
-  test('POST /auth/phone/send-otp → delegates userId + phone', async () => {
-    const { ctrl, authSvc } = await buildCtrl();
-    await ctrl.sendPhoneOtp({ id: 'u1' } as any, { phone: '+974500' } as any);
-    expect(authSvc.sendPhoneOtp).toHaveBeenCalledWith('u1', '+974500');
-  });
-
-  test('POST /auth/phone/verify-otp → delegates userId + code', async () => {
-    const { ctrl, authSvc } = await buildCtrl();
-    await ctrl.verifyPhoneOtp({ id: 'u1' } as any, { code: '123456' } as any);
-    expect(authSvc.verifyPhoneOtp).toHaveBeenCalledWith('u1', '123456');
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -386,7 +372,7 @@ describe('AuthController.getProfile', () => {
   test('CUSTOMER → returns user row only (no vendor block)', async () => {
     const { ctrl, prisma } = await buildCtrl();
     prisma._client.user.findUnique.mockResolvedValueOnce({
-      id: 'u1', email: 'a@b.com', fullName: 'A', role: 'CUSTOMER', phone: '+974', phoneVerified: true,
+      id: 'u1', email: 'a@b.com', fullName: 'A', role: 'CUSTOMER', phone: '+974',
     });
     const r = await ctrl.getProfile({ id: 'u1', role: 'CUSTOMER' } as any);
     expect(r).not.toHaveProperty('vendor');
@@ -395,7 +381,7 @@ describe('AuthController.getProfile', () => {
   test('VENDOR → returns user row + vendor sub-object', async () => {
     const { ctrl, prisma } = await buildCtrl();
     prisma._client.user.findUnique.mockResolvedValueOnce({
-      id: 'u1', email: 'v@b.com', fullName: 'V', role: 'VENDOR', phone: '+974', phoneVerified: true,
+      id: 'u1', email: 'v@b.com', fullName: 'V', role: 'VENDOR', phone: '+974',
     });
     prisma._client.vendor.findUnique.mockResolvedValueOnce({
       id: 'ven1', businessNameEn: 'Biz', businessNameAr: 'بز', slug: 'biz', status: 'APPROVED', countryId: 'QA',

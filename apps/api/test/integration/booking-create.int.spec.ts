@@ -87,6 +87,7 @@ describe('BookingsService.createBooking — HOURLY happy path (PAY2M)', () => {
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 2,
+      bookingPhone: '+97455123456',
     });
 
     expect(result.booking).toBeDefined();
@@ -130,6 +131,7 @@ describe('BookingsService.createBooking — HOURLY happy path (PAY2M)', () => {
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 1,
+      bookingPhone: '+97455123456',
     });
 
     const b = await ctx.prisma.booking.findUniqueOrThrow({
@@ -150,12 +152,14 @@ describe('BookingsService.createBooking — HOURLY happy path (PAY2M)', () => {
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 1,
+      bookingPhone: '+97455123456',
     });
     const res2 = await svc.createBooking(seed.customer.id, {
       activityId: seed.activity.id,
       checkInDate: futureDate(8),
       slotTime: '10:00',
       guests: 1,
+      bookingPhone: '+97455123456',
     });
 
     expect(res1.booking.ref).toMatch(/^JDWL-/);
@@ -178,6 +182,7 @@ describe('BookingsService.createBooking — guards', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 1,
+      bookingPhone: '+97455123456',
       }),
     ).rejects.toThrow(/not found/i);
   });
@@ -194,6 +199,7 @@ describe('BookingsService.createBooking — guards', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 1,
+      bookingPhone: '+97455123456',
       }),
     ).rejects.toThrow(/not available/i);
   });
@@ -210,6 +216,7 @@ describe('BookingsService.createBooking — guards', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 1,
+      bookingPhone: '+97455123456',
       }),
     ).rejects.toThrow(/vendor.*not active/i);
   });
@@ -223,6 +230,7 @@ describe('BookingsService.createBooking — guards', () => {
         checkInDate: '2020-01-01',
         slotTime: '10:00',
         guests: 1,
+      bookingPhone: '+97455123456',
       }),
     ).rejects.toThrow(/past date/i);
   });
@@ -236,6 +244,7 @@ describe('BookingsService.createBooking — guards', () => {
         checkInDate: futureDate(365 * 3), // 3 years out (max is 2)
         slotTime: '10:00',
         guests: 1,
+      bookingPhone: '+97455123456',
       }),
     ).rejects.toThrow(/more than.*year/i);
   });
@@ -256,6 +265,7 @@ describe('BookingsService.createBooking — idempotency', () => {
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 2,
+      bookingPhone: '+97455123456',
       idempotencyKey: key,
     });
     const second = await svc.createBooking(seed.customer.id, {
@@ -263,6 +273,7 @@ describe('BookingsService.createBooking — idempotency', () => {
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 2,
+      bookingPhone: '+97455123456',
       idempotencyKey: key,
     });
 
@@ -292,6 +303,7 @@ describe('BookingsService.createBooking — idempotency', () => {
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 1,
+      bookingPhone: '+97455123456',
       idempotencyKey: key,
     });
 
@@ -309,6 +321,7 @@ describe('BookingsService.createBooking — idempotency', () => {
         checkInDate: futureDate(8),
         slotTime: '10:00',
         guests: 1,
+      bookingPhone: '+97455123456',
         idempotencyKey: key,
       }),
     ).rejects.toThrow(); // P2002 / unique-constraint conflict; specific
@@ -348,6 +361,7 @@ describe('BookingsService.createBooking — capacity enforcement', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         idempotencyKey: crypto.randomUUID(),
       });
     }
@@ -371,6 +385,7 @@ describe('BookingsService.createBooking — capacity enforcement', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         idempotencyKey: crypto.randomUUID(),
       });
     }
@@ -382,6 +397,7 @@ describe('BookingsService.createBooking — capacity enforcement', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 3,
+      bookingPhone: '+97455123456',
         idempotencyKey: crypto.randomUUID(),
       }),
     ).rejects.toThrow();
@@ -399,6 +415,7 @@ describe('BookingsService.createBooking — capacity enforcement', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         idempotencyKey: crypto.randomUUID(),
       });
     }
@@ -409,6 +426,7 @@ describe('BookingsService.createBooking — capacity enforcement', () => {
       checkInDate: futureDate(8),
       slotTime: '10:00',
       guests: 5,
+      bookingPhone: '+97455123456',
       idempotencyKey: crypto.randomUUID(),
     });
     expect(day2.booking.status).toBe('PENDING');
@@ -445,6 +463,7 @@ describe('BookingsService.createBooking — loyalty redemption', () => {
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 2,
+      bookingPhone: '+97455123456',
       redeemPoints: 5_000,
       idempotencyKey: crypto.randomUUID(),
     });
@@ -487,6 +506,7 @@ describe('BookingsService.createBooking — loyalty redemption', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 1,
+      bookingPhone: '+97455123456',
         redeemPoints: 10_000, // way more than available
         idempotencyKey: crypto.randomUUID(),
       }),
@@ -533,6 +553,7 @@ describe('BookingsService.createBooking — full points coverage (WANASA-only)',
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 1,
+      bookingPhone: '+97455123456',
       redeemPoints: 15_000, // more than 10,500 needed
       idempotencyKey: crypto.randomUUID(),
     });
@@ -612,6 +633,7 @@ describe('BookingsService.createBooking — coupon', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         couponCode: 'EXPIRED',
         idempotencyKey: crypto.randomUUID(),
       }),
@@ -641,6 +663,7 @@ describe('BookingsService.createBooking — coupon', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         couponCode: 'MAXED',
         idempotencyKey: crypto.randomUUID(),
       }),
@@ -656,6 +679,7 @@ describe('BookingsService.createBooking — coupon', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         couponCode: 'GHOST',
         idempotencyKey: crypto.randomUUID(),
       }),
@@ -692,6 +716,7 @@ describe('BookingsService.createBooking — activeDays restriction', () => {
         checkInDate: nonMonday,
         slotTime: '10:00',
         guests: 1,
+      bookingPhone: '+97455123456',
       }),
     ).rejects.toThrow(/not available on/i);
   });

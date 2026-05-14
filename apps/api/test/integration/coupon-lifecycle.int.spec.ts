@@ -249,6 +249,7 @@ describe('Coupon lifecycle — apply at booking time', () => {
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 2,
+      bookingPhone: '+97455123456',
       couponCode: 'VENDOR15',
       idempotencyKey: crypto.randomUUID(),
     });
@@ -297,6 +298,7 @@ describe('Coupon lifecycle — apply at booking time', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         couponCode: 'OTHER10', // belongs to otherVendor
         idempotencyKey: crypto.randomUUID(),
       }),
@@ -324,6 +326,7 @@ describe('Coupon lifecycle — apply at booking time', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         couponCode: 'MAXED2',
         idempotencyKey: crypto.randomUUID(),
       }),
@@ -352,6 +355,7 @@ describe('Coupon lifecycle — apply at booking time', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         couponCode: 'PENDOK',
         idempotencyKey: crypto.randomUUID(),
       }),

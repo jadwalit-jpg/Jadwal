@@ -34,7 +34,6 @@ import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
-import { PhoneVerificationModal } from '@/components/phone-verification-modal';
 import { Badge, Button } from '@/components/ui';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -52,7 +51,6 @@ interface Profile {
   email: string;
   phone: string | null;
   emailVerified: boolean;
-  phoneVerified: boolean;
   role: string;
   createdAt: string;
   stats: ProfileStats;
@@ -174,7 +172,6 @@ export default function ProfilePage() {
     name?: string;
     phone?: string;
   }>({});
-  const [phoneVerifyOpen, setPhoneVerifyOpen] = useState(false);
   const [phoneRevealed, setPhoneRevealed] = useState(false);
 
   // Auto-re-hide phone after 30s even if the user leaves the tab open — cheap
@@ -559,49 +556,6 @@ export default function ProfilePage() {
                             )}
                           </button>
                         ) : null}
-                        {profile.phone && profile.phoneVerified ? (
-                          <Badge
-                            variant="success"
-                            size="sm"
-                            icon={
-                              <CheckCircle2
-                                className="h-3 w-3"
-                                aria-hidden="true"
-                              />
-                            }
-                          >
-                            {t('profile.verified', {
-                              defaultValue: 'Verified',
-                            })}
-                          </Badge>
-                        ) : null}
-                        {profile.phone && !profile.phoneVerified ? (
-                          <>
-                            <Badge
-                              variant="warning"
-                              size="sm"
-                              icon={
-                                <AlertCircle
-                                  className="h-3 w-3"
-                                  aria-hidden="true"
-                                />
-                              }
-                            >
-                              {t('profile.notVerified', {
-                                defaultValue: 'Not verified',
-                              })}
-                            </Badge>
-                            <button
-                              type="button"
-                              onClick={() => setPhoneVerifyOpen(true)}
-                              className="text-xs font-semibold text-jadwal-primary hover:underline transition-colors"
-                            >
-                              {t('profile.verifyNow', {
-                                defaultValue: 'Verify now',
-                              })}
-                            </button>
-                          </>
-                        ) : null}
                       </div>
                     )}
                   </FieldRow>
@@ -734,19 +688,6 @@ export default function ProfilePage() {
       </main>
 
       <Footer />
-
-      {profile ? (
-        <PhoneVerificationModal
-          isOpen={phoneVerifyOpen}
-          onClose={() => setPhoneVerifyOpen(false)}
-          onVerified={() => {
-            queryClient.invalidateQueries({ queryKey: ['profile'] });
-            setPhoneVerifyOpen(false);
-          }}
-          initialPhone={profile.phone ?? ''}
-          allowSkip={true}
-        />
-      ) : null}
     </div>
   );
 }

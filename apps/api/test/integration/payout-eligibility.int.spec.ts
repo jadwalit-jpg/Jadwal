@@ -52,6 +52,7 @@ async function seedEligibleBooking(
     data: {
       ref: `JDWL-EL-${crypto.randomUUID().slice(0, 6)}`,
       currencyCode: 'QAR', guests: 1,
+      bookingPhone: '+97455123456',
       totalPrice: total, serviceFee: 0, commissionAmount: commission,
       status: 'COMPLETED',
       startDatetime: start, endDatetime: new Date(start.getTime() + 3600_000),

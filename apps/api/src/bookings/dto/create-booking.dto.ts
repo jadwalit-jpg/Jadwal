@@ -92,6 +92,26 @@ export class CreateBookingDto {
   @Max(500)
   guests!: number;
 
+  /**
+   * Customer-provided phone number for THIS specific booking.
+   *
+   * Required. May differ from User.phone (the account-level phone) —
+   * e.g. customer wants to use their work number for a corporate trip.
+   * Vendor uses this to reach the customer about this booking; surfaces
+   * in admin + vendor + customer booking views.
+   *
+   * E.164 format expected: `+<country><digits>`, no spaces / dashes.
+   * The frontend `validatePhone()` utility normalises before send. The
+   * regex below is intentionally lax (7–15 digits) — strict GCC-length
+   * checks are FE-only for UX; backend trusts the regex for safety.
+   * 20-char cap matches the DB column size and prevents over-long writes.
+   */
+  @IsString()
+  @IsNotEmpty({ message: 'Booking phone is required' })
+  @MaxLength(20, { message: 'Phone is too long' })
+  @Matches(/^\+?[0-9]{7,15}$/, { message: 'Phone must be 7–15 digits, optionally starting with +' })
+  bookingPhone!: string;
+
   /** Optional guest age breakdown (e.g. { adults: 2, children: 1 }) */
   @IsOptional()
   @Validate(IsValidGuestBreakdown)

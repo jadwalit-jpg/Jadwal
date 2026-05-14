@@ -29,10 +29,6 @@ model User {
   emailVerified            Boolean   @default(false)
   verificationToken        String?   @unique
   verificationTokenExpiry  DateTime?
-  phoneVerified         Boolean   @default(false)
-  phoneOtpHash          String?
-  phoneOtpExpiry        DateTime?
-  phoneOtpAttempts      Int       @default(0)
   passwordResetToken       String?   @unique
   passwordResetExpiry      DateTime?
   googleId          String?   @unique
@@ -354,6 +350,11 @@ model Booking {
   startDatetime     DateTime
   endDatetime       DateTime
   guests            Int
+  // Customer-provided phone number for THIS specific booking. May differ
+  // from User.phone (e.g. "use my work number for this corporate trip").
+  // Vendor uses this to reach the customer about this booking. Required —
+  // enforced by the create-booking DTO. E.164 format (no spaces), max 20.
+  bookingPhone      String        @db.VarChar(20)
   guestBreakdown    Json?
   selectedExtras    Json?         // [{name, price}] — paid add-ons customer selected at booking time
   totalPrice        Decimal       @db.Decimal(10, 2)
@@ -410,6 +411,10 @@ model Booking {
   // Fast lookup for the vendor refund-requests page — filters by vendor
   // + joins on payment.status=REFUND_PENDING. cancelledAt used for sort.
   @@index([vendorId, cancelledAt])
+  // Vendor/admin support-by-phone lookup ("find a booking by the phone
+  // number the customer entered"). Non-unique — different customers may
+  // share a phone (e.g. family bookings, hotel concierge).
+  @@index([bookingPhone])
   @@map("bookings")
 }
 

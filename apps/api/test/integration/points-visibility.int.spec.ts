@@ -102,6 +102,7 @@ async function createWanasaBooking() {
     checkInDate: futureDate(7),
     slotTime: '10:00',
     guests: 2,
+      bookingPhone: '+97455123456',
     redeemPoints: 10_000, // more than enough → full Wanasa coverage
     idempotencyKey: crypto.randomUUID(),
   });
@@ -327,6 +328,7 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
       })(),
       slotTime: '10:00',
       guests: 2,
+      bookingPhone: '+97455123456',
       redeemPoints: 100, // less than activity price (200) — fee must stay
       idempotencyKey: crypto.randomUUID(),
     });

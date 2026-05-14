@@ -24,7 +24,7 @@ import { localized } from '@/lib/localize';
 import { useAuth } from '@/context/auth-context';
 import { useGeo } from '@/context/geo-context';
 import { useToast } from '@/components/toast';
-import { PhoneVerificationModal } from '@/components/phone-verification-modal';
+import { BookingPhoneModal } from '@/components/booking-phone-modal';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 import { BookActivityPageSkeleton } from '@/components/ui/skeletons';
@@ -149,12 +149,17 @@ export default function BookActivityPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, checkAuth } = useAuth();
+  const { user } = useAuth();
   const { country: geoCountry } = useGeo();
   const { toast } = useToast();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [showPhoneModal, setShowPhoneModal] = useState(false);
+  // Per-booking phone the customer enters via the modal. Distinct from
+  // `user.phone` (account-level) — customer may use a different number
+  // for this specific booking. Submitted as `bookingPhone` in the
+  // create-booking payload; backend DTO @IsNotEmpty enforces it.
+  const [bookingPhone, setBookingPhone] = useState('');
 
   // Shared state
   const [calendarMonth, setCalendarMonth] = useState(getCurrentMonth());
@@ -638,7 +643,11 @@ export default function BookActivityPage() {
       router.push(`/login?callbackUrl=/activity/${slug}/book`);
       return;
     }
-    if (!user.phoneVerified) {
+    // Gate: customer must supply a per-booking phone before we hit the
+    // backend. The modal collects + normalises to E.164 and writes into
+    // `bookingPhone` state via its onSubmit callback; the DTO does the
+    // canonical regex check server-side.
+    if (!bookingPhone) {
       setShowPhoneModal(true);
       return;
     }
@@ -668,6 +677,7 @@ export default function BookActivityPage() {
           ? { slotEndTime: selectedSlotEnd }
           : {}),
         guests,
+        bookingPhone,
         selectedExtras: extras,
         selectedExtrasQty: Object.keys(extrasQty).length > 0 ? extrasQty : undefined,
         couponCode: appliedCoupon?.code || undefined,
@@ -681,6 +691,7 @@ export default function BookActivityPage() {
         checkInDate: checkIn,
         checkOutDate: checkOut,
         guests,
+        bookingPhone,
         selectedExtras: extras,
         selectedExtrasQty: Object.keys(extrasQty).length > 0 ? extrasQty : undefined,
         couponCode: appliedCoupon?.code || undefined,
@@ -1453,12 +1464,12 @@ export default function BookActivityPage() {
 
       <Footer />
 
-      <PhoneVerificationModal
+      <BookingPhoneModal
         isOpen={showPhoneModal}
         onClose={() => setShowPhoneModal(false)}
-        onVerified={() => {
+        onSubmit={(phone) => {
+          setBookingPhone(phone);
           setShowPhoneModal(false);
-          checkAuth();
         }}
         initialPhone={user?.phone || ''}
         detectedCountryIso={geoCountry?.isoCode}

@@ -22,7 +22,6 @@ import { SecurityLoggerService } from '../common/services/security-logger.servic
 import { AuditLoggerService } from '../common/services/audit-logger.service';
 import { EmailService } from '../email/email.service';
 import { EmailQuotaService } from '../email/email-quota.service';
-import { SmsService } from '../sms/sms.service';
 import { NotificationService } from '../common/services/notification.service';
 import { RedisService } from '../redis/redis.service';
 
@@ -46,7 +45,6 @@ export class AuthService {
     private auditLogger: AuditLoggerService,
     private emailService: EmailService,
     private emailQuota: EmailQuotaService,
-    private smsService: SmsService,
     private notificationService: NotificationService,
     private redisService: RedisService,
   ) {
@@ -1164,7 +1162,6 @@ export class AuthService {
         profilePicture: true,
         role: true,
         emailVerified: true,
-        phoneVerified: true,
         loyaltyPoints: true,
         preferredCountryId: true,
         createdAt: true,
@@ -1381,9 +1378,6 @@ export class AuthService {
           verificationTokenExpiry: null,
           passwordResetToken: null,
           passwordResetExpiry: null,
-          phoneOtpHash: null,
-          phoneOtpExpiry: null,
-          phoneOtpAttempts: 0,
           isDeactivated: true,
           emailVerified: false,
           deletedAt: new Date(),
@@ -1428,118 +1422,4 @@ export class AuthService {
     response.cookie('RefreshToken', '', { ...clearOpts, maxAge: 0 });
   }
 
-  // ─── Phone OTP Verification ─────────────────────────────────────────────
-
-  async sendPhoneOtp(userId: string, phone: string) {
-    const db = this.prisma.client;
-
-    // Check if phone is already verified by another user
-    const existing = await db.user.findFirst({
-      where: { phone, id: { not: userId }, phoneVerified: true },
-      select: { id: true },
-    });
-    if (existing) {
-      // Generic message — telling the user "another account has this number"
-      // confirms whether a given phone number is registered, which lets a
-      // logged-in attacker enumerate phone numbers across the platform.
-      throw new ConflictException('This phone number cannot be used for verification. Please try a different number.');
-    }
-
-    // Generate 6-digit OTP
-    const otp = crypto.randomInt(100000, 999999).toString();
-    const otpHash = this.hashToken(otp);
-    const otpExpiryMinutes = Number(process.env.OTP_EXPIRY_MINUTES || 5);
-    const otpExpiry = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
-
-    await db.user.update({
-      where: { id: userId },
-      data: {
-        phone,
-        phoneOtpHash: otpHash,
-        phoneOtpExpiry: otpExpiry,
-        phoneOtpAttempts: 0,
-        phoneVerified: false,
-      },
-    });
-
-    await this.smsService.sendOtp(phone, { code: otp });
-
-    // SecurityLog keeps only userId as the identity dimension — the user
-    // record itself already has the phone. Storing last-4 here is redundant
-    // and would be recoverable via frequency analysis across many logs.
-    this.securityLogger.log({
-      event: 'PHONE_OTP_SENT',
-      userId,
-    });
-
-    return { message: 'Verification code sent' };
-  }
-
-  async verifyPhoneOtp(userId: string, code: string) {
-    const db = this.prisma.client;
-    const user = await db.user.findUnique({
-      where: { id: userId },
-      select: { phoneOtpHash: true, phoneOtpExpiry: true, phoneOtpAttempts: true, phone: true },
-    });
-
-    // Unified failure message — all four "fail" paths (no pending OTP,
-    // expired, exhausted attempts, wrong code) return the same string so
-    // that an attacker holding a stolen access token can't distinguish
-    // between "victim has no pending OTP" / "OTP expired" / "we just
-    // locked them out" / "wrong code". Server-side counters still enforce
-    // the max-attempt rule; the client just gets a uniform error.
-    const OTP_INVALID = 'Invalid or expired verification code. Please request a new one.';
-
-    if (!user?.phoneOtpHash || !user.phoneOtpExpiry) {
-      throw new BadRequestException(OTP_INVALID);
-    }
-
-    if (user.phoneOtpExpiry < new Date()) {
-      await db.user.update({
-        where: { id: userId },
-        data: { phoneOtpHash: null, phoneOtpExpiry: null, phoneOtpAttempts: 0 },
-      });
-      throw new BadRequestException(OTP_INVALID);
-    }
-
-    const maxOtpAttempts = Number(process.env.OTP_MAX_ATTEMPTS || 5);
-    if (user.phoneOtpAttempts >= maxOtpAttempts) {
-      await db.user.update({
-        where: { id: userId },
-        data: { phoneOtpHash: null, phoneOtpExpiry: null, phoneOtpAttempts: 0 },
-      });
-      throw new BadRequestException(OTP_INVALID);
-    }
-
-    // Increment attempts before checking (costs an attempt even on failure)
-    await db.user.update({
-      where: { id: userId },
-      data: { phoneOtpAttempts: { increment: 1 } },
-    });
-
-    const codeHash = this.hashToken(code);
-    if (codeHash !== user.phoneOtpHash) {
-      throw new BadRequestException(OTP_INVALID);
-    }
-
-    // Success — mark phone as verified, clear OTP fields
-    await db.user.update({
-      where: { id: userId },
-      data: {
-        phoneVerified: true,
-        phoneOtpHash: null,
-        phoneOtpExpiry: null,
-        phoneOtpAttempts: 0,
-      },
-    });
-
-    // Same rationale as PHONE_OTP_SENT — userId uniquely identifies the user
-    // and no phone substring is needed for audit.
-    this.securityLogger.log({
-      event: 'PHONE_VERIFIED',
-      userId,
-    });
-
-    return { message: 'Phone verified successfully', phoneVerified: true };
-  }
 }

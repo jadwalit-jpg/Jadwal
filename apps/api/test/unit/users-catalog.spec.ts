@@ -13,7 +13,7 @@ jest.mock('../../src/common/services/upload.service', () => ({
   ALLOWED_MIME: [], MIME_TO_EXT: {}, ALLOWED_EXT: [],
 }));
 
-import { BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { UsersService } from '../../src/users/users.service';
 import { UsersController } from '../../src/users/users.controller';
@@ -44,7 +44,7 @@ describe('UsersService.getProfile', () => {
     const ctx = await buildUsersSut();
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
       id: 'u1', fullName: 'A', email: 'a@b.com', phone: null,
-      emailVerified: true, phoneVerified: false, role: 'CUSTOMER',
+      emailVerified: true, role: 'CUSTOMER',
       createdAt: new Date(),
     });
     ctx.prisma._client.booking.count.mockResolvedValueOnce(10);  // total
@@ -73,7 +73,6 @@ describe('UsersService.getProfile', () => {
     const call = ctx.prisma._client.user.findUnique.mock.calls[0][0];
     expect(call.select).toBeDefined();
     expect(call.select.password).toBeUndefined();
-    expect(call.select.phoneOtpHash).toBeUndefined();
   });
 });
 
@@ -85,7 +84,9 @@ describe('UsersService.updateProfile', () => {
       .rejects.toThrow(NotFoundException);
   });
 
-  test('phone change resets verification + OTP state (force re-verify)', async () => {
+  test('phone change updates the phone column directly (no OTP reset machinery)', async () => {
+    // SMS/OTP was retired — phone is now stored as-is, the canonical
+    // contact value lives on the booking (`Booking.bookingPhone`).
     const ctx = await buildUsersSut();
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
       id: 'u1', fullName: 'A', phone: '+97400000001',
@@ -93,29 +94,11 @@ describe('UsersService.updateProfile', () => {
 
     await ctx.sut.updateProfile('u1', { phone: '+97400000002' } as any);
 
-    expect(ctx.prisma._client.user.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          phone: '+97400000002',
-          phoneVerified: false,
-          phoneOtpHash: null,
-          phoneOtpExpiry: null,
-          phoneOtpAttempts: 0,
-        }),
-      }),
-    );
-  });
-
-  test('same phone resubmitted → no reset of phoneVerified (saves re-verify)', async () => {
-    const ctx = await buildUsersSut();
-    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
-      id: 'u1', fullName: 'A', phone: '+97400000001',
-    });
-
-    await ctx.sut.updateProfile('u1', { phone: '+97400000001' } as any);
-
     const data = ctx.prisma._client.user.update.mock.calls[0][0].data;
+    expect(data).toEqual({ phone: '+97400000002' });
+    // No OTP-reset side effects remain.
     expect(data).not.toHaveProperty('phoneVerified');
+    expect(data).not.toHaveProperty('phoneOtpHash');
   });
 
   test('fullName-only change → does not touch phone/OTP fields', async () => {

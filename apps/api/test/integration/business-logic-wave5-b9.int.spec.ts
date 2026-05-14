@@ -105,7 +105,6 @@ describe('§B9 — deleteUser anonymises PII + preserves financial records', () 
     expect(after!.googleId).toBeNull();
     expect(after!.verificationToken).toBeNull();
     expect(after!.passwordResetToken).toBeNull();
-    expect(after!.phoneOtpHash).toBeNull();
     expect(after!.isDeactivated).toBe(true);
     expect(after!.emailVerified).toBe(false);
   });

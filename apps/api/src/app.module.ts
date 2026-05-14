@@ -34,7 +34,6 @@ import { VendorModule } from './vendor/vendor.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { GeoModule } from './geo/geo.module';
 import { EmailModule } from './email/email.module';
-import { SmsModule } from './sms/sms.module';
 import { PaymentModule } from './payment/payment.module';
 import { CommonModule } from './common/common.module';
 import { RequestLoggerMiddleware } from './common/middleware/request-logger.middleware';
@@ -157,7 +156,6 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
     BookingsModule,
     GeoModule,
     EmailModule,
-    SmsModule,
     PaymentModule,
   ],
   controllers: [AppController],

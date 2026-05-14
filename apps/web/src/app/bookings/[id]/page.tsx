@@ -581,6 +581,20 @@ export default function BookingDetailPage() {
                   </div>
                 </div>
 
+                {/* Per-booking phone — what the customer entered when
+                    creating this booking. Shown read-only so they can
+                    verify the vendor will call the right number. */}
+                {booking.bookingPhone && (
+                  <div className="px-5 py-4 border-b border-jadwal-border-subtle">
+                    <p className="text-[11px] text-jadwal-text-muted uppercase tracking-[0.4px] mb-1">
+                      {t('booking.bookingPhoneLabel', { defaultValue: 'Contact phone' })}
+                    </p>
+                    <p className="text-sm font-medium text-jadwal-text tabular-nums">
+                      {booking.bookingPhone}
+                    </p>
+                  </div>
+                )}
+
                 {booking.activity?.locationAddress ? (
                   <DetailRow label={t('activity.location')}>
                     <p className="text-sm text-jadwal-text flex items-start gap-1.5">

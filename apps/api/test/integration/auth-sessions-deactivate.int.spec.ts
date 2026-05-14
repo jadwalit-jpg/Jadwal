@@ -15,7 +15,7 @@ import { UsersService } from '../../src/users/users.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import {
   makeJwtMock, makeConfigMock, makeSecurityLoggerMock, makeAuditLoggerMock,
-  makeEmailMock, makeSmsMock, makeNotificationMock,
+  makeEmailMock, makeNotificationMock,
   makeResponseMock, makeRequestMock,
 } from '../mocks/auth-deps.mock';
 import { UnauthorizedException, ForbiddenException, NotFoundException } from '@nestjs/common';
@@ -37,7 +37,6 @@ function makeAuth() {
     makeSecurityLoggerMock() as any,
     makeAuditLoggerMock() as any,
     makeEmailMock() as any,
-    makeSmsMock() as any,
     makeNotificationMock() as any,
   );
 }
