@@ -375,7 +375,7 @@
     "tooShortOrLong": "Phone number is too short or too long",
     "phoneNumber": "Phone Number",
     "withoutCountryCode": "Enter your number without the country code",
-    "sendCode": "Save & Continue",
+    "saveAndContinue": "Save & Continue",
     "skipForNow": "Skip for now"
   },
   "notifications": {

@@ -217,7 +217,7 @@ export function BookingPhoneModal({
                 disabled={!localNumber.trim()}
                 className="w-full mt-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
               >
-                {t('phone.sendCode')}
+                {t('phone.saveAndContinue')}
               </button>
               {allowSkip && (
                 <button

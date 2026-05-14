@@ -375,7 +375,7 @@
     "tooShortOrLong": "رقم الهاتف قصير جداً أو طويل جداً",
     "phoneNumber": "رقم الهاتف",
     "withoutCountryCode": "أدخل رقمك بدون رمز الدولة",
-    "sendCode": "حفظ ومتابعة",
+    "saveAndContinue": "حفظ ومتابعة",
     "skipForNow": "تخطي الآن"
   },
   "notifications": {

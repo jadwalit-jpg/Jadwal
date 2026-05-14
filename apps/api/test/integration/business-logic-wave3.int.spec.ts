@@ -118,6 +118,7 @@ interface OrphanFixtureOpts {
   endOffsetMs?: number;       // booking end time relative to now (ms)
   guests?: number;
   activityCapacity?: number;
+  bookingPhone?: string;
 }
 
 async function seedOrphanedPayment(opts: OrphanFixtureOpts = {}) {
@@ -147,6 +148,7 @@ async function seedOrphanedPayment(opts: OrphanFixtureOpts = {}) {
       vendorId: seed.vendor.id,
       customerId: seed.customer.id,
       guests: opts.guests ?? 2,
+      bookingPhone: opts.bookingPhone ?? '+97455123456',
       guestBreakdown: {},
       startDatetime: startDt,
       endDatetime: endDt,
@@ -303,7 +305,7 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
         vendorId: seed.vendor.id,
         customerId: seed.customer.id,
         guests: 2,
-      bookingPhone: '+97455123456',
+        bookingPhone: '+97455123456',
         guestBreakdown: {},
         startDatetime: new Date(snapshot.startDatetime),
         endDatetime: new Date(snapshot.endDatetime),
