@@ -60,6 +60,7 @@ async function seedPaidBooking(
     data: {
       ref: `JDWL-MPU-${crypto.randomUUID().slice(0, 6)}`,
       currencyCode: 'QAR', guests: 1,
+      bookingPhone: '+97455123456',
       totalPrice: opts.total, serviceFee: 0, commissionAmount: opts.commission,
       status: 'COMPLETED',
       startDatetime: start, endDatetime: new Date(start.getTime() + 3600_000),

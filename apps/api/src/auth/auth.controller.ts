@@ -14,8 +14,6 @@ import { RegisterDto } from './dto/register.dto';
 import { RegisterVendorDto } from './dto/register-vendor.dto';
 import { LoginDto } from './dto/login.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
-import { SendPhoneOtpDto } from './dto/send-phone-otp.dto';
-import { VerifyPhoneOtpDto } from './dto/verify-phone-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -321,7 +319,7 @@ export class AuthController {
   async getProfile(@CurrentUser() user: RequestUser) {
     const dbUser = await this.prisma.client.user.findUnique({
       where: { id: user.id },
-      select: { id: true, email: true, fullName: true, role: true, phone: true, phoneVerified: true },
+      select: { id: true, email: true, fullName: true, role: true, phone: true },
     });
     if (!dbUser) throw new UnauthorizedException();
 
@@ -334,32 +332,6 @@ export class AuthController {
     }
 
     return dbUser;
-  }
-
-  // ─── Phone OTP ──────────────────────────────────────────────────────────
-
-  @Post('phone/send-otp')
-  @Throttle(RATE_LIMIT_STRICT)
-  @UseGuards(JwtAuthGuard)
-  async sendPhoneOtp(
-    @CurrentUser() user: RequestUser,
-    @Body() dto: SendPhoneOtpDto,
-  ) {
-    return this.authService.sendPhoneOtp(user.id, dto.phone);
-  }
-
-  @Post('phone/verify-otp')
-  // STRICT (3/min) — phone OTP is 6-digit numeric (1M space). At 5/min
-  // a brute-force tries 7200 codes/day = 0.7% chance of hitting per
-  // day. At 3/min that drops to 4320 codes/day = 0.43% per day. Pair
-  // with per-account counter to hard-fail after N wrong codes.
-  @Throttle(RATE_LIMIT_STRICT)
-  @UseGuards(JwtAuthGuard)
-  async verifyPhoneOtp(
-    @CurrentUser() user: RequestUser,
-    @Body() dto: VerifyPhoneOtpDto,
-  ) {
-    return this.authService.verifyPhoneOtp(user.id, dto.code);
   }
 
   // ─── Password Reset ─────────────────────────────────────────────────────

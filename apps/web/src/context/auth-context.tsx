@@ -19,7 +19,6 @@ interface User {
   email: string;
   fullName: string;
   phone?: string;
-  phoneVerified?: boolean;
   role: 'CUSTOMER' | 'VENDOR' | 'ADMIN';
   vendor?: VendorProfile;
 }

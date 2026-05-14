@@ -15,11 +15,10 @@ import { AuthService } from '../../src/auth/auth.service';
 import { UsersService } from '../../src/users/users.service';
 import {
   makeJwtMock, makeConfigMock, makeSecurityLoggerMock, makeAuditLoggerMock,
-  makeEmailMock, makeEmailQuotaMock, makeSmsMock, makeNotificationMock,
+  makeEmailMock, makeEmailQuotaMock, makeNotificationMock, makeRedisMock,
   makeResponseMock, makeRequestMock,
 } from '../mocks/auth-deps.mock';
 import * as bcrypt from 'bcrypt';
-import * as crypto from 'crypto';
 
 const ctx = getTestContext();
 
@@ -39,8 +38,8 @@ function makeAuth(emailMock = makeEmailMock()) {
     makeAuditLoggerMock() as any,
     emailMock as any,
     makeEmailQuotaMock() as any,    // EmailQuotaService — mock returns true (no quota gating in tests)
-    makeSmsMock() as any,
     makeNotificationMock() as any,
+    makeRedisMock() as any,         // RedisService — in-memory stub for rate-limit / lock state
   );
   return { svc, emailMock };
 }

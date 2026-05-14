@@ -166,7 +166,6 @@ async function main() {
           password: hashedPassword,
           role: 'ADMIN',
           emailVerified: true,
-          phoneVerified: true,
           isDeactivated: false,
           verificationToken: null,
           verificationTokenExpiry: null,
@@ -181,7 +180,6 @@ async function main() {
           password: hashedPassword,
           role: 'ADMIN',
           emailVerified: true,
-          phoneVerified: true,
         },
       });
 

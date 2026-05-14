@@ -211,6 +211,7 @@ describe('VendorService.toggleActivityStatus — future-booking guard', () => {
       data: {
         ref: `JDWL-FUT-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR', guests: 2,
+      bookingPhone: '+97455123456',
         totalPrice: 200, serviceFee: 5, commissionAmount: 20,
         status: 'CONFIRMED',
         startDatetime: start, endDatetime: new Date(start.getTime() + 2 * 3600_000),
@@ -242,6 +243,7 @@ describe('VendorService.toggleActivityStatus — future-booking guard', () => {
       data: {
         ref: `JDWL-PAST-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR', guests: 1,
+      bookingPhone: '+97455123456',
         totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'COMPLETED',
         startDatetime: past, endDatetime: new Date(past.getTime() + 3600_000),

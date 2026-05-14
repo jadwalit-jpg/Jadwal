@@ -370,19 +370,13 @@
   },
   "phone": {
     "addPhone": "إضافة رقم الهاتف",
-    "verifyToBook": "تحقق من هاتفك لإكمال الحجوزات",
-    "enterCode": "أدخل رمز التحقق",
-    "codeSentTo": "تم إرسال الرمز إلى",
+    "verifyToBook": "أدخل رقم هاتفك لهذا الحجز",
     "validNumber": "أدخل رقم هاتف صحيح (أرقام فقط)",
     "tooShortOrLong": "رقم الهاتف قصير جداً أو طويل جداً",
     "phoneNumber": "رقم الهاتف",
     "withoutCountryCode": "أدخل رقمك بدون رمز الدولة",
-    "sendCode": "إرسال رمز التحقق",
-    "skipForNow": "تخطي الآن",
-    "verifying": "جاري التحقق...",
-    "didntReceive": "لم تستلم الرمز؟",
-    "resendIn": "إعادة الإرسال خلال",
-    "resend": "إعادة الإرسال"
+    "saveAndContinue": "حفظ ومتابعة",
+    "skipForNow": "تخطي الآن"
   },
   "notifications": {
     "title": "الإشعارات",

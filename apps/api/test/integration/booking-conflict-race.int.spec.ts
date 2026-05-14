@@ -95,6 +95,7 @@ describe('BookingsService.createBooking — concurrent capacity guard', () => {
           checkInDate: futureDate(7),
           slotTime: '10:00',
           guests: 1,
+      bookingPhone: '+97455123456',
           idempotencyKey: crypto.randomUUID(),
         }).catch(err => ({ err })),
       ),
@@ -140,6 +141,7 @@ describe('BookingsService.createBooking — concurrent capacity guard', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         idempotencyKey: crypto.randomUUID(),
       });
       expect(res.booking.status).toBe('PENDING');
@@ -152,6 +154,7 @@ describe('BookingsService.createBooking — concurrent capacity guard', () => {
         checkInDate: futureDate(7),
         slotTime: '10:00',
         guests: 2,
+      bookingPhone: '+97455123456',
         idempotencyKey: crypto.randomUUID(),
       }),
     ).rejects.toThrow();
@@ -183,6 +186,7 @@ describe('BookingsService.createBooking — concurrent capacity guard', () => {
         checkInDate: futureDate(7 + i),
         slotTime: '10:00',
         guests: 1,
+      bookingPhone: '+97455123456',
         idempotencyKey: crypto.randomUUID(),
       });
       expect(res.booking.status).toBe('PENDING');
@@ -205,6 +209,7 @@ describe('BookingsService.createBooking — concurrent capacity guard', () => {
         checkInDate: futureDate(7),
         slotTime: slots[i],
         guests: 1,
+      bookingPhone: '+97455123456',
         idempotencyKey: crypto.randomUUID(),
       });
       expect(res.booking.status).toBe('PENDING');

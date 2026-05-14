@@ -236,7 +236,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           password: true,
           verificationToken: true,
           passwordResetToken: true,
-          phoneOtpHash: true,
         },
         refreshToken: {
           tokenHash: true,

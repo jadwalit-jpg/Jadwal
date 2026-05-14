@@ -254,7 +254,17 @@ export default function VendorBookingsPage() {
                       <td className="px-6 py-4">
                         <p className="text-sm text-gray-900 dark:text-white">{b.customer?.fullName}</p>
                         <p className="text-xs text-gray-400 dark:text-slate-500">{b.customer?.email}</p>
-                        {b.customer?.phone && <p className="text-xs text-gray-400 dark:text-slate-500">{b.customer.phone}</p>}
+                        {/* Per-booking phone is the canonical contact for THIS booking
+                            (customer may use a different number than their account phone).
+                            Click-to-call on mobile via tel: link. */}
+                        {b.bookingPhone && (
+                          <a
+                            href={`tel:${b.bookingPhone}`}
+                            className="text-xs text-blue-600 dark:text-blue-400 hover:underline tabular-nums block"
+                          >
+                            {b.bookingPhone}
+                          </a>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600 dark:text-slate-300">
                         <p>{new Date(b.startDatetime).toLocaleDateString()}</p>
@@ -472,8 +482,13 @@ export default function VendorBookingsPage() {
                 <div className="text-end">
                   <p className="text-sm font-medium text-gray-900 dark:text-white">{viewBooking.customer?.fullName}</p>
                   <p className="text-xs text-gray-400 dark:text-slate-500">{viewBooking.customer?.email}</p>
-                  {viewBooking.customer?.phone && (
-                    <p className="text-xs text-gray-400 dark:text-slate-500">{viewBooking.customer.phone}</p>
+                  {viewBooking.bookingPhone && (
+                    <a
+                      href={`tel:${viewBooking.bookingPhone}`}
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline tabular-nums block"
+                    >
+                      {viewBooking.bookingPhone}
+                    </a>
                   )}
                 </div>
               </div>

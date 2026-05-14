@@ -62,7 +62,6 @@ export class UsersService {
         email: true,
         phone: true,
         emailVerified: true,
-        phoneVerified: true,
         role: true,
         createdAt: true,
       },
@@ -105,15 +104,11 @@ export class UsersService {
     const user = await this.prisma.client.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
-    // If phone number changed, reset verification status
-    const phoneChanged = dto.phone !== undefined && dto.phone !== user.phone;
-
     const updated = await this.prisma.client.user.update({
       where: { id: userId },
       data: {
         ...(dto.fullName !== undefined && { fullName: dto.fullName }),
         ...(dto.phone !== undefined && { phone: dto.phone }),
-        ...(phoneChanged && { phoneVerified: false, phoneOtpHash: null, phoneOtpExpiry: null, phoneOtpAttempts: 0 }),
       },
       select: {
         id: true,
@@ -121,7 +116,6 @@ export class UsersService {
         email: true,
         phone: true,
         emailVerified: true,
-        phoneVerified: true,
         role: true,
         createdAt: true,
       },

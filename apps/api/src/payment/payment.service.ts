@@ -841,8 +841,12 @@ export class PaymentService {
     }
 
     const snapshot = fresh.bookingSnapshot as any;
-    if (snapshot.v !== 1) {
+    if (snapshot.v !== 2) {
       // Unknown snapshot version — be conservative, refund.
+      // v:2 was introduced when bookingPhone became required. Prod has
+      // zero v:1 snapshots in the wild (no booking history) so refusing
+      // them is safe. A future v:3 would also refund here until the
+      // recreate path below knows the new shape.
       await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, `UNKNOWN_SNAPSHOT_VERSION:${snapshot.v}`);
       return;
     }
@@ -943,6 +947,7 @@ export class PaymentService {
             startDatetime: startDt,
             endDatetime: endDt,
             guests: snapshot.guests,
+            bookingPhone: snapshot.bookingPhone,
             guestBreakdown: snapshot.guestBreakdown ?? undefined,
             selectedExtras: snapshot.selectedExtras ?? undefined,
             totalPrice: snapshot.totalPrice,

@@ -370,19 +370,13 @@
   },
   "phone": {
     "addPhone": "Add Phone Number",
-    "verifyToBook": "Verify your phone to complete bookings",
-    "enterCode": "Enter Verification Code",
-    "codeSentTo": "Code sent to",
+    "verifyToBook": "Enter your phone for this booking",
     "validNumber": "Enter a valid phone number (digits only)",
     "tooShortOrLong": "Phone number is too short or too long",
     "phoneNumber": "Phone Number",
     "withoutCountryCode": "Enter your number without the country code",
-    "sendCode": "Send Verification Code",
-    "skipForNow": "Skip for now",
-    "verifying": "Verifying...",
-    "didntReceive": "Didn't receive the code?",
-    "resendIn": "Resend in",
-    "resend": "Resend"
+    "saveAndContinue": "Save & Continue",
+    "skipForNow": "Skip for now"
   },
   "notifications": {
     "title": "Notifications",

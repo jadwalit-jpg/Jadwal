@@ -75,6 +75,7 @@ async function seedBooking(paymentStatus: 'SUCCESS' | 'REFUND_PENDING' | 'REFUND
       vendorId: seed.vendor.id,
       customerId: seed.customer.id,
       guests: 1,
+      bookingPhone: '+97455123456',
       totalPrice: 100,
       serviceFee: 5,
       commissionPct: 10,

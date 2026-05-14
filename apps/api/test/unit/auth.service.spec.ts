@@ -2,7 +2,7 @@
  * AuthService unit tests — critical money/identity paths.
  *
  * Mocks: Prisma, JWT, Config, UsersService, SecurityLogger, AuditLogger,
- *        EmailService, SmsService, NotificationService, bcrypt.
+ *        EmailService, NotificationService, bcrypt.
  *
  * No DB, no network, no Redis. Runtime <2s.
  */
@@ -19,13 +19,12 @@ import { SecurityLoggerService } from '../../src/common/services/security-logger
 import { AuditLoggerService } from '../../src/common/services/audit-logger.service';
 import { EmailService } from '../../src/email/email.service';
 import { EmailQuotaService } from '../../src/email/email-quota.service';
-import { SmsService } from '../../src/sms/sms.service';
 import { NotificationService } from '../../src/common/services/notification.service';
 import { RedisService } from '../../src/redis/redis.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import {
   makeJwtMock, makeConfigMock, makeUsersMock, makeSecurityLoggerMock,
-  makeAuditLoggerMock, makeEmailMock, makeEmailQuotaMock, makeSmsMock, makeNotificationMock,
+  makeAuditLoggerMock, makeEmailMock, makeEmailQuotaMock, makeNotificationMock,
   makeRedisMock,
   makeResponseMock, makeRequestMock,
 } from '../mocks/auth-deps.mock';
@@ -41,7 +40,6 @@ async function buildSut(configOverrides: Record<string, string> = {}) {
   const audit = makeAuditLoggerMock();
   const email = makeEmailMock();
   const emailQuota = makeEmailQuotaMock();
-  const sms = makeSmsMock();
   const notif = makeNotificationMock();
   const redis = makeRedisMock();
 
@@ -56,7 +54,6 @@ async function buildSut(configOverrides: Record<string, string> = {}) {
       { provide: AuditLoggerService,    useValue: audit },
       { provide: EmailService,          useValue: email },
       { provide: EmailQuotaService,     useValue: emailQuota },
-      { provide: SmsService,            useValue: sms },
       { provide: NotificationService,   useValue: notif },
       { provide: RedisService,          useValue: redis },
     ],
@@ -64,7 +61,7 @@ async function buildSut(configOverrides: Record<string, string> = {}) {
 
   return {
     sut: moduleRef.get(AuthService),
-    prisma, jwt, config, users, sec, audit, email, emailQuota, sms, notif, redis,
+    prisma, jwt, config, users, sec, audit, email, emailQuota, notif, redis,
   };
 }
 

@@ -284,7 +284,7 @@ export class AdminService {
         where,
         select: {
           id: true, fullName: true, email: true, phone: true,
-          role: true, isDeactivated: true, emailVerified: true, phoneVerified: true, createdAt: true,
+          role: true, isDeactivated: true, emailVerified: true, createdAt: true,
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -473,9 +473,6 @@ export class AdminService {
           verificationTokenExpiry: null,
           passwordResetToken: null,
           passwordResetExpiry: null,
-          phoneOtpHash: null,
-          phoneOtpExpiry: null,
-          phoneOtpAttempts: 0,
           // Defence in depth — even if a future bug ever surfaces a
           // soft-deleted account in a query that forgot the deletedAt
           // filter, the deactivation flag is a second guard against
@@ -755,9 +752,6 @@ export class AdminService {
           verificationTokenExpiry: null,
           passwordResetToken: null,
           passwordResetExpiry: null,
-          phoneOtpHash: null,
-          phoneOtpExpiry: null,
-          phoneOtpAttempts: 0,
           isDeactivated: true,
           emailVerified: false,
           deletedAt: new Date(),
@@ -1071,7 +1065,7 @@ export class AdminService {
       db.booking.findMany({
         where,
         select: {
-          id: true, ref: true, guests: true, totalPrice: true, serviceFee: true,
+          id: true, ref: true, guests: true, bookingPhone: true, totalPrice: true, serviceFee: true,
           commissionPct: true, commissionAmount: true, couponCode: true, couponDiscount: true,
           // Loyalty redemption — surfaces Wanasa points used. Without these,
           // a points-funded booking renders as QAR 0 with no indication of the

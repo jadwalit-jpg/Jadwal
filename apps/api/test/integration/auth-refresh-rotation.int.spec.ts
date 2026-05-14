@@ -18,7 +18,8 @@ import { getTestContext, seedReference } from './_setup';
 import { AuthService } from '../../src/auth/auth.service';
 import {
   makeJwtMock, makeConfigMock, makeUsersMock, makeSecurityLoggerMock,
-  makeAuditLoggerMock, makeEmailMock, makeSmsMock, makeNotificationMock,
+  makeAuditLoggerMock, makeEmailMock, makeEmailQuotaMock,
+  makeNotificationMock, makeRedisMock,
   makeResponseMock, makeRequestMock,
 } from '../mocks/auth-deps.mock';
 import { UnauthorizedException, ForbiddenException } from '@nestjs/common';
@@ -40,8 +41,9 @@ function makeAuth() {
     makeSecurityLoggerMock() as any,
     makeAuditLoggerMock() as any,
     makeEmailMock() as any,
-    makeSmsMock() as any,
+    makeEmailQuotaMock() as any,
     makeNotificationMock() as any,
+    makeRedisMock() as any,
   );
   return svc;
 }

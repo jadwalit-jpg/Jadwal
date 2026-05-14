@@ -1,71 +1,20 @@
 /**
- * Wave 4 + 5 finish — sms, geo, audit/security loggers, hourly-activity
+ * Wave 4 + 5 finish — geo, audit/security loggers, hourly-activity
  * validator. Email + upload are heavy external-service wrappers and are
  * best exercised at the integration tier with fake credentials.
+ *
+ * The legacy SmsService block here was removed when SMS/OTP was retired —
+ * the platform now relies on email only, and per-booking phone is
+ * collected at booking-create time, not verified.
  */
 
 import { Test } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
-import { SmsService } from '../../src/sms/sms.service';
 import { GeoService } from '../../src/geo/geo.service';
 import { AuditLoggerService } from '../../src/common/services/audit-logger.service';
 import { SecurityLoggerService } from '../../src/common/services/security-logger.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
-import { ConfigService } from '@nestjs/config';
 import { assertHourlyTimesConsistent } from '../../src/common/validators/hourly-activity';
 import { makePrismaMock } from '../mocks/prisma.mock';
-import { makeConfigMock } from '../mocks/auth-deps.mock';
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SmsService
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe('SmsService', () => {
-  async function build(enabled = false) {
-    const config = makeConfigMock({ SMS_ENABLED: enabled ? 'true' : 'false' });
-    const mod = await Test.createTestingModule({
-      providers: [SmsService, { provide: ConfigService, useValue: config }],
-    }).compile();
-    return { sut: mod.get(SmsService) };
-  }
-
-  test('production + SMS_ENABLED=false → constructor throws (fail-closed)', async () => {
-    const originalEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
-    try {
-      const config = makeConfigMock({ SMS_ENABLED: 'false' });
-      await expect(
-        Test.createTestingModule({
-          providers: [SmsService, { provide: ConfigService, useValue: config }],
-        }).compile(),
-      ).rejects.toThrow(/SMS_ENABLED must be true/);
-    } finally {
-      process.env.NODE_ENV = originalEnv;
-    }
-  });
-
-  test('sendOtp rejects non-6-digit codes (prevents log injection)', async () => {
-    const ctx = await build(false);
-    await expect(ctx.sut.sendOtp('+97412345678', { code: 'abc123' })).resolves.toBe(false);
-    await expect(ctx.sut.sendOtp('+97412345678', { code: '12345' })).resolves.toBe(false);
-    await expect(ctx.sut.sendOtp('+97412345678', { code: '1234567' })).resolves.toBe(false);
-    await expect(ctx.sut.sendOtp('+97412345678', { code: '123 456' })).resolves.toBe(false);
-  });
-
-  test('sendOtp with valid 6-digit code → dev path returns true', async () => {
-    const ctx = await build(false);
-    expect(await ctx.sut.sendOtp('+97412345678', { code: '123456' })).toBe(true);
-  });
-
-  test('maskPhone format: +974***5678 (first 4 + *** + last 4)', async () => {
-    const ctx = await build(false);
-    // Access private via type cast
-    const masked = (ctx.sut as any).maskPhone('+97412345678');
-    expect(masked).toBe('+974***5678');
-    // Never contains the middle digits
-    expect(masked).not.toMatch(/1234567/);
-  });
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GeoService

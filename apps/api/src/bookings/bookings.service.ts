@@ -98,6 +98,7 @@ export type BookingSnapshot = {
   startDatetime: string;        // ISO string — Json field can't hold Date
   endDatetime: string;
   guests: number;
+  bookingPhone: string;         // v:2 — per-booking phone (E.164)
   guestBreakdown: any | null;
   selectedExtras: any | null;
   totalPrice: string;           // Decimal serialised as string to avoid float drift
@@ -114,7 +115,10 @@ export type BookingSnapshot = {
   /// Snapshot version — bump when the shape changes so the callback
   /// branch can fall back to the refund path on an unrecognised shape
   /// rather than recreating with stale assumptions.
-  v: 1;
+  /// v:2 — added bookingPhone (per-booking phone, replacing the removed
+  /// User.phoneVerified OTP machinery). prod has zero v:1 snapshots in
+  /// the wild (no bookings) so the bump is safe.
+  v: 2;
 };
 
 export function buildBookingSnapshot(booking: {
@@ -126,6 +130,7 @@ export function buildBookingSnapshot(booking: {
   startDatetime: Date;
   endDatetime: Date;
   guests: number;
+  bookingPhone: string;
   guestBreakdown: any;
   selectedExtras: any;
   totalPrice: any;            // Prisma.Decimal
@@ -151,6 +156,7 @@ export function buildBookingSnapshot(booking: {
     startDatetime: booking.startDatetime.toISOString(),
     endDatetime: booking.endDatetime.toISOString(),
     guests: booking.guests,
+    bookingPhone: booking.bookingPhone,
     guestBreakdown: booking.guestBreakdown ?? null,
     selectedExtras: booking.selectedExtras ?? null,
     totalPrice: dec(booking.totalPrice),
@@ -164,7 +170,7 @@ export function buildBookingSnapshot(booking: {
     currencyCode: booking.currencyCode,
     idempotencyKey: booking.idempotencyKey ?? null,
     originalCreatedAt: booking.createdAt.toISOString(),
-    v: 1,
+    v: 2,
   };
 }
 
@@ -1335,6 +1341,7 @@ export class BookingsService {
               startDatetime,
               endDatetime,
               guests: dto.guests,
+              bookingPhone: dto.bookingPhone,
               guestBreakdown: dto.guestBreakdown ?? undefined,
               selectedExtras: selectedExtras.length > 0 ? selectedExtras : undefined,
               totalPrice: finalTotalPrice,
@@ -1401,6 +1408,7 @@ export class BookingsService {
             startDatetime,
             endDatetime,
             guests: dto.guests,
+            bookingPhone: dto.bookingPhone,
             guestBreakdown: dto.guestBreakdown ?? undefined,
             selectedExtras: selectedExtras.length > 0 ? selectedExtras : undefined,
             totalPrice: finalTotalPrice,

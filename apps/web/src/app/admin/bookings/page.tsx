@@ -15,6 +15,7 @@ interface Booking {
   id: string;
   ref: string;
   guests: number;
+  bookingPhone: string;
   totalPrice: string;
   serviceFee: string;
   commissionPct: string;
@@ -153,6 +154,7 @@ export default function AdminBookingsPage() {
         Ref: b.ref,
         Customer: b.customer?.fullName ?? '',
         Email: b.customer?.email ?? '',
+        BookingPhone: b.bookingPhone ?? '',
         Activity: b.activity?.titleEn ?? '',
         Vendor: b.vendor?.businessNameEn ?? '',
         StartDate: new Date(b.startDatetime).toISOString().slice(0, 16).replace('T', ' '),
@@ -360,6 +362,17 @@ export default function AdminBookingsPage() {
                                 <p className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider">Customer</p>
                                 <p className="font-medium text-gray-900 dark:text-white leading-tight">{booking.customer.fullName}</p>
                                 <p className="text-xs text-gray-500 dark:text-slate-400 break-all">{booking.customer.email}</p>
+                                {booking.bookingPhone && (
+                                  <p className="text-xs text-gray-500 dark:text-slate-400">
+                                    Booking phone:{' '}
+                                    <a
+                                      href={`tel:${booking.bookingPhone}`}
+                                      className="text-blue-600 dark:text-blue-400 hover:underline tabular-nums"
+                                    >
+                                      {booking.bookingPhone}
+                                    </a>
+                                  </p>
+                                )}
                               </div>
 
                               {/* ── Dates ── */}

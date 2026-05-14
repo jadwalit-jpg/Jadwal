@@ -53,6 +53,7 @@ async function seedEligible(seed: Awaited<ReturnType<typeof seedReference>>) {
     data: {
       ref: `JDWL-TWO-${crypto.randomUUID().slice(0, 6)}`,
       currencyCode: 'QAR', guests: 1,
+      bookingPhone: '+97455123456',
       totalPrice: 300, serviceFee: 0, commissionAmount: 30,
       status: 'COMPLETED',
       startDatetime: start, endDatetime: new Date(start.getTime() + 3600_000),

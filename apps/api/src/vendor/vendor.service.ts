@@ -380,11 +380,13 @@ export class VendorService {
       if (query.dateFrom) (where.startDatetime as any).gte = new Date(query.dateFrom);
       if (query.dateTo) (where.startDatetime as any).lte = new Date(query.dateTo);
     }
-    // Search by booking ref or customer name/phone
+    // Search by booking ref, customer name/account phone, OR the
+    // per-booking phone (vendor's primary contact for this booking).
     if (query.search) {
       const s = query.search.trim();
       where.OR = [
         { ref: { contains: s, mode: 'insensitive' } },
+        { bookingPhone: { contains: s, mode: 'insensitive' } },
         { customer: { fullName: { contains: s, mode: 'insensitive' } } },
         { customer: { phone: { contains: s, mode: 'insensitive' } } },
       ];

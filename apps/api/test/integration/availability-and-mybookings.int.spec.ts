@@ -102,6 +102,7 @@ describe('BookingsService.getHourlyAvailability', () => {
       data: {
         ref: `JDWL-PRE-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR', guests: 2,
+      bookingPhone: '+97455123456',
         totalPrice: 200, serviceFee: 5, commissionAmount: 20,
         status: 'CONFIRMED',
         startDatetime: start, endDatetime: new Date(start.getTime() + 2 * 3600_000),
@@ -207,6 +208,7 @@ describe('BookingsService.getMyBookings — pagination + status filter', () => {
         data: {
           ref: `JDWL-MY-${i}-${crypto.randomUUID().slice(0, 6)}`,
           currencyCode: 'QAR', guests: 1,
+      bookingPhone: '+97455123456',
           totalPrice: 100, serviceFee: 0, commissionAmount: 10,
           status: e.status as any,
           startDatetime: start,

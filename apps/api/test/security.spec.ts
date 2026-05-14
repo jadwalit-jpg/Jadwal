@@ -194,82 +194,39 @@ describe('JWT & Token Security', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 4. PHONE OTP SECURITY
+// 4. PER-BOOKING PHONE VALIDATION
+// (SMS/OTP security checks retired — platform now relies on email-only
+//  verification + per-booking phone collection without SMS round-trip.)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('Phone OTP Security', () => {
-  const authService = readSrc('src/auth/auth.service.ts');
-
-  test('CRITICAL: OTP is hashed before storage (SHA-256)', () => {
-    expect(authService).toContain('phoneOtpHash');
-    expect(authService).toContain('hashToken(otp)');
+describe('Per-Booking Phone Validation', () => {
+  test('CRITICAL: bookingPhone is required + format-validated in CreateBookingDto', () => {
+    const dto = readSrc('src/bookings/dto/create-booking.dto.ts');
+    expect(dto).toContain('bookingPhone');
+    // Required (NotEmpty), max length cap, E.164 regex — all attached
+    // to the bookingPhone field's decorator block.
+    expect(dto).toMatch(
+      /@IsNotEmpty[\s\S]*?@MaxLength\(20[\s\S]*?@Matches\(\/\^\\\+\?\[0-9\]\{7,15\}\$\/[\s\S]*?bookingPhone/,
+    );
   });
 
-  test('CRITICAL: OTP codes are NEVER logged', () => {
-    const smsService = readSrc('src/sms/sms.service.ts');
-    // The dev log should NOT contain the message content
-    expect(smsService).not.toMatch(/logger.*debug.*\$\{message\}/);
-    expect(smsService).toContain('SMS OTP sent to');
-    // Should contain masked phone, not full message
-    expect(smsService).toContain('slice(0, 4)');
+  test('CRITICAL: Booking model carries bookingPhone column with VarChar(20)', () => {
+    const schema = readSrc('prisma/schema.prisma');
+    expect(schema).toMatch(/bookingPhone\s+String\s+@db\.VarChar\(20\)/);
+    // Lookup index for vendor/admin support search
+    expect(schema).toContain('@@index([bookingPhone])');
   });
 
-  test('CRITICAL: OTP is NEVER exposed in API response (no dev-bypass)', () => {
-    // Stricter than before — the service must not even HAVE a devOtp return path.
-    // Any such path is a prod-misconfig waiting to leak OTPs. No env-var bypass either.
-    expect(authService).not.toContain('devOtp');
-    expect(authService).not.toContain('EXPOSE_DEV_OTP');
-  });
-
-  test('HIGH: max OTP verify attempts is env-configurable (not hardcoded)', () => {
-    // Per check-security skill: prefer env var over magic number.
-    expect(authService).toContain('OTP_MAX_ATTEMPTS');
-    expect(authService).toMatch(/phoneOtpAttempts\s*>=\s*maxOtpAttempts/);
-    // Lockout branch must throw — wording is intentionally generic so the
-    // client can't distinguish lockout from "wrong code" / "no pending".
-    expect(authService).toMatch(/phoneOtpAttempts\s*>=\s*maxOtpAttempts[\s\S]{0,400}throw new BadRequestException/);
-  });
-
-  test('HIGH: attempt counter incremented BEFORE comparing', () => {
-    const verifySection = authService.slice(authService.indexOf('verifyPhoneOtp'));
-    const incrementPos = verifySection.indexOf('increment: 1');
-    const comparePos = verifySection.indexOf('codeHash !== user.phoneOtpHash');
-    expect(incrementPos).toBeLessThan(comparePos);
-  });
-
-  test('HIGH: OTP expiry is env-configurable (not hardcoded 5 * 60 * 1000)', () => {
-    // Per check-security skill: OTP_EXPIRY_MINUTES env var, not magic number.
-    expect(authService).toContain('OTP_EXPIRY_MINUTES');
-    expect(authService).toContain('phoneOtpExpiry');
-    expect(authService).toMatch(/otpExpiryMinutes\s*\*\s*60\s*\*\s*1000/);
-  });
-
-  test('HIGH: phone uniqueness check before OTP send', () => {
-    // Verify the uniqueness lookup (no enumeration via the "already verified
-    // by another account" message — message itself is now generic).
-    expect(authService).toMatch(/findFirst\([\s\S]*?phoneVerified:\s*true/);
-    expect(authService).toContain('This phone number cannot be used for verification');
-  });
-
-  test('MEDIUM: OTP is exactly 6 digits', () => {
-    // crypto.randomInt(100000, 999999) generates 6-digit numbers
-    expect(authService).toContain('randomInt(100000, 999999)');
-
-    // Backend DTO validates exactly 6 digits
-    const dto = readSrc('src/auth/dto/verify-phone-otp.dto.ts');
-    expect(dto).toContain('Length(6, 6)');
-    expect(dto).toContain('^[0-9]{6}$');
-  });
-
-  test('MEDIUM: SMS service validates OTP format before sending', () => {
-    const smsService = readSrc('src/sms/sms.service.ts');
-    expect(smsService).toContain('^[0-9]{6}$');
-  });
-
-  test('MEDIUM: phone change resets phoneVerified', () => {
-    const usersService = readSrc('src/users/users.service.ts');
-    expect(usersService).toContain('phoneChanged');
-    expect(usersService).toContain('phoneVerified: false');
+  test('HIGH: SMS service + phone-OTP machinery are fully removed', () => {
+    const fs = require('fs');
+    const smsDir = 'src/sms';
+    // sms/ directory must not exist after the OTP removal.
+    expect(fs.existsSync(smsDir)).toBe(false);
+    const authService = readSrc('src/auth/auth.service.ts');
+    expect(authService).not.toContain('sendPhoneOtp');
+    expect(authService).not.toContain('verifyPhoneOtp');
+    expect(authService).not.toContain('phoneOtpHash');
+    expect(authService).not.toContain('phoneVerified');
   });
 });
 
@@ -283,10 +240,10 @@ describe('Rate Limiting', () => {
 
     // Login endpoint has @Throttle
     expect(authController).toMatch(/@Throttle.*\n.*@Post\('login'\)/s);
-
-    // Phone OTP send uses the strictest tier (named constant, not inline numbers).
-    // Per check-security skill: every mutation uses RATE_LIMIT_* constants.
-    expect(authController).toMatch(/send-otp[\s\S]{0,200}@Throttle\(RATE_LIMIT_STRICT\)/);
+    // Forgot-password endpoint uses a named RATE_LIMIT_* constant (no inline
+    // throttle numbers anywhere in the auth controller — check-security rule).
+    expect(authController).toMatch(/@Throttle\(RATE_LIMIT_/);
+    expect(authController).not.toMatch(/@Throttle\(\{[^}]*ttl:\s*\d+/);
   });
 
   test('HIGH: admin controller is NOT @SkipThrottle at class level', () => {
@@ -376,12 +333,6 @@ describe('Input Validation & Database Protection', () => {
     expect(bookingDto).toContain('IsUUID');
   });
 
-  test('MEDIUM: phone OTP DTO uses E.164 format validation', () => {
-    const sendOtpDto = readSrc('src/auth/dto/send-phone-otp.dto.ts');
-    expect(sendOtpDto).toContain('E.164');
-    expect(sendOtpDto).toContain('^\\+[0-9]{7,15}$');
-  });
-
   test('MEDIUM: Helmet.js security headers enabled', () => {
     const main = readSrc('src/main.ts');
     expect(main).toContain('helmet');
@@ -400,14 +351,6 @@ describe('Input Validation & Database Protection', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('AWS Service Skeletons (Production Readiness)', () => {
-  test('SMS service has production SNS code commented and ready', () => {
-    const smsService = readSrc('src/sms/sms.service.ts');
-    expect(smsService).toContain('SNSClient');
-    expect(smsService).toContain('PublishCommand');
-    expect(smsService).toContain('SMS_ENABLED');
-    expect(smsService).toContain('Transactional');
-  });
-
   test('Email service has production SES code commented and ready', () => {
     const emailService = readSrc('src/email/email.service.ts');
     // Migrated to SES v2 SDK on 2026-05-06 — v1 API can't carry custom MIME
@@ -416,15 +359,6 @@ describe('AWS Service Skeletons (Production Readiness)', () => {
     expect(emailService).toContain('SendEmailCommand');
     expect(emailService).toContain('EMAIL_ENABLED');
     expect(emailService).toContain('EMAIL_FROM');
-  });
-
-  test('SMS module is global and properly registered', () => {
-    const smsModule = readSrc('src/sms/sms.module.ts');
-    expect(smsModule).toContain('@Global()');
-    expect(smsModule).toContain('SmsService');
-
-    const appModule = readSrc('src/app.module.ts');
-    expect(appModule).toContain('SmsModule');
   });
 
   test('Email module is global and properly registered', () => {
@@ -486,10 +420,13 @@ describe('Booking & Payment Security', () => {
     expect(bookingDto).toContain('idempotencyKey');
   });
 
-  webTest('HIGH: frontend requires phone verification before booking', () => {
+  webTest('HIGH: frontend requires per-booking phone before booking', () => {
     const bookPage = readSrc('../../apps/web/src/app/activity/[slug]/book/page.tsx');
-    expect(bookPage).toContain('phoneVerified');
+    // Booking submission is gated on the customer entering a phone
+    // for THIS booking (replacement for the legacy phone-OTP gate).
+    expect(bookPage).toContain('bookingPhone');
     expect(bookPage).toContain('showPhoneModal');
+    expect(bookPage).toContain('BookingPhoneModal');
   });
 
   test('MEDIUM: booking cancellation checks ownership (IDOR protection)', () => {
@@ -509,23 +446,6 @@ describe('Privacy & Data Protection', () => {
     // Should NOT return raw fullName in public endpoint
     const detailSection = catalogController.slice(catalogController.indexOf('getActivityBySlug'));
     expect(detailSection).toContain('displayName');
-  });
-
-  test('MEDIUM: security logger does not log raw PII', () => {
-    const authService = readSrc('src/auth/auth.service.ts');
-    // Phone OTP events must NOT log the phone number at all — not even the
-    // last 4 digits. userId in the log row is sufficient; storing phone
-    // substrings is redundant and reconstructable via frequency analysis.
-    // Check inside the phone-OTP section specifically.
-    const phoneBlock = authService.slice(
-      authService.indexOf('async sendPhoneOtp'),
-      authService.indexOf('// ─', authService.indexOf('async verifyPhoneOtp')),
-    );
-    expect(phoneBlock).not.toContain('Phone ending in');
-    expect(phoneBlock).not.toMatch(/slice\(-4\)/);
-    // Event name is still logged
-    expect(phoneBlock).toContain("event: 'PHONE_OTP_SENT'");
-    expect(phoneBlock).toContain("event: 'PHONE_VERIFIED'");
   });
 
   test('MEDIUM: .env file is in gitignore pattern', () => {

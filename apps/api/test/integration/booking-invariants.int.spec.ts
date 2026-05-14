@@ -286,6 +286,7 @@ describe('Seat accounting — capacity guards', () => {
         activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
         ref: `JDWL-${i}`,
         guests: 2,
+      bookingPhone: '+97455123456',
         startDatetime: start, endDatetime: end,
       });
     }

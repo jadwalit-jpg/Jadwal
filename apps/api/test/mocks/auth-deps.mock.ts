@@ -78,13 +78,6 @@ export function makeEmailQuotaMock() {
   };
 }
 
-export function makeSmsMock() {
-  return {
-    sendOtp:        jest.fn().mockResolvedValue(undefined),
-    sendBookingSms: jest.fn().mockResolvedValue(undefined),
-  };
-}
-
 export function makeNotificationMock() {
   return {
     send:         jest.fn().mockResolvedValue(undefined),

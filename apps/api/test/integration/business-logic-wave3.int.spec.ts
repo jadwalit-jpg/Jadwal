@@ -118,6 +118,7 @@ interface OrphanFixtureOpts {
   endOffsetMs?: number;       // booking end time relative to now (ms)
   guests?: number;
   activityCapacity?: number;
+  bookingPhone?: string;
 }
 
 async function seedOrphanedPayment(opts: OrphanFixtureOpts = {}) {
@@ -147,6 +148,7 @@ async function seedOrphanedPayment(opts: OrphanFixtureOpts = {}) {
       vendorId: seed.vendor.id,
       customerId: seed.customer.id,
       guests: opts.guests ?? 2,
+      bookingPhone: opts.bookingPhone ?? '+97455123456',
       guestBreakdown: {},
       startDatetime: startDt,
       endDatetime: endDt,
@@ -293,6 +295,7 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     const { basketId, paymentId, amountStr, snapshot, seed } = await seedOrphanedPayment({
       activityCapacity: 2,                  // tiny capacity to force conflict
       guests: 2,
+      bookingPhone: '+97455123456',
     });
     // While the original customer was at PAY2M, another customer booked the slot
     await ctx.prisma.booking.create({
@@ -302,6 +305,7 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
         vendorId: seed.vendor.id,
         customerId: seed.customer.id,
         guests: 2,
+        bookingPhone: '+97455123456',
         guestBreakdown: {},
         startDatetime: new Date(snapshot.startDatetime),
         endDatetime: new Date(snapshot.endDatetime),
@@ -627,6 +631,7 @@ describe('§M6 — callback un-cancels SYSTEM-cancelled booking when safe', () =
         vendorId: seed.vendor.id,
         customerId: seed.customer.id,
         guests: 2,
+      bookingPhone: '+97455123456',
         guestBreakdown: {},
         startDatetime: new Date(Date.now() + 24 * 3600_000),
         endDatetime:   new Date(Date.now() + 26 * 3600_000),
@@ -696,6 +701,7 @@ describe('booking snapshot is server-derived', () => {
       startDatetime: new Date('2030-01-01T10:00:00Z'),
       endDatetime: new Date('2030-01-01T12:00:00Z'),
       guests: 2,
+      bookingPhone: '+97455123456',
       guestBreakdown: { adults: 2 },
       selectedExtras: null,
       totalPrice: { toString: () => '200.00' },
