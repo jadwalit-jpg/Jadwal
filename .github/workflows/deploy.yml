@@ -245,7 +245,7 @@ jobs:
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
 
-      - uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3
+      - uses: github/codeql-action/upload-sarif@68bde559dea0fdcac2102bfdf6230c5f70eb485e # v3
         if: always()
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
