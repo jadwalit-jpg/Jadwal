@@ -44,7 +44,7 @@ test.describe('Customer detail to book and pay (mocked)', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          formAction: 'https://payments.pay2m.com/mock-checkout',
+          formAction: 'https://pay.pay2m.com/mock-checkout',
           formFields: { orderId: 'pw-e2e-123', amount: '100.00' },
         }),
       });

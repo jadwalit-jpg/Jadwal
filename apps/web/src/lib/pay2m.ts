@@ -12,7 +12,7 @@
  * middleware.ts and the backend env validation.
  */
 
-const DEFAULT_ALLOWED_ORIGINS = ['https://payments.pay2m.com'] as const;
+const DEFAULT_ALLOWED_ORIGINS = ['https://pay.pay2m.com'] as const;
 
 function readAllowedOriginsFromEnv(): readonly string[] {
   const raw = process.env.NEXT_PUBLIC_PAY2M_ALLOWED_ORIGINS;
