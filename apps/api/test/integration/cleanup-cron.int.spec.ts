@@ -107,7 +107,7 @@ async function mkPendingBooking(opts: {
     data: {
       ref: `JDWL-STALE-${crypto.randomUUID().slice(0, 6)}`,
       currencyCode: 'QAR',
-      guests: 2, totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+      guests: 2, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
       status: 'PENDING',
       startDatetime: start, endDatetime: end,
       activityId: opts.seed.activity.id,
@@ -233,7 +233,7 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
       data: {
         ref: `JDWL-CNF-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR',
-        guests: 2, totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        guests: 2, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'CONFIRMED',
         startDatetime: confirmedStart,
         endDatetime: new Date(confirmedStart.getTime() + 2 * 3600_000),
@@ -248,7 +248,7 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
       data: {
         ref: `JDWL-CNC-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR',
-        guests: 2, totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        guests: 2, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'CANCELLED',
         startDatetime: cancelledStart,
         endDatetime: new Date(cancelledStart.getTime() + 2 * 3600_000),
@@ -314,7 +314,7 @@ describe('CleanupService.autoCompletePastBookings', () => {
       data: {
         ref: `JDWL-PAST-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR',
-        guests: 2, totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        guests: 2, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'CONFIRMED',
         startDatetime: new Date('2020-01-01T10:00:00Z'),
         endDatetime:   new Date('2020-01-01T12:00:00Z'),
@@ -326,7 +326,7 @@ describe('CleanupService.autoCompletePastBookings', () => {
       data: {
         ref: `JDWL-FUT-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR',
-        guests: 2, totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        guests: 2, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'CONFIRMED',
         startDatetime: new Date('2030-09-05T10:00:00Z'),
         endDatetime:   new Date('2030-09-05T12:00:00Z'),
@@ -354,7 +354,7 @@ describe('CleanupService.autoCompletePastBookings', () => {
       data: {
         ref: `JDWL-EARN-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR',
-        guests: 2, totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        guests: 2, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'CONFIRMED',
         startDatetime: new Date('2020-01-01T10:00:00Z'),
         endDatetime:   new Date('2020-01-01T12:00:00Z'),
@@ -389,7 +389,7 @@ describe('CleanupService.autoCompletePastBookings', () => {
       data: {
         ref: `JDWL-CPAST-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR',
-        guests: 2, totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        guests: 2, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'CANCELLED',
         startDatetime: new Date('2020-01-01T10:00:00Z'),
         endDatetime:   new Date('2020-01-01T12:00:00Z'),

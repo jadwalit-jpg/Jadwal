@@ -71,7 +71,12 @@ function makePaymentService() {
 }
 
 /** Seed a PENDING booking + linked PENDING payment for `customerId`. */
-async function seedPendingBooking(customerId: string, activityId: string, vendorId: string) {
+async function seedPendingBooking(
+  customerId: string,
+  activityId: string,
+  vendorId: string,
+  bookingPhone = '+97455123456',
+) {
   const payment = await ctx.prisma.payment.create({
     data: { amount: 200, currency: 'QAR', status: 'PENDING', method: 'PAY2M' },
   });
@@ -79,6 +84,7 @@ async function seedPendingBooking(customerId: string, activityId: string, vendor
     data: {
       ref: `JDWL-INIT-${crypto.randomUUID().slice(0, 6)}`,
       currencyCode: 'QAR', guests: 2, totalPrice: 200, serviceFee: 5, commissionAmount: 20,
+      bookingPhone,
       status: 'PENDING',
       startDatetime: new Date('2030-10-01T10:00:00Z'),
       endDatetime:   new Date('2030-10-01T12:00:00Z'),
@@ -133,5 +139,27 @@ describe('PaymentService.initiatePayment — R3 idempotency', () => {
     expect(res.idempotent).toBe(false);
     const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(p.idempotencyKey).toBeNull();
+  });
+
+  test('PAY2M form CUSTOMER_MOBILE_NO uses booking.bookingPhone, not User.phone', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makePaymentService();
+
+    // Force the account-level phone to be NULL on the seeded customer so that
+    // booking.bookingPhone is the only viable source for the mandatory PAY2M
+    // CUSTOMER_MOBILE_NO field. This mirrors the post-PR#264 reality where
+    // User.phone is optional but the per-booking phone is required.
+    await ctx.prisma.user.update({
+      where: { id: seed.customer.id },
+      data: { phone: null },
+    });
+
+    const { bookingId } = await seedPendingBooking(
+      seed.customer.id, seed.activity.id, seed.vendor.id,
+      '+97455999888',  // explicit per-booking phone that must show up in the form
+    );
+
+    const res = await svc.initiatePayment(bookingId, seed.customer.id);
+    expect(res.formFields.CUSTOMER_MOBILE_NO).toBe('+97455999888');
   });
 });

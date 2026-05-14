@@ -276,6 +276,7 @@ export class PaymentService {
         reservedUntil: true,
         paymentId: true,
         ref: true,
+        bookingPhone: true,
         activity: { select: { titleEn: true } },
       },
     });
@@ -369,14 +370,20 @@ export class PaymentService {
         select: { email: true, phone: true, fullName: true },
       });
 
-      // 6. Build form payload
+      // 6. Build form payload.
+      // PAY2M's CUSTOMER_MOBILE_NO is MANDATORY (per PAY2M API docs §3.3).
+      // Source priority:
+      //   1. booking.bookingPhone — the per-booking contact phone the customer
+      //      entered at checkout (required, NOT NULL since PR #264).
+      //   2. customer.phone — defensive fallback only for any pre-bookingPhone
+      //      legacy rows; never expected to fire on post-migration bookings.
       const formFields = this.buildFormPayload({
         token,
         basketId,
         amount,
         currency: payment.currency,
         customerEmail: customer?.email || '',
-        customerPhone: customer?.phone || '',
+        customerPhone: booking.bookingPhone || customer?.phone || '',
         description: `Booking ${booking.ref} — ${booking.activity?.titleEn || 'Activity'}`,
         orderDate: new Date().toISOString().replace('T', ' ').slice(0, 19), // "YYYY-MM-DD HH:mm:ss" matching PAY2M PHP example
       });

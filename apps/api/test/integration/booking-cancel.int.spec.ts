@@ -83,7 +83,7 @@ async function seedPaidBooking(opts: {
   const booking = await ctx.prisma.booking.create({
     data: {
       ref: `JDWL-CAN-${crypto.randomUUID().slice(0, 6)}`,
-      currencyCode: 'QAR', guests: 2, totalPrice: paid, serviceFee: 5, commissionAmount: 20,
+      currencyCode: 'QAR', guests: 2, bookingPhone: '+97455123456', totalPrice: paid, serviceFee: 5, commissionAmount: 20,
       status: 'CONFIRMED', startDatetime: start, endDatetime: end,
       activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
       paymentId: payment.id, pointsRedeemed,
@@ -129,7 +129,7 @@ describe('BookingsService.cancelBooking — unpaid booking', () => {
     const booking = await ctx.prisma.booking.create({
       data: {
         ref: `JDWL-UNPAID-${crypto.randomUUID().slice(0, 6)}`,
-        currencyCode: 'QAR', guests: 1, totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'PENDING',
         startDatetime: start, endDatetime: new Date(start.getTime() + 2 * 3600_000),
         activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
@@ -249,7 +249,7 @@ describe('BookingsService.cancelBooking — points-only booking', () => {
     const booking = await ctx.prisma.booking.create({
       data: {
         ref: `JDWL-WN-${crypto.randomUUID().slice(0, 6)}`,
-        currencyCode: 'QAR', guests: 1, totalPrice: 100, serviceFee: 0, commissionAmount: 10,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 0, commissionAmount: 10,
         status: 'CONFIRMED',
         startDatetime: start, endDatetime: new Date(start.getTime() + 2 * 3600_000),
         activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
@@ -326,7 +326,7 @@ describe('BookingsService.cancelBooking — guards', () => {
     const booking = await ctx.prisma.booking.create({
       data: {
         ref: `JDWL-STARTED-${crypto.randomUUID().slice(0, 6)}`,
-        currencyCode: 'QAR', guests: 1, totalPrice: 100, serviceFee: 0, commissionAmount: 10,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 0, commissionAmount: 10,
         status: 'CONFIRMED',
         startDatetime: start, endDatetime: new Date(start.getTime() + 2 * 3600_000),
         activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
@@ -517,7 +517,7 @@ describe('BookingsService.recordRefundDecision — guards', () => {
     const booking = await ctx.prisma.booking.create({
       data: {
         ref: `JDWL-NOPAY-${crypto.randomUUID().slice(0, 6)}`,
-        currencyCode: 'QAR', guests: 1, totalPrice: 100, serviceFee: 0, commissionAmount: 10,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 0, commissionAmount: 10,
         status: 'CANCELLED',
         startDatetime: start, endDatetime: new Date(start.getTime() + 2 * 3600_000),
         activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,

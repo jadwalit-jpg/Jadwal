@@ -111,7 +111,7 @@ async function seedWithBookings(opts: {
       data: {
         ref: `JDWL-CAS-${i}-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR',
-        guests: 2, totalPrice: paymentAmount, serviceFee: 5, commissionAmount: 20,
+        guests: 2, bookingPhone: '+97455123456', totalPrice: paymentAmount, serviceFee: 5, commissionAmount: 20,
         status: 'CONFIRMED',
         startDatetime: start, endDatetime: end,
         activityId: seed.activity.id,
@@ -131,7 +131,7 @@ async function seedWithBookings(opts: {
     data: {
       ref: `JDWL-PAST-${crypto.randomUUID().slice(0, 6)}`,
       currencyCode: 'QAR',
-      guests: 2, totalPrice: paymentAmount, serviceFee: 5, commissionAmount: 20,
+      guests: 2, bookingPhone: '+97455123456', totalPrice: paymentAmount, serviceFee: 5, commissionAmount: 20,
       status: 'CONFIRMED',
       startDatetime: pastStart, endDatetime: pastEnd,
       activityId: seed.activity.id,
@@ -281,7 +281,7 @@ describe('AdminService.updateVendorStatus — SUSPENDED cascade', () => {
       data: {
         ref: `JDWL-PEND-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR',
-        guests: 1, totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'PENDING',
         startDatetime: start, endDatetime: new Date(start.getTime() + 2 * 3600_000),
         activityId: seed.activity.id, customerId: buyer.id, vendorId: seed.vendor.id,
@@ -441,7 +441,7 @@ describe('AdminService.updateActivityStatus — single-activity cascade', () => 
       data: {
         ref: `JDWL-OTHER-${crypto.randomUUID().slice(0, 6)}`,
         currencyCode: 'QAR',
-        guests: 2, totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        guests: 2, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'CONFIRMED',
         startDatetime: new Date('2030-07-20T10:00:00Z'),
         endDatetime: new Date('2030-07-20T12:00:00Z'),

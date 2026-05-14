@@ -644,13 +644,22 @@ export default function BookActivityPage() {
       return;
     }
     // Gate: customer must supply a per-booking phone before we hit the
-    // backend. The modal collects + normalises to E.164 and writes into
-    // `bookingPhone` state via its onSubmit callback; the DTO does the
-    // canonical regex check server-side.
+    // backend. The modal collects + normalises to E.164, writes into the
+    // `bookingPhone` state, AND directly invokes submitWithPhone() — so the
+    // customer doesn't have to click "Continue to Pay" a second time after
+    // the modal closes (a setState batch would have left `bookingPhone`
+    // empty for the rest of this tick anyway).
     if (!bookingPhone) {
       setShowPhoneModal(true);
       return;
     }
+    submitWithPhone(bookingPhone);
+  };
+
+  // Phone-arg-passed submit. Called from handleSubmit() once bookingPhone
+  // is already in state, AND directly from the modal's onSubmit so the
+  // freshly-entered phone is used immediately (no second click).
+  const submitWithPhone = (phone: string) => {
     if (!activity || !canSubmit) return;
 
     // Build extras array: repeat name by quantity for per-person, or send once for per-booking
@@ -677,7 +686,7 @@ export default function BookActivityPage() {
           ? { slotEndTime: selectedSlotEnd }
           : {}),
         guests,
-        bookingPhone,
+        bookingPhone: phone,
         selectedExtras: extras,
         selectedExtrasQty: Object.keys(extrasQty).length > 0 ? extrasQty : undefined,
         couponCode: appliedCoupon?.code || undefined,
@@ -691,7 +700,7 @@ export default function BookActivityPage() {
         checkInDate: checkIn,
         checkOutDate: checkOut,
         guests,
-        bookingPhone,
+        bookingPhone: phone,
         selectedExtras: extras,
         selectedExtrasQty: Object.keys(extrasQty).length > 0 ? extrasQty : undefined,
         couponCode: appliedCoupon?.code || undefined,
@@ -1468,8 +1477,13 @@ export default function BookActivityPage() {
         isOpen={showPhoneModal}
         onClose={() => setShowPhoneModal(false)}
         onSubmit={(phone) => {
+          // Persist the phone for any subsequent retry/edit AND submit the
+          // booking immediately with the freshly-entered value. We can't
+          // rely on bookingPhone state here — React batches setState, so
+          // a follow-up handleSubmit() in the same tick would still see ''.
           setBookingPhone(phone);
           setShowPhoneModal(false);
+          submitWithPhone(phone);
         }}
         initialPhone={user?.phone || ''}
         detectedCountryIso={geoCountry?.isoCode}

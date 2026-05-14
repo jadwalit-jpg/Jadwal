@@ -60,7 +60,7 @@ async function seedCustomerWithHistory() {
       activityId: seed.activity.id,
       vendorId: seed.vendor.id,
       customerId: seed.customer.id,
-      guests: 2, guestBreakdown: {},
+      guests: 2, bookingPhone: '+97455123456', guestBreakdown: {},
       startDatetime: new Date(Date.now() - 95 * 86400_000),
       endDatetime: new Date(Date.now() - 95 * 86400_000 + 2 * 3600_000),
       totalPrice: 250, currencyCode: 'QAR',
@@ -186,7 +186,7 @@ describe('§B9 — deleteUser anonymises PII + preserves financial records', () 
       data: {
         ref: 'JDWL-PENDING',
         activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: seed.customer.id,
-        guests: 2, guestBreakdown: {},
+        guests: 2, bookingPhone: '+97455123456', guestBreakdown: {},
         startDatetime: new Date(Date.now() + 86400_000),
         endDatetime: new Date(Date.now() + 86400_000 + 2 * 3600_000),
         totalPrice: 100, currencyCode: 'QAR',
@@ -274,7 +274,7 @@ describe('§B9 — deleteVendor cascade soft-deletes activities + anonymises use
       data: {
         ref: 'JDWL-V-HIST',
         activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: customer.id,
-        guests: 1, guestBreakdown: {},
+        guests: 1, bookingPhone: '+97455123456', guestBreakdown: {},
         startDatetime: new Date(Date.now() - 86400_000),
         endDatetime: new Date(Date.now() - 86400_000 + 2 * 3600_000),
         totalPrice: 100, currencyCode: 'QAR',
@@ -305,7 +305,7 @@ describe('§B9 — deleteVendor cascade soft-deletes activities + anonymises use
       data: {
         ref: 'JDWL-V-OWED',
         activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: customer.id,
-        guests: 1, guestBreakdown: {},
+        guests: 1, bookingPhone: '+97455123456', guestBreakdown: {},
         startDatetime: new Date(Date.now() - 86400_000),
         endDatetime: new Date(Date.now() - 86400_000 + 2 * 3600_000),
         totalPrice: 100, currencyCode: 'QAR',
@@ -340,7 +340,7 @@ describe('§B9 — deleteVendor cascade soft-deletes activities + anonymises use
       data: {
         ref: 'JDWL-V-PEND',
         activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: seed.customer.id,
-        guests: 1, guestBreakdown: {},
+        guests: 1, bookingPhone: '+97455123456', guestBreakdown: {},
         startDatetime: new Date(Date.now() + 86400_000),
         endDatetime: new Date(Date.now() + 86400_000 + 2 * 3600_000),
         totalPrice: 100, currencyCode: 'QAR',
