@@ -223,7 +223,7 @@ jobs:
       # wants every finding represented), so it would exit-code 1 on
       # a single MEDIUM. The TABLE format respects severity correctly.
       - name: Trivy gate (CRITICAL,HIGH; fail closed)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.ECR_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
           severity: CRITICAL,HIGH
@@ -236,7 +236,7 @@ jobs:
       # GitHub Security tab. exit-code 0 because Pass 1 already gated.
       - name: Trivy SARIF (all severities, advisory)
         if: always()        # run even if gate fired, so Security tab updates
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.ECR_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
           exit-code: 0
