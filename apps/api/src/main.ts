@@ -178,7 +178,7 @@ async function bootstrap() {
           frameAncestors: ["'none'"],
           objectSrc: ["'none'"],
           baseUri: ["'self'"],
-          formAction: ["'self'", 'https://payments.pay2m.com'],
+          formAction: ["'self'", 'https://pay.pay2m.com'],
         },
       },
       crossOriginEmbedderPolicy: false,
