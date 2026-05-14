@@ -27,6 +27,7 @@ import { useToast } from '@/components/toast';
 import { PhoneVerificationModal } from '@/components/phone-verification-modal';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
+import { BookActivityPageSkeleton } from '@/components/ui/skeletons';
 import BookingCalendar, { type CalendarDay } from '@/components/booking-calendar';
 import { HourRangePicker } from '@/components/hour-range-picker';
 import { Button, Stepper } from '@/components/ui';
@@ -691,21 +692,14 @@ export default function BookActivityPage() {
   };
 
   // ─── Loading state ──────────────────────────────────────
+  // Shape skeleton composed with Navbar — same component the route-level
+  // loading.tsx renders, so the cold-navigation flash flows continuously
+  // into this state with no spinner-to-skeleton jump.
   if (activityLoading) {
     return (
       <div className="min-h-screen bg-jadwal-bg font-outfit">
         <Navbar variant="solid" />
-        <div className="pt-24 max-w-6xl mx-auto px-4 sm:px-6 animate-pulse">
-          <div className="h-8 bg-jadwal-surface-muted rounded w-64 mb-8" />
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 md:gap-8">
-            <div className="lg:col-span-3 space-y-4">
-              <div className="h-12 bg-jadwal-surface-muted rounded-xl" />
-              <div className="h-80 bg-jadwal-surface-muted rounded-2xl" />
-              <div className="h-24 bg-jadwal-surface-muted rounded-xl" />
-            </div>
-            <div className="lg:col-span-2 h-96 bg-jadwal-surface-muted rounded-2xl" />
-          </div>
-        </div>
+        <BookActivityPageSkeleton />
       </div>
     );
   }
