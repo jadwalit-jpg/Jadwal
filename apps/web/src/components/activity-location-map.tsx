@@ -114,9 +114,15 @@ export default function ActivityLocationMap({
   }, [lat, lng, zoom]);
 
   return (
+    // `isolate` (= CSS `isolation: isolate`) creates a new stacking context on
+    // the map container. Leaflet uses high z-indices internally for its panes
+    // (200-700) and controls (1000+); without isolation those values bubble
+    // up to the document root and can render above the fixed navbar, currency
+    // pill, theme toggle, and other surrounding UI. Isolating contains them.
     <div
       ref={containerRef}
-      style={{ height, width: '100%' }}
+      className="isolate w-full"
+      style={{ height }}
       role="img"
       aria-label={
         ariaLabel ?? `Map showing location at ${lat.toFixed(4)}, ${lng.toFixed(4)}`
