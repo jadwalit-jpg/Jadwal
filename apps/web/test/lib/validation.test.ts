@@ -156,6 +156,22 @@ describe('validateFullName', () => {
       expect(r).toEqual({ valid: false, error: 'Name contains invalid characters' });
     }
   });
+
+  it('rejects names containing ASCII digits', () => {
+    for (const sample of ['John 1', 'Naji9', '5lice', 'Mary 23 Smith']) {
+      const r = validateFullName(sample);
+      expect(r).toEqual({ valid: false, error: 'Name cannot contain numbers' });
+    }
+  });
+
+  it('rejects names containing Arabic-Indic digits', () => {
+    // Arabic-Indic digits ٠١٢٣٤٥٦٧٨٩ — same logical zero-through-nine
+    // as ASCII; reject these the same way to avoid an unicode bypass.
+    for (const sample of ['لمى٥', 'محمد ١', 'سارة٢٣']) {
+      const r = validateFullName(sample);
+      expect(r).toEqual({ valid: false, error: 'Name cannot contain numbers' });
+    }
+  });
 });
 
 describe('validatePhone', () => {

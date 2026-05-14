@@ -69,6 +69,10 @@ export function validateFullName(name: string): ValidationResult {
   if (trimmed.length < 2) return { valid: false, error: 'Name is too short' };
   if (trimmed.length > 100) return { valid: false, error: 'Name is too long' };
   if (/[<>{}()[\]\\\/;]/.test(trimmed)) return { valid: false, error: 'Name contains invalid characters' };
+  // `\p{Nd}` matches decimal digits across all scripts — ASCII 0-9
+  // AND Arabic-Indic 0-9 (٠١٢٣٤٥٦٧٨٩). Real personal names don't
+  // contain digits in any script; reject defensively.
+  if (/\p{Nd}/u.test(trimmed)) return { valid: false, error: 'Name cannot contain numbers' };
   return { valid: true };
 }
 

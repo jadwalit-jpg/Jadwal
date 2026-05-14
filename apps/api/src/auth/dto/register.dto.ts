@@ -7,6 +7,11 @@ export class RegisterDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
+  // `\P{Nd}` (capital P) matches anything EXCEPT a decimal digit across
+  // every script — rejects ASCII 0-9 AND Arabic-Indic ٠-٩. Real personal
+  // names don't contain digits; this is the server-side authority for
+  // the same rule enforced client-side by `validateFullName`.
+  @Matches(/^\P{Nd}*$/u, { message: 'Full name cannot contain numbers' })
   @Transform(({ value }) => typeof value === 'string' ? value.replace(/[<>]/g, '').trim() : value)
   fullName!: string;
 
