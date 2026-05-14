@@ -208,6 +208,45 @@ export function SidebarPageSkeleton() {
   );
 }
 
+// Shape-matching skeleton for `/profile`. Mirrors the heading area and
+// the inline `ProfileSkeleton` used inside page.tsx — 1 header card,
+// 4 stat tiles, 1 content card — so the cold-load transition into the
+// real page is shape-stable.
+//
+// Navbar is intentionally NOT rendered here (matches the
+// `ActivityGridSkeleton` / route-level pattern). The brief moment between
+// `loading.tsx` and the hydrated page rendering its own navbar is
+// acceptable; the alternative (rendering navbar in loading.tsx) double-
+// mounts a heavy client component during navigation.
+export function ProfilePageSkeleton() {
+  return (
+    <SkeletonPage
+      className="bg-jadwal-bg px-4 sm:px-6 pt-24 pb-16"
+      label="Loading profile"
+    >
+      <div className="max-w-4xl mx-auto">
+        {/* Heading area — h1 + subtitle. */}
+        <div className="mb-6 space-y-2">
+          <Skeleton className="h-8 md:h-10 w-48" />
+          <Skeleton className="h-4 w-72" />
+        </div>
+        <div className="space-y-6">
+          {/* Header card */}
+          <Skeleton className="h-28 rounded-2xl" />
+          {/* 4-stat grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-24 rounded-2xl" />
+            ))}
+          </div>
+          {/* Content card */}
+          <Skeleton className="h-72 rounded-2xl" />
+        </div>
+      </div>
+    </SkeletonPage>
+  );
+}
+
 // Minimal page loader for simple / legal / callback routes.
 export function PageShellSkeleton() {
   return (
