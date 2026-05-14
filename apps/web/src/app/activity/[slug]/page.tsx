@@ -39,6 +39,7 @@ import { cn } from '@/lib/utils';
 import { localized } from '@/lib/localize';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
+import { ActivityDetailPageSkeleton } from '@/components/ui/skeletons';
 import {
   Badge,
   Button,
@@ -262,21 +263,13 @@ export default function ActivityDetailPage() {
   const totalPrice = isDaily || isPerUnit ? price : price * guests;
 
   if (isLoading) {
+    // Shape skeleton composed with Navbar — exactly the same skeleton
+    // the route-level loading.tsx renders, so the cold-navigation flash
+    // flows continuously into this state with no visible jump.
     return (
       <div className="min-h-screen bg-jadwal-bg font-outfit">
         <Navbar variant="solid" />
-        <div className="pt-24 max-w-7xl mx-auto px-4 sm:px-6 animate-pulse">
-          <div className="h-6 bg-jadwal-surface-muted rounded w-40 mb-6" />
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
-            <div className="lg:col-span-2 space-y-4">
-              <div className="h-80 md:h-[450px] bg-jadwal-surface-muted rounded-[20px]" />
-              <div className="h-6 bg-jadwal-surface-muted rounded w-3/4" />
-              <div className="h-4 bg-jadwal-surface-muted rounded w-1/2" />
-              <div className="h-32 bg-jadwal-surface-muted rounded-2xl" />
-            </div>
-            <div className="h-96 bg-jadwal-surface-muted rounded-[20px]" />
-          </div>
-        </div>
+        <ActivityDetailPageSkeleton />
       </div>
     );
   }

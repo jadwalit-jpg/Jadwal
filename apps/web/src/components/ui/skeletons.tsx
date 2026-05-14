@@ -269,6 +269,32 @@ export function BookingDetailPageSkeleton() {
   );
 }
 
+// Shape-matching skeleton for `/activity/[slug]`. Renders the
+// content-area only (no navbar) so it can be composed two ways:
+//   1) loading.tsx renders it directly (route boundary, before page chunk loads)
+//   2) page.tsx's early-return wraps it with <Navbar /> (during the
+//      query phase after hydration)
+// Same component in both places = continuous shape across the
+// navigation→hydration transition, no visible "spinner-to-skeleton" jump.
+export function ActivityDetailPageSkeleton() {
+  return (
+    <SkeletonPage className="bg-jadwal-bg" label="Loading activity">
+      <div className="pt-24 max-w-7xl mx-auto px-4 sm:px-6">
+        <Skeleton className="h-6 w-40 mb-6 rounded" />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
+          <div className="lg:col-span-2 space-y-4">
+            <Skeleton className="h-80 md:h-[450px] rounded-[20px]" />
+            <Skeleton className="h-6 w-3/4 rounded" />
+            <Skeleton className="h-4 w-1/2 rounded" />
+            <Skeleton className="h-32 rounded-2xl" />
+          </div>
+          <Skeleton className="h-96 rounded-[20px]" />
+        </div>
+      </div>
+    </SkeletonPage>
+  );
+}
+
 // Minimal page loader for simple / legal / callback routes.
 export function PageShellSkeleton() {
   return (
