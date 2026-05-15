@@ -28,7 +28,6 @@
       ],
       "secrets": [
         { "name": "NODE_ENV",                     "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/NODE_ENV" },
-        { "name": "DATABASE_URL",                 "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/DATABASE_URL" },
         { "name": "REDIS_URL",                    "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/REDIS_URL" },
         { "name": "JWT_SECRET",                   "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/JWT_SECRET" },
         { "name": "JWT_REFRESH_SECRET",           "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/JWT_REFRESH_SECRET" },
