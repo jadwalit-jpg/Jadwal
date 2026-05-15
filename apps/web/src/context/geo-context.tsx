@@ -26,11 +26,16 @@ interface UserLocation {
 interface GeoState {
   country: GeoCountry | null;
   city: GeoCity | null;
-  /** 'detecting' | 'ip' | 'manual' | 'fallback' */
+  /** 'detecting' | 'ip' | 'manual' | 'fallback' | 'unsupported-default' */
   source: string;
   isDetecting: boolean;
   setCountry: (country: GeoCountry) => void;
   setCity: (city: GeoCity | null) => void;
+  /** Reset geo state back to "auto-detect" — clears any manual pick + cache,
+   *  and re-fires /geo/detect. Use from a "Auto-detect my location" affordance
+   *  in the country picker so users can recover from an accidental manual pick.
+   */
+  resetGeo: () => void;
   /** Precise browser location — null until user grants permission */
   location: UserLocation | null;
   /** 'idle' | 'requesting' | 'granted' | 'denied' | 'unavailable' */
@@ -46,6 +51,7 @@ const GeoContext = createContext<GeoState>({
   isDetecting: true,
   setCountry: () => {},
   setCity: () => {},
+  resetGeo: () => {},
   location: null,
   locationStatus: 'idle',
   requestLocation: () => {},
@@ -115,6 +121,9 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
   // plain refresh with a fresh cache makes ZERO /geo/detect requests.
   const [geoChecked, setGeoChecked] = useState(false);
   const [revalidate, setRevalidate] = useState(false);
+  // Bumped by resetGeo() to force a fresh /geo/detect (also serves as the
+  // tanstack-query cache-buster — included in the queryKey below).
+  const [resetCounter, setResetCounter] = useState(0);
 
   // Live mirrors of `source` / `country` so the effects + callbacks below can
   // read the current value without taking them as effect deps (which would
@@ -174,7 +183,7 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
     city: GeoCity | null;
     source: string;
   }>({
-    queryKey: ['geo-detect'],
+    queryKey: ['geo-detect', resetCounter],
     queryFn: () => api.get('/geo/detect').then(r => r.data),
     staleTime: 30 * 60 * 1000,
     retry: 1,
@@ -229,6 +238,26 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   /**
+   * Reset back to "auto-detect via IP". Wired to the country picker's
+   * "Auto-detect" affordance so users can recover from an accidental manual
+   * pick. Clears the cache, drops state back to a fresh-visit posture, and
+   * bumps the queryKey so /geo/detect re-fires — `setRevalidate(true)` alone
+   * wouldn't, because useQuery treats the enable transition as a no-op when
+   * a cached result already exists under the same key.
+   */
+  const resetGeo = useCallback(() => {
+    try { localStorage.removeItem(GEO_CACHE_KEY); } catch { /* ignore */ }
+    setCountryState(null);
+    setCityState(null);
+    setSource('detecting');
+    setHasGeo(false);
+    countryRef.current = null;
+    sourceRef.current = 'detecting';
+    setRevalidate(true);
+    setResetCounter((n) => n + 1);
+  }, []);
+
+  /**
    * Request precise browser location.
    * Only called on explicit user action (button click) — never automatically.
    * Coordinates stay in memory + sessionStorage only — never logged, never
@@ -271,10 +300,11 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
     isDetecting: !geoChecked || (isLoading && !hasGeo),
     setCountry,
     setCity,
+    resetGeo,
     location,
     locationStatus,
     requestLocation,
-  }), [country, city, source, geoChecked, isLoading, hasGeo, setCountry, setCity, location, locationStatus, requestLocation]);
+  }), [country, city, source, geoChecked, isLoading, hasGeo, setCountry, setCity, resetGeo, location, locationStatus, requestLocation]);
 
   return <GeoContext.Provider value={value}>{children}</GeoContext.Provider>;
 }
