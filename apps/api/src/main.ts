@@ -67,15 +67,33 @@ async function bootstrap() {
       process.exit(1);
     }
 
-    // DB connection: either RDS_SECRET_ARN (preferred — picks up auto-rotation
-    // from Secrets Manager and pairs with DB_HOST / DB_PORT / DB_NAME) OR a
-    // legacy plaintext DATABASE_URL. At least one must be set; if RDS_SECRET_ARN
-    // is set, the host/port/db env vars must accompany it.
+    // DB connection — strict in production.
+    //
+    // Production (NODE_ENV === 'production'): RDS_SECRET_ARN is REQUIRED.
+    // Legacy plaintext DATABASE_URL is refused even if set — this prevents
+    // a silent regression where someone re-adds DATABASE_URL to the task
+    // def and prod starts running on a stale credential bypassing the
+    // Secrets Manager auto-rotation path.
+    //
+    // Non-production (dev / test / CI): either path is accepted, since
+    // local environments don't have AWS Secrets Manager access and rely
+    // on docker-compose-style DATABASE_URL in .env files.
     const hasSecretArn = !!process.env.RDS_SECRET_ARN?.trim();
     const hasLegacyUrl = !!process.env.DATABASE_URL?.trim();
-    if (!hasSecretArn && !hasLegacyUrl) {
-      console.error('\n[FATAL] DB connection not configured: set RDS_SECRET_ARN (+ DB_HOST/DB_PORT/DB_NAME) or DATABASE_URL.\n');
-      process.exit(1);
+    if (process.env.NODE_ENV === 'production') {
+      if (!hasSecretArn) {
+        console.error('\n[FATAL] Production requires RDS_SECRET_ARN (+ DB_HOST/DB_PORT/DB_NAME). Legacy DATABASE_URL is not accepted in production.\n');
+        process.exit(1);
+      }
+      if (hasLegacyUrl) {
+        console.error('\n[FATAL] DATABASE_URL is set in production. Remove it from the task definition — RDS_SECRET_ARN is the only supported path.\n');
+        process.exit(1);
+      }
+    } else {
+      if (!hasSecretArn && !hasLegacyUrl) {
+        console.error('\n[FATAL] DB connection not configured: set RDS_SECRET_ARN (+ DB_HOST/DB_PORT/DB_NAME) or DATABASE_URL.\n');
+        process.exit(1);
+      }
     }
     if (hasSecretArn) {
       const dbMissing = ['DB_HOST', 'DB_NAME'].filter((k) => !process.env[k]?.trim());
