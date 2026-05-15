@@ -158,8 +158,16 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
         className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-medium transition-colors ${pillCls}`}
       >
         <span className="text-base leading-none">{country ? flagFromIso(country.isoCode) : '🌍'}</span>
-        <span className="hidden lg:inline">{country?.isoCode ?? '—'}</span>
-        <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''} ${chevronCls}`} />
+        {/* Localized country name (e.g. "Jordan" / "الأردن"), not the ISO code
+            — the flag already carries the code visually, so showing "JO" next
+            to 🇯🇴 reads as a duplicate. Hidden below sm to keep the bar
+            uncluttered on phones (mobile users get the full row from the
+            hamburger menu variant). `max-w` + `truncate` so a long localized
+            name doesn't blow the navbar layout. */}
+        <span className="hidden sm:inline max-w-[110px] truncate">
+          {country ? pickName(country, lang) : '—'}
+        </span>
+        <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''} ${chevronCls}`} />
       </button>
       {open && (
         <div
