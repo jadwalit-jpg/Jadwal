@@ -31,6 +31,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/auth-context';
 import api from '@/lib/api';
+import { CountryPicker } from '@/components/country-picker';
 import {
   Sun, Moon, Menu, X, Globe,
   Home, Compass, Tag, Store,
@@ -227,6 +228,11 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
               {!mounted ? '' : isAr ? 'EN' : 'ع'}
             </span>
           </button>
+
+          {/* Country picker — desktop only. Mobile users get the same control
+              as a row inside the hamburger menu (see below). Hidden inside the
+              component via `hidden md:block`. */}
+          <CountryPicker variant="desktop" isOpaque={isOpaque} />
 
           {/* Theme toggle. Icon driven by `dark:` against `<html class>` so the
               right icon shows on first paint with no mounted gate; click gated
@@ -456,6 +462,10 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
                     {t('nav.becomeVendor')}
                   </Link>
                 )}
+
+                {/* Country picker — same surface as the desktop pill. Closing
+                    `onSelect` collapses the hamburger menu on pick. */}
+                <CountryPicker variant="mobile" onSelect={() => setOpen(false)} />
 
                 {/* Language toggle */}
                 <button

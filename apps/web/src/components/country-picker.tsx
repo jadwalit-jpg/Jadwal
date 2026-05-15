@@ -1,0 +1,188 @@
+'use client';
+
+/**
+ * Country picker — used in the navbar (desktop dropdown + mobile menu row).
+ *
+ * The geo system has two layers:
+ *   1. IP-derived geo (passive) — what /geo/detect returns. May be soft-defaulted
+ *      to Qatar for unsupported countries (Germany, India, etc.) so the page
+ *      always has *some* storefront to render.
+ *   2. Manual pick (active) — this component. Always wins over IP geo; never
+ *      auto-revalidated. The choice is cached in localStorage with source='manual'.
+ *
+ * Two visual variants:
+ *   - `variant='desktop'` — compact pill button: `🇶🇦 QA ▾`. Sits in the navbar bar.
+ *   - `variant='mobile'`  — full-width menu row matching the rest of the mobile
+ *     hamburger menu rows.
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
+import { ChevronDown, MapPin, Check } from 'lucide-react';
+import api from '@/lib/api';
+import { useGeo } from '@/context/geo-context';
+import { localized } from '@/lib/localize';
+
+interface Country {
+  id: string;
+  nameEn: string;
+  nameAr: string;
+  isoCode: string;
+  currencyCode: string;
+}
+
+// ISO-3166 alpha-2 → flag emoji. Cheap, no network call. Two regional-indicator
+// code points (U+1F1E6 .. U+1F1FF). Returns globe if input is malformed.
+function flagFromIso(iso: string): string {
+  if (!iso || iso.length !== 2) return '🌍';
+  const A = 0x1F1E6;
+  const a = 'A'.charCodeAt(0);
+  return (
+    String.fromCodePoint(A + iso.charCodeAt(0) - a) +
+    String.fromCodePoint(A + iso.charCodeAt(1) - a)
+  );
+}
+
+interface Props {
+  variant?: 'desktop' | 'mobile';
+  isOpaque?: boolean;
+  onSelect?: () => void;
+}
+
+export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }: Props) {
+  const { t } = useTranslation();
+  const { country, setCountry, source } = useGeo();
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  const { data: countries = [] } = useQuery<Country[]>({
+    queryKey: ['public-countries'],
+    queryFn: () => api.get('/catalog/countries').then((r) => r.data),
+    staleTime: 60 * 60 * 1000,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [open]);
+
+  const select = (c: Country) => {
+    setCountry(c);
+    setOpen(false);
+    onSelect?.();
+  };
+
+  if (variant === 'mobile') {
+    return (
+      <div className="px-1">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800 hover:text-sky-600 dark:hover:text-white transition-colors"
+        >
+          <span className="flex items-center gap-3">
+            <MapPin aria-hidden="true" className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+            <span>{country ? `${flagFromIso(country.isoCode)} ${localized(country, 'name')}` : t('nav.country', { defaultValue: 'Country' })}</span>
+          </span>
+          <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''} text-gray-400 dark:text-slate-500`} />
+        </button>
+        {open && (
+          <div className="mt-1 max-h-72 overflow-y-auto rounded-xl border border-gray-200/60 dark:border-slate-700/60 bg-white dark:bg-slate-900">
+            {countries.map((c) => {
+              const isActive = c.id === country?.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => select(c)}
+                  className={`flex w-full items-center justify-between gap-3 px-4 py-2.5 text-sm transition-colors ${
+                    isActive
+                      ? 'bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold'
+                      : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="text-base leading-none">{flagFromIso(c.isoCode)}</span>
+                    <span>{localized(c, 'name')}</span>
+                  </span>
+                  {isActive && <Check aria-hidden="true" className="h-4 w-4" />}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Desktop variant — pill button + absolute dropdown
+  const pillCls = isOpaque
+    ? 'bg-white border-gray-200 hover:bg-gray-50 text-gray-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-700'
+    : 'bg-white/10 border-white/20 text-white hover:bg-white/20';
+  const chevronCls = isOpaque ? 'text-gray-400 dark:text-slate-500' : 'text-white/60';
+
+  return (
+    <div ref={wrapperRef} className="relative hidden md:block">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={t('nav.country', { defaultValue: 'Country' })}
+        title={source === 'unsupported-default' ? t('nav.countryFallback', { defaultValue: 'Showing Qatar — your country isn\'t available yet' }) : undefined}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-medium transition-colors ${pillCls}`}
+      >
+        <span className="text-base leading-none">{country ? flagFromIso(country.isoCode) : '🌍'}</span>
+        <span className="hidden lg:inline">{country?.isoCode ?? '—'}</span>
+        <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''} ${chevronCls}`} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute inset-e-0 mt-2 w-56 max-h-80 overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 border border-gray-200/60 dark:border-slate-700/60 shadow-xl shadow-black/10 dark:shadow-black/30 z-50 py-1.5"
+        >
+          {countries.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-gray-400 dark:text-slate-500">{t('common.loading')}</div>
+          ) : (
+            countries.map((c) => {
+              const isActive = c.id === country?.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => select(c)}
+                  className={`flex w-full items-center justify-between gap-3 px-4 py-2.5 text-sm transition-colors ${
+                    isActive
+                      ? 'bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold'
+                      : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <span className="flex items-center gap-2.5">
+                    <span className="text-base leading-none">{flagFromIso(c.isoCode)}</span>
+                    <span>{localized(c, 'name')}</span>
+                  </span>
+                  {isActive && <Check aria-hidden="true" className="h-4 w-4" />}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

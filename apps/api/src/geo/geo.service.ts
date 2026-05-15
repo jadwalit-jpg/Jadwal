@@ -52,19 +52,38 @@ export class GeoService {
       select: { id: true, nameEn: true, nameAr: true, isoCode: true, currencyCode: true },
     });
 
-    // No silent Qatar fallback for unsupported countries. If we detected
-    // a real public-IP country and it isn't in our ACTIVE country list,
-    // return null so the frontend can either prompt for manual selection
-    // or render an empty "we're not in your country yet" state. Silently
-    // attributing a German visitor to Qatar produces wrong content (the
-    // canonical bug this method used to ship with).
+    // Soft Qatar fallback for unsupported countries — show the default
+    // storefront so the visitor has something to browse rather than an
+    // empty page. The `source` field is set to 'unsupported-default' so
+    // the UI can show a "Showing Qatar — change country?" banner and the
+    // navbar country picker lets the visitor switch explicitly. Without
+    // the picker affordance this would silently mis-attribute geo (the
+    // bug this method used to ship with) — but with the picker it's a
+    // user-fixable soft default, not a silent misrepresentation.
     if (!country) {
+      const fallbackCountry = await this.prisma.client.country.findFirst({
+        where: { isoCode: { equals: 'QA', mode: 'insensitive' }, status: 'ACTIVE' },
+        select: { id: true, nameEn: true, nameAr: true, isoCode: true, currencyCode: true },
+      });
+      if (!fallbackCountry) {
+        // No Qatar row in DB (extremely rare — dev / fresh-bootstrap edge case)
+        return {
+          country: null,
+          city: null,
+          source: detectedIso ? 'unsupported' : 'unknown',
+        };
+      }
+      const firstCity = await this.prisma.client.city.findFirst({
+        where: { countryId: fallbackCountry.id },
+        select: { id: true, nameEn: true, nameAr: true },
+        orderBy: { nameEn: 'asc' },
+      });
       return {
-        country: null,
-        city: null,
-        // 'unsupported' = real geo, country not in our DB (Germany before we operate there)
-        // 'unknown'     = couldn't detect geo at all AND no Qatar row in DB (rare dev edge case)
-        source: detectedIso ? 'unsupported' : 'unknown',
+        country: fallbackCountry,
+        city: firstCity,
+        // 'unsupported-default' = real geo detected, country not in our DB, defaulted to Qatar
+        // 'fallback'            = no geo (private/localhost) → defaulted to Qatar (dev path)
+        source: detectedIso ? 'unsupported-default' : 'fallback',
       };
     }
 
