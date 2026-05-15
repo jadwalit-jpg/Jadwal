@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, MapPin, Check, Locate } from 'lucide-react';
+import { ChevronDown, MapPin, Check } from 'lucide-react';
 import api from '@/lib/api';
 import { useGeo } from '@/context/geo-context';
 
@@ -62,7 +62,7 @@ interface Props {
 
 export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }: Props) {
   const { t, i18n } = useTranslation();
-  const { country, setCountry, resetGeo, source } = useGeo();
+  const { country, setCountry, source } = useGeo();
   const lang = i18n.language;
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -97,17 +97,6 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
     onSelect?.();
   };
 
-  const resetToAutoDetect = () => {
-    resetGeo();
-    setOpen(false);
-    onSelect?.();
-  };
-
-  // 'manual' is the only mode where the auto-detect affordance is meaningful —
-  // for IP-derived sources the picker is already showing the detected country,
-  // and surfacing a "re-detect" button there would just be visual noise.
-  const showAutoDetect = source === 'manual';
-
   if (variant === 'mobile') {
     return (
       <div className="px-1">
@@ -125,19 +114,6 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
         </button>
         {open && (
           <div className="mt-1 max-h-72 overflow-y-auto rounded-xl border border-gray-200/60 dark:border-slate-700/60 bg-white dark:bg-slate-900">
-            {showAutoDetect && (
-              <>
-                <button
-                  type="button"
-                  onClick={resetToAutoDetect}
-                  className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors"
-                >
-                  <Locate aria-hidden="true" className="h-4 w-4 shrink-0" />
-                  <span>{t('nav.autoDetect', { defaultValue: 'Auto-detect my location' })}</span>
-                </button>
-                <div className="h-px bg-gray-100 dark:bg-slate-800" />
-              </>
-            )}
             {countries.map((c) => {
               const isActive = c.id === country?.id;
               return (
@@ -201,22 +177,7 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
           {countries.length === 0 ? (
             <div className="px-4 py-3 text-sm text-gray-400 dark:text-slate-500">{t('common.loading')}</div>
           ) : (
-            <>
-              {showAutoDetect && (
-                <>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={resetToAutoDetect}
-                    className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors"
-                  >
-                    <Locate aria-hidden="true" className="h-4 w-4 shrink-0" />
-                    <span>{t('nav.autoDetect', { defaultValue: 'Auto-detect my location' })}</span>
-                  </button>
-                  <div className="h-px bg-gray-100 dark:bg-slate-800 my-1" />
-                </>
-              )}
-              {countries.map((c) => {
+            countries.map((c) => {
               const isActive = c.id === country?.id;
               return (
                 <button
@@ -237,8 +198,7 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
                   {isActive && <Check aria-hidden="true" className="h-4 w-4" />}
                 </button>
               );
-            })}
-            </>
+            })
           )}
         </div>
       )}
