@@ -44,6 +44,13 @@ export function BookingEmailOtpModal({
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resending, setResending] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // In-flight refs are the single source of truth for "is a request running"
+  // — state booleans get captured stale inside async callbacks and the
+  // setTimeout-scheduled auto-submit (CodeRabbit / race-condition fix). Refs
+  // mutate immediately, so a button click during the setTimeout window sees
+  // the up-to-date value and bails. State is kept for the UI render only.
+  const verifyInFlightRef = useRef(false);
+  const resendInFlightRef = useRef(false);
 
   // Reset state every time the modal opens. Auto-focus the input.
   useEffect(() => {
@@ -67,11 +74,16 @@ export function BookingEmailOtpModal({
   // Verify submission. Called via Enter, Verify button, or auto-submit on 6 chars.
   const handleVerify = useCallback(
     async (codeToSubmit: string) => {
-      if (verifying) return;
+      // Ref-based gate. Mutates immediately so a concurrent caller (e.g.
+      // setTimeout-scheduled auto-submit collides with a button click)
+      // sees the up-to-date value and bails. Using `verifying` state here
+      // would let both calls through because closures capture stale values.
+      if (verifyInFlightRef.current) return;
       if (!/^[0-9]{6}$/.test(codeToSubmit)) {
         setError(t('booking.emailOtp.invalidCode'));
         return;
       }
+      verifyInFlightRef.current = true;
       setVerifying(true);
       setError('');
       try {
@@ -83,14 +95,17 @@ export function BookingEmailOtpModal({
         setCode('');
         inputRef.current?.focus();
       } finally {
+        verifyInFlightRef.current = false;
         setVerifying(false);
       }
     },
-    [bookingId, onVerified, t, verifying],
+    [bookingId, onVerified, t],
   );
 
   const handleResend = useCallback(async () => {
-    if (resendCooldown > 0 || resending) return;
+    // Same rationale as handleVerify — ref instead of `resending` state.
+    if (resendCooldown > 0 || resendInFlightRef.current) return;
+    resendInFlightRef.current = true;
     setResending(true);
     setError('');
     try {
@@ -102,9 +117,10 @@ export function BookingEmailOtpModal({
     } catch (err: unknown) {
       setError(getApiError(err, t('booking.emailOtp.resendFailed')));
     } finally {
+      resendInFlightRef.current = false;
       setResending(false);
     }
-  }, [bookingId, resendCooldown, resending, t]);
+  }, [bookingId, resendCooldown, t]);
 
   // Numeric-only input. Auto-submit when the 6th digit lands.
   const handleChange = useCallback(
@@ -132,6 +148,10 @@ export function BookingEmailOtpModal({
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}
           transition={{ duration: 0.2 }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="booking-email-otp-title"
+          aria-describedby="booking-email-otp-description"
           className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-slate-800 w-full max-w-md mx-4 overflow-hidden"
         >
           {/* Header */}
@@ -141,10 +161,16 @@ export function BookingEmailOtpModal({
                 <Mail className="h-5 w-5 text-blue-600 dark:text-blue-400" />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                <h3
+                  id="booking-email-otp-title"
+                  className="text-lg font-semibold text-gray-900 dark:text-white"
+                >
                   {t('booking.emailOtp.title')}
                 </h3>
-                <p className="text-xs text-gray-500 dark:text-slate-400">
+                <p
+                  id="booking-email-otp-description"
+                  className="text-xs text-gray-500 dark:text-slate-400"
+                >
                   {emailHint
                     ? t('booking.emailOtp.description') + ' (' + emailHint + ')'
                     : t('booking.emailOtp.description')}
