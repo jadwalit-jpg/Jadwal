@@ -181,6 +181,26 @@ export function middleware(request: NextRequest) {
 
   const applyCspHeaders = (res: NextResponse) => {
     res.headers.set('Content-Security-Policy', csp);
+
+    // ─── /home browser-only cache ──────────────────────────────
+    // /home renders a per-request geo-aware eyebrow ("Qatar · Local
+    // experiences" via CF-IPCountry). Edge caching shares one HTML across
+    // all visitors → first cache populator's country leaks to everyone.
+    //
+    // `private` keeps the response in the visitor's browser cache only —
+    // never the CF edge or any shared cache. Each user's first visit hits
+    // origin (~200-400ms) but repeats within 5 min serve from local cache
+    // (~0ms). No cross-user contamination is structurally possible.
+    //
+    // `must-revalidate` blocks stale-while-error serving past the TTL.
+    //
+    // CSP nonce safety: the browser caches headers + body atomically, so
+    // the cached `<script nonce="X">` always matches the cached CSP
+    // header's `nonce-X` directive. No re-stamping needed.
+    if (pathname === '/home') {
+      res.headers.set('Cache-Control', 'private, max-age=300, must-revalidate');
+    }
+
     return res;
   };
 
