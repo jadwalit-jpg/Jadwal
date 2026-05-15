@@ -116,7 +116,14 @@ function buildCsp(nonce: string, isProd: boolean): string {
     `frame-ancestors 'none'`,
     `object-src 'none'`,
     `base-uri 'self'`,
-    `form-action 'self'`,
+    // 'self' for normal in-app form posts + the PAY2M hosted-checkout host:
+    // the booking page auto-submits a form to
+    // https://pay.pay2m.com/Ecommerce/api/Transaction/PostTransaction.
+    // Host-level (no path) so it matches the PostTransaction endpoint and any
+    // future PAY2M path. Mirrors the API Helmet CSP (main.ts) and the runtime
+    // allowlist in lib/pay2m.ts. Removing pay.pay2m.com here silently breaks
+    // checkout — the browser blocks the form POST.
+    `form-action 'self' https://pay.pay2m.com`,
     // upgrade-insecure-requests is a hard "force HTTPS" instruction.
     // On http://localhost it breaks every request (no TLS = SSL connect
     // error on WebKit/iOS). Only emit it when we know we're behind real
