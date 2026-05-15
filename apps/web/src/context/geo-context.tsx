@@ -66,8 +66,9 @@ const GEO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — older than this 
 // Was 6h, dropped to 30min after a real incident: a visitor who tested from
 // Qatar earlier in the day kept seeing Qatar on a Germany VPN even after a
 // fix shipped, because the cache hadn't aged out. 30min is short enough that
-// any meaningful re-test (5-10 min later) sees the new geo result, but long
-// enough that a normal session (page-to-page) doesn't re-fire /geo/detect.
+// a deliberate retest ~30 minutes later (or after a `localStorage.removeItem
+// ('jadwal_geo')`) picks up new geo, but long enough that a normal session
+// (page-to-page) doesn't re-fire /geo/detect on every transition.
 const GEO_REVALIDATE_AFTER_MS = 30 * 60 * 1000; // 30 minutes
 
 type CachedGeo = { country: GeoCountry | null; city: GeoCity | null; source: string; ts: number };
