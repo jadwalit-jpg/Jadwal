@@ -189,7 +189,15 @@ export function GeoProvider({ children }: { children: React.ReactNode }) {
       setSource(geoData.source);
       writeGeoCache(geoData.country, geoData.city ?? null, geoData.source);
     } else {
+      // Fallback failed (no country at all — extremely rare: Qatar missing
+      // from the DB, or detection genuinely returned 'unknown'). Clear any
+      // stale cached country so the navbar picker becomes the only path
+      // forward instead of a previous-trip Qatar/UAE leaking into the UI.
+      // Manual picks are preserved by the early-return at the top.
       setSource(geoData.source);
+      setCountryState(null);
+      setCityState(null);
+      try { localStorage.removeItem(GEO_CACHE_KEY); } catch { /* ignore */ }
     }
     setHasGeo(true);
   }, [geoData, country?.id, city?.id]);

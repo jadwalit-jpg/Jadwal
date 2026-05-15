@@ -25,6 +25,7 @@ import { RequestUser } from '../auth/interfaces/request-user.interface';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { PaginationDto } from './dto/query-params.dto';
+import { EmailSuppressionsQueryDto } from './dto/email-suppressions-query.dto';
 import { ExportPaginationDto } from '../common/dto/pagination.dto';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { DeactivateUserDto } from './dto/deactivate-user.dto';
@@ -596,7 +597,7 @@ export class AdminController {
 
   @Get('email-suppressions')
   @Throttle(RATE_LIMIT_READ)
-  listEmailSuppressions(@Query() query: PaginationDto) {
+  listEmailSuppressions(@Query() query: EmailSuppressionsQueryDto) {
     return this.adminService.listEmailSuppressions(query);
   }
 

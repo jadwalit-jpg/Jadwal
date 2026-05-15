@@ -21,7 +21,10 @@ interface SuppressionsResponse {
   total: number;
   page: number;
   limit: number;
+  counts: Record<string, number>; // { BOUNCE, COMPLAINT, MANUAL }
 }
+
+type ReasonFilter = 'ALL' | 'BOUNCE' | 'COMPLAINT' | 'MANUAL';
 
 const REASON_STYLES: Record<string, string> = {
   BOUNCE: 'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-900/50',
@@ -41,6 +44,7 @@ export default function EmailSuppressionsPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [page, setPage] = useState(1);
+  const [reason, setReason] = useState<ReasonFilter>('ALL');
   const [searchEmail, setSearchEmail] = useState('');
   const [searching, setSearching] = useState(false);
   const [confirmHash, setConfirmHash] = useState<string | null>(null);
@@ -48,9 +52,12 @@ export default function EmailSuppressionsPage() {
 
   // ─── List query ──────────────────────────────────────────────────────
   const { data, isLoading, isError } = useQuery<SuppressionsResponse>({
-    queryKey: ['admin', 'email-suppressions', page, limit],
-    queryFn: () =>
-      api.get(`/admin/email-suppressions?page=${page}&limit=${limit}`).then((r) => r.data),
+    queryKey: ['admin', 'email-suppressions', page, limit, reason],
+    queryFn: () => {
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (reason !== 'ALL') params.set('reason', reason);
+      return api.get(`/admin/email-suppressions?${params}`).then((r) => r.data);
+    },
     staleTime: 30_000,
   });
 
@@ -111,14 +118,40 @@ export default function EmailSuppressionsPage() {
       subtitle="Emails blocked from outbound mail due to bounces, complaints, or manual flags."
     >
       <div className="space-y-6">
-        {/* Header total badge */}
+        {/* Counts strip — per-reason totals over the full table (not filtered).
+            Doubles as filter chips: click a chip to scope the list to that
+            reason; click "All" to clear. Counts come from the same response
+            as the page items (single round-trip via Prisma groupBy). */}
         {data && (
-          <div className="flex items-center justify-end text-sm text-gray-500 dark:text-slate-400">
-            <span className="inline-flex items-center gap-2">
-              <MailX className="h-4 w-4 text-orange-500" />
-              <span className="font-semibold text-gray-900 dark:text-white">{data.total}</span>{' '}
-              total
-            </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <ReasonChip
+              label="All"
+              count={(data.counts.BOUNCE ?? 0) + (data.counts.COMPLAINT ?? 0) + (data.counts.MANUAL ?? 0)}
+              active={reason === 'ALL'}
+              onClick={() => { setReason('ALL'); setPage(1); }}
+              iconColor="text-gray-500"
+            />
+            <ReasonChip
+              label="Bounces"
+              count={data.counts.BOUNCE ?? 0}
+              active={reason === 'BOUNCE'}
+              onClick={() => { setReason('BOUNCE'); setPage(1); }}
+              iconColor="text-orange-500"
+            />
+            <ReasonChip
+              label="Complaints"
+              count={data.counts.COMPLAINT ?? 0}
+              active={reason === 'COMPLAINT'}
+              onClick={() => { setReason('COMPLAINT'); setPage(1); }}
+              iconColor="text-red-500"
+            />
+            <ReasonChip
+              label="Manual"
+              count={data.counts.MANUAL ?? 0}
+              active={reason === 'MANUAL'}
+              onClick={() => { setReason('MANUAL'); setPage(1); }}
+              iconColor="text-gray-400"
+            />
           </div>
         )}
 
@@ -277,6 +310,38 @@ export default function EmailSuppressionsPage() {
         />
       )}
     </AdminLayout>
+  );
+}
+
+function ReasonChip({
+  label,
+  count,
+  active,
+  onClick,
+  iconColor,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+  iconColor: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl border text-sm font-medium transition cursor-pointer ${
+        active
+          ? 'bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-400'
+          : 'bg-white dark:bg-slate-900/60 border-gray-200 dark:border-slate-800 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
+      }`}
+    >
+      <MailX className={`h-3.5 w-3.5 ${iconColor}`} aria-hidden="true" />
+      <span>{label}</span>
+      <span className={`text-xs font-bold tabular-nums ${active ? 'text-blue-600 dark:text-blue-300' : 'text-gray-500 dark:text-slate-400'}`}>
+        {count}
+      </span>
+    </button>
   );
 }
 

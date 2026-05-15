@@ -2798,12 +2798,18 @@ export class AdminService {
   }
 
   // ─── Email Suppression List (admin) ─────────────────────────────────────
-  async listEmailSuppressions(query: PaginationDto) {
+  async listEmailSuppressions(query: { page?: number; limit?: number; reason?: string }) {
     const page = Number(query.page ?? 1);
     const limit = Math.min(Number(query.limit ?? 50), 100);
     const skip = (page - 1) * limit;
 
-    const [items, total] = await Promise.all([
+    const where = query.reason ? { reason: query.reason } : {};
+
+    // groupBy returns per-reason counts in one query — sent alongside the
+    // page so the UI can show "12 bounces · 3 complaints · 0 manual" without
+    // a second round-trip. Always computed over the full table (no `where`)
+    // so the counts don't shift when the user filters by reason.
+    const [items, total, byReason] = await Promise.all([
       (this.prisma.client as any).emailSuppression.findMany({
         // Only expose the hash + metadata. Never plaintext recipient — we
         // don't store it (see EmailSuppressionService). Admin must compute
@@ -2815,13 +2821,23 @@ export class AdminService {
           notes: true,
           createdAt: true,
         },
+        where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
-      (this.prisma.client as any).emailSuppression.count(),
+      (this.prisma.client as any).emailSuppression.count({ where }),
+      (this.prisma.client as any).emailSuppression.groupBy({
+        by: ['reason'],
+        _count: { _all: true },
+      }),
     ]);
 
-    return { items, total, page, limit };
+    const counts: Record<string, number> = { BOUNCE: 0, COMPLAINT: 0, MANUAL: 0 };
+    for (const row of byReason as Array<{ reason: string; _count: { _all: number } }>) {
+      counts[row.reason] = row._count._all;
+    }
+
+    return { items, total, page, limit, counts };
   }
 }
