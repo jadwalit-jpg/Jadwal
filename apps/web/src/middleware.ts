@@ -68,7 +68,13 @@ const IMG_HOSTS = [
   'https://jadwal-assets.s3.amazonaws.com',
   'https://jadwal-assets.s3.eu-central-1.amazonaws.com',
   'https://cdn.jadwal.qa',
-  ...(CDN_HOST ? [CDN_HOST] : []),
+  // Build-time CDN host (NEXT_PUBLIC_CDN_URL). Add to the allowlist ONLY if
+  // it differs from the hardcoded production fallback above — prevents the
+  // duplicate `cdn.jadwal.qa cdn.jadwal.qa` entry that the live CSP header
+  // showed before this dedupe. The hardcoded line stays as a safety net so
+  // production never silently loses CDN images if the env var is dropped
+  // from the next deploy.
+  ...(CDN_HOST && CDN_HOST !== 'https://cdn.jadwal.qa' ? [CDN_HOST] : []),
   API_ORIGIN,
 ];
 
