@@ -215,6 +215,10 @@ describe('PaymentService.initiatePayment — guards', () => {
     ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
       id: 'b1', status: 'PENDING',
       reservedUntil: new Date(Date.now() + 10 * 60 * 1000),
+      // Email-OTP already verified — the test exercises the post-gate
+      // "no payment record" path, not the gate itself. Mirrors live state
+      // where customer entered the 6-digit code before clicking Pay.
+      emailOtpVerifiedAt: new Date(),
       paymentId: null, ref: 'JDWL-1', activity: { titleEn: 'T' },
     });
     await expect(ctx.sut.initiatePayment('b1', 'u1'))
@@ -226,6 +230,7 @@ describe('PaymentService.initiatePayment — guards', () => {
     ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
       id: 'b1', status: 'PENDING',
       reservedUntil: new Date(Date.now() + 10 * 60 * 1000),
+      emailOtpVerifiedAt: new Date(),
       paymentId: 'p1', ref: 'JDWL-1', activity: { titleEn: 'T' },
     });
     ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
@@ -240,6 +245,7 @@ describe('PaymentService.initiatePayment — guards', () => {
     ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
       id: 'b1', status: 'PENDING',
       reservedUntil: new Date(Date.now() + 10 * 60 * 1000),
+      emailOtpVerifiedAt: new Date(),
       paymentId: 'p1', ref: 'JDWL-1', activity: { titleEn: 'T' },
     });
     ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
@@ -249,6 +255,20 @@ describe('PaymentService.initiatePayment — guards', () => {
 
     await expect(ctx.sut.initiatePayment('b1', 'u1'))
       .rejects.toThrow(/not in a payable state/i);
+  });
+
+  test('400 when emailOtpVerifiedAt is null (email-OTP gate trips)', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', status: 'PENDING',
+      reservedUntil: new Date(Date.now() + 10 * 60 * 1000),
+      emailOtpVerifiedAt: null,
+      paymentId: 'p1', ref: 'JDWL-1', activity: { titleEn: 'T' },
+    });
+    await expect(ctx.sut.initiatePayment('b1', 'u1'))
+      .rejects.toThrow(/verify your email/i);
+    // No payment lookup attempted — gate blocks before that I/O.
+    expect(ctx.prisma._client.payment.findUnique).not.toHaveBeenCalled();
   });
 });
 

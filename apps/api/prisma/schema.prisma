@@ -373,6 +373,17 @@ model Booking {
   paymentId         String?       @unique
   payment           Payment?      @relation(fields: [paymentId], references: [id], onDelete: SetNull)
 
+  // ─── Email-OTP verification gate (between booking create + PAY2M) ─────
+  // Customer must verify a 6-digit code emailed at booking-create time
+  // before /payment/initiate will issue a PAY2M token. Defends against
+  // session-cookie theft + acts as a per-booking "is the customer here"
+  // check. Hash is SHA-256 hex (64 chars). Plaintext lives only in the
+  // delivered email + the customer's memory — never in DB or logs.
+  emailOtpHash        String?     @db.VarChar(64)
+  emailOtpExpiry      DateTime?
+  emailOtpAttempts    Int         @default(0)
+  emailOtpVerifiedAt  DateTime?   // one-way; never reset to NULL once stamped
+
   // ─── Cancellation + refund-decision audit trail ─────────────────────
   // Populated when any actor cancels the booking. cancelledBy is the
   // canonical record of WHO cancelled (the audit log is secondary).
@@ -415,6 +426,9 @@ model Booking {
   // number the customer entered"). Non-unique — different customers may
   // share a phone (e.g. family bookings, hotel concierge).
   @@index([bookingPhone])
+  // Cleanup-cron + forensic lookups for unverified OTPs across a customer's
+  // recent bookings (e.g. "show me PENDING bookings expiring in next 2 min").
+  @@index([customerId, emailOtpExpiry])
   @@map("bookings")
 }
 

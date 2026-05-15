@@ -231,6 +231,96 @@ describe('Per-Booking Phone Validation', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 4b. BOOKING EMAIL-OTP — the per-booking auth gate before PAY2M
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('Booking Email-OTP Security', () => {
+  test('CRITICAL: VerifyEmailOtpDto enforces 6-digit format upfront', () => {
+    const dto = readSrc('src/bookings/dto/verify-email-otp.dto.ts');
+    expect(dto).toContain('@Matches');
+    expect(dto).toMatch(/\/\^\[0-9\]\{6\}\$\//);
+    expect(dto).toContain('@IsNotEmpty');
+  });
+
+  test('CRITICAL: emailOtpHash + emailOtpAttempts are omitted from default Prisma reads', () => {
+    const prismaSvc = readSrc('src/prisma/prisma.service.ts');
+    // Omit block hides hash + attempts so include:/findX never returns them
+    // unless the caller explicitly selects them (verify path only).
+    expect(prismaSvc).toMatch(/booking:\s*\{[\s\S]*?emailOtpHash:\s*true/);
+    expect(prismaSvc).toMatch(/booking:\s*\{[\s\S]*?emailOtpAttempts:\s*true/);
+  });
+
+  test('CRITICAL: Booking model carries the four email-OTP columns + index', () => {
+    const schema = readSrc('prisma/schema.prisma');
+    expect(schema).toMatch(/emailOtpHash\s+String\?\s+@db\.VarChar\(64\)/);
+    expect(schema).toMatch(/emailOtpExpiry\s+DateTime\?/);
+    expect(schema).toMatch(/emailOtpAttempts\s+Int\s+@default\(0\)/);
+    expect(schema).toMatch(/emailOtpVerifiedAt\s+DateTime\?/);
+    expect(schema).toContain('@@index([customerId, emailOtpExpiry])');
+  });
+
+  test('HIGH: send-email-otp uses RATE_LIMIT_STRICT, verify uses RATE_LIMIT_AUTH', () => {
+    const ctrl = readSrc('src/bookings/bookings.controller.ts');
+    // send-email-otp → STRICT (resends are mailbomb-shaped). Decorator
+    // sits BELOW the @Post path in the file, so match in path-then-throttle
+    // order.
+    expect(ctrl).toMatch(/send-email-otp[\s\S]{0,200}@Throttle\(RATE_LIMIT_STRICT\)/);
+    // verify-email-otp → AUTH (brute-force surface; per-booking 5-cap also)
+    expect(ctrl).toMatch(/verify-email-otp[\s\S]{0,200}@Throttle\(RATE_LIMIT_AUTH\)/);
+  });
+
+  test('HIGH: payment.initiate gates on emailOtpVerifiedAt before token issuance', () => {
+    const ps = readSrc('src/payment/payment.service.ts');
+    expect(ps).toMatch(/emailOtpVerifiedAt:\s*true/);
+    expect(ps).toMatch(/!booking\.emailOtpVerifiedAt/);
+    expect(ps).toMatch(/verify your email/i);
+  });
+
+  test('HIGH: OTP code never logged + only hash stored', () => {
+    const bs = readSrc('src/bookings/bookings.service.ts');
+    // SHA-256 hex digest is the only thing stored.
+    expect(bs).toMatch(/createHash\('sha256'\)\.update\(code\)\.digest\('hex'\)/);
+    // Constant-time compare on the hashes (not on the plaintext code).
+    expect(bs).toContain('timingSafeEqual');
+    // securityLogger.log details strings must NEVER reference the `code`
+    // variable. We scan each securityLogger.log({...}) call's argument block
+    // and assert none of them interpolate ${code} or pass the variable in
+    // a details string. Comments mentioning "code" elsewhere are fine.
+    const calls = bs.match(/securityLogger\.log\(\s*\{[\s\S]*?\}\s*\)/g) ?? [];
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call).not.toMatch(/\$\{\s*code\s*\}/);
+      expect(call).not.toMatch(/details:\s*[^,}]*code\b/);
+    }
+  });
+
+  test('HIGH: ownership baked into where clause (no 404 vs 403 oracle)', () => {
+    const bs = readSrc('src/bookings/bookings.service.ts');
+    // Both send + verify scope by { id, customerId: userId }
+    const scoped = bs.match(/findFirst\(\s*\{\s*where:\s*\{\s*id:\s*bookingId,\s*customerId:\s*userId/g) ?? [];
+    expect(scoped.length).toBeGreaterThanOrEqual(2);
+    // No legacy "Not your booking" leak path
+    expect(bs).not.toMatch(/'Not your booking'/);
+  });
+
+  test('HIGH: attempts counter incremented BEFORE compare (atomic increment)', () => {
+    const bs = readSrc('src/bookings/bookings.service.ts');
+    // The increment block sits above the timingSafeEqual call so even an
+    // exception path costs the customer an attempt.
+    const idxIncrement = bs.indexOf('emailOtpAttempts: { increment: 1 }');
+    const idxCompare = bs.indexOf('timingSafeEqual');
+    expect(idxIncrement).toBeGreaterThan(0);
+    expect(idxCompare).toBeGreaterThan(idxIncrement);
+  });
+
+  test('HIGH: verifiedAt is set ONLY on success + hash nulled to prevent replay', () => {
+    const bs = readSrc('src/bookings/bookings.service.ts');
+    // The success branch updates verifiedAt AND nulls hash + expiry.
+    expect(bs).toMatch(/emailOtpVerifiedAt:\s*new Date\(\)[\s\S]*?emailOtpHash:\s*null[\s\S]*?emailOtpExpiry:\s*null/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 5. RATE LIMITING
 // ═══════════════════════════════════════════════════════════════════════════
 

@@ -13,10 +13,11 @@ import {
 } from '@nestjs/common';
 import { BusinessBadRequestException } from '../common/exceptions/business-exception';
 import { Throttle } from '@nestjs/throttler';
-import { RATE_LIMIT_WRITE, RATE_LIMIT_AUTH, RATE_LIMIT_READ } from '../common/throttle-config';
+import { RATE_LIMIT_WRITE, RATE_LIMIT_AUTH, RATE_LIMIT_READ, RATE_LIMIT_STRICT } from '../common/throttle-config';
 import { BookingsService } from './bookings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { RefundDecisionDto } from './dto/refund-decision.dto';
+import { VerifyEmailOtpDto } from './dto/verify-email-otp.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/interfaces/request-user.interface';
@@ -106,6 +107,37 @@ export class BookingsController {
       dto.amount,
       dto.note,
     );
+  }
+
+  /**
+   * Resend the booking email-OTP. Customers land here when their original
+   * code lands in spam or expires. Rate-limited at RATE_LIMIT_STRICT (3/min)
+   * — defense in depth on top of EmailQuotaService per-recipient daily cap
+   * (10/day). Anti-enumeration: foreign or non-PENDING bookings return 404.
+   */
+  @Post(':id/send-email-otp')
+  @Throttle(RATE_LIMIT_STRICT)
+  sendEmailOtp(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.bookingsService.sendBookingEmailOtp(user.id, id);
+  }
+
+  /**
+   * Verify the 6-digit booking email-OTP. RATE_LIMIT_AUTH (5/min) caps the
+   * brute-force surface at the network edge; service layer enforces a
+   * separate per-booking 5-attempt counter that locks the cycle on the 5th
+   * miss (only a resend can recover).
+   */
+  @Post(':id/verify-email-otp')
+  @Throttle(RATE_LIMIT_AUTH)
+  verifyEmailOtp(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: VerifyEmailOtpDto,
+  ) {
+    return this.bookingsService.verifyBookingEmailOtp(user.id, id, dto.code);
   }
 
   /**

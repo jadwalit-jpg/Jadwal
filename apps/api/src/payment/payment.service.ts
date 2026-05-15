@@ -376,6 +376,7 @@ export class PaymentService {
         paymentId: true,
         ref: true,
         bookingPhone: true,
+        emailOtpVerifiedAt: true,
         activity: { select: { titleEn: true } },
       },
     });
@@ -385,6 +386,17 @@ export class PaymentService {
     // Check reservation hasn't expired (with 1-minute buffer)
     if (booking.reservedUntil && booking.reservedUntil < new Date(Date.now() + 60 * 1000)) {
       throw new BadRequestException('Reservation has expired. Please create a new booking.');
+    }
+
+    // Email-OTP gate. The customer must have verified the 6-digit code that
+    // was emailed at booking-create time before we will hand the gateway
+    // any payment token. Defends against session-cookie theft + provides a
+    // per-booking "is the customer actually here" check.
+    //
+    // No 404 oracle leak: by the time we reach this line, ownership + state
+    // checks have already passed, so the booking is known-yours.
+    if (!booking.emailOtpVerifiedAt) {
+      throw new BadRequestException('Please verify your email before proceeding to payment.');
     }
 
     // Generic "not in a payable state" — collapses three internal paths

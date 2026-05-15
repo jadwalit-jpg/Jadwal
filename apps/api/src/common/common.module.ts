@@ -7,6 +7,7 @@ import { NotificationService } from './services/notification.service';
 import { WebPushService } from './services/web-push.service';
 import { LoyaltyService } from './services/loyalty.service';
 import { ReconciliationService } from './services/reconciliation.service';
+import { SecurityLoggerService } from './services/security-logger.service';
 import { NotificationController } from './controllers/notification.controller';
 import { PushController } from './controllers/push.controller';
 import { ClientErrorController } from './controllers/client-error.controller';
@@ -16,7 +17,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 @Module({
   imports: [ScheduleModule.forRoot(), PrismaModule],
   controllers: [NotificationController, PushController, ClientErrorController],
-  providers: [UploadService, CleanupService, AuditLoggerService, NotificationService, WebPushService, LoyaltyService, ReconciliationService],
-  exports: [UploadService, CleanupService, AuditLoggerService, NotificationService, WebPushService, LoyaltyService, ReconciliationService],
+  providers: [UploadService, CleanupService, AuditLoggerService, NotificationService, WebPushService, LoyaltyService, ReconciliationService, SecurityLoggerService],
+  exports: [UploadService, CleanupService, AuditLoggerService, NotificationService, WebPushService, LoyaltyService, ReconciliationService, SecurityLoggerService],
 })
 export class CommonModule {}

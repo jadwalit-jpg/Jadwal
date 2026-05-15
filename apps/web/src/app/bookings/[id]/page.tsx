@@ -25,6 +25,7 @@ import { getApiError } from '@/lib/api-error';
 import { isAllowedPay2mFormAction } from '@/lib/pay2m';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
+import { BookingEmailOtpModal } from '@/components/booking-email-otp-modal';
 import { useToast } from '@/components/toast';
 import { Badge, Button } from '@/components/ui';
 
@@ -131,6 +132,25 @@ export default function BookingDetailPage() {
 
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+
+  // Email-OTP gate. Booking-create auto-sends a 6-digit code to the
+  // customer's email; they must verify before /payment/initiate will
+  // hand them a PAY2M token. We auto-open the modal as soon as we know
+  // the booking is PENDING + not yet verified, so the customer never
+  // sees a "Pay" button that mysteriously fails.
+  const needsEmailOtp =
+    booking?.status === 'PENDING' && !booking?.emailOtpVerifiedAt;
+  const [showEmailOtpModal, setShowEmailOtpModal] = useState(false);
+  useEffect(() => {
+    if (needsEmailOtp) setShowEmailOtpModal(true);
+  }, [needsEmailOtp]);
+
+  const handleOtpVerified = useCallback(() => {
+    setShowEmailOtpModal(false);
+    // Refetch so emailOtpVerifiedAt flips to a value and the page state
+    // (PaymentButton enabled, verify-email banner removed) updates.
+    queryClient.invalidateQueries({ queryKey: ['booking', id], refetchType: 'all' });
+  }, [id, queryClient]);
 
   const handleCancelReservation = useCallback(async () => {
     setCancelling(true);
@@ -688,7 +708,21 @@ export default function BookingDetailPage() {
               </div>
 
               {/* ── Actions ─────────────────────────────────────── */}
-              {booking.status === 'PENDING' ? (
+              {booking.status === 'PENDING' && needsEmailOtp ? (
+                <div className="space-y-2">
+                  <div className="px-4 py-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 text-sm text-blue-700 dark:text-blue-400">
+                    {t('booking.emailOtp.verifyToPay')}
+                  </div>
+                  <Button
+                    full
+                    size="lg"
+                    onClick={() => setShowEmailOtpModal(true)}
+                  >
+                    {t('booking.emailOtp.reopenCta')}
+                  </Button>
+                </div>
+              ) : null}
+              {booking.status === 'PENDING' && !needsEmailOtp ? (
                 <PaymentButton bookingId={booking.id} />
               ) : null}
 
@@ -746,6 +780,16 @@ export default function BookingDetailPage() {
       </main>
 
       <Footer />
+
+      {/* ── Email-OTP verification modal — auto-opens for PENDING bookings ── */}
+      {booking ? (
+        <BookingEmailOtpModal
+          isOpen={showEmailOtpModal}
+          onClose={() => setShowEmailOtpModal(false)}
+          onVerified={handleOtpVerified}
+          bookingId={booking.id}
+        />
+      ) : null}
 
       {/* ── Wanasa points cancel confirmation popup ── */}
       {showCancelConfirm ? (
