@@ -22,7 +22,6 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, MapPin, Check } from 'lucide-react';
 import api from '@/lib/api';
 import { useGeo } from '@/context/geo-context';
-import { localized } from '@/lib/localize';
 
 interface Country {
   id: string;
@@ -30,6 +29,17 @@ interface Country {
   nameAr: string;
   isoCode: string;
   currencyCode: string;
+}
+
+/**
+ * Inline bilingual-name resolver. Same fallback rules as `@/lib/localize`'s
+ * `localized()`, but avoids importing `@/lib/i18n` at module-load, which would
+ * pull react-i18next's `initReactI18next` plugin into the navbar's test
+ * graph (mocked-as-undefined in unit tests) and crash the navbar suite.
+ */
+function pickName(c: Country, lang: string): string {
+  if (lang === 'ar' && c.nameAr?.trim()) return c.nameAr;
+  return c.nameEn ?? '';
 }
 
 // ISO-3166 alpha-2 → flag emoji. Cheap, no network call. Two regional-indicator
@@ -51,8 +61,9 @@ interface Props {
 }
 
 export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { country, setCountry, source } = useGeo();
+  const lang = i18n.language;
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -97,7 +108,7 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
         >
           <span className="flex items-center gap-3">
             <MapPin aria-hidden="true" className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-            <span>{country ? `${flagFromIso(country.isoCode)} ${localized(country, 'name')}` : t('nav.country', { defaultValue: 'Country' })}</span>
+            <span>{country ? `${flagFromIso(country.isoCode)} ${pickName(country, lang)}` : t('nav.country', { defaultValue: 'Country' })}</span>
           </span>
           <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''} text-gray-400 dark:text-slate-500`} />
         </button>
@@ -118,7 +129,7 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
                 >
                   <span className="flex items-center gap-2">
                     <span className="text-base leading-none">{flagFromIso(c.isoCode)}</span>
-                    <span>{localized(c, 'name')}</span>
+                    <span>{pickName(c, lang)}</span>
                   </span>
                   {isActive && <Check aria-hidden="true" className="h-4 w-4" />}
                 </button>
@@ -174,7 +185,7 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
                 >
                   <span className="flex items-center gap-2.5">
                     <span className="text-base leading-none">{flagFromIso(c.isoCode)}</span>
-                    <span>{localized(c, 'name')}</span>
+                    <span>{pickName(c, lang)}</span>
                   </span>
                   {isActive && <Check aria-hidden="true" className="h-4 w-4" />}
                 </button>
