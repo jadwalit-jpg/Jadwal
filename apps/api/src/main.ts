@@ -115,11 +115,15 @@ async function bootstrap() {
     }
 
     // Critical services must be explicitly enabled in production.
-    // Silent fallback (logging-only mode) would mean users never receive booking emails,
-    // OTP SMS, or payment confirmations — a severe production failure.
+    // Silent fallback (logging-only mode) would mean users never receive booking
+    // emails or payment confirmations — a severe production failure.
+    //
+    // SMS (AWS SNS) was removed in PR #264 — the platform no longer sends text
+    // messages; OTP runs over email. SMS_ENABLED is therefore no longer a gate
+    // here. Leaving it in this list would fail-fast every prod boot, because
+    // SMS_ENABLED is no longer injected by the task definition.
     const requiredServices: Array<{ key: string; name: string }> = [
       { key: 'EMAIL_ENABLED', name: 'Email (AWS SES)' },
-      { key: 'SMS_ENABLED', name: 'SMS (AWS SNS)' },
       { key: 'PAYMENT_ENABLED', name: 'Payment (PAY2M)' },
     ];
     const disabled = requiredServices.filter((s) => process.env[s.key] !== 'true');
