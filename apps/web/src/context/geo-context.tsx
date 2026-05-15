@@ -63,7 +63,12 @@ const GEO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — older than this 
 // If the cached value is younger than this, trust it and DON'T re-fire
 // /geo/detect on load — so a plain refresh makes zero geo requests. Older →
 // re-validate in the background (catches travel / VPN / ISP changes).
-const GEO_REVALIDATE_AFTER_MS = 6 * 60 * 60 * 1000; // 6 hours
+// Was 6h, dropped to 30min after a real incident: a visitor who tested from
+// Qatar earlier in the day kept seeing Qatar on a Germany VPN even after a
+// fix shipped, because the cache hadn't aged out. 30min is short enough that
+// any meaningful re-test (5-10 min later) sees the new geo result, but long
+// enough that a normal session (page-to-page) doesn't re-fire /geo/detect.
+const GEO_REVALIDATE_AFTER_MS = 30 * 60 * 1000; // 30 minutes
 
 type CachedGeo = { country: GeoCountry | null; city: GeoCity | null; source: string; ts: number };
 
