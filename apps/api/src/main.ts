@@ -69,31 +69,25 @@ async function bootstrap() {
 
     // DB connection — strict in production.
     //
-    // Production (NODE_ENV === 'production'): RDS_SECRET_ARN is REQUIRED.
-    // Legacy plaintext DATABASE_URL is refused even if set — this prevents
-    // a silent regression where someone re-adds DATABASE_URL to the task
-    // def and prod starts running on a stale credential bypassing the
-    // Secrets Manager auto-rotation path.
+    // We're already inside `if (NODE_ENV === 'production')` (outer block at
+    // line 63), so these checks ALWAYS run in prod. Non-prod / dev / test
+    // environments use their own validation paths (Prisma's resolver throws
+    // if neither RDS_SECRET_ARN nor DATABASE_URL is set when it boots) — no
+    // need to duplicate that here.
     //
-    // Non-production (dev / test / CI): either path is accepted, since
-    // local environments don't have AWS Secrets Manager access and rely
-    // on docker-compose-style DATABASE_URL in .env files.
+    // RDS_SECRET_ARN is REQUIRED in prod. Legacy plaintext DATABASE_URL is
+    // refused even if set — this prevents a silent regression where someone
+    // re-adds DATABASE_URL to the task def and prod starts running on a
+    // stale credential bypassing the Secrets Manager auto-rotation path.
     const hasSecretArn = !!process.env.RDS_SECRET_ARN?.trim();
     const hasLegacyUrl = !!process.env.DATABASE_URL?.trim();
-    if (process.env.NODE_ENV === 'production') {
-      if (!hasSecretArn) {
-        console.error('\n[FATAL] Production requires RDS_SECRET_ARN (+ DB_HOST/DB_PORT/DB_NAME). Legacy DATABASE_URL is not accepted in production.\n');
-        process.exit(1);
-      }
-      if (hasLegacyUrl) {
-        console.error('\n[FATAL] DATABASE_URL is set in production. Remove it from the task definition — RDS_SECRET_ARN is the only supported path.\n');
-        process.exit(1);
-      }
-    } else {
-      if (!hasSecretArn && !hasLegacyUrl) {
-        console.error('\n[FATAL] DB connection not configured: set RDS_SECRET_ARN (+ DB_HOST/DB_PORT/DB_NAME) or DATABASE_URL.\n');
-        process.exit(1);
-      }
+    if (!hasSecretArn) {
+      console.error('\n[FATAL] Production requires RDS_SECRET_ARN (+ DB_HOST/DB_PORT/DB_NAME). Legacy DATABASE_URL is not accepted in production.\n');
+      process.exit(1);
+    }
+    if (hasLegacyUrl) {
+      console.error('\n[FATAL] DATABASE_URL is set in production. Remove it from the task definition — RDS_SECRET_ARN is the only supported path.\n');
+      process.exit(1);
     }
     if (hasSecretArn) {
       const dbMissing = ['DB_HOST', 'DB_NAME'].filter((k) => !process.env[k]?.trim());
