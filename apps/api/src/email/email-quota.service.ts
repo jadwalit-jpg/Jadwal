@@ -52,7 +52,14 @@ export class EmailQuotaService {
     reset: 5,
     verification: 5,
     'change-notification': 3,
+    'booking-otp': 10,
   };
+
+  // Types where the progressive cooldown SHOULD NOT apply. booking-otp is
+  // here because the 1m/5m/15m/60m schedule would block legitimate resends
+  // after the first code lands in spam or expires (10 min). The per-day cap
+  // (Layer 2) + per-endpoint @Throttle(RATE_LIMIT_STRICT) still apply.
+  private readonly cooldownExemptTypes = new Set<EmailQuotaType>(['booking-otp']);
 
   // Progressive cooldown between successive sends to the same recipient,
   // indexed by the count *after* this send (i.e. cooldownAfterSendMs[2] is
@@ -103,7 +110,10 @@ export class EmailQuotaService {
       const lastSent = lastSentRaw ? Number(lastSentRaw) : 0;
       const prevCount = prevCountRaw ? Number(prevCountRaw) : 0;
 
-      if (lastSent > 0 && prevCount > 0 && prevCount < this.cooldownAfterSendMs.length) {
+      if (
+        !this.cooldownExemptTypes.has(type) &&
+        lastSent > 0 && prevCount > 0 && prevCount < this.cooldownAfterSendMs.length
+      ) {
         const requiredWait = this.cooldownAfterSendMs[prevCount];
         const elapsed = Date.now() - lastSent;
         if (elapsed < requiredWait) {
@@ -303,4 +313,4 @@ export class EmailQuotaService {
   }
 }
 
-export type EmailQuotaType = 'reset' | 'verification' | 'change-notification';
+export type EmailQuotaType = 'reset' | 'verification' | 'change-notification' | 'booking-otp';

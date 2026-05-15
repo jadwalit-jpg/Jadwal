@@ -20,6 +20,9 @@ import { NotificationService } from '../../src/common/services/notification.serv
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { RedisLockService } from '../../src/redis/redis-lock.service';
 import { AvailabilityCacheService } from '../../src/redis/availability-cache.service';
+import { EmailService } from '../../src/email/email.service';
+import { EmailQuotaService } from '../../src/email/email-quota.service';
+import { SecurityLoggerService } from '../../src/common/services/security-logger.service';
 import { ConfigService } from '@nestjs/config';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import { makeConfigMock } from '../mocks/auth-deps.mock';
@@ -41,6 +44,14 @@ async function buildSut() {
   const lock = makeRedisLockMock();
   const cache = makeAvailabilityCacheMock();
 
+  // Email-OTP gate deps — minimal stubs so the SUT compiles. The unit tests
+  // here focus on permission / state-machine paths and never invoke
+  // sendBookingEmailOtp / verifyBookingEmailOtp directly (integration suite
+  // covers those against a real DB).
+  const email = { sendBookingOtp: jest.fn().mockResolvedValue(true) } as any;
+  const emailQuota = { tryConsume: jest.fn().mockResolvedValue(true) } as any;
+  const securityLogger = { log: jest.fn().mockResolvedValue(undefined) } as any;
+
   const mod = await Test.createTestingModule({
     providers: [
       BookingsService,
@@ -51,10 +62,13 @@ async function buildSut() {
       { provide: LoyaltyService,            useValue: loyalty },
       { provide: RedisLockService,          useValue: lock },
       { provide: AvailabilityCacheService,  useValue: cache },
+      { provide: EmailService,              useValue: email },
+      { provide: EmailQuotaService,         useValue: emailQuota },
+      { provide: SecurityLoggerService,     useValue: securityLogger },
     ],
   }).compile();
 
-  return { sut: mod.get(BookingsService), prisma, audit, notif, loyalty, lock, cache };
+  return { sut: mod.get(BookingsService), prisma, audit, notif, loyalty, lock, cache, email, emailQuota, securityLogger };
 }
 
 const futureDate = (offsetMs = 24 * 60 * 60 * 1000) => new Date(Date.now() + offsetMs);

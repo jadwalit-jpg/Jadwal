@@ -6,6 +6,7 @@ import { bookingCancellationTemplate } from './templates/booking-cancellation';
 import { passwordResetTemplate } from './templates/password-reset';
 import { passwordChangedTemplate } from './templates/password-changed';
 import { emailVerificationTemplate } from './templates/email-verification';
+import { bookingOtpTemplate } from './templates/booking-otp';
 import {
   adminAlertTemplate,
   ADMIN_ALERT_SUBJECTS,
@@ -138,6 +139,24 @@ export class EmailService {
     currency?: string;
   }) {
     return this.send(to, 'Booking Cancelled — Jadwal', 'booking-cancellation', data);
+  }
+
+  /**
+   * Booking email-OTP. Sent on booking creation; customer must enter the
+   * code on /bookings/[id] before /payment/initiate will issue a PAY2M
+   * token. Direct send (not queued in EmailOutbox) — the code is time-
+   * sensitive (10 min). If SES is down the resend endpoint covers retries.
+   *
+   * The plaintext code is interpolated into the rendered HTML body ONLY.
+   * It MUST NOT appear in any log, response, or audit trail.
+   */
+  async sendBookingOtp(to: string, data: {
+    customerName: string;
+    otpCode: string;
+    bookingRef: string;
+    expiresInMinutes: number;
+  }) {
+    return this.send(to, 'Your Jadwal booking verification code', 'booking-otp', data);
   }
 
   // ─── Payment Emails ──────────────────────────────────────────────────────
@@ -304,6 +323,9 @@ export class EmailService {
         break;
       case 'email-verification':
         html = emailVerificationTemplate(data as any);
+        break;
+      case 'booking-otp':
+        html = bookingOtpTemplate(data as any);
         break;
       case 'admin-alert':
         html = adminAlertTemplate(data as any);

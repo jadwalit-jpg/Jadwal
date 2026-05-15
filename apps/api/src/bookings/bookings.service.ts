@@ -16,8 +16,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditLoggerService } from '../common/services/audit-logger.service';
 import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
+import { SecurityLoggerService } from '../common/services/security-logger.service';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
+import { EmailService } from '../email/email.service';
+import { EmailQuotaService } from '../email/email-quota.service';
 import { envNumber } from '../common/env';
 import { ConfigService } from '@nestjs/config';
 import { CreateBookingDto } from './dto/create-booking.dto';
@@ -352,6 +355,9 @@ export class BookingsService {
     private configService: ConfigService,
     private loyalty: LoyaltyService,
     private availabilityCache: AvailabilityCacheService,
+    private emailService: EmailService,
+    private emailQuota: EmailQuotaService,
+    private securityLogger: SecurityLoggerService,
   ) {
     this.reservationWindowMinutes = Number(
       this.configService.get('RESERVATION_WINDOW_MINUTES', '15'),
@@ -1493,8 +1499,12 @@ export class BookingsService {
     });
     const totalBookedNow = postAgg._sum.guests ?? 0;
 
-    // Audit log: customer created a booking
-    const auditUser = await db.user.findUnique({ where: { id: userId }, select: { fullName: true } });
+    // Audit log: customer created a booking. Also pull email so we can
+    // send the email-OTP (PENDING flow) right after this block.
+    const auditUser = await db.user.findUnique({
+      where: { id: userId },
+      select: { fullName: true, email: true },
+    });
     this.auditLogger.log({
       actorType: 'CUSTOMER',
       actorId: userId,
@@ -1511,6 +1521,24 @@ export class BookingsService {
         ...(Number(booking.pointsRedeemed) > 0 ? { pointsRedeemed: Number(booking.pointsRedeemed), pointsDiscount: Number(booking.pointsDiscount) } : {}),
       }),
     });
+
+    // Email-OTP gate. PENDING bookings must verify a 6-digit code before
+    // /payment/initiate will issue a PAY2M token. CONFIRMED bookings
+    // (full-Wanasa-points coverage) skip this — no payment redirect to gate.
+    // Fire-and-forget: any SES error is logged inside the helper and never
+    // breaks the booking flow (customer can resend via the dedicated endpoint).
+    if (booking.status === 'PENDING' && auditUser?.email) {
+      void this.generateAndSendBookingOtp(
+        booking.id,
+        auditUser.email,
+        auditUser.fullName || 'Customer',
+        booking.ref,
+      ).catch((err: unknown) => {
+        const kind = err instanceof Error ? err.name : 'UnknownError';
+        // eslint-disable-next-line no-console
+        console.warn(`[bookings] OTP send failed for booking ${booking.id} (${kind})`);
+      });
+    }
 
     // Notify vendor + admins ONLY when the booking is already CONFIRMED at
     // create time — this happens for full-Wanasa-points coverage where PAY2M
@@ -2255,5 +2283,234 @@ export class BookingsService {
     });
 
     return { pointsAwarded: points };
+  }
+
+  // ─── Email-OTP verification (booking → payment gate) ──────────────────────
+
+  /** 10 minutes in ms — matches the value shown in the email template. */
+  private static readonly BOOKING_OTP_TTL_MS = 10 * 60 * 1000;
+
+  /** Max wrong-code attempts per OTP cycle before the code is invalidated. */
+  private static readonly BOOKING_OTP_MAX_ATTEMPTS = 5;
+
+  /**
+   * Generate a fresh 6-digit code, stamp it on the booking, and email it.
+   * Used by both the booking-create fire-and-forget path AND the explicit
+   * resend endpoint.
+   *
+   * Plaintext code lives only in the email body and the customer's memory.
+   * The DB stores ONLY the SHA-256 hex digest. Logs never see the code.
+   */
+  private async generateAndSendBookingOtp(
+    bookingId: string,
+    customerEmail: string,
+    customerName: string,
+    bookingRef: string,
+  ): Promise<void> {
+    // Cryptographic randomness — NOT Math.random(). 100000-999999 inclusive.
+    const code = String(crypto.randomInt(100000, 1000000));
+    const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+    const expiry = new Date(Date.now() + BookingsService.BOOKING_OTP_TTL_MS);
+
+    // Stamp hash + expiry + reset attempts. The reset is what makes the
+    // resend endpoint actually usable — a customer who burned 5 attempts on
+    // a stale code gets a fresh budget on the new code.
+    await this.prisma.client.booking.update({
+      where: { id: bookingId },
+      data: {
+        emailOtpHash: codeHash,
+        emailOtpExpiry: expiry,
+        emailOtpAttempts: 0,
+      },
+    });
+
+    // Per-recipient quota (10/day for booking-otp, no progressive cooldown
+    // — see EmailQuotaService.cooldownExemptTypes). On exhaustion we fail
+    // closed silently so the customer must wait — but the booking row is
+    // already stamped so the previous-code path still works if they had one.
+    const quotaOk = await this.emailQuota.tryConsume(customerEmail, 'booking-otp');
+    if (!quotaOk) {
+      this.auditLogger.log({
+        actorType: 'SYSTEM',
+        actorId: 'system',
+        actorName: 'system',
+        action: 'BOOKING_EMAIL_OTP_QUOTA_BLOCKED',
+        entity: 'Booking',
+        entityId: bookingId,
+        details: JSON.stringify({ bookingRef }),
+      });
+      return;
+    }
+
+    // Direct SES send (NOT via EmailOutbox) — OTP is time-sensitive (10 min).
+    // sendBookingOtp returns true even on send-failure (anti-enumeration on
+    // the recipient side), so we can't distinguish success here.
+    await this.emailService.sendBookingOtp(customerEmail, {
+      customerName,
+      otpCode: code,
+      bookingRef,
+      expiresInMinutes: 10,
+    });
+
+    // Audit log carries booking ref ONLY. No email, no code.
+    this.auditLogger.log({
+      actorType: 'SYSTEM',
+      actorId: 'system',
+      actorName: 'system',
+      action: 'BOOKING_EMAIL_OTP_SENT',
+      entity: 'Booking',
+      entityId: bookingId,
+      details: JSON.stringify({ bookingRef }),
+    });
+
+    this.securityLogger.log({
+      event: 'BOOKING_EMAIL_OTP_SENT',
+      details: `Booking ${bookingRef}`,
+    });
+  }
+
+  /**
+   * Resend endpoint. Anti-enumeration: foreign or non-PENDING bookings
+   * return the same 404 as a random UUID. Already-verified bookings are
+   * a successful no-op (idempotent).
+   */
+  async sendBookingEmailOtp(userId: string, bookingId: string): Promise<{ ok: true }> {
+    const booking = await this.prisma.client.booking.findFirst({
+      where: { id: bookingId, customerId: userId, status: 'PENDING' },
+      select: {
+        id: true,
+        ref: true,
+        emailOtpVerifiedAt: true,
+        customer: { select: { email: true, fullName: true } },
+      },
+    });
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    // Already verified — idempotent success. Don't send another code.
+    if (booking.emailOtpVerifiedAt) return { ok: true };
+
+    await this.generateAndSendBookingOtp(
+      booking.id,
+      booking.customer.email,
+      booking.customer.fullName || 'Customer',
+      booking.ref,
+    );
+
+    return { ok: true };
+  }
+
+  /**
+   * Verify a 6-digit code against the stored hash. Constant-time compare.
+   * Increments attempts counter atomically BEFORE the compare so even a
+   * thrown error costs the customer an attempt — closes the timing-attack
+   * window where an attacker could distinguish "wrong code" from "code
+   * expired" by error-path latency.
+   *
+   * On success, stamps emailOtpVerifiedAt + nulls hash to prevent replay.
+   * On 5th failure, nulls hash (lock) and requires resend.
+   */
+  async verifyBookingEmailOtp(
+    userId: string,
+    bookingId: string,
+    code: string,
+  ): Promise<{ ok: true }> {
+    const booking = await this.prisma.client.booking.findFirst({
+      where: { id: bookingId, customerId: userId },
+      select: {
+        id: true,
+        ref: true,
+        status: true,
+        emailOtpHash: true,
+        emailOtpExpiry: true,
+        emailOtpAttempts: true,
+        emailOtpVerifiedAt: true,
+      },
+    });
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    // Idempotent: already verified.
+    if (booking.emailOtpVerifiedAt) return { ok: true };
+
+    if (booking.status !== 'PENDING') {
+      throw new BadRequestException('This booking does not require verification.');
+    }
+
+    if (!booking.emailOtpHash || !booking.emailOtpExpiry) {
+      throw new BadRequestException('No active verification code. Please request a new one.');
+    }
+
+    if (booking.emailOtpExpiry < new Date()) {
+      throw new BadRequestException('Verification code expired. Please request a new one.');
+    }
+
+    if (booking.emailOtpAttempts >= BookingsService.BOOKING_OTP_MAX_ATTEMPTS) {
+      // Lock the cycle — only a resend can recover.
+      await this.prisma.client.booking.update({
+        where: { id: bookingId },
+        data: { emailOtpHash: null, emailOtpExpiry: null },
+      });
+      this.securityLogger.log({
+        event: 'BOOKING_EMAIL_OTP_LOCKED',
+        userId,
+        details: `Booking ${booking.ref}`,
+      });
+      throw new BadRequestException('Too many attempts. Please request a new code.');
+    }
+
+    // Atomic increment BEFORE compare — even an exception below leaves
+    // the counter advanced. Protects against retry-loop attacks that try
+    // to slip through a transient error.
+    await this.prisma.client.booking.update({
+      where: { id: bookingId },
+      data: { emailOtpAttempts: { increment: 1 } },
+    });
+
+    const providedHash = crypto.createHash('sha256').update(code).digest('hex');
+    const stored = Buffer.from(booking.emailOtpHash, 'hex');
+    const provided = Buffer.from(providedHash, 'hex');
+
+    // Defensive: SHA-256 hex digests are always 32 bytes. Length-mismatch
+    // means caller bypassed the DTO regex — treat as a wrong code.
+    const match =
+      stored.length === provided.length &&
+      crypto.timingSafeEqual(stored, provided);
+
+    if (!match) {
+      this.securityLogger.log({
+        event: 'BOOKING_EMAIL_OTP_VERIFY_FAIL',
+        userId,
+        details: `Booking ${booking.ref}`,
+      });
+      throw new BadRequestException('Invalid code.');
+    }
+
+    // Success. Stamp verifiedAt + null hash (prevents replay even if the
+    // same code is somehow re-submitted before page reload).
+    await this.prisma.client.booking.update({
+      where: { id: bookingId },
+      data: {
+        emailOtpVerifiedAt: new Date(),
+        emailOtpHash: null,
+        emailOtpExpiry: null,
+      },
+    });
+
+    this.securityLogger.log({
+      event: 'BOOKING_EMAIL_OTP_VERIFY_OK',
+      userId,
+      details: `Booking ${booking.ref}`,
+    });
+
+    this.auditLogger.log({
+      actorType: 'CUSTOMER',
+      actorId: userId,
+      actorName: `Customer ${userId.slice(0, 8)}`,
+      action: 'BOOKING_EMAIL_OTP_VERIFIED',
+      entity: 'Booking',
+      entityId: bookingId,
+      details: JSON.stringify({ bookingRef: booking.ref }),
+    });
+
+    return { ok: true };
   }
 }

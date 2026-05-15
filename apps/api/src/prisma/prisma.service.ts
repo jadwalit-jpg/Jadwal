@@ -240,6 +240,14 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         refreshToken: {
           tokenHash: true,
         },
+        booking: {
+          // Booking-OTP secrets — never returned to clients via default
+          // findX/include calls. Auth-internal verify path reads them via
+          // an explicit `select: { emailOtpHash: true, ... }` in
+          // verifyBookingEmailOtp, which overrides this omit.
+          emailOtpHash: true,
+          emailOtpAttempts: true,
+        },
       },
     } as any);
 

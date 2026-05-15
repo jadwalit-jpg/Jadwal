@@ -9,7 +9,7 @@ import { SesEventsController } from './ses-events.controller';
 import { SnsSignatureValidator } from './sns-signature-validator.service';
 import { OutboxDrainService } from './outbox-drain.service';
 import { RedisModule } from '../redis/redis.module';
-import { SecurityLoggerService } from '../common/services/security-logger.service';
+// SecurityLoggerService now provided globally by CommonModule.
 
 @Global()
 @Module({
@@ -20,7 +20,6 @@ import { SecurityLoggerService } from '../common/services/security-logger.servic
     EmailQuotaService,
     EmailSuppressionService,
     EmailUnsubscribeTokenService,
-    SecurityLoggerService,
     SnsSignatureValidator,
     // R4 — cron worker that drains the EmailOutbox (leader-locked). PrismaService
     // + RedisLockService come from the global Prisma/Redis modules; EmailService
