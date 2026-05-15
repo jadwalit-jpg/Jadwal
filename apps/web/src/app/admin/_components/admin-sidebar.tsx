@@ -26,6 +26,7 @@ import {
   Award,
   UserCircle,
   Undo2,
+  MailX,
   X,
 } from 'lucide-react';
 
@@ -44,6 +45,7 @@ const navItems = [
   { href: '/admin/loyalty', label: 'Loyalty (WANASA)', icon: Award },
   { href: '/admin/trending', label: 'Trending', icon: TrendingUp },
   { href: '/admin/audit-logs', label: 'Audit Logs', icon: ClipboardList },
+  { href: '/admin/email-suppressions', label: 'Email Suppressions', icon: MailX },
   { href: '/admin/settings', label: 'Settings', icon: Settings },
   { href: '/admin/profile', label: 'My Profile', icon: UserCircle },
 ] as { href: string; label: string; icon: any; comingSoon?: boolean }[];
