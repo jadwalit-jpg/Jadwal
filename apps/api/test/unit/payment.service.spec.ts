@@ -29,7 +29,8 @@ const PAY2M_CFG = {
   PAY2M_MERCHANT_ID:    'TEST_MID',
   PAY2M_MERCHANT_NAME:  'Jadwal Test',
   PAY2M_SECURED_KEY:    'test-secured-key',
-  PAY2M_SECRET_WORD:    'TEST_SECRET_WORD',
+  // No PAY2M_SECRET_WORD — PAY2M's callback Response_Key recipe has no
+  // secret word (see PaymentService.verifyCallbackHash).
   PAY2M_API_URL:        'https://pay2m.example/api',
   PAY2M_RETURN_URL:     'https://jadwal.example/payment/callback',
 };
@@ -59,9 +60,13 @@ async function buildSut(enabled = true) {
   return { sut: mod.get(PaymentService), prisma, config, lock, cache, audit, notif, email };
 }
 
-/** Build a valid PAY2M callback Response_Key hash for the given inputs. */
+/**
+ * Build a valid PAY2M callback Response_Key hash for the given inputs.
+ * Recipe (confirmed against a live callback, 2026-05-16):
+ *   SHA256(merchant_id + basket_id + amount + err_code)  — no secret word.
+ */
 function buildResponseKey(basketId: string, amount: string, errCode: string): string {
-  const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}${basketId}${PAY2M_CFG.PAY2M_SECRET_WORD}${amount}${errCode}`;
+  const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}${basketId}${amount}${errCode}`;
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
@@ -103,6 +108,15 @@ describe('PaymentService.verifyCallbackHash', () => {
     const ctx = await buildSut();
     const key = buildResponseKey('JDWL-ABC', '100.00', '00');
     expect(ctx.sut.verifyCallbackHash('JDWL-ABC', '100.00', '00', key.toUpperCase())).toBe(true);
+  });
+
+  test('amount-format tolerant: hash built with "1" verifies when caller passes "1.00"', async () => {
+    const ctx = await buildSut();
+    // PAY2M normalises the amount (strips trailing zeros): a transaction
+    // sent as "1.00" comes back hashed as "1". verifyCallbackHash tries the
+    // canonical numeric forms, so a caller passing "1.00" still matches.
+    const key = buildResponseKey('JDWL-ABC', '1', '00');
+    expect(ctx.sut.verifyCallbackHash('JDWL-ABC', '1.00', '00', key)).toBe(true);
   });
 
   // Regression (2026-04-22): defence-in-depth format gate.

@@ -30,7 +30,6 @@ export class PaymentService {
   private readonly merchantId: string;
   private readonly merchantName: string;
   private readonly securedKey: string;
-  private readonly secretWord: string;
   private readonly apiUrl: string;
   private readonly returnUrl: string;
   // Per-attempt timeout for the PAY2M token-fetch HTTP call (in ms).
@@ -72,7 +71,9 @@ export class PaymentService {
     this.enabled = this.config.get('PAYMENT_ENABLED', 'false') === 'true';
     this.merchantId = this.config.getOrThrow<string>('PAY2M_MERCHANT_ID');
     this.securedKey = this.config.getOrThrow<string>('PAY2M_SECURED_KEY');
-    this.secretWord = this.config.getOrThrow<string>('PAY2M_SECRET_WORD');
+    // PAY2M_SECRET_WORD is intentionally NOT loaded — PAY2M's callback
+    // Response_Key recipe has no secret word (confirmed against a live
+    // callback, 2026-05-16). See verifyCallbackHash.
     this.returnUrl = this.config.getOrThrow<string>('PAY2M_RETURN_URL');
     this.apiUrl = this.config.getOrThrow<string>('PAY2M_API_URL');
     this.merchantName = this.config.getOrThrow<string>('PAY2M_MERCHANT_NAME');
@@ -313,10 +314,7 @@ export class PaymentService {
       CUSTOMER_MOBILE_NO: params.customerPhone || '',
       CUSTOMER_EMAIL_ADDRESS: params.customerEmail,
       // PAY2M docs (section 3.2) require a SIGNATURE field but state it is
-      // "a random string value" — PAY2M does not validate its content. The
-      // hash that actually authenticates the payment is Response_Key (sent
-      // by PAY2M to us in the callback), computed as
-      // SHA256(merchant_id + basket_id + secret_word + amount + err_code).
+      // "a random string value" — PAY2M does not validate its content.
       // crypto.randomUUID() satisfies the "random string" requirement
       // without exposing any internal state.
       SIGNATURE: crypto.randomUUID(),
@@ -336,21 +334,46 @@ export class PaymentService {
 
   verifyCallbackHash(basketId: string, amount: string, errCode: string, responseKey: string): boolean {
     // Upfront format gate — rejects obvious garbage (wrong length, non-hex)
-    // in O(1) before we spend O(n) on string normalisation + buffer
-    // construction. Defence-in-depth against a flood of large-payload
-    // `Response_Key` submissions; also makes the expected shape explicit.
+    // in O(1) before we spend O(n) on hashing + buffer construction.
     if (typeof responseKey !== 'string' || !/^[a-f0-9]{64}$/i.test(responseKey)) {
       return false;
     }
-    const raw = `${this.merchantId}${basketId}${this.secretWord}${amount}${errCode}`;
-    const expected = crypto.createHash('sha256').update(raw).digest('hex');
-    // Compare the decoded 32-byte buffers, not ASCII hex. timingSafeEqual
-    // is constant-time on equal-length inputs; the length check above means
-    // these are always the same length by the time we get here.
-    return crypto.timingSafeEqual(
-      Buffer.from(expected, 'hex'),
-      Buffer.from(responseKey.toLowerCase(), 'hex'),
-    );
+    // PAY2M's Response_Key recipe — confirmed against a live callback
+    // (2026-05-16): SHA256(merchant_id + basket_id + amount + err_code).
+    //
+    // ⚠ SECURITY: this hash contains NO shared secret. Every input is
+    // visible in the customer's own browser (MERCHANT_ID + BASKET_ID +
+    // TXNAMT are in the PAY2M checkout form; err_code is trivial). It is an
+    // INTEGRITY checksum, NOT an authentication signature — a valid hash
+    // does NOT prove the callback came from PAY2M. Forged-callback defence
+    // must come from an independent server-to-server transaction
+    // verification (see the launch-blocker note in handleCallback).
+    //
+    // PAY2M normalises the amount (strips trailing zeros): a transaction
+    // sent as "1.00" comes back hashed as "1". We try the canonical numeric
+    // forms so the check is robust to that normalisation — and since the
+    // hash carries no secret, trying a few amount forms weakens nothing.
+    const n = Number(amount);
+    const amountForms = new Set<string>([String(amount)]);
+    if (Number.isFinite(n)) {
+      amountForms.add(n.toString());   // "1.00" → "1", "1.50" → "1.5"
+      amountForms.add(n.toFixed(2));   // → "1.00"
+    }
+    const target = Buffer.from(responseKey.toLowerCase(), 'hex');
+    for (const amt of amountForms) {
+      const expected = Buffer.from(
+        crypto
+          .createHash('sha256')
+          .update(`${this.merchantId}${basketId}${amt}${errCode}`)
+          .digest('hex'),
+        'hex',
+      );
+      // timingSafeEqual needs equal-length buffers — both are 32 bytes.
+      if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // ─── Initiate Payment ───────────────────────────────────────────────────
@@ -585,12 +608,18 @@ export class PaymentService {
     // If payment.status === 'FAILED' && isSuccess → fall through to process as new SUCCESS
     // (the optimistic lock below handles the update safely)
 
-    // 4. Verify SHA-256 hash — required for ALL callbacks regardless of
-    //    err_code. PAY2M sends a valid Response_Key on cancels and declines
-    //    too; the previous "best-effort for failures" was the only carve-out
-    //    and it's now closed (fixed PAY-1 — closes a forge-failure-IPN
-    //    attack vector where an attacker who knew a victim's basket_id
-    //    could mark their PENDING booking as FAILED → cron deletes it).
+    // 4. Verify the PAY2M Response_Key hash on every callback.
+    //
+    // ⚠ LAUNCH BLOCKER — forgeable callback. PAY2M's Response_Key recipe is
+    // SHA256(merchant_id + basket_id + amount + err_code) — it has NO shared
+    // secret (see verifyCallbackHash). Every input is visible in the
+    // customer's own browser, so a customer can compute a valid hash and
+    // POST a forged `err_code=000` callback to confirm a booking they never
+    // paid for. This hash is therefore an INTEGRITY check only, NOT proof of
+    // origin. Before real-money launch this MUST be backed by an independent
+    // server-to-server verification — a PAY2M transaction status/inquiry
+    // call (authenticated with SECURED_KEY), or an IP-locked IPN treated as
+    // the authoritative event. Tracked in the launch checklist.
     const amount = Number(payment.amount).toFixed(2);
     const hashValid = this.verifyCallbackHash(
       params.basket_id,
@@ -599,14 +628,9 @@ export class PaymentService {
       params.Response_Key,
     );
 
-    // Always require a valid hash — both for SUCCESS (an invalid hash on
-    // success = tampering attempt to confirm an unpaid booking) and for
-    // FAILURE (an invalid hash on failure = a forged callback by an
-    // attacker who knows the basket_id, used to cancel a victim's PENDING
-    // booking). Industry norm: webhook signatures are verified on every
-    // event, regardless of outcome. PAY2M sends a valid Response_Key for
-    // legitimate cancels and declines too — the previous "be lenient on
-    // failures" was the only deviation, and it's now closed.
+    // The hash is verified on every callback regardless of err_code — a
+    // mismatch means a corrupted or malformed callback. (It cannot, on its
+    // own, distinguish a forgery — see the launch-blocker note above.)
     if (!hashValid) {
       this.logger.warn({ event: 'PAY2M_HASH_MISMATCH', paymentId: payment.id, errCode: params.err_code });
       await this.auditLogger.log({
