@@ -1,5 +1,6 @@
 import { IsString, IsEnum, IsNumber, IsOptional, IsInt, IsDateString, Min, Max, MaxLength, MinLength, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsValidCouponDiscount } from '../../common/validators/coupon-discount';
 
 export class CreateCouponDto {
   @IsString()
@@ -15,6 +16,7 @@ export class CreateCouponDto {
   @IsNumber()
   @Min(0.01, { message: 'discountValue must be greater than 0' })
   @Max(100000)
+  @IsValidCouponDiscount() // PERCENTAGE coupons capped at 100
   discountValue!: number;
 
   @IsDateString()
