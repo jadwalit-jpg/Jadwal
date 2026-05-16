@@ -30,6 +30,11 @@ export class PaymentService {
   private readonly merchantId: string;
   private readonly merchantName: string;
   private readonly securedKey: string;
+  // PAY2M callback secret word. Configured in the PAY2M merchant portal and
+  // mirrored into SSM as PAY2M_SECRET_WORD — the two MUST be identical.
+  // Empty string when no secret word is set in the portal (pre-launch
+  // state); production requires it non-empty (main.ts). See verifyCallbackHash.
+  private readonly secretWord: string;
   private readonly apiUrl: string;
   private readonly returnUrl: string;
   // Per-attempt timeout for the PAY2M token-fetch HTTP call (in ms).
@@ -71,9 +76,10 @@ export class PaymentService {
     this.enabled = this.config.get('PAYMENT_ENABLED', 'false') === 'true';
     this.merchantId = this.config.getOrThrow<string>('PAY2M_MERCHANT_ID');
     this.securedKey = this.config.getOrThrow<string>('PAY2M_SECURED_KEY');
-    // PAY2M_SECRET_WORD is intentionally NOT loaded — PAY2M's callback
-    // Response_Key recipe has no secret word (confirmed against a live
-    // callback, 2026-05-16). See verifyCallbackHash.
+    // Default to '' — a missing/empty secret word is a valid (if insecure,
+    // forgeable) pre-launch state. main.ts fails-fast in production if it is
+    // empty, so production always has a real secret word.
+    this.secretWord = this.config.get<string>('PAY2M_SECRET_WORD', '') ?? '';
     this.returnUrl = this.config.getOrThrow<string>('PAY2M_RETURN_URL');
     this.apiUrl = this.config.getOrThrow<string>('PAY2M_API_URL');
     this.merchantName = this.config.getOrThrow<string>('PAY2M_MERCHANT_NAME');
@@ -338,21 +344,25 @@ export class PaymentService {
     if (typeof responseKey !== 'string' || !/^[a-f0-9]{64}$/i.test(responseKey)) {
       return false;
     }
-    // PAY2M's Response_Key recipe — confirmed against a live callback
-    // (2026-05-16): SHA256(merchant_id + basket_id + amount + err_code).
+    // PAY2M's Response_Key recipe (PAY2M Merchant Integration Guide, Table
+    // 1.2): SHA256(merchant_id + basket_id + <secret word> + amount +
+    // err_code). The recipe + SHA256 algorithm were confirmed against a
+    // live callback (2026-05-16).
     //
-    // ⚠ SECURITY: this hash contains NO shared secret. Every input is
-    // visible in the customer's own browser (MERCHANT_ID + BASKET_ID +
-    // TXNAMT are in the PAY2M checkout form; err_code is trivial). It is an
-    // INTEGRITY checksum, NOT an authentication signature — a valid hash
-    // does NOT prove the callback came from PAY2M. Forged-callback defence
-    // must come from an independent server-to-server transaction
-    // verification (see the launch-blocker note in handleCallback).
+    // <secret word> is configured in the PAY2M merchant portal and mirrored
+    // into SSM as PAY2M_SECRET_WORD — `this.secretWord`. The two MUST match
+    // exactly or every callback mismatches.
+    //
+    // ⚠ SECURITY: when the secret word is EMPTY the hash carries no secret —
+    // every other input (MERCHANT_ID, BASKET_ID, TXNAMT, err_code) is
+    // visible in the customer's own browser, so the callback is forgeable
+    // (a customer could confirm an unpaid booking). A NON-EMPTY secret word
+    // makes it a real authentication signature. main.ts requires
+    // PAY2M_SECRET_WORD non-empty in production for exactly this reason.
     //
     // PAY2M normalises the amount (strips trailing zeros): a transaction
     // sent as "1.00" comes back hashed as "1". We try the canonical numeric
-    // forms so the check is robust to that normalisation — and since the
-    // hash carries no secret, trying a few amount forms weakens nothing.
+    // forms so the check is robust to that normalisation.
     const n = Number(amount);
     const amountForms = new Set<string>([String(amount)]);
     if (Number.isFinite(n)) {
@@ -364,7 +374,7 @@ export class PaymentService {
       const expected = Buffer.from(
         crypto
           .createHash('sha256')
-          .update(`${this.merchantId}${basketId}${amt}${errCode}`)
+          .update(`${this.merchantId}${basketId}${this.secretWord}${amt}${errCode}`)
           .digest('hex'),
         'hex',
       );
@@ -610,16 +620,17 @@ export class PaymentService {
 
     // 4. Verify the PAY2M Response_Key hash on every callback.
     //
-    // ⚠ LAUNCH BLOCKER — forgeable callback. PAY2M's Response_Key recipe is
-    // SHA256(merchant_id + basket_id + amount + err_code) — it has NO shared
-    // secret (see verifyCallbackHash). Every input is visible in the
-    // customer's own browser, so a customer can compute a valid hash and
-    // POST a forged `err_code=000` callback to confirm a booking they never
-    // paid for. This hash is therefore an INTEGRITY check only, NOT proof of
-    // origin. Before real-money launch this MUST be backed by an independent
-    // server-to-server verification — a PAY2M transaction status/inquiry
-    // call (authenticated with SECURED_KEY), or an IP-locked IPN treated as
-    // the authoritative event. Tracked in the launch checklist.
+    // The hash includes the PAY2M secret word (verifyCallbackHash). When a
+    // non-empty secret word is configured — in the PAY2M merchant portal AND
+    // the matching SSM PAY2M_SECRET_WORD — this is a genuine authentication
+    // signature: a customer cannot forge it.
+    //
+    // ⚠ LAUNCH BLOCKER while the secret word is EMPTY: with no secret word,
+    // every hash input is visible in the customer's browser, so a forged
+    // `err_code=000` callback could confirm an unpaid booking. Closing this
+    // = set a strong secret word in the PAY2M portal + mirror it to SSM.
+    // main.ts fails-fast in production if PAY2M_SECRET_WORD is empty, so a
+    // production deploy cannot ship with the forgeable configuration.
     const amount = Number(payment.amount).toFixed(2);
     const hashValid = this.verifyCallbackHash(
       params.basket_id,

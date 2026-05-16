@@ -27,6 +27,7 @@ function configShim() {
     PAYMENT_ENABLED:     'true',
     PAY2M_MERCHANT_ID:   'TEST_MERCHANT',
     PAY2M_SECURED_KEY:   'secret-key',
+    PAY2M_SECRET_WORD:   'secret-word',
     PAY2M_RETURN_URL:    'https://example.com/return',
     PAY2M_API_URL:       'https://pay2m.test',
     PAY2M_MERCHANT_NAME: 'Jadwal Test',

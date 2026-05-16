@@ -29,8 +29,7 @@ const PAY2M_CFG = {
   PAY2M_MERCHANT_ID:    'TEST_MID',
   PAY2M_MERCHANT_NAME:  'Jadwal Test',
   PAY2M_SECURED_KEY:    'test-secured-key',
-  // No PAY2M_SECRET_WORD — PAY2M's callback Response_Key recipe has no
-  // secret word (see PaymentService.verifyCallbackHash).
+  PAY2M_SECRET_WORD:    'TEST_SECRET_WORD',
   PAY2M_API_URL:        'https://pay2m.example/api',
   PAY2M_RETURN_URL:     'https://jadwal.example/payment/callback',
 };
@@ -62,11 +61,11 @@ async function buildSut(enabled = true) {
 
 /**
  * Build a valid PAY2M callback Response_Key hash for the given inputs.
- * Recipe (confirmed against a live callback, 2026-05-16):
- *   SHA256(merchant_id + basket_id + amount + err_code)  — no secret word.
+ * Recipe (PAY2M Merchant Integration Guide, Table 1.2):
+ *   SHA256(merchant_id + basket_id + secret_word + amount + err_code).
  */
 function buildResponseKey(basketId: string, amount: string, errCode: string): string {
-  const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}${basketId}${amount}${errCode}`;
+  const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}${basketId}${PAY2M_CFG.PAY2M_SECRET_WORD}${amount}${errCode}`;
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
