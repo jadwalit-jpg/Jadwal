@@ -41,7 +41,9 @@ const REQUIRED_IN_PRODUCTION = [
   // parameter + adding it back to infra/ecs/api-task.json.
   'PAY2M_MERCHANT_ID',
   'PAY2M_SECURED_KEY',
-  'PAY2M_SECRET_WORD',
+  // PAY2M_SECRET_WORD removed — PAY2M's callback Response_Key recipe has no
+  // secret word (see PaymentService.verifyCallbackHash). The SSM parameter
+  // and its api-task.json secrets entry can be deleted as a cleanup task.
   'PAY2M_RETURN_URL',
   'PAY2M_API_URL',
   'STORAGE_DRIVER',
