@@ -12,6 +12,7 @@ import {
   MaxLength,
   Matches,
 } from 'class-validator';
+import { IsValidCouponDiscount } from '../../common/validators/coupon-discount';
 
 export class CreateVendorCouponDto {
   @IsString()
@@ -26,6 +27,7 @@ export class CreateVendorCouponDto {
   @IsNumber()
   @Min(0)
   @Max(10000)
+  @IsValidCouponDiscount() // PERCENTAGE coupons capped at 100
   discountValue!: number;
 
   @IsDateString()
