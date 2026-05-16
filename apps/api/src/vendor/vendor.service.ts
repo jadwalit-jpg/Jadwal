@@ -315,10 +315,19 @@ export class VendorService {
 
     const { hasUnits, unitCount, unitCapacity, ...activityData } = dto;
 
-    // Recalculate capacity from units if units are being updated
+    // Recalculate capacity from units, using MERGED next-state values (DTO
+    // value ?? current DB value) for all three fields. A partial PATCH that
+    // sends only `unitCount` (or only `unitCapacity`) to an activity that
+    // already has units must still be recomputed and ceiling-checked — keying
+    // off `dto.hasUnits` alone would let such a PATCH slip past the limit.
     let capacityOverride: number | null | undefined;
-    if (hasUnits !== undefined && hasUnits && unitCount !== undefined && unitCount > 0) {
-      capacityOverride = unitCount * (unitCapacity ?? 1);
+    const mergedHasUnits = hasUnits ?? activity.hasUnits;
+    if (mergedHasUnits) {
+      const mergedUnitCount = unitCount ?? activity.unitCount ?? 0;
+      const mergedUnitCapacity = unitCapacity ?? activity.unitCapacity ?? 1;
+      if (mergedUnitCount > 0) {
+        capacityOverride = mergedUnitCount * mergedUnitCapacity;
+      }
     }
     // Same ceiling as createActivity / the direct `capacity` @Max(10000) —
     // the units product is otherwise unbounded.

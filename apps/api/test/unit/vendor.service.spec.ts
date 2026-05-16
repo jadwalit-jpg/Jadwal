@@ -508,3 +508,37 @@ describe('VendorService.createActivity — capacity ceiling', () => {
     expect(ctx.prisma._client.activity.create).toHaveBeenCalled();
   });
 });
+
+describe('VendorService.updateActivity — capacity ceiling on partial PATCH', () => {
+  // The bypass CodeRabbit caught: a partial PATCH that sends only `unitCount`
+  // (no `hasUnits`) to an activity that already has units must still be
+  // ceiling-checked against the MERGED next-state values.
+  function mockExistingUnitsActivity(ctx: Awaited<ReturnType<typeof buildSut>>) {
+    ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce({
+      id: 'v1', status: 'ACTIVE', countryId: 'QA', businessNameEn: 'Biz',
+    });
+    ctx.prisma._client.activity.findFirst.mockResolvedValueOnce({
+      id: 'a1', vendorId: 'v1', slug: 'existing', status: 'ACTIVE',
+      bookingType: 'DAILY', checkInTime: null, checkOutTime: null, durationValue: null,
+      hasUnits: true, unitCount: 100, unitCapacity: 100, capacity: 10000,
+    });
+  }
+
+  test('rejects partial PATCH (only unitCount) whose merged product exceeds 10000', async () => {
+    const ctx = await buildSut();
+    mockExistingUnitsActivity(ctx);
+    // dto omits hasUnits + unitCapacity; merged = 200 (dto) × 100 (existing) = 20000
+    const call = ctx.sut.updateActivity('u1', 'a1', { unitCount: 200 } as any);
+    await expect(call).rejects.toThrow(BadRequestException);
+    await expect(call).rejects.toThrow(/cannot exceed 10000/i);
+    expect(ctx.prisma._client.activity.update).not.toHaveBeenCalled();
+  });
+
+  test('allows a partial PATCH whose merged product stays within 10000', async () => {
+    const ctx = await buildSut();
+    mockExistingUnitsActivity(ctx);
+    // merged = 50 (dto) × 100 (existing) = 5000
+    await ctx.sut.updateActivity('u1', 'a1', { unitCount: 50 } as any);
+    expect(ctx.prisma._client.activity.update).toHaveBeenCalled();
+  });
+});
