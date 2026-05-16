@@ -239,6 +239,13 @@ export class VendorService {
     if (hasUnits && unitCount && unitCount > 0) {
       capacity = unitCount * (unitCapacity ?? 1);
     }
+    // Bound the units-derived capacity to the same ceiling as the direct
+    // `capacity` field (@Max(10000) on the DTO). The DTO can't express the
+    // unitCount × unitCapacity product, so it's enforced here — otherwise the
+    // product is unbounded and an absurd capacity could be persisted.
+    if (capacity != null && capacity > 10000) {
+      throw new BadRequestException('Total capacity (units × capacity per unit) cannot exceed 10000');
+    }
 
     // Strip DTO-only fields before spreading into Prisma create
     const { capacity: _cap, extraServices, ...restData } = activityData;
@@ -308,10 +315,24 @@ export class VendorService {
 
     const { hasUnits, unitCount, unitCapacity, ...activityData } = dto;
 
-    // Recalculate capacity from units if units are being updated
+    // Recalculate capacity from units, using MERGED next-state values (DTO
+    // value ?? current DB value) for all three fields. A partial PATCH that
+    // sends only `unitCount` (or only `unitCapacity`) to an activity that
+    // already has units must still be recomputed and ceiling-checked — keying
+    // off `dto.hasUnits` alone would let such a PATCH slip past the limit.
     let capacityOverride: number | null | undefined;
-    if (hasUnits !== undefined && hasUnits && unitCount !== undefined && unitCount > 0) {
-      capacityOverride = unitCount * (unitCapacity ?? 1);
+    const mergedHasUnits = hasUnits ?? activity.hasUnits;
+    if (mergedHasUnits) {
+      const mergedUnitCount = unitCount ?? activity.unitCount ?? 0;
+      const mergedUnitCapacity = unitCapacity ?? activity.unitCapacity ?? 1;
+      if (mergedUnitCount > 0) {
+        capacityOverride = mergedUnitCount * mergedUnitCapacity;
+      }
+    }
+    // Same ceiling as createActivity / the direct `capacity` @Max(10000) —
+    // the units product is otherwise unbounded.
+    if (capacityOverride != null && capacityOverride > 10000) {
+      throw new BadRequestException('Total capacity (units × capacity per unit) cannot exceed 10000');
     }
 
     // Strip DTO-only fields before spreading into Prisma update
