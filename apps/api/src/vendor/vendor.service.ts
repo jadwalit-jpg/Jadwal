@@ -239,6 +239,13 @@ export class VendorService {
     if (hasUnits && unitCount && unitCount > 0) {
       capacity = unitCount * (unitCapacity ?? 1);
     }
+    // Bound the units-derived capacity to the same ceiling as the direct
+    // `capacity` field (@Max(10000) on the DTO). The DTO can't express the
+    // unitCount × unitCapacity product, so it's enforced here — otherwise the
+    // product is unbounded and an absurd capacity could be persisted.
+    if (capacity != null && capacity > 10000) {
+      throw new BadRequestException('Total capacity (units × capacity per unit) cannot exceed 10000');
+    }
 
     // Strip DTO-only fields before spreading into Prisma create
     const { capacity: _cap, extraServices, ...restData } = activityData;
@@ -312,6 +319,11 @@ export class VendorService {
     let capacityOverride: number | null | undefined;
     if (hasUnits !== undefined && hasUnits && unitCount !== undefined && unitCount > 0) {
       capacityOverride = unitCount * (unitCapacity ?? 1);
+    }
+    // Same ceiling as createActivity / the direct `capacity` @Max(10000) —
+    // the units product is otherwise unbounded.
+    if (capacityOverride != null && capacityOverride > 10000) {
+      throw new BadRequestException('Total capacity (units × capacity per unit) cannot exceed 10000');
     }
 
     // Strip DTO-only fields before spreading into Prisma update

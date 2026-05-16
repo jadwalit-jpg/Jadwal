@@ -466,3 +466,45 @@ describe('VendorService.updateBookingStatus — Complete guard', () => {
     expect(res).toMatchObject({ status: 'CANCELLED' });
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// createActivity — units-derived capacity ceiling (§14 audit)
+// unitCount × unitCapacity is otherwise unbounded; both fields can be ≤ their
+// own @Max yet still multiply past the 10000 capacity ceiling.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('VendorService.createActivity — capacity ceiling', () => {
+  const baseDto = {
+    slug: 'my-activity', categoryId: 'cat1', cityId: 'city1',
+    bookingType: 'DAILY', titleEn: 'Tour', titleAr: 'جولة',
+  };
+
+  function mockHappyPath(ctx: Awaited<ReturnType<typeof buildSut>>) {
+    ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce({
+      id: 'v1', status: 'ACTIVE', countryId: 'QA', businessNameEn: 'Biz',
+    });
+    ctx.prisma._client.activity.findUnique.mockResolvedValueOnce(null); // slug free
+    ctx.prisma._client.category.findUnique.mockResolvedValueOnce({ id: 'cat1' });
+    ctx.prisma._client.city.findUnique.mockResolvedValueOnce({ id: 'city1', countryId: 'QA' });
+  }
+
+  test('rejects when unitCount × unitCapacity exceeds 10000', async () => {
+    const ctx = await buildSut();
+    mockHappyPath(ctx);
+    const call = ctx.sut.createActivity('u1', {
+      ...baseDto, hasUnits: true, unitCount: 200, unitCapacity: 100, // = 20000
+    } as any);
+    await expect(call).rejects.toThrow(BadRequestException);
+    await expect(call).rejects.toThrow(/cannot exceed 10000/i);
+    expect(ctx.prisma._client.activity.create).not.toHaveBeenCalled();
+  });
+
+  test('allows the units product at the 10000 boundary', async () => {
+    const ctx = await buildSut();
+    mockHappyPath(ctx);
+    await ctx.sut.createActivity('u1', {
+      ...baseDto, hasUnits: true, unitCount: 100, unitCapacity: 100, // = 10000
+    } as any);
+    expect(ctx.prisma._client.activity.create).toHaveBeenCalled();
+  });
+});

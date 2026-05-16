@@ -159,11 +159,13 @@ export class CreateActivityDto {
 
   @IsInt()
   @Min(0)
+  @Max(10000)
   @IsOptional()
   unitCount?: number;
 
   @IsInt()
   @Min(1)
+  @Max(10000)
   @IsOptional()
   unitCapacity?: number;
 }
