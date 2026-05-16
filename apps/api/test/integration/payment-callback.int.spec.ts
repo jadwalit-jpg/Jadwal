@@ -28,6 +28,7 @@ afterAll(async () => { await ctx.stop(); });
 const PAY2M = {
   MERCHANT_ID:   'TEST_MERCHANT',
   SECURED_KEY:   'secret-key',
+  SECRET_WORD:   'secret-word',
   RETURN_URL:    'https://example.com/return',
   API_URL:       'https://pay2m.test',
   MERCHANT_NAME: 'Jadwal Test',
@@ -38,6 +39,7 @@ function configShim(overrides: Record<string, string> = {}) {
     PAYMENT_ENABLED:     'true',
     PAY2M_MERCHANT_ID:   PAY2M.MERCHANT_ID,
     PAY2M_SECURED_KEY:   PAY2M.SECURED_KEY,
+    PAY2M_SECRET_WORD:   PAY2M.SECRET_WORD,
     PAY2M_RETURN_URL:    PAY2M.RETURN_URL,
     PAY2M_API_URL:       PAY2M.API_URL,
     PAY2M_MERCHANT_NAME: PAY2M.MERCHANT_NAME,
@@ -90,11 +92,11 @@ function makePaymentService(configOverrides: Record<string, string> = {}) {
 
 /**
  * Compute the Response_Key that PAY2M would send back for these params.
- * Recipe (confirmed against a live callback): SHA256(merchant_id +
- * basket_id + amount + err_code) — no secret word.
+ * Recipe (PAY2M Merchant Integration Guide, Table 1.2):
+ * SHA256(merchant_id + basket_id + secret_word + amount + err_code).
  */
 function signCallback(basketId: string, amount: string, errCode: string): string {
-  const raw = `${PAY2M.MERCHANT_ID}${basketId}${amount}${errCode}`;
+  const raw = `${PAY2M.MERCHANT_ID}${basketId}${PAY2M.SECRET_WORD}${amount}${errCode}`;
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
