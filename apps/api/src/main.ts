@@ -66,7 +66,9 @@ async function bootstrap() {
   // ─── Production env guard ────────────────────────────────────────────────
   // Fails loudly at startup instead of silently using localhost fallbacks.
   if (process.env.NODE_ENV === 'production') {
-    const missing = REQUIRED_IN_PRODUCTION.filter((k) => !process.env[k]);
+    // `?.trim()` so a whitespace-only value ("   ") is rejected too, not just
+    // missing/empty — a blank PAY2M_SECRET_WORD must not satisfy the guard.
+    const missing = REQUIRED_IN_PRODUCTION.filter((k) => !process.env[k]?.trim());
     if (missing.length) {
       console.error(`\n[FATAL] Missing required environment variables:\n  ${missing.join('\n  ')}\n`);
       process.exit(1);
