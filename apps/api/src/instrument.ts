@@ -44,6 +44,7 @@ const SENSITIVE_KEYS = [
   'secret',
   'pay2m_secured_key',
   'pay2m_secret_word',
+  'resend_api_key',
 ];
 
 type AnyObject = Record<string, unknown>;

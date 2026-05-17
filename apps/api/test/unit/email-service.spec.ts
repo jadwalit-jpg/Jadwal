@@ -1,20 +1,22 @@
 /**
  * EmailService unit tests.
  *
- * Migrated 2026-05-06 to AWS SDK SES v2 (`@aws-sdk/client-sesv2`). The v1
- * SDK can't carry custom MIME headers, which RFC 8058 requires for
- * `List-Unsubscribe` + `List-Unsubscribe-Post`. v2 takes a raw MIME blob
- * via `Content.Raw.Data`, so all SDK-shape assertions changed accordingly.
+ * Migrated 2026-05-17 from AWS SES v2 (`@aws-sdk/client-sesv2`) to Resend.
+ * SES production access was denied (200/day sandbox cap); Resend has no
+ * sandbox-approval gate. The transport swap moves List-Unsubscribe headers
+ * off a hand-rolled raw-MIME blob and onto the `headers` field of
+ * `resend.emails.send()` — all SDK-shape assertions changed accordingly.
  *
  * Covers:
- *   - Log-only mode (EMAIL_ENABLED=false) never instantiates SES client
+ *   - Log-only mode (EMAIL_ENABLED=false) never instantiates the Resend client
  *   - Production must not boot with EMAIL_ENABLED=false (guard)
- *   - send() renders template + builds raw MIME with List-Unsubscribe
- *     headers when a user is found by email
+ *   - EMAIL_ENABLED=true with no RESEND_API_KEY throws at construction
+ *   - send() renders template + sets List-Unsubscribe headers when a user
+ *     is found by email
  *   - send() falls back to mailto-only List-Unsubscribe when no user matches
  *   - Email is masked in all log output (anti-leak)
- *   - SES error branch returns false + logs err.name (not err.message)
- *   - ConfigurationSetName + EmailTags carried through
+ *   - Resend error branch returns false + logs err.name (not err.message)
+ *   - tags carry env + template
  *   - Suppression list short-circuit (anti-enumeration)
  *   - Platform daily cap short-circuit (cost runaway gate)
  *   - admin-alert bypasses both gates
@@ -22,15 +24,15 @@
 
 import { EmailService } from '../../src/email/email.service';
 
-// Mock SES v2 SDK before importing anything that uses it
-jest.mock('@aws-sdk/client-sesv2', () => {
-  const sendMock = jest.fn().mockResolvedValue({});
-  const SESv2Client = jest.fn().mockImplementation(() => ({ send: sendMock }));
-  const SendEmailCommand = jest.fn().mockImplementation((args) => ({ __cmd: 'SendEmail', args }));
-  return { SESv2Client, SendEmailCommand, __sendMock: sendMock };
+// Mock the Resend SDK before importing anything that uses it. The SDK's
+// `emails.send()` resolves with `{ data, error }` — it does not throw on
+// API errors — so the mock mirrors that contract.
+jest.mock('resend', () => {
+  const sendMock = jest.fn().mockResolvedValue({ data: { id: 'email_mock_123' }, error: null });
+  const Resend = jest.fn().mockImplementation(() => ({ emails: { send: sendMock } }));
+  return { Resend, __sendMock: sendMock };
 });
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const sesMocks = require('@aws-sdk/client-sesv2') as any;
+const resendMocks = require('resend') as any;
 
 function makeConfig(overrides: Record<string, string> = {}) {
   const defaults: Record<string, string> = {
@@ -38,7 +40,7 @@ function makeConfig(overrides: Record<string, string> = {}) {
     EMAIL_ENABLED: 'false',
     APP_URL: 'https://app.jadwal.test',
     API_URL: 'https://app.jadwal.test/api',
-    AWS_REGION: 'eu-central-1',
+    RESEND_API_KEY: 're_test_key_123',
     ADMIN_EMAIL: 'ops@jadwal.qa',
     UNSUBSCRIBE_TOKEN_SECRET: 'a'.repeat(64),
   };
@@ -112,47 +114,37 @@ function buildSvc(opts: {
   );
 }
 
-/** Decode the base64-encoded raw MIME from a SendEmailCommand call argument. */
-function decodeMime(cmdArgs: any): string {
-  const buf = cmdArgs.Content?.Raw?.Data;
-  if (!buf) return '';
-  return Buffer.isBuffer(buf) ? buf.toString('utf8') : Buffer.from(buf).toString('utf8');
-}
-
-/**
- * Extract and base64-decode the body section of a raw MIME message.
- * The MIME builder uses Content-Transfer-Encoding: base64, so the literal
- * HTML can only be inspected after decoding the base64 lines.
- */
-function decodeMimeBody(mime: string): string {
-  const sep = mime.indexOf('\r\n\r\n');
-  if (sep < 0) return '';
-  const body = mime.slice(sep + 4).replace(/\r\n/g, '');
-  return Buffer.from(body, 'base64').toString('utf8');
+/** The payload object passed to `resend.emails.send()` on the Nth call. */
+function sentPayload(n = 0): any {
+  return resendMocks.__sendMock.mock.calls[n][0];
 }
 
 describe('EmailService — construction + prod-guard', () => {
   const ORIGINAL_ENV = process.env.NODE_ENV;
   afterEach(() => { process.env.NODE_ENV = ORIGINAL_ENV; });
 
-  test('dev (EMAIL_ENABLED=false) → no SES client instantiated', () => {
-    sesMocks.SESv2Client.mockClear();
+  test('dev (EMAIL_ENABLED=false) → no Resend client instantiated', () => {
+    resendMocks.Resend.mockClear();
     buildSvc({ config: { EMAIL_ENABLED: 'false' } });
-    expect(sesMocks.SESv2Client).not.toHaveBeenCalled();
+    expect(resendMocks.Resend).not.toHaveBeenCalled();
   });
 
-  test('EMAIL_ENABLED=true → SESv2Client instantiated with region + adaptive retry', () => {
-    sesMocks.SESv2Client.mockClear();
-    buildSvc({ config: { EMAIL_ENABLED: 'true', AWS_REGION: 'eu-west-1' } });
-    // R2 hardening: adaptive retry + 3 attempts is mandatory on all AWS
-    // SDK v3 clients. Pinning here so a future refactor can't silently
-    // drop the retry config and turn transient AWS edge blips back into
-    // customer-facing email-send failures.
-    expect(sesMocks.SESv2Client).toHaveBeenCalledWith({
-      region: 'eu-west-1',
-      maxAttempts: 3,
-      retryMode: 'adaptive',
-    });
+  test('EMAIL_ENABLED=true → Resend instantiated with the API key', () => {
+    resendMocks.Resend.mockClear();
+    buildSvc({ config: { EMAIL_ENABLED: 'true', RESEND_API_KEY: 're_live_abc' } });
+    expect(resendMocks.Resend).toHaveBeenCalledWith('re_live_abc');
+  });
+
+  test('EMAIL_ENABLED=true + missing RESEND_API_KEY → throws at construction', () => {
+    expect(() => buildSvc({ config: { EMAIL_ENABLED: 'true', RESEND_API_KEY: '' } })).toThrow(
+      /FATAL.*RESEND_API_KEY is required/,
+    );
+  });
+
+  test('EMAIL_ENABLED=true + whitespace-only RESEND_API_KEY → throws (treated as missing)', () => {
+    expect(() => buildSvc({ config: { EMAIL_ENABLED: 'true', RESEND_API_KEY: '   ' } })).toThrow(
+      /FATAL.*RESEND_API_KEY is required/,
+    );
   });
 
   test('production + EMAIL_ENABLED=false → throws at construction (fail-safe)', () => {
@@ -165,11 +157,10 @@ describe('EmailService — construction + prod-guard', () => {
 
 describe('EmailService — suppression list short-circuit', () => {
   beforeEach(() => {
-    sesMocks.__sendMock.mockClear();
-    sesMocks.SendEmailCommand.mockClear();
+    resendMocks.__sendMock.mockClear();
   });
 
-  test('suppressed recipient → SES never called, returns true (anti-enumeration)', async () => {
+  test('suppressed recipient → Resend never called, returns true (anti-enumeration)', async () => {
     const suppressions = makeSuppressions(async () => true);
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, suppressions });
     const ok = await svc.sendEmailVerification('bounced@example.com', {
@@ -177,19 +168,18 @@ describe('EmailService — suppression list short-circuit', () => {
     });
     expect(ok).toBe(true);
     expect(suppressions.isSuppressed).toHaveBeenCalledWith('bounced@example.com');
-    expect(sesMocks.SendEmailCommand).not.toHaveBeenCalled();
-    expect(sesMocks.__sendMock).not.toHaveBeenCalled();
+    expect(resendMocks.__sendMock).not.toHaveBeenCalled();
   });
 
-  test('non-suppressed recipient → SES called normally', async () => {
+  test('non-suppressed recipient → Resend called normally', async () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     await svc.sendPasswordReset('user@example.com', {
       userName: 'A', resetLink: 'https://x/r', expiresIn: '1 hour',
     });
-    expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
+    expect(resendMocks.__sendMock).toHaveBeenCalledTimes(1);
   });
 
-  test('platform daily cap exceeded → returns success-shaped, never calls SES', async () => {
+  test('platform daily cap exceeded → returns success-shaped, never calls Resend', async () => {
     const quota = makeQuota(async () => false);
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, quota });
     const ok = await svc.sendEmailVerification('user@example.com', {
@@ -197,7 +187,7 @@ describe('EmailService — suppression list short-circuit', () => {
     });
     expect(ok).toBe(true);
     expect(quota.tryConsumePlatformDaily).toHaveBeenCalledTimes(1);
-    expect(sesMocks.SendEmailCommand).not.toHaveBeenCalled();
+    expect(resendMocks.__sendMock).not.toHaveBeenCalled();
   });
 
   test('admin-alert bypasses platform cap — operational alerts always go out', async () => {
@@ -205,131 +195,116 @@ describe('EmailService — suppression list short-circuit', () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, quota });
     await svc.sendAdminAlert({ type: 'DATABASE_ERROR', note: 'fired through cap' });
     expect(quota.tryConsumePlatformDaily).not.toHaveBeenCalled();
-    expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
-  });
-
-  test('SES SendEmailCommand carries ConfigurationSetName when SES_CONFIG_SET_NAME is set', async () => {
-    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true', SES_CONFIG_SET_NAME: 'jadwal-prod' } });
-    await svc.sendEmailVerification('user@example.com', {
-      userName: 'A', verificationLink: 'https://x/v?t=abc',
-    });
-    const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
-    expect(cmdArgs.ConfigurationSetName).toBe('jadwal-prod');
-  });
-
-  test('SES SendEmailCommand omits ConfigurationSetName when env var unset', async () => {
-    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
-    await svc.sendEmailVerification('user@example.com', {
-      userName: 'A', verificationLink: 'https://x/v?t=abc',
-    });
-    const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
-    expect(cmdArgs.ConfigurationSetName).toBeUndefined();
+    expect(resendMocks.__sendMock).toHaveBeenCalledTimes(1);
   });
 
   test('admin-alert bypasses suppression — operational alerts always go out', async () => {
     const suppressions = makeSuppressions(async () => true);
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, suppressions });
     await svc.sendAdminAlert({ type: 'SECURITY_EVENT', note: 'Something is broken' });
-    expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
+    expect(resendMocks.__sendMock).toHaveBeenCalledTimes(1);
     expect(suppressions.isSuppressed).not.toHaveBeenCalled();
   });
 });
 
-describe('EmailService — send dispatching + raw MIME', () => {
+describe('EmailService — send dispatching + Resend payload', () => {
   beforeEach(() => {
-    sesMocks.__sendMock.mockClear();
-    sesMocks.SendEmailCommand.mockClear();
+    resendMocks.__sendMock.mockClear();
+    resendMocks.__sendMock.mockResolvedValue({ data: { id: 'email_mock_123' }, error: null });
   });
 
-  test('dev mode send returns true + never calls SES', async () => {
+  test('dev mode send returns true + never calls Resend', async () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'false' } });
     const ok = await svc.sendEmailVerification('user@example.com', {
       userName: 'Alice', verificationLink: 'https://app.jadwal.test/verify?token=abc',
     });
     expect(ok).toBe(true);
-    expect(sesMocks.__sendMock).not.toHaveBeenCalled();
+    expect(resendMocks.__sendMock).not.toHaveBeenCalled();
   });
 
-  test('prod mode send calls SES v2 with FromEmailAddress + Destination + Content.Raw.Data', async () => {
+  test('prod mode send calls Resend with from + to + subject + html', async () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     const ok = await svc.sendEmailVerification('user@example.com', {
       userName: 'Alice', verificationLink: 'https://app.jadwal.test/verify?token=abc',
     });
     expect(ok).toBe(true);
-    expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
-    const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
-    expect(cmdArgs.FromEmailAddress).toBe('noreply@jadwal.qa');
-    expect(cmdArgs.Destination.ToAddresses).toEqual(['user@example.com']);
-    // v2 ships content as raw bytes via Content.Raw.Data
-    expect(cmdArgs.Content?.Raw?.Data).toBeDefined();
-    const mime = decodeMime(cmdArgs);
-    expect(mime).toContain('From: noreply@jadwal.qa');
-    expect(mime).toContain('To: user@example.com');
-    expect(mime).toContain('Subject:');
-    expect(mime).toContain('Content-Type: text/html');
-    expect(mime).toContain('Content-Transfer-Encoding: base64');
-    // HTML body present (base64-encoded — decode to inspect)
-    expect(decodeMimeBody(mime)).toContain('<html');
+    expect(resendMocks.__sendMock).toHaveBeenCalledTimes(1);
+    const payload = sentPayload();
+    expect(payload.from).toBe('noreply@jadwal.qa');
+    expect(payload.to).toBe('user@example.com');
+    expect(payload.subject).toBe('Verify your email — Jadwal');
+    expect(payload.html).toContain('<html');
   });
 
-  test('raw MIME includes List-Unsubscribe + List-Unsubscribe-Post when user is found', async () => {
+  test('payload carries List-Unsubscribe + List-Unsubscribe-Post headers when user is found', async () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     await svc.sendEmailVerification('user@example.com', {
       userName: 'Alice', verificationLink: 'https://app.jadwal.test/verify?token=abc',
     });
-    const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
-    const mime = decodeMime(cmdArgs);
+    const headers = sentPayload().headers;
     // Both URL + mailto variants in the header (per RFC 2369 / 8058)
-    expect(mime).toMatch(/List-Unsubscribe: <https:\/\/.*\/email\/unsubscribe\?t=FAKE_TOKEN_123>, <mailto:unsubscribe@jadwal\.qa[^>]*>/);
+    expect(headers['List-Unsubscribe']).toMatch(
+      /<https:\/\/.*\/email\/unsubscribe\?t=FAKE_TOKEN_123>, <mailto:unsubscribe@jadwal\.qa[^>]*>/,
+    );
     // The one-click marker
-    expect(mime).toContain('List-Unsubscribe-Post: List-Unsubscribe=One-Click');
+    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
   });
 
-  test('raw MIME falls back to mailto-only List-Unsubscribe when user is NOT found', async () => {
+  test('payload falls back to mailto-only List-Unsubscribe when user is NOT found', async () => {
     // Prisma returns null → no userId → no token minted → no HTTPS variant
     const prisma = makePrisma(async () => null);
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, prisma });
     await svc.sendEmailVerification('stranger@example.com', {
       userName: 'A', verificationLink: 'https://x/v',
     });
-    const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
-    const mime = decodeMime(cmdArgs);
-    // Only the mailto: form (no HTTPS variant)
-    expect(mime).toContain('List-Unsubscribe: <mailto:unsubscribe@jadwal.qa');
+    const headers = sentPayload().headers;
+    expect(headers['List-Unsubscribe']).toBe('<mailto:unsubscribe@jadwal.qa?subject=unsubscribe>');
     // List-Unsubscribe-Post only emitted alongside the HTTPS variant
-    expect(mime).not.toContain('List-Unsubscribe-Post:');
+    expect(headers['List-Unsubscribe-Post']).toBeUndefined();
   });
 
-  test('raw MIME includes mailto-only header for admin-alert (no user lookup attempted)', async () => {
+  test('payload carries mailto-only header for admin-alert (no user lookup attempted)', async () => {
     const prisma = makePrisma();
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, prisma });
     await svc.sendAdminAlert({ type: 'DEPLOYMENT_FAILURE' });
-    const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
-    const mime = decodeMime(cmdArgs);
+    const headers = sentPayload().headers;
     // admin-alert skips the user lookup → mailto-only
-    expect(mime).toContain('List-Unsubscribe: <mailto:unsubscribe@jadwal.qa');
-    expect(mime).not.toContain('List-Unsubscribe-Post:');
+    expect(headers['List-Unsubscribe']).toBe('<mailto:unsubscribe@jadwal.qa?subject=unsubscribe>');
+    expect(headers['List-Unsubscribe-Post']).toBeUndefined();
     // Confirm we didn't make a wasted Prisma call
     expect(prisma.client.user.findUnique).not.toHaveBeenCalled();
   });
 
-  test('EmailTags carry env + template (not the v1 Tags field)', async () => {
+  test('tags carry env + template', async () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     await svc.sendBookingConfirmation('user@example.com', {
       customerName: 'A', activityTitle: 'B', date: '2030-01-01',
       guests: 1, totalAmount: '10', currency: 'QAR', bookingId: 'b1',
     });
-    const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
-    expect(cmdArgs.EmailTags).toBeDefined();
-    expect(cmdArgs.EmailTags).toEqual(
+    const tags = sentPayload().tags;
+    expect(tags).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ Name: 'template', Value: 'booking-confirmation' }),
+        expect.objectContaining({ name: 'template', value: 'booking-confirmation' }),
       ]),
     );
   });
 
-  test('SES throws → send() returns false (caller must not crash)', async () => {
-    sesMocks.__sendMock.mockRejectedValueOnce(new Error('SES rejected: ThrottlingException'));
+  test('Resend returns an error → send() returns false (caller must not crash)', async () => {
+    resendMocks.__sendMock.mockResolvedValueOnce({
+      data: null,
+      error: { name: 'rate_limit_exceeded', message: 'Too many requests' },
+    });
+    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
+    const ok = await svc.sendBookingConfirmation('user@example.com', {
+      customerName: 'Alice', activityTitle: 'X',
+      date: '2030-06-15', guests: 2, totalAmount: '200', currency: 'QAR',
+      bookingId: 'b1',
+    });
+    expect(ok).toBe(false);
+  });
+
+  test('Resend SDK throws → send() returns false', async () => {
+    resendMocks.__sendMock.mockRejectedValueOnce(new Error('network down'));
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     const ok = await svc.sendBookingConfirmation('user@example.com', {
       customerName: 'Alice', activityTitle: 'X',
@@ -346,10 +321,9 @@ describe('EmailService — send dispatching + raw MIME', () => {
       userName: 'A', resetLink: 'https://x/r', expiresIn: '1 hour',
     });
     expect(ok).toBe(true);
-    const cmdArgs = sesMocks.SendEmailCommand.mock.calls[0][0];
-    const mime = decodeMime(cmdArgs);
-    expect(mime).toContain('List-Unsubscribe: <mailto:unsubscribe@jadwal.qa');
-    expect(mime).not.toContain('List-Unsubscribe-Post:');
+    const headers = sentPayload().headers;
+    expect(headers['List-Unsubscribe']).toBe('<mailto:unsubscribe@jadwal.qa?subject=unsubscribe>');
+    expect(headers['List-Unsubscribe-Post']).toBeUndefined();
   });
 });
 
@@ -406,29 +380,28 @@ describe('EmailService — every public method routes through send()', () => {
     expect(ok).toBe(true);
   });
 
-  test.each(cases)('%s — prod mode issues a SendEmailCommand', async (method, data) => {
-    sesMocks.__sendMock.mockClear();
-    sesMocks.SendEmailCommand.mockClear();
+  test.each(cases)('%s — prod mode issues a Resend send', async (method, data) => {
+    resendMocks.__sendMock.mockClear();
+    resendMocks.__sendMock.mockResolvedValue({ data: { id: 'email_mock_123' }, error: null });
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     await (svc as any)[method]('u@example.com', data);
-    expect(sesMocks.SendEmailCommand).toHaveBeenCalledTimes(1);
+    expect(resendMocks.__sendMock).toHaveBeenCalledTimes(1);
   });
 });
 
 // ─── Typed admin-alert hardening (2026-05-08) ─────────────────────────────
 describe('EmailService — sendAdminAlert typed events', () => {
   beforeEach(() => {
-    sesMocks.__sendMock.mockClear();
-    sesMocks.SendEmailCommand.mockClear();
+    resendMocks.__sendMock.mockClear();
+    resendMocks.__sendMock.mockResolvedValue({ data: { id: 'email_mock_123' }, error: null });
   });
 
   test('subject is sourced from the type, never from caller input', async () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     await svc.sendAdminAlert({ type: 'DATABASE_ERROR' });
-    const mime = decodeMime(sesMocks.SendEmailCommand.mock.calls[0][0]);
-    expect(mime).toContain('Subject:');
-    expect(mime).toMatch(/Subject: Jadwal/);
-    expect(mime).toContain('Database error');
+    const payload = sentPayload();
+    expect(payload.subject).toMatch(/^Jadwal/);
+    expect(payload.html).toContain('Database error');
   });
 
   test('details are HTML-escaped in the body (defence-in-depth)', async () => {
@@ -437,7 +410,7 @@ describe('EmailService — sendAdminAlert typed events', () => {
       type: 'SECURITY_EVENT',
       details: { offender: '<script>alert(1)</script>' },
     });
-    const body = decodeMimeBody(decodeMime(sesMocks.SendEmailCommand.mock.calls[0][0]));
+    const body = sentPayload().html;
     expect(body).not.toContain('<script>alert(1)</script>');
     expect(body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   });
@@ -448,7 +421,7 @@ describe('EmailService — sendAdminAlert typed events', () => {
       type: 'PAYMENT_DRIFT',
       details: { trace: 'x'.repeat(1000) },
     });
-    const body = decodeMimeBody(decodeMime(sesMocks.SendEmailCommand.mock.calls[0][0]));
+    const body = sentPayload().html;
     // 200-char cap + ellipsis — must contain a truncated run, not the full string
     expect(body).not.toContain('x'.repeat(1000));
     expect(body).toContain('…');
@@ -460,17 +433,17 @@ describe('EmailService — sendAdminAlert typed events', () => {
       type: 'CRON_FAILURE',
       note: 'job\x00failed\x07at\x1bstep',
     });
-    const body = decodeMimeBody(decodeMime(sesMocks.SendEmailCommand.mock.calls[0][0]));
+    const body = sentPayload().html;
     expect(body).toContain('jobfailedatstep');
     expect(body).not.toMatch(/[\x00\x07\x1b]/);
   });
 
-  test('unknown alert type returns success-shaped + does not call SES', async () => {
+  test('unknown alert type returns success-shaped + does not call Resend', async () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     // Bypass the type system to simulate a bad runtime caller
     const ok = await (svc.sendAdminAlert as any)({ type: 'NOT_A_REAL_TYPE' });
     expect(ok).toBe(true);
-    expect(sesMocks.SendEmailCommand).not.toHaveBeenCalled();
+    expect(resendMocks.__sendMock).not.toHaveBeenCalled();
   });
 
   test('details with more than 20 keys are capped', async () => {
@@ -478,7 +451,7 @@ describe('EmailService — sendAdminAlert typed events', () => {
     const huge: Record<string, string> = {};
     for (let i = 0; i < 50; i++) huge[`k${i}`] = `v${i}`;
     await svc.sendAdminAlert({ type: 'BOUNCE_RATE_HIGH', details: huge });
-    const body = decodeMimeBody(decodeMime(sesMocks.SendEmailCommand.mock.calls[0][0]));
+    const body = sentPayload().html;
     expect(body).toContain('k0');
     expect(body).toContain('k19');
     expect(body).not.toContain('k20');
