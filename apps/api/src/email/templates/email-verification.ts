@@ -18,7 +18,7 @@ export function emailVerificationTemplate(data: EmailVerificationData): string {
       </tr>
       <tr>
         <td style="font-family: Arial, sans-serif; font-size: 15px; color: #374151; padding-bottom: 8px; line-height: 22px;">
-          Hi ${name}, welcome to Jadwal!
+          Hi ${name}, welcome to AL Jadwal!
         </td>
       </tr>
       <tr>
@@ -49,5 +49,5 @@ export function emailVerificationTemplate(data: EmailVerificationData): string {
       </tr>
     </table>`;
 
-  return baseTemplate(content, 'Verify your email to start using Jadwal');
+  return baseTemplate(content, 'Verify your email to start using AL Jadwal');
 }

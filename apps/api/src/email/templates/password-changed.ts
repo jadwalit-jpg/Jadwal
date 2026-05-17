@@ -16,7 +16,7 @@ export function passwordChangedTemplate(data: PasswordChangedData): string {
       </tr>
       <tr>
         <td style="font-family: Arial, sans-serif; font-size: 15px; color: #374151; padding-bottom: 16px; line-height: 22px;">
-          Hi ${name}, the password on your Jadwal account was just changed. All other sessions have been signed out for your security.
+          Hi ${name}, the password on your AL Jadwal account was just changed. All other sessions have been signed out for your security.
         </td>
       </tr>
     </table>

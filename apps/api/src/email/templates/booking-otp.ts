@@ -61,10 +61,13 @@ export function bookingOtpTemplate(data: BookingOtpData): string {
       </tr>
       <tr>
         <td style="background-color: #fefce8; border-radius: 8px; padding: 14px 16px; font-family: Arial, sans-serif; font-size: 13px; color: #854d0e; line-height: 20px;">
-          <strong>Never share this code.</strong> Jadwal staff will never ask for it. If you didn&#x27;t start a booking, you can safely ignore this email.
+          <strong>Never share this code.</strong> AL Jadwal staff will never ask for it. If you didn&#x27;t start a booking, you can safely ignore this email.
         </td>
       </tr>
     </table>`;
 
-  return baseTemplate(content, `Your Jadwal booking verification code: ${code}`);
+  // Preheader (inbox-preview / lock-screen snippet) must NOT carry the OTP —
+  // that would leak the code without the email being opened. Code stays in
+  // the body only.
+  return baseTemplate(content, 'Your AL Jadwal booking verification code');
 }
