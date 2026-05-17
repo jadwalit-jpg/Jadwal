@@ -18,6 +18,7 @@ import { UsersService } from '../users/users.service';
 import { User } from '@prisma/client';
 import { TokenPayload } from './interfaces/token-payload.interface';
 import { RegisterVendorDto } from './dto/register-vendor.dto';
+import { resolveLanguageFromRequest } from '../common/utils/locale';
 import { SecurityLoggerService } from '../common/services/security-logger.service';
 import { AuditLoggerService } from '../common/services/audit-logger.service';
 import { EmailService } from '../email/email.service';
@@ -505,8 +506,12 @@ export class AuthService {
       if (existingPhone) throw new ConflictException('Please use a different phone number');
     }
 
-    // emailVerified defaults to false in schema; usersService hashes password
-    const user = await this.usersService.create(data);
+    // emailVerified defaults to false in schema; usersService hashes password.
+    // preferredLanguage is seeded from the Accept-Language header so the
+    // verification email (and all later transactional mail) renders in the
+    // language the user registered in.
+    const preferredLanguage = resolveLanguageFromRequest(req);
+    const user = await this.usersService.create({ ...data, preferredLanguage });
 
     const { ip: regIp } = this.extractClientInfo(req);
     await this.sendVerificationEmail(db, user.id, user.email, user.fullName, regIp);
@@ -759,6 +764,7 @@ export class AuthService {
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hashedPassword = await bcrypt.hash(dto.password, bcryptRounds);
 
+    const preferredLanguage = resolveLanguageFromRequest(req);
     const result = await db.$transaction(async (tx: any) => {
       const user = await tx.user.create({
         data: {
@@ -767,6 +773,7 @@ export class AuthService {
           password: hashedPassword,
           phone: dto.phone ?? null,
           role: 'VENDOR',
+          preferredLanguage,
         },
       });
 
