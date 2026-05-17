@@ -21,6 +21,20 @@ describe('resolveLanguageFromRequest', () => {
     expect(resolveLanguageFromRequest(reqWith('en-US,ar;q=0.5'))).toBe('EN');
   });
 
+  test('honours q-weights, not list order', () => {
+    // en listed first but ar has the higher q → AR
+    expect(resolveLanguageFromRequest(reqWith('en;q=0.7,ar;q=1.0'))).toBe('AR');
+    // ar listed first but en outweighs it → EN
+    expect(resolveLanguageFromRequest(reqWith('ar;q=0.3,en;q=0.9'))).toBe('EN');
+    // equal q → earliest tag wins (ar)
+    expect(resolveLanguageFromRequest(reqWith('ar;q=0.8,en;q=0.8'))).toBe('AR');
+  });
+
+  test('does not over-match non-Arabic tags', () => {
+    // a hypothetical `arn` (Mapudungun) must not be treated as Arabic
+    expect(resolveLanguageFromRequest(reqWith('arn'))).toBe('EN');
+  });
+
   test('missing / empty / non-string header → EN (safe default)', () => {
     expect(resolveLanguageFromRequest(reqWith(undefined))).toBe('EN');
     expect(resolveLanguageFromRequest(reqWith(''))).toBe('EN');
