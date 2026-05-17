@@ -31,7 +31,7 @@ import { CircuitBreaker, withTimeout } from '../common/utils/circuit-breaker';
  *   - 2026-05-06: AWS SES v1 (`@aws-sdk/client-ses`) → SES v2
  *     (`@aws-sdk/client-sesv2`) for custom MIME headers.
  *   - 2026-05-17: SES v2 → Resend. SES production access was denied (capped at
- *     200/day in sandbox); Resend has no sandbox-approval gate and ships from a
+ *     200 emails/day); Resend has no equivalent approval gate and ships from a
  *     verified domain immediately. The provider-agnostic layers (outbox queue,
  *     suppression list, 4-tier quota, unsubscribe tokens, circuit breaker) are
  *     unchanged — only the send transport swapped.
