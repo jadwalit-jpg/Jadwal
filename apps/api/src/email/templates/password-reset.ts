@@ -45,5 +45,5 @@ export function passwordResetTemplate(data: PasswordResetData): string {
       </tr>
     </table>`;
 
-  return baseTemplate(content, 'Reset your Jadwal password');
+  return baseTemplate(content, 'Reset your AL Jadwal password');
 }

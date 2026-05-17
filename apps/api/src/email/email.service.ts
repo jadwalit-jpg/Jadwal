@@ -149,7 +149,7 @@ export class EmailService {
     locationAddress?: string;
     mapsLink?: string;
   }) {
-    return this.send(to, 'Booking Confirmed — Jadwal', 'booking-confirmation', data);
+    return this.send(to, 'Booking Confirmed — AL Jadwal', 'booking-confirmation', data);
   }
 
   async sendBookingCancellation(to: string, data: {
@@ -160,7 +160,7 @@ export class EmailService {
     refundAmount?: string;
     currency?: string;
   }) {
-    return this.send(to, 'Booking Cancelled — Jadwal', 'booking-cancellation', data);
+    return this.send(to, 'Booking Cancelled — AL Jadwal', 'booking-cancellation', data);
   }
 
   /**
@@ -178,7 +178,7 @@ export class EmailService {
     bookingRef: string;
     expiresInMinutes: number;
   }) {
-    return this.send(to, 'Your Jadwal booking verification code', 'booking-otp', data);
+    return this.send(to, 'Your AL Jadwal booking verification code', 'booking-otp', data);
   }
 
   // ─── Payment Emails ──────────────────────────────────────────────────────
@@ -190,7 +190,7 @@ export class EmailService {
     paymentId: string;
     method: string;
   }) {
-    return this.send(to, 'Payment Receipt — Jadwal', 'payment-receipt', data);
+    return this.send(to, 'Payment Receipt — AL Jadwal', 'payment-receipt', data);
   }
 
   async sendRefundConfirmation(to: string, data: {
@@ -199,7 +199,7 @@ export class EmailService {
     currency: string;
     bookingId: string;
   }) {
-    return this.send(to, 'Refund Processed — Jadwal', 'refund-confirmation', data);
+    return this.send(to, 'Refund Processed — AL Jadwal', 'refund-confirmation', data);
   }
 
   // ─── Auth Emails ─────────────────────────────────────────────────────────
@@ -208,7 +208,7 @@ export class EmailService {
     userName: string;
     verificationLink: string;
   }) {
-    return this.send(to, 'Verify your email — Jadwal', 'email-verification', data);
+    return this.send(to, 'Verify your email — AL Jadwal', 'email-verification', data);
   }
 
   async sendPasswordReset(to: string, data: {
@@ -216,19 +216,19 @@ export class EmailService {
     resetLink: string;
     expiresIn: string;
   }) {
-    return this.send(to, 'Reset Your Password — Jadwal', 'password-reset', data);
+    return this.send(to, 'Reset Your Password — AL Jadwal', 'password-reset', data);
   }
 
   async sendPasswordChangedNotification(to: string, data: {
     customerName: string;
   }) {
-    return this.send(to, 'Your password was changed — Jadwal', 'password-changed', data);
+    return this.send(to, 'Your password was changed — AL Jadwal', 'password-changed', data);
   }
 
   async sendWelcome(to: string, data: {
     userName: string;
   }) {
-    return this.send(to, 'Welcome to Jadwal!', 'welcome', data);
+    return this.send(to, 'Welcome to AL Jadwal!', 'welcome', data);
   }
 
   // ─── Admin Notifications ─────────────────────────────────────────────────

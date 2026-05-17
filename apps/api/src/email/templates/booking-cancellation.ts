@@ -28,7 +28,7 @@ export function bookingCancellationTemplate(data: BookingCancellationData): stri
               </tr>
               <tr>
                 <td style="font-size: 14px; color: #78350f;">
-                  Your cancellation has been recorded. The vendor will review your request and decide the refund amount. Any approved refund will be <strong>added as Wanasa loyalty points</strong> to your balance &#x2014; you can use them to book activities on Jadwal.
+                  Your cancellation has been recorded. The vendor will review your request and decide the refund amount. Any approved refund will be <strong>added as Wanasa loyalty points</strong> to your balance &#x2014; you can use them to book activities on AL Jadwal.
                 </td>
               </tr>
             </table>
@@ -73,7 +73,7 @@ export function bookingCancellationTemplate(data: BookingCancellationData): stri
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
       <tr>
         <td style="font-family: Arial, sans-serif; font-size: 13px; color: #9ca3af; text-align: center; padding-top: 8px;">
-          Changed your mind? You can always book again on Jadwal.
+          Changed your mind? You can always book again on AL Jadwal.
         </td>
       </tr>
     </table>`;

@@ -10,14 +10,14 @@ import { baseTemplate, escapeHtml } from './base';
  * rendering.
  */
 export const ADMIN_ALERT_SUBJECTS = {
-  DATABASE_ERROR:        'Jadwal alert:Database error',
-  PAYMENT_DRIFT:         'Jadwal alert:Payment drift detected',
-  SECURITY_EVENT:        'Jadwal alert:Security event',
-  DEPLOYMENT_FAILURE:    'Jadwal alert:Deployment failure',
-  BOUNCE_RATE_HIGH:      'Jadwal alert:Email bounce rate alert',
-  COMPLAINT_RATE_HIGH:   'Jadwal alert:Email complaint rate alert',
-  RATE_LIMIT_BREACH:     'Jadwal alert:Sustained rate limit breach',
-  CRON_FAILURE:          'Jadwal alert:Background job failure',
+  DATABASE_ERROR:        'AL Jadwal alert:Database error',
+  PAYMENT_DRIFT:         'AL Jadwal alert:Payment drift detected',
+  SECURITY_EVENT:        'AL Jadwal alert:Security event',
+  DEPLOYMENT_FAILURE:    'AL Jadwal alert:Deployment failure',
+  BOUNCE_RATE_HIGH:      'AL Jadwal alert:Email bounce rate alert',
+  COMPLAINT_RATE_HIGH:   'AL Jadwal alert:Email complaint rate alert',
+  RATE_LIMIT_BREACH:     'AL Jadwal alert:Sustained rate limit breach',
+  CRON_FAILURE:          'AL Jadwal alert:Background job failure',
 } as const;
 
 export type AdminAlertType = keyof typeof ADMIN_ALERT_SUBJECTS;
@@ -87,7 +87,7 @@ export function adminAlertTemplate(data: AdminAlertData): string {
     ${detailsBlock}
     ${noteBlock}
     <p style="font-family: Arial, sans-serif; font-size: 12px; color: #9ca3af; margin: 24px 0 0 0;">
-      This message was generated automatically by the Jadwal platform. No reply needed.
+      This message was generated automatically by the AL Jadwal platform. No reply needed.
     </p>`;
 
   return baseTemplate(content, ADMIN_ALERT_SUBJECTS[data.type]);

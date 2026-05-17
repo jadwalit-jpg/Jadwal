@@ -232,7 +232,7 @@ describe('EmailService — send dispatching + Resend payload', () => {
     const payload = sentPayload();
     expect(payload.from).toBe('noreply@jadwal.qa');
     expect(payload.to).toBe('user@example.com');
-    expect(payload.subject).toBe('Verify your email — Jadwal');
+    expect(payload.subject).toBe('Verify your email — AL Jadwal');
     expect(payload.html).toContain('<html');
   });
 
@@ -401,7 +401,7 @@ describe('EmailService — sendAdminAlert typed events', () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     await svc.sendAdminAlert({ type: 'DATABASE_ERROR' });
     const payload = sentPayload();
-    expect(payload.subject).toMatch(/^Jadwal/);
+    expect(payload.subject).toMatch(/^AL Jadwal/);
     expect(payload.html).toContain('Database error');
   });
 

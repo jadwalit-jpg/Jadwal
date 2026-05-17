@@ -48,7 +48,7 @@ export function baseTemplate(content: string, previewText?: string): string {
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="color-scheme" content="light">
   <meta name="supported-color-schemes" content="light">
-  <title>Jadwal</title>
+  <title>AL Jadwal</title>
   <!--[if mso]>
   <noscript>
     <xml>
@@ -76,8 +76,8 @@ export function baseTemplate(content: string, previewText?: string): string {
               <table role="presentation" cellspacing="0" cellpadding="0" border="0">
                 <tr>
                   <td align="center" style="font-family: Arial, sans-serif; font-size: 28px; font-weight: bold; color: #ffffff; letter-spacing: 1px;">
-                    <img src="https://jadwal.qa/android-chrome-192x192.png" width="56" height="56" alt="Jadwal" style="display: block; margin: 0 auto 12px; border: 0; border-radius: 12px;">
-                    Jadwal <span style="font-size: 22px; color: #7dd3fc;">&#1580;&#1583;&#1608;&#1604;</span>
+                    <img src="https://jadwal.qa/android-chrome-192x192.png" width="56" height="56" alt="" style="display: block; margin: 0 auto 12px; border: 0; border-radius: 12px;">
+                    AL Jadwal <span style="font-size: 22px; color: #7dd3fc;">&#1575;&#1604;&#1580;&#1583;&#1608;&#1604;</span>
                   </td>
                 </tr>
               </table>
@@ -98,7 +98,7 @@ export function baseTemplate(content: string, previewText?: string): string {
                 <tr>
                   <td align="center" style="font-family: Arial, sans-serif; font-size: 12px; color: #9ca3af; line-height: 20px;">
                     &copy; 2026 AL Jadwal. All rights reserved.<br>
-                    <span style="color: #d1d5db;">You received this transactional email because you have an account on Jadwal. We don&#x27;t send marketing emails.</span><br>
+                    <span style="color: #d1d5db;">You received this transactional email because you have an account on AL Jadwal. We don&#x27;t send marketing emails.</span><br>
                     <a href="https://jadwal.qa/profile" style="color: #9ca3af; text-decoration: underline;">Manage your account &amp; email preferences</a><br>
                     <span style="color: #d1d5db;">AL Jadwal &middot; Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar</span>
                   </td>
