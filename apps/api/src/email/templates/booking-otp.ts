@@ -66,5 +66,8 @@ export function bookingOtpTemplate(data: BookingOtpData): string {
       </tr>
     </table>`;
 
-  return baseTemplate(content, `Your AL Jadwal booking verification code: ${code}`);
+  // Preheader (inbox-preview / lock-screen snippet) must NOT carry the OTP —
+  // that would leak the code without the email being opened. Code stays in
+  // the body only.
+  return baseTemplate(content, 'Your AL Jadwal booking verification code');
 }
