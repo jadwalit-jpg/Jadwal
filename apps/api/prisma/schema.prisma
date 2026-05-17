@@ -26,6 +26,10 @@ model User {
   loyaltyPoints     Int       @default(0)
   preferredCountryId String?
   preferredCountry  Country?  @relation(fields: [preferredCountryId], references: [id], onDelete: SetNull)
+  /// Preferred email language. Captured from the Accept-Language header at
+  /// registration; drives which language EmailService renders. Defaults to
+  /// EN for every existing and OAuth-created account.
+  preferredLanguage Language  @default(EN)
   emailVerified            Boolean   @default(false)
   verificationToken        String?   @unique
   verificationTokenExpiry  DateTime?
@@ -131,6 +135,12 @@ enum Role {
   CUSTOMER
   VENDOR
   ADMIN
+}
+
+/// Email language. EN = English (LTR), AR = Arabic (RTL).
+enum Language {
+  EN
+  AR
 }
 
 model Vendor {
