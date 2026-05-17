@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import { Resend } from 'resend';
 import { bookingConfirmationTemplate } from './templates/booking-confirmation';
 import { bookingCancellationTemplate } from './templates/booking-cancellation';
 import { passwordResetTemplate } from './templates/password-reset';
@@ -19,17 +19,22 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CircuitBreaker, withTimeout } from '../common/utils/circuit-breaker';
 
 /**
- * Email Service — AWS SES v2 integration with RFC 8058 List-Unsubscribe headers.
+ * Email Service — Resend integration with RFC 8058 List-Unsubscribe headers.
  *
  * When EMAIL_ENABLED=false (dev): logs to console, never sends.
- * When EMAIL_ENABLED=true (production): sends via AWS SES v2 SDK using raw MIME
- * so we can attach `List-Unsubscribe` and `List-Unsubscribe-Post` headers
- * (RFC 8058 + Gmail/Yahoo Feb 2024 bulk-sender requirements).
+ * When EMAIL_ENABLED=true (production): sends via the Resend HTTP API. The
+ * `List-Unsubscribe` + `List-Unsubscribe-Post` headers (RFC 8058 + Gmail/Yahoo
+ * Feb 2024 bulk-sender requirements) ride on the `headers` field — Resend
+ * builds the MIME message, so no hand-rolled raw-MIME builder is needed.
  *
- * Migration history (2026-05-06): switched from `@aws-sdk/client-ses` (v1 API,
- * SendEmailCommand with Body.Html.Data) to `@aws-sdk/client-sesv2` (v2 API,
- * SendEmailCommand with Content.Raw.Data). v2 supports custom MIME headers
- * which v1 does not.
+ * Migration history:
+ *   - 2026-05-06: AWS SES v1 (`@aws-sdk/client-ses`) → SES v2
+ *     (`@aws-sdk/client-sesv2`) for custom MIME headers.
+ *   - 2026-05-17: SES v2 → Resend. SES production access was denied (capped at
+ *     200 emails/day); Resend has no equivalent approval gate and ships from a
+ *     verified domain immediately. The provider-agnostic layers (outbox queue,
+ *     suppression list, 4-tier quota, unsubscribe tokens, circuit breaker) are
+ *     unchanged — only the send transport swapped.
  *
  * All callers continue to use the same public methods — no signature changes.
  * The userId is looked up by email at send-time so the unsubscribe token can
@@ -42,20 +47,16 @@ export class EmailService {
   private readonly enabled: boolean;
   private readonly appUrl: string;
   private readonly apiUrl: string;
-  private readonly sesClient: SESv2Client | null;
-  // Optional — when set, every SendEmailCommand carries this configuration
-  // set name. The set is wired in AWS to publish Bounce/Complaint events
-  // to two SNS topics; without it, the bounce/complaint feedback loop is
-  // a no-op even though SES still sends the email.
-  private readonly configSetName: string | undefined;
-  // Per-call timeout for the SES SDK request (in ms). Combined with the
-  // SDK's `maxAttempts: 3` retry, worst-case time-to-give-up is roughly
-  // 3 × this. Defaults are generous (10s request); SES is normally <300ms.
+  private readonly resend: Resend | null;
+  // Per-call timeout for the Resend HTTP request (in ms). The AbortSignal is
+  // forwarded into the SDK's underlying fetch, so a hung connection is
+  // actually cancelled — not just orphaned. Defaults are generous (10s);
+  // Resend is normally <500ms.
   private readonly sendTimeoutMs: number;
   // Circuit breaker around the .send() call. Opens after `failureThreshold`
-  // consecutive failures (each "failure" = post-SDK-retry outcome, so it
-  // takes a sustained SES outage to trip — not one bad request). When OPEN,
-  // calls fail-fast with `CircuitBreakerOpenError` → caller's catch logs
+  // consecutive failures (each "failure" = post-retry outcome, so it takes a
+  // sustained Resend outage to trip — not one bad request). When OPEN, calls
+  // fail-fast with `CircuitBreakerOpenError` → caller's catch logs
   // `kind: 'CircuitBreakerOpenError'` and returns false. Default is paranoid
   // (10 failures, 30s open) so it doesn't trip on traffic spikes.
   private readonly breaker: CircuitBreaker;
@@ -73,34 +74,34 @@ export class EmailService {
     // API_URL is where the unsubscribe endpoint lives (e.g. https://jadwal.qa/api).
     // Used to build the HTTPS variant of List-Unsubscribe.
     this.apiUrl = this.config.get('API_URL', this.appUrl + '/api');
-    this.configSetName = this.config.get<string>('SES_CONFIG_SET_NAME');
 
     // Defence-in-depth: never let production boot with email in log-only mode
     if (!this.enabled && process.env.NODE_ENV === 'production') {
       throw new Error('[FATAL] EMAIL_ENABLED must be true in production');
     }
 
-    // Only initialize SES client when email is enabled (avoids credential errors in dev)
-    // Adaptive retry (3 attempts) — SDK only retries on retryable error
-    // types (network errors pre-request, throttling), so transient AWS
-    // edge blips don't trigger spurious failures. Won't double-send on
-    // a real error (SES 400/403 responses are non-retryable by design).
-    this.sesClient = this.enabled
-      ? new SESv2Client({
-          region: this.config.get('AWS_REGION', 'eu-central-1'),
-          maxAttempts: 3,
-          retryMode: 'adaptive',
-        })
-      : null;
+    // Only initialize the Resend client when email is enabled (avoids a
+    // missing-key throw in dev / test where EMAIL_ENABLED=false). When
+    // enabled, RESEND_API_KEY is mandatory — fail loud at construction
+    // rather than on the first send attempt.
+    if (this.enabled) {
+      const apiKey = this.config.get<string>('RESEND_API_KEY', '').trim();
+      if (!apiKey) {
+        throw new Error('[FATAL] RESEND_API_KEY is required when EMAIL_ENABLED=true');
+      }
+      this.resend = new Resend(apiKey);
+    } else {
+      this.resend = null;
+    }
 
     // Resilience config: explicit per-call timeout + circuit breaker. Defaults
     // are paranoid (don't open on a single slow request). All knobs are env
     // overridable; `EXTERNAL_BREAKER_DISABLED=true` is the SSM kill switch.
-    this.sendTimeoutMs = Number(this.config.get('SES_SEND_TIMEOUT_MS', '10000'));
+    this.sendTimeoutMs = this.parsePositiveIntEnv('RESEND_SEND_TIMEOUT_MS', 10000);
     this.breaker = new CircuitBreaker({
-      name: 'ses-send',
-      failureThreshold: Number(this.config.get('SES_BREAKER_FAILURE_THRESHOLD', '10')),
-      openTimeoutMs: Number(this.config.get('SES_BREAKER_OPEN_MS', '30000')),
+      name: 'resend-send',
+      failureThreshold: this.parsePositiveIntEnv('RESEND_BREAKER_FAILURE_THRESHOLD', 10),
+      openTimeoutMs: this.parsePositiveIntEnv('RESEND_BREAKER_OPEN_MS', 30000),
       disabled: this.config.get('EXTERNAL_BREAKER_DISABLED', 'false') === 'true',
       onStateChange: (e) =>
         this.logger.warn({
@@ -111,6 +112,27 @@ export class EmailService {
           consecutiveFailures: e.consecutiveFailures,
         }),
     });
+  }
+
+  /**
+   * Parse a positive-integer env knob with a safe fallback.
+   *
+   * `ConfigService.get` only substitutes the default when the key is
+   * *undefined* — an empty-string SSM value slips through, and `Number('')`
+   * is `0`. A zero `sendTimeoutMs` would abort every send instantly; a zero
+   * breaker threshold would mis-tune the circuit breaker. So: an absent /
+   * blank value falls back to the default, but a *present but malformed*
+   * value (`NaN`, `0`, negative) fails loud at boot rather than silently
+   * destabilising production.
+   */
+  private parsePositiveIntEnv(key: string, fallback: number): number {
+    const raw = (this.config.get<string>(key, '') ?? '').trim();
+    if (!raw) return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new Error(`[FATAL] ${key} must be a positive number, got "${raw}"`);
+    }
+    return Math.floor(n);
   }
 
   // ─── Booking Emails ──────────────────────────────────────────────────────
@@ -145,7 +167,7 @@ export class EmailService {
    * Booking email-OTP. Sent on booking creation; customer must enter the
    * code on /bookings/[id] before /payment/initiate will issue a PAY2M
    * token. Direct send (not queued in EmailOutbox) — the code is time-
-   * sensitive (10 min). If SES is down the resend endpoint covers retries.
+   * sensitive (10 min). If Resend is down the resend endpoint covers retries.
    *
    * The plaintext code is interpolated into the rendered HTML body ONLY.
    * It MUST NOT appear in any log, response, or audit trail.
@@ -226,11 +248,10 @@ export class EmailService {
    * Strip control chars and cap length on a free-form string. The HTML
    * template already escapes the value at render time; this layer exists
    * to keep the email *readable* (control bytes break clients like Outlook)
-   * and to bound size before MIME encoding.
+   * and to bound size before transport.
    */
   private sanitizeAlertValue(raw: unknown, maxLen: number): string {
     const s = String(raw ?? '');
-    // eslint-disable-next-line no-control-regex
     const cleaned = s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
     if (cleaned.length <= maxLen) return cleaned;
     return cleaned.slice(0, maxLen) + '…';
@@ -352,69 +373,23 @@ export class EmailService {
   }
 
   /**
-   * Encode a string as a MIME header value safe for any 7-bit transport.
-   * Subjects with non-ASCII characters need `=?UTF-8?B?<base64>?=` encoding;
-   * pure-ASCII subjects pass through unchanged. SES re-validates so this is
-   * defence-in-depth.
+   * Build the RFC 8058 List-Unsubscribe header pair.
+   *
+   * Always include the mailto: variant (works even without a token); add the
+   * HTTPS one-click variant only when we have a per-user token (otherwise the
+   * URL would unsubscribe nobody — cleaner to omit). The `List-Unsubscribe-Post`
+   * marker is what makes Gmail/Yahoo register the sender as bulk-friendly, and
+   * it is only meaningful alongside the HTTPS URL.
    */
-  private encodeHeader(value: string): string {
-    // Fast path: ASCII-only, no special chars → use as-is
-    // eslint-disable-next-line no-control-regex
-    if (/^[\x20-\x7e]+$/.test(value) && !/[=?]/.test(value)) return value;
-    return `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
-  }
-
-  /**
-   * Build the raw MIME message including List-Unsubscribe headers.
-   * Returns a base64-encoded string ready for `Content.Raw.Data`.
-   */
-  private buildRawMime(params: {
-    to: string;
-    subject: string;
-    html: string;
-    unsubscribeToken: string | null;
-  }): string {
-    const { to, subject, html, unsubscribeToken } = params;
-
-    // Build List-Unsubscribe header value. Always include the mailto: variant
-    // (works even without token); add HTTPS variant only when we have a per-
-    // user token (otherwise the URL would unsubscribe nobody — cleaner to omit).
-    // Format per RFC 2369 / 8058:
-    //   List-Unsubscribe: <https://example.com/unsubscribe?t=...>, <mailto:unsubscribe@example.com>
+  private buildUnsubscribeHeaders(unsubscribeToken: string | null): Record<string, string> {
     const unsubMailto = `<mailto:unsubscribe@jadwal.qa?subject=unsubscribe>`;
-    const listUnsubscribe = unsubscribeToken
-      ? `<${this.apiUrl}/email/unsubscribe?t=${unsubscribeToken}>, ${unsubMailto}`
-      : unsubMailto;
-
-    // Headers section. Each header is a single line ≤1000 chars (RFC 5321).
-    // The order doesn't matter to receivers but `From`, `To`, `Subject`,
-    // `MIME-Version`, `Content-Type` first is conventional.
-    const headers = [
-      `From: ${this.from}`,
-      `To: ${to}`,
-      `Subject: ${this.encodeHeader(subject)}`,
-      `MIME-Version: 1.0`,
-      `Content-Type: text/html; charset=UTF-8`,
-      // base64, not 7bit: templates may carry non-ASCII (Arabic copy, smart
-      // quotes, currency glyphs) which would violate the RFC 2045 7bit
-      // contract. AWS SES also doesn't guarantee 8bit preservation when it
-      // rewrites the message for open/click tracking — base64 is robust.
-      `Content-Transfer-Encoding: base64`,
-      `List-Unsubscribe: ${listUnsubscribe}`,
-      // List-Unsubscribe-Post is the RFC 8058 marker that says "I support
-      // one-click POST unsubscribe" — receivers (Gmail, Yahoo) only register
-      // the sender as bulk-friendly when this exact header is present.
-      ...(unsubscribeToken ? [`List-Unsubscribe-Post: List-Unsubscribe=One-Click`] : []),
-    ];
-
-    // RFC 2045 §6.8: base64 lines must be ≤76 chars; fold with CRLF.
-    const encodedBody = Buffer.from(html, 'utf8')
-      .toString('base64')
-      .replace(/(.{76})/g, '$1\r\n');
-    const mime = headers.join('\r\n') + '\r\n\r\n' + encodedBody;
-    // SES v2 wants base64-encoded Raw.Data (decoded back to bytes by SES).
-    // The SDK accepts a Buffer or string; we encode explicitly to be unambiguous.
-    return Buffer.from(mime, 'utf8').toString('base64');
+    if (unsubscribeToken) {
+      return {
+        'List-Unsubscribe': `<${this.apiUrl}/email/unsubscribe?t=${unsubscribeToken}>, ${unsubMailto}`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      };
+    }
+    return { 'List-Unsubscribe': unsubMailto };
   }
 
   /**
@@ -443,18 +418,17 @@ export class EmailService {
   private async send(to: string, subject: string, template: string, _data: any): Promise<boolean> {
     const masked = this.maskEmail(to);
 
-    // Suppression check — short-circuit before rendering or hitting SES.
-    // SES bounce/complaint events populate this list via the SNS webhook
-    // at /api/webhooks/ses-events. Returns `true` (success-shaped) so
-    // callers can't distinguish a suppressed recipient from a real send
-    // — preserves anti-enumeration on /forgot-password and friends.
-    // Fail-open inside the service if Prisma errors.
+    // Suppression check — short-circuit before rendering or hitting Resend.
+    // Bounce/complaint events populate this list via the provider webhook.
+    // Returns `true` (success-shaped) so callers can't distinguish a
+    // suppressed recipient from a real send — preserves anti-enumeration on
+    // /forgot-password and friends. Fail-open inside the service if Prisma errors.
     //
     // Exception: admin-alert bypasses the suppression check. Operational
     // notifications must always go out — if ADMIN_EMAIL ever lands on
     // the suppression list (mailbox full → bounce; admin marks routine
     // alert as spam by mistake), silently swallowing the alert hides
-    // production incidents from on-call. Worth the SES bounce-rate cost.
+    // production incidents from on-call. Worth the bounce-rate cost.
     if (template !== 'admin-alert') {
       const suppressed = await this.suppressions.isSuppressed(to);
       if (suppressed) {
@@ -489,7 +463,7 @@ export class EmailService {
     // local file dump GUARDED by `process.env.NODE_ENV !== 'production'`.
     this.logger.debug({ event: 'EMAIL_RENDERED', template, htmlLength: html.length });
 
-    if (!this.enabled || !this.sesClient) {
+    if (!this.enabled || !this.resend) {
       // NEVER log `_data` — it carries verification tokens, reset links, OTP codes.
       this.logger.debug({ event: 'EMAIL_DEV_SKIP_SEND', recipientMasked: masked, template, subject });
       return true;
@@ -506,60 +480,72 @@ export class EmailService {
       }
     }
 
-    const rawMime = this.buildRawMime({ to, subject, html, unsubscribeToken });
+    const headers = this.buildUnsubscribeHeaders(unsubscribeToken);
 
     try {
-      const command = new SendEmailCommand({
-        FromEmailAddress: this.from,
-        Destination: { ToAddresses: [to] },
-        Content: {
-          Raw: {
-            // SDK v2 accepts Uint8Array or base64 string. We send base64
-            // explicitly — easier to inspect in unit tests and unambiguous
-            // to anyone reading the wire format.
-            Data: Buffer.from(rawMime, 'base64'),
-          },
-        },
-        // ConfigurationSetName is what causes SES to publish bounce /
-        // complaint / reject events to the SNS topics that feed the
-        // suppression list. Without this attribute, SES sends the email
-        // but emits no feedback events — the loop is a no-op. Optional
-        // (undefined) so dev / test environments without the set still
-        // work.
-        ...(this.configSetName ? { ConfigurationSetName: this.configSetName } : {}),
-        // Tags surface in CloudWatch metrics so we can break down sends
-        // by environment + template (e.g. spike on `password-reset` in
-        // prod = telltale of a forgot-password attack).
-        EmailTags: [
-          { Name: 'env', Value: process.env.NODE_ENV ?? 'unknown' },
-          { Name: 'template', Value: template },
-        ],
-      });
       // Resilience layering:
-      //   1) `breaker.run()` short-circuits if SES has been failing for
+      //   1) `breaker.run()` short-circuits if Resend has been failing for
       //      `failureThreshold` consecutive calls — throws
       //      `CircuitBreakerOpenError` immediately (caught below, returns
       //      false; outbox/quota callers retry next drain cycle).
-      //   2) `withTimeout()` creates an AbortController and aborts the SDK
-      //      call after `sendTimeoutMs`. The SDK's own retries (maxAttempts:
-      //      3) still apply *within* each attempt, but a hung TCP connection
-      //      can't pin a Node worker forever.
-      //   3) The SDK itself retries network errors / throttling with
-      //      adaptive backoff.
+      //   2) `withTimeout()` creates an AbortController and aborts the SDK's
+      //      underlying fetch after `sendTimeoutMs` — the request is
+      //      cancelled, not orphaned.
+      //   3) The Resend SDK surfaces transport/API failures as a resolved
+      //      `{ error }` rather than throwing, so we re-throw on `error` to
+      //      feed the breaker a real failure signal.
       await this.breaker.run(() =>
-        withTimeout((signal) => this.sesClient!.send(command, { abortSignal: signal }), this.sendTimeoutMs),
+        withTimeout(async (signal) => {
+          const { data, error } = await this.resend!.emails.send(
+            {
+              from: this.from,
+              to,
+              subject,
+              html,
+              headers,
+              // Tags surface in the Resend dashboard so we can break sends
+              // down by environment + template (e.g. a spike on
+              // `password-reset` in prod = telltale of a forgot-password
+              // attack). Resend tag names/values allow only ASCII letters,
+              // digits, underscores and dashes — env + template names qualify.
+              tags: [
+                { name: 'env', value: process.env.NODE_ENV ?? 'unknown' },
+                { name: 'template', value: template },
+              ],
+            },
+            // The 2nd arg is spread into the underlying fetch options by the
+            // SDK, so `signal` reaches fetch and the timeout actually aborts
+            // the in-flight request. Cast: `signal` is not in the SDK's
+            // published options type but is honoured at runtime.
+            { signal } as unknown as { idempotencyKey?: string },
+          );
+          if (error) {
+            // A timed-out request comes back here as a resolved `{ error }`
+            // (the SDK swallows the AbortError). Distinguish it for clearer
+            // logs; the breaker counts both the same way.
+            if (signal.aborted) {
+              const t = new Error(`Resend send timed out after ${this.sendTimeoutMs}ms`);
+              t.name = 'TimeoutError';
+              throw t;
+            }
+            const e = new Error(error.message ?? 'Resend send failed');
+            // Resend error names are coarse identifiers (`rate_limit_exceeded`,
+            // `validation_error`, `application_error`) — safe to log; they
+            // carry no request IDs or recipient data.
+            e.name = error.name ?? 'ResendError';
+            throw e;
+          }
+          return data;
+        }, this.sendTimeoutMs),
       );
 
       this.logger.log({ event: 'EMAIL_SENT', recipientMasked: masked, template });
       return true;
     } catch (error: unknown) {
-      // Log error class only. SES error.message can carry request IDs and
-      // account fingerprints; nothing the receiver can act on. For
-      // operational debug, inspect CloudTrail / SES bounce dashboard.
-      // `kind` will be one of:
-      //   - 'CircuitBreakerOpenError' (breaker open — sustained SES failure)
-      //   - 'AbortError' / 'Error' with 'Timed out…' message (per-call timeout)
-      //   - AWS SDK error names (`ThrottlingException`, `MessageRejected`, …)
+      // Log error class only. `kind` will be one of:
+      //   - 'CircuitBreakerOpenError' (breaker open — sustained Resend failure)
+      //   - 'TimeoutError' (per-call timeout)
+      //   - Resend error names (`rate_limit_exceeded`, `validation_error`, …)
       const kind = error instanceof Error ? error.name : 'UnknownError';
       this.logger.error({ event: 'EMAIL_SEND_FAILED', recipientMasked: masked, template, kind });
       return false;

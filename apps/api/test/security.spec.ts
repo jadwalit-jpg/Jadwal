@@ -441,14 +441,20 @@ describe('Input Validation & Database Protection', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('AWS Service Skeletons (Production Readiness)', () => {
-  test('Email service has production SES code commented and ready', () => {
+  test('Email service has production Resend transport wired', () => {
     const emailService = readSrc('src/email/email.service.ts');
-    // Migrated to SES v2 SDK on 2026-05-06 — v1 API can't carry custom MIME
-    // headers (List-Unsubscribe / List-Unsubscribe-Post for RFC 8058).
-    expect(emailService).toContain('SESv2Client');
-    expect(emailService).toContain('SendEmailCommand');
+    // Migrated off AWS SES to Resend on 2026-05-17 — SES production access
+    // was denied (200/day sandbox cap). List-Unsubscribe / List-Unsubscribe-Post
+    // (RFC 8058) now ride on the `headers` field of resend.emails.send().
+    expect(emailService).toContain("from 'resend'");
+    expect(emailService).toContain('emails.send');
+    expect(emailService).toContain('List-Unsubscribe');
+    expect(emailService).toContain('List-Unsubscribe-Post');
     expect(emailService).toContain('EMAIL_ENABLED');
     expect(emailService).toContain('EMAIL_FROM');
+    // RESEND_API_KEY is mandatory whenever email is enabled — EmailService
+    // throws at construction if it is missing (mirrors the JWT_SECRET guard).
+    expect(emailService).toContain('RESEND_API_KEY');
   });
 
   test('Email module is global and properly registered', () => {

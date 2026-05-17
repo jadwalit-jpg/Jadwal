@@ -60,6 +60,12 @@ const REQUIRED_IN_PRODUCTION = [
   // `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
   // and store as SSM SecureString /jadwal/prod/UNSUBSCRIBE_TOKEN_SECRET.
   'UNSUBSCRIBE_TOKEN_SECRET',
+  // Resend API key — the email transport (migrated off AWS SES 2026-05-17).
+  // EmailService throws at construction if EMAIL_ENABLED=true and this is
+  // missing/empty; listing it here surfaces the misconfig at the env-guard
+  // step with a clearer message. Store as SSM SecureString
+  // /jadwal/prod/RESEND_API_KEY.
+  'RESEND_API_KEY',
 ];
 
 async function bootstrap() {
@@ -130,7 +136,7 @@ async function bootstrap() {
     // here. Leaving it in this list would fail-fast every prod boot, because
     // SMS_ENABLED is no longer injected by the task definition.
     const requiredServices: Array<{ key: string; name: string }> = [
-      { key: 'EMAIL_ENABLED', name: 'Email (AWS SES)' },
+      { key: 'EMAIL_ENABLED', name: 'Email (Resend)' },
       { key: 'PAYMENT_ENABLED', name: 'Payment (PAY2M)' },
     ];
     const disabled = requiredServices.filter((s) => process.env[s.key] !== 'true');
