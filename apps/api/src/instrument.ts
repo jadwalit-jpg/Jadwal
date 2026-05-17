@@ -45,6 +45,7 @@ const SENSITIVE_KEYS = [
   'pay2m_secured_key',
   'pay2m_secret_word',
   'resend_api_key',
+  'resend_webhook_secret',
 ];
 
 type AnyObject = Record<string, unknown>;

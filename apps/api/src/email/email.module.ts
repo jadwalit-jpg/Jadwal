@@ -5,8 +5,7 @@ import { EmailQuotaService } from './email-quota.service';
 import { EmailSuppressionService } from './email-suppression.service';
 import { EmailUnsubscribeTokenService } from './email-unsubscribe-token.service';
 import { EmailUnsubscribeController } from './email-unsubscribe.controller';
-import { SesEventsController } from './ses-events.controller';
-import { SnsSignatureValidator } from './sns-signature-validator.service';
+import { ResendEventsController } from './resend-events.controller';
 import { OutboxDrainService } from './outbox-drain.service';
 import { RedisModule } from '../redis/redis.module';
 // SecurityLoggerService now provided globally by CommonModule.
@@ -14,13 +13,12 @@ import { RedisModule } from '../redis/redis.module';
 @Global()
 @Module({
   imports: [ConfigModule, RedisModule],
-  controllers: [SesEventsController, EmailUnsubscribeController],
+  controllers: [ResendEventsController, EmailUnsubscribeController],
   providers: [
     EmailService,
     EmailQuotaService,
     EmailSuppressionService,
     EmailUnsubscribeTokenService,
-    SnsSignatureValidator,
     // R4 — cron worker that drains the EmailOutbox (leader-locked). PrismaService
     // + RedisLockService come from the global Prisma/Redis modules; EmailService
     // is in this module. @Cron works via ScheduleModule.forRoot() in CommonModule.
