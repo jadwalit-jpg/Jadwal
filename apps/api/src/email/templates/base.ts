@@ -17,11 +17,17 @@ export function escapeHtml(value: string): string {
 
 /** Render a CTA button as a table-based element (Outlook-safe). */
 export function ctaButton(text: string, href: string): string {
+  // CTA links must be http(s) only. escapeHtml() neutralises HTML-injection
+  // but NOT a `javascript:` / `data:` scheme — guard the scheme explicitly so
+  // a vendor-supplied URL (e.g. a booking's maps link) can't smuggle a
+  // non-navigational scheme into the button. A bad scheme falls back to '#'.
+  const trimmed = String(href ?? '').trim();
+  const safeHref = /^https?:\/\//i.test(trimmed) ? trimmed : '#';
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin: 24px auto;">
       <tr>
         <td style="border-radius: 8px; background-color: #0284c7;">
-          <a href="${escapeHtml(href)}" target="_blank" style="display: inline-block; padding: 14px 32px; font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 8px;">
+          <a href="${escapeHtml(safeHref)}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 14px 32px; font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 8px;">
             ${escapeHtml(text)}
           </a>
         </td>
