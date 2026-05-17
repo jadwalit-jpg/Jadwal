@@ -13,10 +13,10 @@ import { EmailService } from './email.service';
  * marks SENT — or, on failure, schedules a jittered exponential-backoff retry,
  * giving up (status=FAILED + EMAIL_OUTBOX_GAVE_UP log) after MAX_ATTEMPTS.
  *
- * Delivery is at-least-once: if the pod crashes after SES accepts the message
- * but before we mark the row SENT, the next drain re-sends. A duplicate
- * confirmation email is harmless; exactly-once would need a 2-phase commit with
- * SES, which isn't worth it here.
+ * Delivery is at-least-once: if the pod crashes after Resend accepts the
+ * message but before we mark the row SENT, the next drain re-sends. A
+ * duplicate confirmation email is harmless; exactly-once would need a 2-phase
+ * commit with the email provider, which isn't worth it here.
  *
  * EmailService.send() swallows its own errors and returns `false` on failure /
  * `true` on success OR on a deliberate no-op (recipient suppressed, daily quota
@@ -56,9 +56,10 @@ export class OutboxDrainService {
       let retried = 0;
       let gaveUp = 0;
       let skipped = 0; // row was already moved off PENDING by another drainer (rare — only if the leader lock expired mid-run)
-      // Sequential — SES has its own adaptive retry; we don't want a thundering
-      // batch hammering it (and a transient SES blip would otherwise burn the
-      // whole batch's attempt counters at once).
+      // Sequential — EmailService has its own circuit breaker + timeout; we
+      // don't want a thundering batch hammering Resend (and a transient
+      // provider blip would otherwise burn the whole batch's attempt
+      // counters at once).
       for (const row of due) {
         try {
           const result = await this.dispatch(row);
@@ -72,21 +73,21 @@ export class OutboxDrainService {
               data: { status: 'SENT', sentAt: new Date(), attempts: row.attempts + 1, lastError: null },
             });
             if (count === 0) { skipped++; continue; }
-            // NOTE: at-least-once — if SES accepted the message but this UPDATE
-            // raced/failed and the row stays PENDING, the next drain re-sends.
-            // A duplicate confirmation email is harmless.
+            // NOTE: at-least-once — if Resend accepted the message but this
+            // UPDATE raced/failed and the row stays PENDING, the next drain
+            // re-sends. A duplicate confirmation email is harmless.
             sent++;
             continue;
           }
           // Preserve the real failure kind: a misconfigured email type lands as
           // EMAIL_OUTBOX_UNKNOWN_TYPE (a poison row, not a transient blip) so it
-          // doesn't masquerade as an SES outage in lastError / EMAIL_OUTBOX_GAVE_UP.
-          const errKind = result === 'unknown_type' ? 'EMAIL_OUTBOX_UNKNOWN_TYPE' : 'SES_SEND_FAILED';
+          // doesn't masquerade as a provider outage in lastError / EMAIL_OUTBOX_GAVE_UP.
+          const errKind = result === 'unknown_type' ? 'EMAIL_OUTBOX_UNKNOWN_TYPE' : 'EMAIL_SEND_FAILED';
           const outcome = await this.scheduleRetryOrGiveUp(row, errKind);
           if (outcome === 'gaveup') gaveUp++; else if (outcome === 'retried') retried++; else skipped++;
         } catch (err: unknown) {
-          // Never persist the raw error — SES errors can echo the recipient,
-          // AWS request IDs, hostnames. Error class only.
+          // Never persist the raw error — provider errors can echo the
+          // recipient, request IDs, hostnames. Error class only.
           const kind = err instanceof Error ? err.name : 'UnknownError';
           const outcome = await this.scheduleRetryOrGiveUp(row, kind);
           if (outcome === 'gaveup') gaveUp++; else if (outcome === 'retried') retried++; else skipped++;

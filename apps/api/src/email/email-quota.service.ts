@@ -11,9 +11,9 @@ import { RedisService } from '../redis/redis.service';
  *   Per-IP throttling caps the request RATE (3/min). It does NOT cap the
  *   total cost a single email address can incur over a day. An attacker
  *   waiting 20 seconds between forgot-password calls can stay under the
- *   throttle for hours — burning thousands of SES sends to a victim's
- *   inbox (mailbomb) or to non-existent recipients (SES bounce-rate damage,
- *   sender-reputation hit, real $$$).
+ *   throttle for hours — burning thousands of provider sends to a victim's
+ *   inbox (mailbomb) or to non-existent recipients (bounce-rate damage,
+ *   sender-reputation hit, Resend-account-ban risk, real $$$).
  *
  * What this does:
  *
@@ -34,8 +34,8 @@ import { RedisService } from '../redis/redis.service';
  *
  *   If Redis is unreachable, we fail OPEN (allow the send). Reason: a
  *   broken Redis shouldn't lock legitimate users out of password recovery.
- *   The per-IP throttle still applies, and the SES per-account quota
- *   acts as a hard ceiling. We log Redis errors but don't surface them.
+ *   The per-IP throttle still applies, and the Resend account-level rate
+ *   limit acts as a hard ceiling. We log Redis errors but don't surface them.
  */
 @Injectable()
 export class EmailQuotaService {
@@ -147,7 +147,8 @@ export class EmailQuotaService {
       return true;
     } catch (err) {
       // Fail OPEN — Redis blip should never lock a real user out of
-      // recovering their account. Per-IP throttle + SES quota still apply.
+      // recovering their account. Per-IP throttle + Resend account rate
+      // limit still apply.
       const kind = err instanceof Error ? err.name : 'UnknownError';
       this.logger.error(`email-quota redis check failed (${kind}) — allowing send`);
       return true;
@@ -221,7 +222,7 @@ export class EmailQuotaService {
    * Per-IP daily cap on email TRIGGERS — closes the "per-(IP + account)"
    * gap noted in the auth audit. Without this, a single IP could pivot
    * through many victim emails at full per-IP throttle (3/min) and burn
-   * thousands of SES sends per day even with the per-account cap of 5.
+   * thousands of provider sends per day even with the per-account cap of 5.
    *
    * Default cap is 50 sends/IP/day across ALL types, generous enough for
    * a busy office or NAT'd household but tight enough to make a cycling
@@ -263,15 +264,15 @@ export class EmailQuotaService {
    * amount.
    *
    * Why this matters:
-   *   AWS SES production-access quotas typically start at 50K/day and
-   *   ramp up. Without an in-app cap, a code bug or unusual traffic
-   *   pattern could spend the full AWS budget before anyone notices —
-   *   at $0.10/1K emails that's $5/day at 50K, much higher at higher
-   *   tiers. This counter is the hard ceiling that bounds runaway spend.
+   *   The Resend plan has its own monthly/daily ceiling, but a code bug or
+   *   unusual traffic pattern could burn the whole allowance — or rack up
+   *   overage cost — before anyone notices. This counter is the in-app hard
+   *   ceiling that bounds runaway send volume independently of the provider.
    *
-   *   Default 5,000/day is comfortably above legitimate steady-state for
-   *   a launch-phase platform; override via `EMAIL_QUOTA_PLATFORM_PER_DAY`
-   *   without a code change as you scale.
+   *   IMPORTANT: set `EMAIL_QUOTA_PLATFORM_PER_DAY` at or below the daily
+   *   limit of the current Resend plan (the free tier is ~100/day). The
+   *   5,000/day default suits a paid plan — override it without a code
+   *   change as the plan changes.
    *
    * Semantics:
    *   - INCR-then-check is atomic, no race. First call sets a 24h TTL
