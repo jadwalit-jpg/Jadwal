@@ -449,8 +449,12 @@ describe('AWS Service Skeletons (Production Readiness)', () => {
     expect(emailService).toContain("from 'resend'");
     expect(emailService).toContain('emails.send');
     expect(emailService).toContain('List-Unsubscribe');
+    expect(emailService).toContain('List-Unsubscribe-Post');
     expect(emailService).toContain('EMAIL_ENABLED');
     expect(emailService).toContain('EMAIL_FROM');
+    // RESEND_API_KEY is mandatory whenever email is enabled — EmailService
+    // throws at construction if it is missing (mirrors the JWT_SECRET guard).
+    expect(emailService).toContain('RESEND_API_KEY');
   });
 
   test('Email module is global and properly registered', () => {

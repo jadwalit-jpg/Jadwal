@@ -284,6 +284,7 @@ describe('EmailService — send dispatching + Resend payload', () => {
     const tags = sentPayload().tags;
     expect(tags).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ name: 'env', value: expect.any(String) }),
         expect.objectContaining({ name: 'template', value: 'booking-confirmation' }),
       ]),
     );

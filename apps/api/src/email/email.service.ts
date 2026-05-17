@@ -97,11 +97,11 @@ export class EmailService {
     // Resilience config: explicit per-call timeout + circuit breaker. Defaults
     // are paranoid (don't open on a single slow request). All knobs are env
     // overridable; `EXTERNAL_BREAKER_DISABLED=true` is the SSM kill switch.
-    this.sendTimeoutMs = Number(this.config.get('RESEND_SEND_TIMEOUT_MS', '10000'));
+    this.sendTimeoutMs = this.parsePositiveIntEnv('RESEND_SEND_TIMEOUT_MS', 10000);
     this.breaker = new CircuitBreaker({
       name: 'resend-send',
-      failureThreshold: Number(this.config.get('RESEND_BREAKER_FAILURE_THRESHOLD', '10')),
-      openTimeoutMs: Number(this.config.get('RESEND_BREAKER_OPEN_MS', '30000')),
+      failureThreshold: this.parsePositiveIntEnv('RESEND_BREAKER_FAILURE_THRESHOLD', 10),
+      openTimeoutMs: this.parsePositiveIntEnv('RESEND_BREAKER_OPEN_MS', 30000),
       disabled: this.config.get('EXTERNAL_BREAKER_DISABLED', 'false') === 'true',
       onStateChange: (e) =>
         this.logger.warn({
@@ -112,6 +112,27 @@ export class EmailService {
           consecutiveFailures: e.consecutiveFailures,
         }),
     });
+  }
+
+  /**
+   * Parse a positive-integer env knob with a safe fallback.
+   *
+   * `ConfigService.get` only substitutes the default when the key is
+   * *undefined* — an empty-string SSM value slips through, and `Number('')`
+   * is `0`. A zero `sendTimeoutMs` would abort every send instantly; a zero
+   * breaker threshold would mis-tune the circuit breaker. So: an absent /
+   * blank value falls back to the default, but a *present but malformed*
+   * value (`NaN`, `0`, negative) fails loud at boot rather than silently
+   * destabilising production.
+   */
+  private parsePositiveIntEnv(key: string, fallback: number): number {
+    const raw = (this.config.get<string>(key, '') ?? '').trim();
+    if (!raw) return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new Error(`[FATAL] ${key} must be a positive number, got "${raw}"`);
+    }
+    return Math.floor(n);
   }
 
   // ─── Booking Emails ──────────────────────────────────────────────────────
