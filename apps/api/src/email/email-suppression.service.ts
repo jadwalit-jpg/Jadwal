@@ -3,20 +3,19 @@ import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
- * SES bounce / complaint suppression list.
+ * Email bounce / complaint suppression list.
  *
  * Why we need it (sender-reputation defence):
  *
- *   AWS SES caps domain reputation: hard-bounce rate >5% or complaint
- *   rate >0.1% over a 7-day window flags the domain. Once flagged, *all*
- *   subsequent sends — including to legitimate recipients — get rate-
- *   limited, junked, or rejected by receiving MTAs. The cost of one bad
- *   address sent 5 times per day across 100 spam signups is real $$$ and
- *   weeks of recovery.
+ *   A high hard-bounce or complaint rate is what gets a Resend account
+ *   throttled or suspended — and, separately, erodes domain reputation so
+ *   receiving MTAs junk or reject *all* subsequent sends, including to
+ *   legitimate recipients. The cost of one bad address sent 5 times a day
+ *   across 100 spam signups is real $$$ and weeks of recovery.
  *
- *   This service maintains a Postgres-backed list of recipients SES has
- *   reported as bounced or complained, populated by the SNS webhook at
- *   /webhooks/ses-events. Every outbound send checks the list first and
+ *   This service maintains a Postgres-backed list of recipients reported
+ *   as bounced or complained, populated by the Resend webhook at
+ *   /webhooks/resend-events. Every outbound send checks the list first and
  *   silently drops if the recipient is suppressed.
  *
  * Storage choice — Postgres, not Redis:
@@ -35,8 +34,8 @@ import { PrismaService } from '../prisma/prisma.service';
  * Failure mode:
  *
  *   isSuppressed() fails OPEN on Prisma error: a broken DB shouldn't
- *   freeze every email send platform-wide. Per-IP throttle and SES
- *   account quota still cap damage. Errors are logged for ops.
+ *   freeze every email send platform-wide. Per-IP throttle and the
+ *   platform daily quota still cap damage. Errors are logged for ops.
  */
 @Injectable()
 export class EmailSuppressionService {

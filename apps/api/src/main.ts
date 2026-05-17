@@ -17,7 +17,7 @@ import helmet from 'helmet';
 import * as compression from 'compression';
 import * as cookieParser from 'cookie-parser';
 import { join } from 'path';
-import { json as bodyJson, urlencoded as bodyUrlencoded } from 'express';
+import { json as bodyJson, raw as bodyRaw, urlencoded as bodyUrlencoded } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { envNumber } from './common/env';
 
@@ -66,6 +66,12 @@ const REQUIRED_IN_PRODUCTION = [
   // step with a clearer message. Store as SSM SecureString
   // /jadwal/prod/RESEND_API_KEY.
   'RESEND_API_KEY',
+  // Resend webhook signing secret (whsec_…). Verifies the Svix signature on
+  // the bounce/complaint webhook (POST /api/webhooks/resend-events). Without
+  // it the controller fail-closes and rejects every event — the suppression
+  // feedback loop goes dark, which is a Resend-account-ban risk. Store as
+  // SSM SecureString /jadwal/prod/RESEND_WEBHOOK_SECRET.
+  'RESEND_WEBHOOK_SECRET',
 ];
 
 async function bootstrap() {
@@ -290,22 +296,15 @@ async function bootstrap() {
   // 128 chars, emails at 254, the largest realistic body is an Activity
   // create with a few text fields and image URL refs (well under 50 KB).
   // Image uploads go via S3 presigned URLs, not through this parser.
-  // `type` widens the JSON parser to also accept text/plain payloads.
-  // Required for the SES events webhook (POST /api/webhooks/ses-events):
-  // AWS SNS HTTP delivery sends `Content-Type: text/plain; charset=UTF-8`
-  // with a valid-JSON body (documented quirk; see AWS SNS HTTP/HTTPS
-  // delivery docs). Without this widener, body-parser ignores SNS posts
-  // and `req.body` arrives as `undefined`, which the controller treats
-  // as a 403 — the SubscriptionConfirmation handshake never completes
-  // and the bounce/complaint feedback loop is dead. The same parser
-  // size cap applies (100 KB) so we don't open a new DoS surface.
-  // No real endpoint expects unstructured text bodies, so widening
-  // text/plain to JSON parsing is safe — non-JSON text bodies become
-  // an empty object and downstream validators reject as usual.
-  app.use(bodyJson({
-    limit: '100kb',
-    type: ['application/json', 'text/plain'],
-  }));
+  //
+  // The Resend webhook (POST /api/webhooks/resend-events) is signed by Svix
+  // over the EXACT request bytes — it must NOT be JSON-parsed, or the
+  // re-serialised body would no longer match the signature. So that one
+  // path is parsed as a raw Buffer FIRST; body-parser sets `req._body` once
+  // a parser runs, so the JSON parser below then skips it. Every other
+  // route falls through to the JSON parser as normal.
+  app.use('/api/webhooks/resend-events', bodyRaw({ limit: '100kb', type: 'application/json' }));
+  app.use(bodyJson({ limit: '100kb' }));
   app.use(bodyUrlencoded({ limit: '100kb', extended: true }));
 
   // ─── Cookie Parser ──────────────────────────────────────────────────────

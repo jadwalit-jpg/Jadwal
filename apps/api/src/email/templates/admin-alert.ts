@@ -14,8 +14,8 @@ export const ADMIN_ALERT_SUBJECTS = {
   PAYMENT_DRIFT:         'Jadwal alert:Payment drift detected',
   SECURITY_EVENT:        'Jadwal alert:Security event',
   DEPLOYMENT_FAILURE:    'Jadwal alert:Deployment failure',
-  BOUNCE_RATE_HIGH:      'Jadwal alert:SES bounce rate alert',
-  COMPLAINT_RATE_HIGH:   'Jadwal alert:SES complaint rate alert',
+  BOUNCE_RATE_HIGH:      'Jadwal alert:Email bounce rate alert',
+  COMPLAINT_RATE_HIGH:   'Jadwal alert:Email complaint rate alert',
   RATE_LIMIT_BREACH:     'Jadwal alert:Sustained rate limit breach',
   CRON_FAILURE:          'Jadwal alert:Background job failure',
 } as const;
