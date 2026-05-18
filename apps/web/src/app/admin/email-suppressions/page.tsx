@@ -6,7 +6,7 @@ import api from '@/lib/api';
 import { getApiError } from '@/lib/api-error';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
-import { ChevronLeft, ChevronRight, MailX, Trash2, Search, Loader2, ShieldAlert } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MailX, Trash2, Search, Loader2, ShieldAlert, FileText, X } from 'lucide-react';
 
 interface Suppression {
   emailHash: string;        // SHA-256 hex (64 chars)
@@ -48,6 +48,9 @@ export default function EmailSuppressionsPage() {
   const [searchEmail, setSearchEmail] = useState('');
   const [searching, setSearching] = useState(false);
   const [confirmHash, setConfirmHash] = useState<string | null>(null);
+  // Full note text shown in a modal — the Notes cell truncates, so a click
+  // opens the complete bounce/complaint message here.
+  const [noteModal, setNoteModal] = useState<string | null>(null);
   const limit = 50;
 
   // ─── List query ──────────────────────────────────────────────────────
@@ -245,8 +248,19 @@ export default function EmailSuppressionsPage() {
                       <td className="px-4 py-3 text-xs text-gray-500 dark:text-slate-400">
                         {s.bounceType ?? '—'}
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-600 dark:text-slate-300 max-w-xs truncate">
-                        {s.notes ?? '—'}
+                      <td className="px-4 py-3 text-xs text-gray-600 dark:text-slate-300">
+                        {s.notes ? (
+                          <button
+                            type="button"
+                            onClick={() => setNoteModal(s.notes)}
+                            title="Click to read the full note"
+                            className="max-w-xs truncate block text-start hover:text-blue-600 dark:hover:text-blue-400 hover:underline transition cursor-pointer"
+                          >
+                            {s.notes}
+                          </button>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500 dark:text-slate-400">
                         {new Date(s.createdAt).toLocaleString('en-GB')}
@@ -309,6 +323,9 @@ export default function EmailSuppressionsPage() {
           onCancel={() => setConfirmHash(null)}
         />
       )}
+
+      {/* Full-note modal — opened by clicking a truncated Notes cell */}
+      {noteModal && <NoteModal note={noteModal} onClose={() => setNoteModal(null)} />}
     </AdminLayout>
   );
 }
@@ -402,6 +419,59 @@ function ConfirmUnsuppressModal({
           >
             {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             Unsuppress
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Read-only modal showing the complete suppression note. The Notes table cell
+ * truncates long bounce/complaint messages; clicking it opens the full text
+ * here. Closes on the Close button or a backdrop click.
+ */
+function NoteModal({ note, onClose }: { note: string; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="note-title"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-slate-800 w-full max-w-md p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-blue-100 dark:bg-blue-900/30">
+              <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            </div>
+            <h3 id="note-title" className="text-lg font-semibold text-gray-900 dark:text-white">
+              Suppression note
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p className="text-sm text-gray-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap wrap-break-word max-h-72 overflow-y-auto">
+          {note}
+        </p>
+        <div className="flex justify-end mt-6">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition cursor-pointer"
+          >
+            Close
           </button>
         </div>
       </div>
