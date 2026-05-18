@@ -1,4 +1,4 @@
-import { baseTemplate, escapeHtml } from './base';
+import { baseTemplate, escapeHtml, type RenderedEmail } from './base';
 
 /**
  * Hardcoded subjects per alert type. Mapping lives next to the template so
@@ -41,11 +41,15 @@ export interface AdminAlertData {
 }
 
 /**
- * Renders the admin alert email body. Inputs MUST be pre-sanitized by
+ * Renders the admin alert email. Inputs MUST be pre-sanitized by
  * `EmailService.sendAdminAlert` — this template trusts the strings it
  * receives and only adds HTML escaping as a defence-in-depth layer.
+ *
+ * Admin alerts are internal ops mail — always English (no `locale` param).
  */
-export function adminAlertTemplate(data: AdminAlertData): string {
+export function adminAlertTemplate(data: AdminAlertData): RenderedEmail {
+  const subject = ADMIN_ALERT_SUBJECTS[data.type];
+
   const detailRows = data.details
     ? Object.entries(data.details)
         .map(
@@ -78,7 +82,7 @@ export function adminAlertTemplate(data: AdminAlertData): string {
       Operational alert
     </p>
     <h2 style="font-family: Arial, sans-serif; font-size: 22px; color: #111827; margin: 0 0 12px 0;">
-      ${escapeHtml(ADMIN_ALERT_SUBJECTS[data.type])}
+      ${escapeHtml(subject)}
     </h2>
     <p style="font-family: Arial, sans-serif; font-size: 13px; color: #6b7280; margin: 0;">
       Type: <strong style="color: #111827;">${escapeHtml(data.type)}</strong> &middot;
@@ -90,5 +94,22 @@ export function adminAlertTemplate(data: AdminAlertData): string {
       This message was generated automatically by the AL Jadwal platform. No reply needed.
     </p>`;
 
-  return baseTemplate(content, ADMIN_ALERT_SUBJECTS[data.type]);
+  const detailLines = data.details
+    ? Object.entries(data.details).map(([k, v]) => `  ${k}: ${v}`)
+    : [];
+  const text = [
+    `Operational alert: ${subject}`,
+    `Type: ${data.type}`,
+    `Generated: ${data.generatedAt}`,
+    ...(detailLines.length ? ['', ...detailLines] : []),
+    ...(data.note ? ['', data.note] : []),
+    '',
+    'This message was generated automatically by the AL Jadwal platform. No reply needed.',
+  ].join('\n');
+
+  return {
+    subject,
+    html: baseTemplate(content, { locale: 'EN', previewText: subject }),
+    text,
+  };
 }

@@ -73,10 +73,13 @@ function makeQuota(tryConsumePlatformDaily: () => Promise<boolean> = async () =>
   };
 }
 
-// Default mock — Prisma user lookup returns a stable userId for any email,
-// so the unsubscribe token includes the HTTPS variant. Tests that exercise
-// the fallback (no user found) override findUnique to return null.
-function makePrisma(findUnique: (args: any) => Promise<any> = async () => ({ id: 'u-mock' })) {
+// Default mock — Prisma user lookup returns a stable userId + EN language for
+// any email, so the unsubscribe token includes the HTTPS variant. Tests that
+// exercise the fallback (no user found) override findUnique to return null;
+// tests for Arabic rendering override it to return preferredLanguage: 'AR'.
+function makePrisma(
+  findUnique: (args: any) => Promise<any> = async () => ({ id: 'u-mock', preferredLanguage: 'EN' }),
+) {
   return {
     client: {
       user: {
@@ -222,7 +225,7 @@ describe('EmailService — send dispatching + Resend payload', () => {
     expect(resendMocks.__sendMock).not.toHaveBeenCalled();
   });
 
-  test('prod mode send calls Resend with from + to + subject + html', async () => {
+  test('prod mode send calls Resend with from + to + subject + html + text', async () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     const ok = await svc.sendEmailVerification('user@example.com', {
       userName: 'Alice', verificationLink: 'https://app.jadwal.test/verify?token=abc',
@@ -234,6 +237,32 @@ describe('EmailService — send dispatching + Resend payload', () => {
     expect(payload.to).toBe('user@example.com');
     expect(payload.subject).toBe('Verify your email — AL Jadwal');
     expect(payload.html).toContain('<html');
+    // Plain-text alternative (multipart/alternative) is sent too.
+    expect(typeof payload.text).toBe('string');
+    expect(payload.text.length).toBeGreaterThan(0);
+    expect(payload.text).not.toContain('<html');
+  });
+
+  test('recipient preferredLanguage=AR → Arabic RTL email sent', async () => {
+    const prisma = makePrisma(async () => ({ id: 'u-ar', preferredLanguage: 'AR' }));
+    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, prisma });
+    await svc.sendPasswordReset('arabi@example.com', {
+      userName: 'سارة', resetLink: 'https://app.jadwal.test/reset?t=abc', expiresIn: '1 hour',
+    });
+    const payload = sentPayload();
+    expect(payload.subject).toBe('إعادة تعيين كلمة المرور — AL Jadwal');
+    expect(payload.html).toContain('dir="rtl"');
+  });
+
+  test('explicit locale arg overrides the recipient preferredLanguage', async () => {
+    // User row says EN, but the caller forces AR.
+    const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
+    await svc.sendPasswordReset(
+      'user@example.com',
+      { userName: 'A', resetLink: 'https://x/r', expiresIn: '1 hour' },
+      'AR',
+    );
+    expect(sentPayload().subject).toBe('إعادة تعيين كلمة المرور — AL Jadwal');
   });
 
   test('payload carries List-Unsubscribe + List-Unsubscribe-Post headers when user is found', async () => {
@@ -331,7 +360,7 @@ describe('EmailService — send dispatching + Resend payload', () => {
 describe('EmailService.renderTemplate — template dispatcher', () => {
   test('booking-confirmation template renders with {{APP_URL}} replaced', () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'false', APP_URL: 'https://myhost.test' } });
-    const html = svc.renderTemplate('booking-confirmation', {
+    const { html } = svc.renderTemplate('booking-confirmation', {
       customerName: 'A', activityTitle: 'B', date: '2030-01-01',
       guests: 1, totalAmount: '10', currency: 'QAR', bookingId: 'b1',
     });
@@ -341,7 +370,7 @@ describe('EmailService.renderTemplate — template dispatcher', () => {
   test('email-verification template includes the verification link', () => {
     const svc = buildSvc();
     const link = 'https://app.jadwal.test/verify?token=xyz';
-    const html = svc.renderTemplate('email-verification', {
+    const { html } = svc.renderTemplate('email-verification', {
       userName: 'Alice', verificationLink: link,
     });
     expect(html).toContain('xyz');
@@ -349,7 +378,7 @@ describe('EmailService.renderTemplate — template dispatcher', () => {
 
   test('password-reset template includes the reset link + expiry', () => {
     const svc = buildSvc();
-    const html = svc.renderTemplate('password-reset', {
+    const { html } = svc.renderTemplate('password-reset', {
       userName: 'Alice',
       resetLink: 'https://app.jadwal.test/reset?t=abc123',
       expiresIn: '1 hour',
@@ -360,9 +389,33 @@ describe('EmailService.renderTemplate — template dispatcher', () => {
 
   test('unknown template → returns a plain-HTML fallback without crashing', () => {
     const svc = buildSvc();
-    const html = svc.renderTemplate('does-not-exist', { any: 'data' });
+    const { html } = svc.renderTemplate('does-not-exist', { any: 'data' });
     expect(html).toMatch(/^<html>/);
     expect(html).not.toContain('{{APP_URL}}');
+  });
+
+  test('renderTemplate returns subject + html + text', () => {
+    const svc = buildSvc();
+    const out = svc.renderTemplate('password-reset', {
+      userName: 'Alice', resetLink: 'https://x/r?t=abc123', expiresIn: '1 hour',
+    });
+    expect(out.subject).toBe('Reset Your Password — AL Jadwal');
+    expect(out.html).toContain('<html');
+    expect(out.text).toContain('abc123');
+    expect(out.text).not.toContain('<html');
+  });
+
+  test('Arabic locale → RTL html + Arabic subject + Arabic copy', () => {
+    const svc = buildSvc();
+    const out = svc.renderTemplate(
+      'password-reset',
+      { userName: 'Alice', resetLink: 'https://x/r?t=abc', expiresIn: '1 hour' },
+      'AR',
+    );
+    expect(out.subject).toBe('إعادة تعيين كلمة المرور — AL Jadwal');
+    expect(out.html).toContain('dir="rtl"');
+    expect(out.html).toContain('lang="ar"');
+    expect(out.html).toContain('إعادة تعيين كلمة المرور');
   });
 });
 

@@ -1,10 +1,13 @@
 export { baseTemplate, escapeHtml, ctaButton } from './base';
+export type { BaseTemplateOptions, RenderedEmail } from './base';
 export { bookingConfirmationTemplate } from './booking-confirmation';
 export type { BookingConfirmationData } from './booking-confirmation';
 export { bookingCancellationTemplate } from './booking-cancellation';
 export type { BookingCancellationData } from './booking-cancellation';
 export { passwordResetTemplate } from './password-reset';
 export type { PasswordResetData } from './password-reset';
+export { passwordChangedTemplate } from './password-changed';
+export type { PasswordChangedData } from './password-changed';
 export { emailVerificationTemplate } from './email-verification';
 export type { EmailVerificationData } from './email-verification';
 export { bookingOtpTemplate } from './booking-otp';

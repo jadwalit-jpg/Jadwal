@@ -1,8 +1,13 @@
+import type { EmailLanguage } from '../../common/utils/locale';
+
 /**
- * Base HTML email template wrapper for all Jadwal emails.
+ * Base HTML email template wrapper for all AL Jadwal emails.
  *
  * Uses table-based layout with inline CSS for maximum email client compatibility.
  * Never use <style> tags — many clients strip them.
+ *
+ * Bilingual (Phase 4B): `baseTemplate` takes a `locale` and emits the document
+ * with the correct `lang` + `dir` (Arabic = RTL) and a localized footer.
  */
 
 /** Escape user-provided strings to prevent HTML injection in emails. */
@@ -21,8 +26,12 @@ export function ctaButton(text: string, href: string): string {
   // but NOT a `javascript:` / `data:` scheme — guard the scheme explicitly so
   // a vendor-supplied URL (e.g. a booking's maps link) can't smuggle a
   // non-navigational scheme into the button. A bad scheme falls back to '#'.
+  // The `{{APP_URL}}` placeholder is allowed through — it is a server-side
+  // token that `EmailService.renderTemplate` rewrites to the real https origin
+  // AFTER the template renders, so it would otherwise fail this scheme gate.
   const trimmed = String(href ?? '').trim();
-  const safeHref = /^https?:\/\//i.test(trimmed) ? trimmed : '#';
+  const safeHref =
+    /^https?:\/\//i.test(trimmed) || trimmed.startsWith('{{APP_URL}}') ? trimmed : '#';
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin: 24px auto;">
       <tr>
@@ -35,19 +44,59 @@ export function ctaButton(text: string, href: string): string {
     </table>`;
 }
 
+/** Localized footer copy. */
+const FOOTER: Record<EmailLanguage, { rights: string; why: string; manage: string; address: string }> = {
+  EN: {
+    rights: '&copy; 2026 AL Jadwal. All rights reserved.',
+    why: 'You received this transactional email because you have an account on AL Jadwal. We don&#x27;t send marketing emails.',
+    manage: 'Manage your account &amp; email preferences',
+    address: 'AL Jadwal &middot; Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar',
+  },
+  AR: {
+    rights: '&copy; 2026 AL Jadwal. جميع الحقوق محفوظة.',
+    why: 'لقد تلقّيت هذا البريد المتعلق بمعاملاتك لأنّ لديك حسابًا على AL Jadwal. نحن لا نرسل رسائل تسويقية.',
+    manage: 'إدارة حسابك وتفضيلات البريد الإلكتروني',
+    address: 'AL Jadwal &middot; شقة 18، الطابق 1، مبنى 60، شارع 840، منطقة 39، الدوحة، قطر',
+  },
+};
+
+export interface BaseTemplateOptions {
+  /** Email language — drives `lang`/`dir` and the footer copy. */
+  locale: EmailLanguage;
+  /** Hidden preheader text shown in inbox previews. */
+  previewText?: string;
+}
+
 /**
- * Wraps email content in the Jadwal branded HTML shell.
- *
- * @param content - The inner HTML content (already rendered by a specific template)
- * @param previewText - Hidden preheader text shown in inbox previews
+ * What every template function returns: the localized subject line, the HTML
+ * body, and a plain-text alternative (sent as the `text` part — multipart/
+ * alternative is a deliverability + accessibility win).
  */
-export function baseTemplate(content: string, previewText?: string): string {
-  const preheader = previewText
-    ? `<span style="display:none;font-size:1px;color:#f3f4f6;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${escapeHtml(previewText)}</span>`
+export interface RenderedEmail {
+  subject: string;
+  html: string;
+  text: string;
+}
+
+/**
+ * Wraps email content in the AL Jadwal branded HTML shell.
+ *
+ * @param content - The inner HTML content (already rendered + localized by a
+ *                  specific template)
+ * @param opts    - `locale` (en/ar) + optional `previewText`
+ */
+export function baseTemplate(content: string, opts: BaseTemplateOptions): string {
+  const isRtl = opts.locale === 'AR';
+  const lang = isRtl ? 'ar' : 'en';
+  const dir = isRtl ? 'rtl' : 'ltr';
+  const f = FOOTER[opts.locale];
+
+  const preheader = opts.previewText
+    ? `<span style="display:none;font-size:1px;color:#f3f4f6;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${escapeHtml(opts.previewText)}</span>`
     : '';
 
   return `<!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html lang="${lang}" dir="${dir}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -65,11 +114,11 @@ export function baseTemplate(content: string, previewText?: string): string {
   </noscript>
   <![endif]-->
 </head>
-<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: Arial, sans-serif; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: Arial, sans-serif; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;" dir="${dir}">
   ${preheader}
 
   <!-- Outer wrapper -->
-  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f3f4f6;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f3f4f6;" dir="${dir}">
     <tr>
       <td align="center" style="padding: 24px 16px;">
 
@@ -103,10 +152,10 @@ export function baseTemplate(content: string, previewText?: string): string {
               <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
                 <tr>
                   <td align="center" style="font-family: Arial, sans-serif; font-size: 12px; color: #9ca3af; line-height: 20px;">
-                    &copy; 2026 AL Jadwal. All rights reserved.<br>
-                    <span style="color: #d1d5db;">You received this transactional email because you have an account on AL Jadwal. We don&#x27;t send marketing emails.</span><br>
-                    <a href="https://jadwal.qa/profile" style="color: #9ca3af; text-decoration: underline;">Manage your account &amp; email preferences</a><br>
-                    <span style="color: #d1d5db;">AL Jadwal &middot; Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar</span>
+                    ${f.rights}<br>
+                    <span style="color: #d1d5db;">${f.why}</span><br>
+                    <a href="https://jadwal.qa/profile" style="color: #9ca3af; text-decoration: underline;">${f.manage}</a><br>
+                    <span style="color: #d1d5db;">${f.address}</span>
                   </td>
                 </tr>
               </table>
