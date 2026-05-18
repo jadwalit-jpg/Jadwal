@@ -892,7 +892,7 @@ export class AuthService {
         this.emailService.sendPasswordReset(email, {
           userName: user.fullName,
           resetLink,
-          expiresIn: `${resetExpiryHours} hour${resetExpiryHours > 1 ? 's' : ''}`,
+          expiresInHours: resetExpiryHours,
         });
 
         this.securityLogger.log({

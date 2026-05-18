@@ -177,7 +177,7 @@ describe('EmailService — suppression list short-circuit', () => {
   test('non-suppressed recipient → Resend called normally', async () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     await svc.sendPasswordReset('user@example.com', {
-      userName: 'A', resetLink: 'https://x/r', expiresIn: '1 hour',
+      userName: 'A', resetLink: 'https://x/r', expiresInHours: 1,
     });
     expect(resendMocks.__sendMock).toHaveBeenCalledTimes(1);
   });
@@ -247,7 +247,7 @@ describe('EmailService — send dispatching + Resend payload', () => {
     const prisma = makePrisma(async () => ({ id: 'u-ar', preferredLanguage: 'AR' }));
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, prisma });
     await svc.sendPasswordReset('arabi@example.com', {
-      userName: 'سارة', resetLink: 'https://app.jadwal.test/reset?t=abc', expiresIn: '1 hour',
+      userName: 'سارة', resetLink: 'https://app.jadwal.test/reset?t=abc', expiresInHours: 1,
     });
     const payload = sentPayload();
     expect(payload.subject).toBe('إعادة تعيين كلمة المرور — AL Jadwal');
@@ -259,7 +259,7 @@ describe('EmailService — send dispatching + Resend payload', () => {
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' } });
     await svc.sendPasswordReset(
       'user@example.com',
-      { userName: 'A', resetLink: 'https://x/r', expiresIn: '1 hour' },
+      { userName: 'A', resetLink: 'https://x/r', expiresInHours: 1 },
       'AR',
     );
     expect(sentPayload().subject).toBe('إعادة تعيين كلمة المرور — AL Jadwal');
@@ -348,7 +348,7 @@ describe('EmailService — send dispatching + Resend payload', () => {
     const prisma = makePrisma(async () => { throw new Error('connection terminated'); });
     const svc = buildSvc({ config: { EMAIL_ENABLED: 'true' }, prisma });
     const ok = await svc.sendPasswordReset('alice@x.com', {
-      userName: 'A', resetLink: 'https://x/r', expiresIn: '1 hour',
+      userName: 'A', resetLink: 'https://x/r', expiresInHours: 1,
     });
     expect(ok).toBe(true);
     const headers = sentPayload().headers;
@@ -381,7 +381,7 @@ describe('EmailService.renderTemplate — template dispatcher', () => {
     const { html } = svc.renderTemplate('password-reset', {
       userName: 'Alice',
       resetLink: 'https://app.jadwal.test/reset?t=abc123',
-      expiresIn: '1 hour',
+      expiresInHours: 1,
     });
     expect(html).toContain('abc123');
     expect(html).toContain('1 hour');
@@ -397,7 +397,7 @@ describe('EmailService.renderTemplate — template dispatcher', () => {
   test('renderTemplate returns subject + html + text', () => {
     const svc = buildSvc();
     const out = svc.renderTemplate('password-reset', {
-      userName: 'Alice', resetLink: 'https://x/r?t=abc123', expiresIn: '1 hour',
+      userName: 'Alice', resetLink: 'https://x/r?t=abc123', expiresInHours: 1,
     });
     expect(out.subject).toBe('Reset Your Password — AL Jadwal');
     expect(out.html).toContain('<html');
@@ -409,7 +409,7 @@ describe('EmailService.renderTemplate — template dispatcher', () => {
     const svc = buildSvc();
     const out = svc.renderTemplate(
       'password-reset',
-      { userName: 'Alice', resetLink: 'https://x/r?t=abc', expiresIn: '1 hour' },
+      { userName: 'Alice', resetLink: 'https://x/r?t=abc', expiresInHours: 1 },
       'AR',
     );
     expect(out.subject).toBe('إعادة تعيين كلمة المرور — AL Jadwal');
@@ -424,7 +424,7 @@ describe('EmailService — every public method routes through send()', () => {
     ['sendBookingConfirmation', { customerName: 'A', activityTitle: 'B', date: '2030-01-01', guests: 1, totalAmount: '10', currency: 'QAR', bookingId: 'b1' }],
     ['sendBookingCancellation', { customerName: 'A', activityTitle: 'B', date: '2030-01-01', bookingId: 'b1' }],
     ['sendEmailVerification', { userName: 'A', verificationLink: 'https://x/v' }],
-    ['sendPasswordReset', { userName: 'A', resetLink: 'https://x/r', expiresIn: '1 hour' }],
+    ['sendPasswordReset', { userName: 'A', resetLink: 'https://x/r', expiresInHours: 1 }],
     ['sendPasswordChangedNotification', { customerName: 'A' }],
   ] as const;
 

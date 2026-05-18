@@ -4,7 +4,19 @@ import type { EmailLanguage } from '../../common/utils/locale';
 export interface PasswordResetData {
   userName: string;
   resetLink: string;
-  expiresIn: string;
+  /** Token lifetime in whole hours — localized into the email body. */
+  expiresInHours: number;
+}
+
+/** Format an hour count into a localized "N hours" phrase. */
+function formatHours(hours: number, locale: EmailLanguage): string {
+  if (locale === 'AR') {
+    if (hours === 1) return 'ساعة واحدة';
+    if (hours === 2) return 'ساعتين';
+    if (hours >= 3 && hours <= 10) return `${hours} ساعات`;
+    return `${hours} ساعة`;
+  }
+  return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
 }
 
 const STRINGS: Record<
@@ -15,7 +27,7 @@ const STRINGS: Record<
     heading: string;
     greeting: (name: string) => string;
     button: string;
-    expires: (duration: string) => string;
+    expires: (hours: number) => string;
     warning: string;
     fallback: string;
   }
@@ -27,7 +39,7 @@ const STRINGS: Record<
     greeting: (name) =>
       `Hi ${name}, we received a request to reset your password. Click the button below to choose a new one.`,
     button: 'Reset Password',
-    expires: (duration) => `This link expires in ${duration}.`,
+    expires: (hours) => `This link expires in ${formatHours(hours, 'EN')}.`,
     warning:
       "Didn't request this? You can safely ignore this email. Your password will remain unchanged.",
     fallback: "If the button doesn't work, copy and paste this link into your browser:",
@@ -39,7 +51,7 @@ const STRINGS: Record<
     greeting: (name) =>
       `مرحبًا ${name}، تلقّينا طلبًا لإعادة تعيين كلمة مرورك. اضغط على الزر أدناه لاختيار كلمة مرور جديدة.`,
     button: 'إعادة تعيين كلمة المرور',
-    expires: (duration) => `تنتهي صلاحية هذا الرابط خلال ${duration}.`,
+    expires: (hours) => `تنتهي صلاحية هذا الرابط خلال ${formatHours(hours, 'AR')}.`,
     warning: 'لم تطلب ذلك؟ يمكنك تجاهل هذا البريد بأمان. ستبقى كلمة مرورك دون تغيير.',
     fallback: 'إذا لم يعمل الزر، انسخ هذا الرابط والصقه في متصفحك:',
   },
@@ -51,7 +63,6 @@ export function passwordResetTemplate(
 ): RenderedEmail {
   const t = STRINGS[locale];
   const name = escapeHtml(data.userName);
-  const expiry = escapeHtml(data.expiresIn);
 
   const content = `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
@@ -72,7 +83,7 @@ export function passwordResetTemplate(
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
       <tr>
         <td style="font-family: Arial, sans-serif; font-size: 13px; color: #dc2626; text-align: center; padding-bottom: 16px;">
-          ${t.expires(expiry)}
+          ${t.expires(data.expiresInHours)}
         </td>
       </tr>
       <tr>
@@ -93,7 +104,7 @@ export function passwordResetTemplate(
     '',
     `${t.button}: ${data.resetLink}`,
     '',
-    t.expires(data.expiresIn),
+    t.expires(data.expiresInHours),
     t.warning,
   ].join('\n');
 
