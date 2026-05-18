@@ -425,7 +425,7 @@ describe('EmailService — every public method routes through send()', () => {
     ['sendBookingCancellation', { customerName: 'A', activityTitle: 'B', date: '2030-01-01', bookingId: 'b1' }],
     ['sendEmailVerification', { userName: 'A', verificationLink: 'https://x/v' }],
     ['sendPasswordReset', { userName: 'A', resetLink: 'https://x/r', expiresIn: '1 hour' }],
-    ['sendWelcome', { userName: 'A' }],
+    ['sendPasswordChangedNotification', { customerName: 'A' }],
   ] as const;
 
   test.each(cases)('%s — dev mode returns true', async (method, data) => {

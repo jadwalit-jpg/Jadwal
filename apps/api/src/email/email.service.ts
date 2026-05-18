@@ -181,34 +181,11 @@ export class EmailService {
     return this.send(to, 'booking-otp', data, locale);
   }
 
-  // ─── Payment Emails ──────────────────────────────────────────────────────
-
-  async sendPaymentReceipt(
-    to: string,
-    data: {
-      customerName: string;
-      amount: string;
-      currency: string;
-      paymentId: string;
-      method: string;
-    },
-    locale?: EmailLanguage,
-  ) {
-    return this.send(to, 'payment-receipt', data, locale);
-  }
-
-  async sendRefundConfirmation(
-    to: string,
-    data: {
-      customerName: string;
-      amount: string;
-      currency: string;
-      bookingId: string;
-    },
-    locale?: EmailLanguage,
-  ) {
-    return this.send(to, 'refund-confirmation', data, locale);
-  }
+  // Payment-receipt + refund-confirmation emails are deferred to Phase 3 —
+  // they will be added here together with their localized templates. They are
+  // intentionally NOT stubbed: a `send*` helper with no matching template
+  // would route through `renderTemplate`'s generic fallback and deliver a
+  // broken email.
 
   // ─── Auth Emails ─────────────────────────────────────────────────────────
 
@@ -234,10 +211,6 @@ export class EmailService {
     locale?: EmailLanguage,
   ) {
     return this.send(to, 'password-changed', data, locale);
-  }
-
-  async sendWelcome(to: string, data: { userName: string }, locale?: EmailLanguage) {
-    return this.send(to, 'welcome', data, locale);
   }
 
   // ─── Admin Notifications ─────────────────────────────────────────────────
