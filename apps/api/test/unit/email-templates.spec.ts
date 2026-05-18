@@ -43,7 +43,7 @@ const CUSTOMER_TEMPLATES: Array<{ name: string; render: (locale: 'EN' | 'AR') =>
   },
   {
     name: 'password-reset',
-    render: (l) => passwordResetTemplate({ userName: 'Sara', resetLink: 'https://x/r?t=abc', expiresIn: '1 hour' }, l),
+    render: (l) => passwordResetTemplate({ userName: 'Sara', resetLink: 'https://x/r?t=abc', expiresInHours: 1 }, l),
   },
   {
     name: 'password-changed',

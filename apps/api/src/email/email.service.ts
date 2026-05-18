@@ -199,7 +199,7 @@ export class EmailService {
 
   async sendPasswordReset(
     to: string,
-    data: { userName: string; resetLink: string; expiresIn: string },
+    data: { userName: string; resetLink: string; expiresInHours: number },
     locale?: EmailLanguage,
   ) {
     return this.send(to, 'password-reset', data, locale);
