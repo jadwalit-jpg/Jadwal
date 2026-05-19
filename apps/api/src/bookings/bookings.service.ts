@@ -1503,7 +1503,7 @@ export class BookingsService {
     // send the email-OTP (PENDING flow) right after this block.
     const auditUser = await db.user.findUnique({
       where: { id: userId },
-      select: { fullName: true, email: true },
+      select: { fullName: true, email: true, bookingOtpVerifiedAt: true },
     });
     this.auditLogger.log({
       actorType: 'CUSTOMER',
@@ -1525,19 +1525,35 @@ export class BookingsService {
     // Email-OTP gate. PENDING bookings must verify a 6-digit code before
     // /payment/initiate will issue a PAY2M token. CONFIRMED bookings
     // (full-Wanasa-points coverage) skip this — no payment redirect to gate.
-    // Fire-and-forget: any SES error is logged inside the helper and never
-    // breaks the booking flow (customer can resend via the dedicated endpoint).
+    //
+    // Once-per-user: the OTP proves "a real human controls this email" and
+    // only needs to happen on a customer's FIRST booking. If the user has
+    // already cleared a booking OTP before (bookingOtpVerifiedAt is set),
+    // the new PENDING booking is born already verified — no OTP email, no
+    // entry step; /payment/initiate's gate and the frontend's needsEmailOtp
+    // check both see a verified booking and go straight to payment.
     if (booking.status === 'PENDING' && auditUser?.email) {
-      void this.generateAndSendBookingOtp(
-        booking.id,
-        auditUser.email,
-        auditUser.fullName || 'Customer',
-        booking.ref,
-      ).catch((err: unknown) => {
-        const kind = err instanceof Error ? err.name : 'UnknownError';
-        // eslint-disable-next-line no-console
-        console.warn(`[bookings] OTP send failed for booking ${booking.id} (${kind})`);
-      });
+      if (auditUser.bookingOtpVerifiedAt) {
+        // Returning user — skip the OTP entirely.
+        await db.booking.update({
+          where: { id: booking.id },
+          data: { emailOtpVerifiedAt: new Date() },
+        });
+        booking.emailOtpVerifiedAt = new Date();
+      } else {
+        // First-time customer — send the OTP. Fire-and-forget: any send
+        // error is logged inside the helper and never breaks the booking
+        // flow (customer can resend via the dedicated endpoint).
+        void this.generateAndSendBookingOtp(
+          booking.id,
+          auditUser.email,
+          auditUser.fullName || 'Customer',
+          booking.ref,
+        ).catch((err: unknown) => {
+          const kind = err instanceof Error ? err.name : 'UnknownError';
+          console.warn(`[bookings] OTP send failed for booking ${booking.id} (${kind})`);
+        });
+      }
     }
 
     // Notify vendor + admins ONLY when the booking is already CONFIRMED at
@@ -2493,6 +2509,16 @@ export class BookingsService {
         emailOtpHash: null,
         emailOtpExpiry: null,
       },
+    });
+
+    // Mark the user as having cleared a booking OTP at least once. Every
+    // future booking they make is born already OTP-verified (see
+    // createBooking) — no OTP email, no entry step. First-time-only and
+    // race-safe: the `bookingOtpVerifiedAt: null` guard means concurrent
+    // verifies and later bookings no-op instead of overwriting the timestamp.
+    await this.prisma.client.user.updateMany({
+      where: { id: userId, bookingOtpVerifiedAt: null },
+      data: { bookingOtpVerifiedAt: new Date() },
     });
 
     this.securityLogger.log({
