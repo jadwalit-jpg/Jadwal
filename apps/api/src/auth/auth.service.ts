@@ -267,15 +267,32 @@ export class AuthService {
     }
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
-      const attempts = user.failedLoginAttempts + 1;
-      const updateData: any = { failedLoginAttempts: attempts };
+      // Atomic increment — two concurrent wrong-password attempts each
+      // advance the counter. Reading `failedLoginAttempts` then writing
+      // `value + 1` would let both reads see the same number and write the
+      // same +1, so lockout could lag by one attempt per collision.
+      const updated = await db.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: { increment: 1 } },
+        select: { failedLoginAttempts: true },
+      });
+      const attempts = updated.failedLoginAttempts;
 
       if (attempts >= this.lockoutThreshold) {
-        updateData.lockedUntil = new Date(Date.now() + this.lockoutDuration * 60000);
-        await this.securityLogger.log({ event: 'ACCOUNT_LOCKED', userId: user.id, email, ip, userAgent, details: `Locked after ${attempts} failed attempts` });
+        // Stamp the lock with the threshold re-asserted in the where. A
+        // concurrent successful login resets failedLoginAttempts to 0 — the
+        // `gte` guard makes this a no-op in that race, so we never lock a
+        // user who has just authenticated cleanly. count > 0 means the lock
+        // actually applied → only then log ACCOUNT_LOCKED.
+        const locked = await db.user.updateMany({
+          where: { id: user.id, failedLoginAttempts: { gte: this.lockoutThreshold } },
+          data: { lockedUntil: new Date(Date.now() + this.lockoutDuration * 60000) },
+        });
+        if (locked.count > 0) {
+          await this.securityLogger.log({ event: 'ACCOUNT_LOCKED', userId: user.id, email, ip, userAgent, details: `Locked after ${attempts} failed attempts` });
+        }
       }
 
-      await db.user.update({ where: { id: user.id }, data: updateData });
       await this.securityLogger.log({ event: 'LOGIN_FAILED', userId: user.id, email, ip, userAgent, details: `Bad password, attempt ${attempts}` });
       throw new UnauthorizedException('Invalid credentials');
     }

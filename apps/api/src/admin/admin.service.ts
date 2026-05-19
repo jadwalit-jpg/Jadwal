@@ -1818,8 +1818,11 @@ export class AdminService {
       throw new BadRequestException('bankTransferRef is required — record the bank-side wire confirmation number before marking paid.');
     }
 
+    // `payoutStatus: 'UNPAID'` in the where makes this a one-way transition:
+    // a row already marked PAID is skipped, so a concurrent / repeated call
+    // can't overwrite its original `paidAt` + `bankTransferRef`.
     const result = await db.payment.updateMany({
-      where: { id: { in: paymentIds }, status: 'SUCCESS' },
+      where: { id: { in: paymentIds }, status: 'SUCCESS', payoutStatus: 'UNPAID' },
       data: { payoutStatus: 'PAID', paidAt: new Date(), bankTransferRef: trimmedRef },
     });
 
