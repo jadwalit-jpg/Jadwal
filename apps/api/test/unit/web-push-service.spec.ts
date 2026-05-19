@@ -136,17 +136,26 @@ describe('WebPushService.subscribe', () => {
     );
   });
 
-  test('at 5-subscription cap → deletes oldest before upserting', async () => {
+  test('over the per-user cap → upserts then trims the oldest subscriptions', async () => {
     const prisma = makePrismaMock();
-    prisma.client.pushSubscription.count.mockResolvedValueOnce(5);
-    prisma.client.pushSubscription.findFirst.mockResolvedValueOnce({ id: 'oldest-sub' });
+    // 6 rows for the user, newest-first (the service queries orderBy createdAt desc).
+    // With a cap of 5, the single oldest row must be trimmed.
+    prisma.client.pushSubscription.findMany.mockResolvedValueOnce([
+      { id: 's-new' }, { id: 's5' }, { id: 's4' },
+      { id: 's3' }, { id: 's2' }, { id: 's-oldest' },
+    ]);
     const svc = new WebPushService(makeConfig() as any, prisma as any);
     await svc.subscribe('u1', {
       endpoint: 'https://fcm.googleapis.com/fcm/send/xyz',
       keys: { p256dh: 'pk', auth: 'ak' },
     });
-    expect(prisma.client.pushSubscription.delete).toHaveBeenCalledWith({ where: { id: 'oldest-sub' } });
+    // Upsert runs first; the cap is then enforced by a single deleteMany —
+    // race-tolerant (no count→find→delete sequence two concurrent
+    // subscribes could collide on).
     expect(prisma.client.pushSubscription.upsert).toHaveBeenCalled();
+    expect(prisma.client.pushSubscription.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['s-oldest'] } },
+    });
   });
 });
 
