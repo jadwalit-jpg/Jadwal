@@ -100,9 +100,9 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
 
     const result = await ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF');
     expect(result).toEqual({ updated: 1 });
-    // Must flip SUCCESS payments ONLY (optimistic)
+    // Must flip SUCCESS + still-UNPAID payments ONLY (optimistic, one-way)
     expect(ctx.prisma._client.payment.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['p1'] }, status: 'SUCCESS' },
+      where: { id: { in: ['p1'] }, status: 'SUCCESS', payoutStatus: 'UNPAID' },
       data: expect.objectContaining({ payoutStatus: 'PAID' }),
     });
   });

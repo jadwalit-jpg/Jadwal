@@ -99,13 +99,16 @@ describe('AuthService.loginWithCheck', () => {
       password: await bcrypt.hash('correct', 4),
       failedLoginAttempts: 0, lockedUntil: null, emailVerified: true, isDeactivated: false,
     });
+    // The counter is now bumped with an atomic `{ increment: 1 }`; the
+    // service reads back the post-increment value to decide on lockout.
+    ctx.prisma._client.user.update.mockResolvedValue({ failedLoginAttempts: 1 });
 
     await expect(ctx.sut.loginWithCheck('a@b.com', 'wrong', makeResponseMock() as any))
       .rejects.toThrow(UnauthorizedException);
     await expect(ctx.sut.loginWithCheck('a@b.com', 'wrong', makeResponseMock() as any))
       .rejects.toThrow('Invalid credentials');
     expect(ctx.prisma._client.user.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ failedLoginAttempts: 1 }) }),
+      expect.objectContaining({ data: expect.objectContaining({ failedLoginAttempts: { increment: 1 } }) }),
     );
   });
 
@@ -160,16 +163,24 @@ describe('AuthService.loginWithCheck', () => {
       failedLoginAttempts: 4, // 4th attempt in DB → this wrong password becomes #5
       lockedUntil: null, emailVerified: true, isDeactivated: false,
     });
+    // The atomic increment returns the post-increment value (5) → the
+    // service then issues a separate update to stamp `lockedUntil`.
+    ctx.prisma._client.user.update.mockResolvedValue({ failedLoginAttempts: 5 });
 
     await expect(ctx.sut.loginWithCheck('a@b.com', 'wrong', makeResponseMock() as any))
       .rejects.toThrow('Invalid credentials');
 
+    // First update = atomic counter bump.
     expect(ctx.prisma._client.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          failedLoginAttempts: 5,
-          lockedUntil: expect.any(Date),
-        }),
+        data: expect.objectContaining({ failedLoginAttempts: { increment: 1 } }),
+      }),
+    );
+    // Second update = lockout stamp once the threshold is reached.
+    expect(ctx.prisma._client.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'u1' },
+        data: expect.objectContaining({ lockedUntil: expect.any(Date) }),
       }),
     );
     expect(ctx.sec.log).toHaveBeenCalledWith(expect.objectContaining({ event: 'ACCOUNT_LOCKED' }));

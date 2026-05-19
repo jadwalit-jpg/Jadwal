@@ -1208,11 +1208,25 @@ export class BookingsService {
           couponDiscount = Math.round(couponDiscount * 100) / 100;
           couponCode = codeUpper;
 
-          // Increment usage count atomically
-          await tx.coupon.update({
-            where: { id: coupon.id },
-            data: { usedCount: { increment: 1 } },
-          });
+          // Increment usage count with the limit re-asserted in the where —
+          // a conditional updateMany, not a plain update. The check above
+          // (usedCount >= usageLimit) is a read-then-act; baking the bound
+          // into the write closes the window where two bookings racing for a
+          // coupon's last use both pass the check and both increment.
+          if (coupon.usageLimit) {
+            const claimed = await tx.coupon.updateMany({
+              where: { id: coupon.id, usedCount: { lt: coupon.usageLimit } },
+              data: { usedCount: { increment: 1 } },
+            });
+            if (claimed.count === 0) {
+              throw new BadRequestException('This coupon has reached its usage limit');
+            }
+          } else {
+            await tx.coupon.update({
+              where: { id: coupon.id },
+              data: { usedCount: { increment: 1 } },
+            });
+          }
         }
 
         // Apply coupon discount to totalPrice (discount reduces vendor share, not service fee)

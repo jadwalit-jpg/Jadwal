@@ -267,15 +267,25 @@ export class AuthService {
     }
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
-      const attempts = user.failedLoginAttempts + 1;
-      const updateData: any = { failedLoginAttempts: attempts };
+      // Atomic increment — two concurrent wrong-password attempts each
+      // advance the counter. Reading `failedLoginAttempts` then writing
+      // `value + 1` would let both reads see the same number and write the
+      // same +1, so lockout could lag by one attempt per collision.
+      const updated = await db.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: { increment: 1 } },
+        select: { failedLoginAttempts: true },
+      });
+      const attempts = updated.failedLoginAttempts;
 
       if (attempts >= this.lockoutThreshold) {
-        updateData.lockedUntil = new Date(Date.now() + this.lockoutDuration * 60000);
+        await db.user.update({
+          where: { id: user.id },
+          data: { lockedUntil: new Date(Date.now() + this.lockoutDuration * 60000) },
+        });
         await this.securityLogger.log({ event: 'ACCOUNT_LOCKED', userId: user.id, email, ip, userAgent, details: `Locked after ${attempts} failed attempts` });
       }
 
-      await db.user.update({ where: { id: user.id }, data: updateData });
       await this.securityLogger.log({ event: 'LOGIN_FAILED', userId: user.id, email, ip, userAgent, details: `Bad password, attempt ${attempts}` });
       throw new UnauthorizedException('Invalid credentials');
     }

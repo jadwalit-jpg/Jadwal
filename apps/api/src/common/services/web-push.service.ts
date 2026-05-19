@@ -57,20 +57,6 @@ export class WebPushService {
 
     const db = this.prisma.client;
 
-    // Check max subscriptions per user (prevent subscription bombing)
-    const count = await db.pushSubscription.count({ where: { userId } });
-    if (count >= this.maxSubscriptionsPerUser) {
-      // Delete oldest subscription to make room
-      const oldest = await db.pushSubscription.findFirst({
-        where: { userId },
-        orderBy: { createdAt: 'asc' },
-        select: { id: true },
-      });
-      if (oldest) {
-        await db.pushSubscription.delete({ where: { id: oldest.id } });
-      }
-    }
-
     // Upsert by endpoint (same browser re-subscribing gets updated, not duplicated)
     await db.pushSubscription.upsert({
       where: { endpoint: subscription.endpoint },
@@ -86,6 +72,21 @@ export class WebPushService {
         auth: subscription.keys.auth,
       },
     });
+
+    // Enforce the per-user cap by trimming AFTER the upsert (prevent
+    // subscription bombing). A count → find-oldest → delete sequence races
+    // with a concurrent subscribe (both see count == max, both delete the
+    // same row → one throws P2025). Trimming to the newest N with a single
+    // deleteMany is idempotent and self-correcting under concurrency.
+    const subs = await db.pushSubscription.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (subs.length > this.maxSubscriptionsPerUser) {
+      const staleIds = subs.slice(this.maxSubscriptionsPerUser).map((s) => s.id);
+      await db.pushSubscription.deleteMany({ where: { id: { in: staleIds } } });
+    }
 
     return { subscribed: true };
   }
