@@ -30,6 +30,9 @@ model User {
   /// registration; drives which language EmailService renders. Defaults to
   /// EN for every existing and OAuth-created account.
   preferredLanguage Language  @default(EN)
+  /// First time this user cleared a booking email-OTP. NULL = never; once set,
+  /// later bookings skip the OTP step. One-way (set once, never cleared).
+  bookingOtpVerifiedAt DateTime?
   emailVerified            Boolean   @default(false)
   verificationToken        String?   @unique
   verificationTokenExpiry  DateTime?
