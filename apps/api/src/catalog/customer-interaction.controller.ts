@@ -3,6 +3,7 @@ import {
   UseGuards, ForbiddenException, BadRequestException, NotFoundException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { Prisma } from '@prisma/client';
 import { RATE_LIMIT_INTERACTION, RATE_LIMIT_VENDOR, RATE_LIMIT_AUTH } from '../common/throttle-config';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationService } from '../common/services/notification.service';
@@ -133,25 +134,39 @@ export class CustomerInteractionController {
     });
     if (!hasBooking) throw new BadRequestException('You can only review activities you have booked');
 
-    // Check they haven't already reviewed this activity
+    // Check they haven't already reviewed this activity. This is the fast
+    // path / friendly message; the @@unique([activityId, customerId]) DB
+    // constraint is the real backstop — two near-simultaneous submits both
+    // pass this read, so the constraint (caught below) is what actually
+    // prevents the duplicate row.
     const existingReview = await this.prisma.client.review.findFirst({
       where: { customerId: user.id, activityId: dto.activityId },
       select: { id: true },
     });
     if (existingReview) throw new BadRequestException('You have already reviewed this activity');
 
-    const review = await this.prisma.client.review.create({
-      data: {
-        activityId: dto.activityId,
-        customerId: user.id,
-        rating: dto.rating,
-        text: dto.text?.trim() || null,
-      },
-      include: {
-        customer: { select: { fullName: true } },
-        activity: { select: { titleEn: true, vendor: { select: { userId: true } } } },
-      },
-    });
+    let review;
+    try {
+      review = await this.prisma.client.review.create({
+        data: {
+          activityId: dto.activityId,
+          customerId: user.id,
+          rating: dto.rating,
+          text: dto.text?.trim() || null,
+        },
+        include: {
+          customer: { select: { fullName: true } },
+          activity: { select: { titleEn: true, vendor: { select: { userId: true } } } },
+        },
+      });
+    } catch (err) {
+      // P2002 = unique-constraint violation → a concurrent request won the
+      // race and created the review first. Same response as the pre-check.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new BadRequestException('You have already reviewed this activity');
+      }
+      throw err;
+    }
 
     // Notify vendor: new review received
     if (review.activity?.vendor) {

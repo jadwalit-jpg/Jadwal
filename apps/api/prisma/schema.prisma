@@ -547,6 +547,7 @@ model Review {
   vendorReply   String?
   createdAt     DateTime @default(now())
 
+  @@unique([activityId, customerId]) // one review per customer per activity
   @@index([activityId])
   @@index([customerId])
   @@index([rating])
