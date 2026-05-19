@@ -279,11 +279,18 @@ export class AuthService {
       const attempts = updated.failedLoginAttempts;
 
       if (attempts >= this.lockoutThreshold) {
-        await db.user.update({
-          where: { id: user.id },
+        // Stamp the lock with the threshold re-asserted in the where. A
+        // concurrent successful login resets failedLoginAttempts to 0 — the
+        // `gte` guard makes this a no-op in that race, so we never lock a
+        // user who has just authenticated cleanly. count > 0 means the lock
+        // actually applied → only then log ACCOUNT_LOCKED.
+        const locked = await db.user.updateMany({
+          where: { id: user.id, failedLoginAttempts: { gte: this.lockoutThreshold } },
           data: { lockedUntil: new Date(Date.now() + this.lockoutDuration * 60000) },
         });
-        await this.securityLogger.log({ event: 'ACCOUNT_LOCKED', userId: user.id, email, ip, userAgent, details: `Locked after ${attempts} failed attempts` });
+        if (locked.count > 0) {
+          await this.securityLogger.log({ event: 'ACCOUNT_LOCKED', userId: user.id, email, ip, userAgent, details: `Locked after ${attempts} failed attempts` });
+        }
       }
 
       await this.securityLogger.log({ event: 'LOGIN_FAILED', userId: user.id, email, ip, userAgent, details: `Bad password, attempt ${attempts}` });

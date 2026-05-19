@@ -164,22 +164,24 @@ describe('AuthService.loginWithCheck', () => {
       lockedUntil: null, emailVerified: true, isDeactivated: false,
     });
     // The atomic increment returns the post-increment value (5) → the
-    // service then issues a separate update to stamp `lockedUntil`.
+    // service then issues a conditional updateMany to stamp `lockedUntil`.
     ctx.prisma._client.user.update.mockResolvedValue({ failedLoginAttempts: 5 });
+    ctx.prisma._client.user.updateMany.mockResolvedValue({ count: 1 });
 
     await expect(ctx.sut.loginWithCheck('a@b.com', 'wrong', makeResponseMock() as any))
       .rejects.toThrow('Invalid credentials');
 
-    // First update = atomic counter bump.
+    // First write = atomic counter bump.
     expect(ctx.prisma._client.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ failedLoginAttempts: { increment: 1 } }),
       }),
     );
-    // Second update = lockout stamp once the threshold is reached.
-    expect(ctx.prisma._client.user.update).toHaveBeenCalledWith(
+    // Second write = lockout stamp, guarded by the threshold so it can't
+    // lock a user whose counter a concurrent successful login just reset.
+    expect(ctx.prisma._client.user.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'u1' },
+        where: { id: 'u1', failedLoginAttempts: { gte: 5 } },
         data: expect.objectContaining({ lockedUntil: expect.any(Date) }),
       }),
     );
