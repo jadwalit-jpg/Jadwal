@@ -18,6 +18,7 @@
 import { usePathname } from 'next/navigation';
 import { GeoProvider } from '@/context/geo-context';
 import { LazyPrompts } from '@/components/lazy-prompts';
+import { WhatsAppFloat } from '@/components/whatsapp-float';
 
 // Route prefixes that do NOT need GeoProvider:
 //   - /admin/*  → staff, no country-scoped data
@@ -48,6 +49,7 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
     <GeoProvider>
       {children}
       <LazyPrompts />
+      <WhatsAppFloat />
     </GeoProvider>
   );
 }
