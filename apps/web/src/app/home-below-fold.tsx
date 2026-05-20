@@ -53,6 +53,7 @@ interface TrendingEvent {
   titleEn: string;
   titleAr: string;
   description: string | null;
+  descriptionAr: string | null;
   image: string | null;
   eventDate: string | null;
   countryId: string | null;
@@ -162,12 +163,15 @@ export default function HomeBelowFold() {
                     <h3 className="font-semibold text-jadwal-text text-[15px] tracking-[-0.2px] line-clamp-2 text-balance">
                       {localized(event, 'title')}
                     </h3>
-                    {event.description ? (
+                    {(() => {
+                      const desc = localized(event, 'description');
+                      if (!desc) return null;
+                      return (
                       <>
                         <p className="text-[13px] text-jadwal-text-muted leading-relaxed line-clamp-2">
-                          {event.description}
+                          {desc}
                         </p>
-                        {event.description.length > READ_MORE_THRESHOLD ? (
+                        {desc.length > READ_MORE_THRESHOLD ? (
                           // Inline link-style trigger (NOT a button-styled CTA).
                           // Sits on its own line so it doesn't get clipped by the
                           // line-clamp above. Underline + accent color reads as a
@@ -188,7 +192,8 @@ export default function HomeBelowFold() {
                           </button>
                         ) : null}
                       </>
-                    ) : null}
+                      );
+                    })()}
                     {event.eventDate ? (
                       <div
                         className="mt-1 flex items-center gap-1.5 text-[12px] text-jadwal-text-faint"

@@ -32,6 +32,7 @@ interface TrendingEvent {
   titleEn: string;
   titleAr: string;
   description: string | null;
+  descriptionAr: string | null;
   image: string | null;
   eventDate: string | null;
   countryId: string | null;
@@ -153,11 +154,14 @@ export function TrendingEventModal({ event, onClose, isRtl, closeLabel }: Trendi
               </div>
             ) : null}
 
-            {event.description ? (
-              <p className="text-[14px] sm:text-[15px] text-jadwal-text-muted leading-relaxed whitespace-pre-line">
-                {event.description}
-              </p>
-            ) : null}
+            {(() => {
+              const desc = localized(event, 'description');
+              return desc ? (
+                <p className="text-[14px] sm:text-[15px] text-jadwal-text-muted leading-relaxed whitespace-pre-line">
+                  {desc}
+                </p>
+              ) : null;
+            })()}
           </div>
         </div>
       ) : null}
