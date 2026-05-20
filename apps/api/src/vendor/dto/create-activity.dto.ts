@@ -28,10 +28,25 @@ enum PricingModel {
 }
 
 export class ExtraServiceItem {
+  /**
+   * English name — the stable identifier. Booking-time matching of
+   * `selectedExtras` runs against this field, so it must NOT be renamed
+   * after a vendor publishes (else in-flight bookings lose their reference).
+   */
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)
   name!: string;
+
+  /**
+   * Arabic name — optional. Displayed to Arabic-locale customers in place
+   * of `name`. Existing extras created before bilingual support are missing
+   * this field and just fall back to `name` for both languages.
+   */
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  nameAr?: string;
 
   @IsNumber()
   @Min(0)

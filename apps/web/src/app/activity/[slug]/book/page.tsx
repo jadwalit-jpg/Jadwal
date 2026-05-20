@@ -52,7 +52,7 @@ interface ActivityBookingData {
   checkInTime: string | null;
   checkOutTime: string | null;
   activeDays: string[];
-  extraServices: { name: string; price: number; perPerson?: boolean }[] | null;
+  extraServices: { name: string; nameAr?: string; price: number; perPerson?: boolean }[] | null;
   cancellationPolicy: string | null;
   category: { nameEn: string } | null;
   country: { nameEn: string; currencyCode: string; serviceFeeFixed?: number } | null;
@@ -1096,7 +1096,7 @@ export default function BookActivityPage() {
                               }`}
                             >
                               <div className="flex flex-col">
-                                <span className="text-sm text-gray-700 dark:text-slate-300">{svc.name}</span>
+                                <span className="text-sm text-gray-700 dark:text-slate-300">{localized(svc, 'name')}</span>
                                 <span className="text-[10px] text-gray-400 dark:text-slate-500">{t('activity.each')} · {svc.price} {currency}</span>
                               </div>
                               <div className="flex items-center gap-2">

@@ -269,8 +269,9 @@ export default function CreateActivityPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [coverImage, setCoverImage] = useState<string>('');
   const [gallery, setGallery] = useState<string[]>([]);
-  const [extraServices, setExtraServices] = useState<{ name: string; price: number; perPerson: boolean }[]>([]);
+  const [extraServices, setExtraServices] = useState<{ name: string; nameAr?: string; price: number; perPerson: boolean }[]>([]);
   const [extraName, setExtraName] = useState('');
+  const [extraNameAr, setExtraNameAr] = useState('');
   const [extraPrice, setExtraPrice] = useState('');
   const [extraPerPerson, setExtraPerPerson] = useState(false);
   const [activeDays, setActiveDays] = useState<string[]>([]);
@@ -453,8 +454,18 @@ export default function CreateActivityPage() {
     if (!name) return;
     const price = Number(extraPrice) || 0;
     if (extraServices.some(s => s.name === name)) return;
-    setExtraServices(prev => [...prev, { name: sanitize(name), price, perPerson: price > 0 ? extraPerPerson : false }]);
+    // Arabic name is optional. Stored alongside `name` (the stable English
+    // identifier used by booking-time matching) so customers in Arabic see
+    // the translated label without breaking selectedExtras references.
+    const nameAr = extraNameAr.trim() ? sanitize(extraNameAr.trim()) : undefined;
+    setExtraServices(prev => [...prev, {
+      name: sanitize(name),
+      ...(nameAr ? { nameAr } : {}),
+      price,
+      perPerson: price > 0 ? extraPerPerson : false,
+    }]);
     setExtraName('');
+    setExtraNameAr('');
     setExtraPrice('');
     setExtraPerPerson(false);
   };
@@ -976,6 +987,19 @@ export default function CreateActivityPage() {
                       maxLength={200}
                     />
                   </div>
+                  <div className="flex-1 min-w-[180px]">
+                    <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">{t('vendor.activities.wizard.ui.labelItemNameAr')}</label>
+                    <input
+                      type="text"
+                      value={extraNameAr}
+                      onChange={e => setExtraNameAr(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addExtraService(); } }}
+                      className={inputCls(false)}
+                      placeholder={t('vendor.activities.wizard.ui.phExtraNameAr')}
+                      maxLength={200}
+                      dir="rtl"
+                    />
+                  </div>
                   <div className="w-28">
                     <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">{t('vendor.activities.wizard.ui.labelExtraPrice')}</label>
                     <input
@@ -1023,11 +1047,14 @@ export default function CreateActivityPage() {
                             : 'bg-blue-50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800/30 text-blue-700 dark:text-blue-400'
                         }`}
                       >
-                        <div className="flex items-center gap-2">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${svc.price === 0 ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-blue-500/20 text-blue-600 dark:text-blue-400'}`}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${svc.price === 0 ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-blue-500/20 text-blue-600 dark:text-blue-400'}`}>
                             {svc.price === 0 ? t('vendor.activities.wizard.ui.tagIncluded') : svc.perPerson ? t('vendor.activities.wizard.ui.tagAddonPerPerson') : t('vendor.activities.wizard.ui.tagAddonPerBooking')}
                           </span>
-                          <span className="font-medium">{svc.name}</span>
+                          <span className="font-medium truncate">{svc.name}</span>
+                          {svc.nameAr ? (
+                            <span dir="rtl" className="text-xs opacity-70 truncate">· {svc.nameAr}</span>
+                          ) : null}
                         </div>
                         <div className="flex items-center gap-3">
                           {svc.price > 0 && (
