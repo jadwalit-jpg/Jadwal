@@ -78,7 +78,7 @@ interface ActivityDetail {
   checkInTime: string | null;
   checkOutTime: string | null;
   activeDays: string[];
-  extraServices: { name: string; price: number; perPerson?: boolean }[] | null;
+  extraServices: { name: string; nameAr?: string; price: number; perPerson?: boolean }[] | null;
   cancellationPolicy: string | null;
   createdAt: string;
   category: { nameEn: string; nameAr: string } | null;
@@ -690,7 +690,7 @@ export default function ActivityDetailPage() {
                                 aria-hidden="true"
                               />
                               <span className="text-sm text-jadwal-text leading-relaxed">
-                                {svc.name}
+                                {localized(svc, 'name')}
                               </span>
                             </div>
                           ))}
@@ -707,7 +707,7 @@ export default function ActivityDetailPage() {
                             >
                               <div className="flex flex-col min-w-0">
                                 <span className="text-sm text-jadwal-text truncate">
-                                  {svc.name}
+                                  {localized(svc, 'name')}
                                 </span>
                                 {svc.perPerson ? (
                                   <span className="text-[10px] text-jadwal-text-faint">
