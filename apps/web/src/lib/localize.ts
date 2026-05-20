@@ -30,8 +30,12 @@ export function localized(obj: any, field: string): string {
     if (typeof arVal === 'string' && arVal.trim()) return arVal;
   }
 
+  // Only return a non-empty `${field}En` here — if it's the empty string,
+  // fall through to the unsuffixed `${field}` so a legacy row that has the
+  // English suffix as '' but a real value in `${field}` (e.g. JSON extras)
+  // still renders. Empty AR strings are already handled above via .trim().
   const enVal = obj[`${field}En`];
-  if (typeof enVal === 'string') return enVal;
+  if (typeof enVal === 'string' && enVal) return enVal;
   const plain = obj[field];
   return typeof plain === 'string' ? plain : '';
 }

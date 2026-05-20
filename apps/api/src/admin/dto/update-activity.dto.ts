@@ -41,10 +41,12 @@ class ExtraServiceItem {
   /**
    * Arabic name — optional, mirrors the vendor-side
    * ExtraServiceItem.nameAr. Pre-bilingual rows have this missing and
-   * fall back to `name` for the Arabic locale.
+   * fall back to `name` for the Arabic locale. MaxLength matches the
+   * vendor DTO so PATCH and POST stay symmetric.
    */
   @IsString()
   @IsOptional()
+  @MaxLength(200)
   nameAr?: string;
 
   @IsNumber()
