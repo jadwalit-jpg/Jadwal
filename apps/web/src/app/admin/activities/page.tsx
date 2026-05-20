@@ -39,7 +39,7 @@ interface Activity {
   unitCount: number;
   unitCapacity: number;
   activeDays: string[];
-  extraServices: { name: string; price: number; perPerson?: boolean }[] | null;
+  extraServices: { name: string; nameAr?: string; price: number; perPerson?: boolean }[] | null;
   cancellationPolicy: string | null;
   categoryId: string;
   status: 'PENDING' | 'ACTIVE' | 'BLOCKED';
