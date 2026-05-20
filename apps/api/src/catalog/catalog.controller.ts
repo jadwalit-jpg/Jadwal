@@ -132,7 +132,8 @@ export class CatalogController {
     return this.prisma.client.trendingEvent.findMany({
       where,
       select: {
-        id: true, titleEn: true, titleAr: true, description: true,
+        id: true, titleEn: true, titleAr: true,
+        description: true, descriptionAr: true,
         image: true, eventDate: true, countryId: true,
       },
       orderBy: { createdAt: 'desc' },
