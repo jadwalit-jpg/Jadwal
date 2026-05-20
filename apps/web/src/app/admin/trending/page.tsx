@@ -17,6 +17,7 @@ interface TrendingEvent {
   titleEn: string;
   titleAr: string;
   description: string | null;
+  descriptionAr: string | null;
   image: string | null;
   eventDate: string | null;
   countryId: string | null;
@@ -44,6 +45,7 @@ const emptyForm = {
   titleEn: '',
   titleAr: '',
   description: '',
+  descriptionAr: '',
   image: '',
   eventDate: '',
   eventTime: '',
@@ -147,6 +149,7 @@ export default function AdminTrendingPage() {
       titleEn: event.titleEn,
       titleAr: event.titleAr,
       description: event.description || '',
+      descriptionAr: event.descriptionAr || '',
       image: event.image || '',
       eventDate: dateStr,
       eventTime: timeStr,
@@ -207,6 +210,7 @@ export default function AdminTrendingPage() {
       titleEn: sanitize(form.titleEn),
       titleAr: sanitize(form.titleAr),
       description: form.description ? sanitize(form.description) : undefined,
+      descriptionAr: form.descriptionAr ? sanitize(form.descriptionAr) : undefined,
       image: form.image || undefined,
       countryId: form.countryId || undefined,
       isActive: form.isActive,
@@ -417,10 +421,16 @@ export default function AdminTrendingPage() {
                     </div>
                   </div>
 
-                  {/* Description */}
+                  {/* Description (English) */}
                   <div>
-                    <label className={labelCls}>Description</label>
+                    <label className={labelCls}>Description (English)</label>
                     <textarea value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="Event description" rows={2} className={inputCls} />
+                  </div>
+
+                  {/* Description (Arabic) */}
+                  <div>
+                    <label className={labelCls}>Description (Arabic)</label>
+                    <textarea value={form.descriptionAr} onChange={(e) => setForm((f) => ({ ...f, descriptionAr: e.target.value }))} placeholder="وصف الحدث" rows={2} dir="rtl" className={inputCls} />
                   </div>
 
                   {/* Country */}

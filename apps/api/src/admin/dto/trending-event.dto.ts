@@ -37,6 +37,12 @@ export class CreateTrendingEventDto {
   @MaxLength(1000)
   description?: string;
 
+  /** Arabic description — optional. Falls back to `description` on render. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  descriptionAr?: string;
+
   @IsOptional()
   @IsUrl({ require_tld: false })
   @MaxLength(2000)
@@ -74,6 +80,12 @@ export class UpdateTrendingEventDto {
   @IsString()
   @MaxLength(1000)
   description?: string;
+
+  /** Arabic description — optional. Falls back to `description` on render. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  descriptionAr?: string;
 
   @IsOptional()
   @IsUrl({ require_tld: false })

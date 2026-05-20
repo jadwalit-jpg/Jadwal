@@ -634,7 +634,15 @@ model TrendingEvent {
   id          String    @id @default(uuid())
   titleEn     String
   titleAr     String
+  /// English description. Kept as `description` (no `En` suffix) for
+  /// backwards compatibility with rows created before bilingual support.
+  /// The bilingual companion is `descriptionAr` below; the `localized()`
+  /// frontend helper handles the no-suffix-fallback transparently.
   description String?
+  /// Arabic description. NULL for rows created before this column landed;
+  /// admin form surfaces an empty textarea on edit, customer rendering
+  /// falls back to `description` (English) when this is missing.
+  descriptionAr String?
   image       String?
   eventDate   DateTime?
   countryId   String?
