@@ -1135,13 +1135,27 @@ export class PaymentService {
         if (snapshot.couponCode) {
           const coupon = await tx.coupon.findUnique({
             where: { code: snapshot.couponCode },
-            select: { id: true },
+            select: { id: true, usageLimit: true },
           });
           if (coupon) {
-            await tx.coupon.update({
-              where: { id: coupon.id },
-              data: { usedCount: { increment: 1 } },
-            });
+            // Conditional re-increment, mirroring the createBooking pattern
+            // hardened in PR #306: bake the usage-limit ceiling into the
+            // where so a recovery that fires after other users have already
+            // exhausted the coupon can't push usedCount past usageLimit.
+            // The recreated booking still survives — we just don't bump
+            // the counter past the limit (the customer already claimed the
+            // coupon originally; the recovery is a bookkeeping replay).
+            if (coupon.usageLimit) {
+              await tx.coupon.updateMany({
+                where: { id: coupon.id, usedCount: { lt: coupon.usageLimit } },
+                data: { usedCount: { increment: 1 } },
+              });
+            } else {
+              await tx.coupon.update({
+                where: { id: coupon.id },
+                data: { usedCount: { increment: 1 } },
+              });
+            }
             // Re-mark the per-user claim used (was unset by refundCouponUsage)
             await tx.claimedCoupon.updateMany({
               where: { userId: snapshot.customerId, couponId: coupon.id, used: false },
