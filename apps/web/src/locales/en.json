@@ -1140,6 +1140,8 @@
           "inclusionsHelp": "Add what comes with the booking. Set price to 0 for free inclusions. Priced items become optional add-ons the customer can choose to add.",
           "labelItemName": "Name",
           "phExtraName": "e.g., Water, Lunch, VIP upgrade",
+          "labelItemNameAr": "Name (Arabic)",
+          "phExtraNameAr": "Optional — e.g., ماء، غداء",
           "labelExtraPrice": "Price (0 = free)",
           "perBooking": "Per booking",
           "perPersonRadio": "Per person",

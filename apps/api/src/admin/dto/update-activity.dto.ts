@@ -38,6 +38,15 @@ class ExtraServiceItem {
   @IsNotEmpty()
   name!: string;
 
+  /**
+   * Arabic name — optional, mirrors the vendor-side
+   * ExtraServiceItem.nameAr. Pre-bilingual rows have this missing and
+   * fall back to `name` for the Arabic locale.
+   */
+  @IsString()
+  @IsOptional()
+  nameAr?: string;
+
   @IsNumber()
   @Min(0)
   price!: number;
