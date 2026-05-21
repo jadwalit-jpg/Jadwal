@@ -12,6 +12,7 @@ import { emailVerificationTemplate } from '../../src/email/templates/email-verif
 import { passwordResetTemplate } from '../../src/email/templates/password-reset';
 import { passwordChangedTemplate } from '../../src/email/templates/password-changed';
 import { adminAlertTemplate } from '../../src/email/templates/admin-alert';
+import { vendorBookingNotificationTemplate } from '../../src/email/templates/vendor-booking-notification';
 import type { RenderedEmail } from '../../src/email/templates/base';
 
 /** Every customer template + representative data, exercised for EN + AR. */
@@ -48,6 +49,26 @@ const CUSTOMER_TEMPLATES: Array<{ name: string; render: (locale: 'EN' | 'AR') =>
   {
     name: 'password-changed',
     render: (l) => passwordChangedTemplate({ customerName: 'Sara' }, l),
+  },
+  {
+    name: 'vendor-booking-notification',
+    render: (l) =>
+      vendorBookingNotificationTemplate(
+        {
+          vendorName: 'Acme Vendor',
+          bookingRef: 'JDWL-V1',
+          bookingId: 'booking-id-1',
+          vendorSlug: 'acme-vendor',
+          activityTitle: 'Desert Safari',
+          date: '2030-01-01',
+          guests: 2,
+          totalAmount: '200',
+          currency: 'QAR',
+          customerName: 'Sara',
+          customerPhone: '+97433333333',
+        },
+        l,
+      ),
   },
 ];
 
@@ -97,5 +118,62 @@ describe('bilingual email templates', () => {
     // …but the body and text part DO carry it.
     expect(out.html).toContain('987654');
     expect(out.text).toContain('987654');
+  });
+
+  describe('vendor-booking-notification (PII discipline + safety)', () => {
+    const base = {
+      vendorName: 'Acme Vendor',
+      bookingRef: 'JDWL-V42',
+      bookingId: 'booking-id-42',
+      vendorSlug: 'acme-vendor',
+      activityTitle: 'Desert Safari',
+      date: '2030-01-01',
+      guests: 3,
+      totalAmount: '500',
+      currency: 'QAR',
+      customerName: 'Sara Customer',
+      customerPhone: '+97433333333',
+    };
+
+    test('renders customer name + phone but NEVER the customer email', () => {
+      const out = vendorBookingNotificationTemplate(base, 'EN');
+      expect(out.html).toContain('Sara Customer');
+      expect(out.html).toContain('+97433333333');
+      expect(out.text).toContain('Sara Customer');
+      expect(out.text).toContain('+97433333333');
+      // The template signature does not accept a customer email at all, but
+      // belt-and-braces: assert no @-sign in the customer section of the body.
+      expect(out.html).not.toMatch(/customer[^@]*@[A-Za-z0-9.-]+/i);
+    });
+
+    test('escapes HTML in customerName and customerPhone (XSS defense)', () => {
+      const out = vendorBookingNotificationTemplate(
+        { ...base, customerName: '<script>alert(1)</script>', customerPhone: '"><img src=x>' },
+        'EN',
+      );
+      expect(out.html).not.toContain('<script>');
+      expect(out.html).toContain('&lt;script&gt;');
+      expect(out.html).not.toContain('<img src=x>');
+    });
+
+    test('optional fields (time, locationAddress) gracefully omitted', () => {
+      const out = vendorBookingNotificationTemplate(base, 'EN');
+      // No "Time" row was injected — the label text shouldn't appear.
+      expect(out.html).not.toMatch(/>Time</);
+      expect(out.html).not.toMatch(/>Location</);
+      // …but when supplied, both appear.
+      const withOpts = vendorBookingNotificationTemplate(
+        { ...base, time: '14:30', locationAddress: 'Doha, Qatar' },
+        'EN',
+      );
+      expect(withOpts.html).toContain('14:30');
+      expect(withOpts.html).toContain('Doha, Qatar');
+    });
+
+    test('dashboard CTA uses {{APP_URL}} placeholder + the vendor slug', () => {
+      const out = vendorBookingNotificationTemplate(base, 'EN');
+      expect(out.html).toContain('{{APP_URL}}/vendor/acme-vendor/bookings/booking-id-42');
+      expect(out.text).toContain('{{APP_URL}}/vendor/acme-vendor/bookings/booking-id-42');
+    });
   });
 });

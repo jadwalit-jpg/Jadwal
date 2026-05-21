@@ -835,6 +835,7 @@ export class PaymentService {
     const bookingForNotify = await db.booking.findUnique({
       where: { id: payment.bookingId! },
       select: {
+        id: true,
         customerId: true,
         ref: true,
         vendorId: true,
@@ -845,6 +846,7 @@ export class PaymentService {
         currencyCode: true,
         startDatetime: true,
         endDatetime: true,
+        bookingPhone: true,
         activity: {
           select: {
             titleEn: true,
@@ -872,9 +874,15 @@ export class PaymentService {
       // reach here because the FAILED branch hard-deletes them).
       // Pull `slug` alongside `userId` — the vendor portal is namespaced by
       // slug (/vendor/[slug]/*). Linking to /vendor/<UUID>/bookings 404s.
+      // Also pull the vendor user's email + name + preferred language so the
+      // vendor email enqueue below can run from the same row.
       const vendorUser = await db.vendor.findUnique({
         where: { id: bookingForNotify.vendorId },
-        select: { userId: true, slug: true },
+        select: {
+          userId: true,
+          slug: true,
+          user: { select: { email: true, fullName: true, preferredLanguage: true } },
+        },
       });
       if (vendorUser) {
         this.notificationService.send({
@@ -941,6 +949,43 @@ export class PaymentService {
         } catch (err: unknown) {
           const kind = err instanceof Error ? err.name : 'UnknownError';
           this.logger.error({ event: 'EMAIL_OUTBOX_ENQUEUE_FAILED', bookingId: payment.bookingId, kind });
+        }
+      }
+
+      // Vendor booking-notification email — sent to the owning vendor in
+      // parallel with the customer's BOOKING_CONFIRMATION. Cross-vendor leak
+      // proof: `bookingForNotify.vendorId` is a non-null FK and
+      // `vendor.userId` is @unique, so exactly one User.email is reachable
+      // per booking. The customer's email is deliberately omitted from the
+      // payload (PII minimisation — name + phone only).
+      const vendorEmail = vendorUser?.user.email;
+      if (vendorUser && vendorEmail && !vendorEmail.endsWith('@deleted.local')) {
+        try {
+          await db.emailOutbox.create({
+            data: {
+              emailType: 'VENDOR_BOOKING_NOTIFICATION',
+              recipient: vendorEmail,
+              bookingId: payment.bookingId,
+              payload: {
+                vendorName: vendorUser.user.fullName,
+                vendorSlug: vendorUser.slug,
+                bookingRef: bookingForNotify.ref,
+                bookingId: payment.bookingId!,
+                activityTitle: bookingForNotify.activity?.titleEn ?? 'Activity',
+                date: dateStr,
+                ...(timeStr ? { time: timeStr } : {}),
+                guests: bookingForNotify.guests,
+                totalAmount: total.toFixed(2),
+                currency: bookingForNotify.currencyCode,
+                customerName: bookingForNotify.customer.fullName,
+                customerPhone: bookingForNotify.bookingPhone,
+                ...(bookingForNotify.activity?.locationAddress ? { locationAddress: bookingForNotify.activity.locationAddress } : {}),
+              },
+            },
+          });
+        } catch (err: unknown) {
+          const kind = err instanceof Error ? err.name : 'UnknownError';
+          this.logger.error({ event: 'EMAIL_OUTBOX_ENQUEUE_FAILED', bookingId: payment.bookingId, kind, recipient: 'vendor' });
         }
       }
     }

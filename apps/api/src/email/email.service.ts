@@ -7,6 +7,7 @@ import { passwordResetTemplate } from './templates/password-reset';
 import { passwordChangedTemplate } from './templates/password-changed';
 import { emailVerificationTemplate } from './templates/email-verification';
 import { bookingOtpTemplate } from './templates/booking-otp';
+import { vendorBookingNotificationTemplate } from './templates/vendor-booking-notification';
 import {
   adminAlertTemplate,
   ADMIN_ALERT_SUBJECTS,
@@ -157,6 +158,39 @@ export class EmailService {
     locale?: EmailLanguage,
   ) {
     return this.send(to, 'booking-cancellation', data, locale);
+  }
+
+  /**
+   * Vendor booking-notification. Sent to the owning vendor whenever one of
+   * their activities is booked (and paid for, or fully covered by Wanasa
+   * points). Carries the customer's name + phone only — never their email
+   * (PDPPL data minimisation).
+   *
+   * Enqueued via OutboxDrainService from `bookings.service.ts` (full-Wanasa
+   * branch) and `payment.service.ts` (PAY2M success branch). Suppression,
+   * platform quota, locale, and unsubscribe header flow through the shared
+   * `send()` path automatically.
+   */
+  async sendVendorBookingNotification(
+    to: string,
+    data: {
+      vendorName: string;
+      bookingRef: string;
+      bookingId: string;
+      vendorSlug: string;
+      activityTitle: string;
+      date: string;
+      time?: string;
+      guests: number;
+      totalAmount: string;
+      currency: string;
+      customerName: string;
+      customerPhone: string;
+      locationAddress?: string;
+    },
+    locale?: EmailLanguage,
+  ) {
+    return this.send(to, 'vendor-booking-notification', data, locale);
   }
 
   /**
@@ -321,6 +355,9 @@ export class EmailService {
         break;
       case 'booking-otp':
         rendered = bookingOtpTemplate(data as any, locale);
+        break;
+      case 'vendor-booking-notification':
+        rendered = vendorBookingNotificationTemplate(data as any, locale);
         break;
       case 'admin-alert':
         rendered = adminAlertTemplate(data as any);
