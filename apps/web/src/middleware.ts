@@ -108,7 +108,12 @@ function buildCsp(nonce: string, isProd: boolean): string {
   const directives = [
     `default-src 'self'`,
     `script-src ${scriptSrc}`,
-    `style-src 'self' 'unsafe-inline'`, // styled-jsx / Tailwind JIT need inline styles
+    // Tailwind v4 inlines critical CSS at build time, so 'unsafe-inline' on
+    // style-src is required for first paint. The project does NOT use
+    // styled-jsx; only Tailwind. The risk profile is style-only — an
+    // attacker controlling inline styles cannot execute scripts because
+    // script-src above is nonce-based with NO 'unsafe-inline'.
+    `style-src 'self' 'unsafe-inline'`,
     `img-src ${IMG_HOSTS.join(' ')}`,
     `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
     `font-src 'self' data:`,
