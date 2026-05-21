@@ -910,7 +910,16 @@ export class PaymentService {
       // we log and move on: the customer still has a CONFIRMED booking + the
       // in-app PAYMENT_SUCCESS notification above, and reconciliation can spot
       // a confirmed-but-never-emailed booking.
-      const total = Number(bookingForNotify.totalPrice) + Number(bookingForNotify.serviceFee) - Number(bookingForNotify.couponDiscount);
+      //
+      // The customer email "Total" is the amount PAY2M actually charged —
+      // payment.amount, captured at booking-create time as
+      // `payableAmount = totalPrice + serviceFee - pointsDiscount` (note:
+      // booking.totalPrice is ALREADY post-coupon, see bookings.service.ts
+      // line ~1318 where finalTotalPrice = afterCouponPrice). Reading
+      // payment.amount directly is the ground truth and avoids the prior
+      // off-by-coupon bug where a recomputed `totalPrice + serviceFee -
+      // couponDiscount` double-subtracted the coupon.
+      const total = Number(payment.amount);
       const startDate = new Date(bookingForNotify.startDatetime);
       const dateStr = startDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
       const timeStr = bookingForNotify.activity?.bookingType === 'HOURLY'

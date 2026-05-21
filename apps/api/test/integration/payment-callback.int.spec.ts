@@ -249,7 +249,64 @@ describe('PaymentService.handleCallback — email outbox (R4)', () => {
     const payload = row.payload as Record<string, unknown>;
     expect(payload.bookingId).toBe(bookingId);
     expect(payload.currency).toBe('QAR');
-    expect(typeof payload.totalAmount).toBe('string');
+    // Regression: customer email "Total" must equal payment.amount (the amount
+    // PAY2M actually charged), NOT a recomputed `totalPrice + serviceFee -
+    // couponDiscount` — that formula double-subtracted the coupon because
+    // booking.totalPrice is already post-coupon. amountStr is `amountQar.toFixed(2)`
+    // == payment.amount.toFixed(2) for this seed.
+    expect(payload.totalAmount).toBe(amountStr);
+  });
+
+  test('SUCCESS with a coupon-applied booking → email Total equals payment.amount (not the pre-fix double-subtracted value)', async () => {
+    const { svc } = makePaymentService();
+    // Build a booking where the pre-fix formula and the corrected formula
+    // diverge: totalPrice already post-coupon (80), couponDiscount=20,
+    // serviceFee=5 → pre-fix would compute 80+5-20=65; payment.amount=85
+    // (the actual charged amount). The fix reads payment.amount directly.
+    const seed = await seedReference(ctx.prisma);
+    const basketId = `BSK-COUP-${crypto.randomUUID().slice(0, 8)}`;
+    const payment = await ctx.prisma.payment.create({
+      data: {
+        amount: 85, currency: 'QAR', status: 'PENDING',
+        method: 'PAY2M', gatewayBasketId: basketId,
+      },
+    });
+    const booking = await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-COUP-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR',
+        guests: 1, bookingPhone: '+97455123456',
+        totalPrice: 80,            // already post-coupon
+        serviceFee: 5,
+        couponCode: 'SAVE20',
+        couponDiscount: 20,
+        commissionAmount: 8,
+        status: 'PENDING',
+        startDatetime: new Date('2030-09-02T10:00:00Z'),
+        endDatetime:   new Date('2030-09-02T12:00:00Z'),
+        activityId: seed.activity.id,
+        customerId: seed.customer.id,
+        vendorId: seed.vendor.id,
+        paymentId: payment.id,
+        reservedUntil: new Date(Date.now() + 600_000),
+      },
+    });
+    await ctx.prisma.payment.update({ where: { id: payment.id }, data: { bookingId: booking.id } });
+
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'TXN-COUP',
+      Response_Key: signCallback(basketId, (85).toFixed(2), '00'),
+    });
+
+    const rows = await ctx.prisma.emailOutbox.findMany({
+      where: { bookingId: booking.id, emailType: 'BOOKING_CONFIRMATION' },
+    });
+    expect(rows).toHaveLength(1);
+    const payload = rows[0].payload as Record<string, unknown>;
+    expect(payload.totalAmount).toBe('85.00');
+    // Belt-and-braces: the buggy pre-fix value MUST NOT appear.
+    expect(payload.totalAmount).not.toBe('65.00');
   });
 
   test('FAILURE callback enqueues nothing (booking is deleted)', async () => {
