@@ -1614,11 +1614,14 @@ export class BookingsService {
         // exactly one User.email is reachable per booking.
         const vendorEmail = vendorUser.user.email;
         if (vendorEmail && !vendorEmail.endsWith('@deleted.local')) {
-          // Mirror the date/time/total formatting used by the customer
-          // enqueue at payment.service.handleCallback (~line 905-913) so
-          // both emails render identical booking detail strings.
-          const totalForEmail =
-            Number(booking.totalPrice) + Number(booking.serviceFee) - Number(booking.couponDiscount);
+          // Mirror the date/time formatting used by the customer enqueue at
+          // payment.service.handleCallback (~line 905-913). totalPrice is
+          // ALREADY post-coupon (set as afterCouponPrice during create) —
+          // subtracting couponDiscount again would double-count the discount.
+          // Vendor sees the customer's gross booking value (post-coupon
+          // activity price + service fee), Wanasa redemption excluded since
+          // points reduce what the customer pays, not what the vendor earns.
+          const totalForEmail = Number(booking.totalPrice) + Number(booking.serviceFee);
           const startDate = new Date(booking.startDatetime);
           const dateStr = startDate.toLocaleDateString('en-GB', {
             day: 'numeric', month: 'short', year: 'numeric',

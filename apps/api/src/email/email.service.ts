@@ -7,7 +7,10 @@ import { passwordResetTemplate } from './templates/password-reset';
 import { passwordChangedTemplate } from './templates/password-changed';
 import { emailVerificationTemplate } from './templates/email-verification';
 import { bookingOtpTemplate } from './templates/booking-otp';
-import { vendorBookingNotificationTemplate } from './templates/vendor-booking-notification';
+import {
+  vendorBookingNotificationTemplate,
+  type VendorBookingNotificationData,
+} from './templates/vendor-booking-notification';
 import {
   adminAlertTemplate,
   ADMIN_ALERT_SUBJECTS,
@@ -173,21 +176,7 @@ export class EmailService {
    */
   async sendVendorBookingNotification(
     to: string,
-    data: {
-      vendorName: string;
-      bookingRef: string;
-      bookingId: string;
-      vendorSlug: string;
-      activityTitle: string;
-      date: string;
-      time?: string;
-      guests: number;
-      totalAmount: string;
-      currency: string;
-      customerName: string;
-      customerPhone: string;
-      locationAddress?: string;
-    },
+    data: VendorBookingNotificationData,
     locale?: EmailLanguage,
   ) {
     return this.send(to, 'vendor-booking-notification', data, locale);

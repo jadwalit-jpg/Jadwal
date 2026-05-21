@@ -148,13 +148,20 @@ export class OutboxDrainService {
   ): payload is Parameters<EmailService['sendVendorBookingNotification']>[1] {
     if (!payload || typeof payload !== 'object') return false;
     const p = payload as Record<string, unknown>;
+    // Required strings must be present AND non-empty after trimming —
+    // an empty string would render literal whitespace in the email body
+    // (e.g. a missing bookingRef would produce "Reference: " with nothing
+    // after the colon). vendorName/customerName etc. don't have to be
+    // sanitary-clean; the template's escapeHtml() handles that. We only
+    // reject genuinely empty values here.
     const requiredStrings = [
       'vendorName', 'bookingRef', 'bookingId', 'vendorSlug',
       'activityTitle', 'date', 'totalAmount', 'currency',
       'customerName', 'customerPhone',
     ] as const;
     for (const k of requiredStrings) {
-      if (typeof p[k] !== 'string') return false;
+      const v = p[k];
+      if (typeof v !== 'string' || v.trim().length === 0) return false;
     }
     if (typeof p.guests !== 'number' || !Number.isFinite(p.guests)) return false;
     if (p.time !== undefined && typeof p.time !== 'string') return false;

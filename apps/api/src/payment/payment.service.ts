@@ -960,6 +960,14 @@ export class PaymentService {
       // payload (PII minimisation — name + phone only).
       const vendorEmail = vendorUser?.user.email;
       if (vendorUser && vendorEmail && !vendorEmail.endsWith('@deleted.local')) {
+        // totalPrice is ALREADY post-coupon (stored as afterCouponPrice at
+        // booking-create time). Vendor email shows the customer's gross
+        // booking value = totalPrice + serviceFee — Wanasa redemption is
+        // excluded because points don't reduce what the vendor earned, only
+        // what the customer paid out-of-pocket. The customer-email `total`
+        // variable above subtracts couponDiscount and is a separate display
+        // contract; do NOT reuse it here.
+        const vendorTotalForEmail = Number(bookingForNotify.totalPrice) + Number(bookingForNotify.serviceFee);
         try {
           await db.emailOutbox.create({
             data: {
@@ -975,7 +983,7 @@ export class PaymentService {
                 date: dateStr,
                 ...(timeStr ? { time: timeStr } : {}),
                 guests: bookingForNotify.guests,
-                totalAmount: total.toFixed(2),
+                totalAmount: vendorTotalForEmail.toFixed(2),
                 currency: bookingForNotify.currencyCode,
                 customerName: bookingForNotify.customer.fullName,
                 customerPhone: bookingForNotify.bookingPhone,
