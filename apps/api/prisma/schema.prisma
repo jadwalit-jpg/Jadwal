@@ -911,6 +911,7 @@ model EmailOutbox {
 
 enum EmailOutboxType {
   BOOKING_CONFIRMATION
+  VENDOR_BOOKING_NOTIFICATION
 }
 
 enum EmailOutboxStatus {

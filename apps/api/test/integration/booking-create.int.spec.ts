@@ -569,6 +569,162 @@ describe('BookingsService.createBooking — full points coverage (WANASA-only)',
     expect(Number(b.payment!.amount)).toBe(0);
     expect(b.reservedUntil).toBeNull(); // no reservation — already booked
   });
+
+  test('full-Wanasa booking enqueues VENDOR_BOOKING_NOTIFICATION outbox row for the owning vendor', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' }, create: { id: 'singleton' }, update: {},
+    });
+    await ctx.prisma.user.update({
+      where: { id: seed.customer.id }, data: { loyaltyPoints: 20_000 },
+    });
+    await ctx.prisma.loyaltyLedger.create({
+      data: {
+        userId: seed.customer.id, delta: 20_000, balanceAfter: 20_000,
+        source: 'ADMIN_ADJUST', actorType: 'SYSTEM', reason: 'genesis',
+      },
+    });
+
+    const res = await svc.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7),
+      slotTime: '10:00',
+      guests: 1,
+      bookingPhone: '+97455199999',
+      redeemPoints: 15_000,
+      idempotencyKey: crypto.randomUUID(),
+    });
+
+    const rows = await ctx.prisma.emailOutbox.findMany({
+      where: { bookingId: res.booking.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    const vendorRow = rows.find((r) => r.emailType === 'VENDOR_BOOKING_NOTIFICATION');
+    expect(vendorRow).toBeDefined();
+    expect(vendorRow!.recipient).toBe(seed.vendorUser.email);
+    expect(vendorRow!.status).toBe('PENDING');
+
+    const payload = vendorRow!.payload as Record<string, unknown>;
+    expect(payload.bookingId).toBe(res.booking.id);
+    expect(payload.vendorSlug).toBe(seed.vendor.slug);
+    expect(payload.customerName).toBe(seed.customer.fullName);
+    expect(payload.customerPhone).toBe('+97455199999');
+    // PII discipline — customer email MUST NOT be in the payload.
+    expect(JSON.stringify(payload)).not.toContain(seed.customer.email);
+  });
+
+  test('cross-vendor isolation — each booking enqueues to its OWN vendor only', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+
+    // Second vendor + activity in the same country/city/category.
+    const vendorUser2 = await ctx.prisma.user.create({
+      data: {
+        fullName: 'Other Vendor', email: 'vendor2@test.com',
+        password: '$2b$10$dummy.hash.for.tests.never.used.in.auth',
+        role: 'VENDOR', emailVerified: true,
+      },
+    });
+    const vendor2 = await ctx.prisma.vendor.create({
+      data: {
+        userId: vendorUser2.id, businessNameEn: 'Other Biz', businessNameAr: 'تست2',
+        businessId: 'BIZ-TEST-2', slug: 'other-biz',
+        countryId: seed.country.id, status: 'ACTIVE',
+      },
+    });
+    const activity2 = await ctx.prisma.activity.create({
+      data: {
+        vendorId: vendor2.id, categoryId: seed.category.id,
+        countryId: seed.country.id, cityId: seed.city.id,
+        titleEn: 'Other Tour', titleAr: 'جولة2',
+        slug: 'other-tour-' + Math.random().toString(36).slice(2, 8),
+        descriptionEn: 'desc', descriptionAr: 'وصف',
+        locationAddress: 'Doha West Bay',
+        locationLat: 25.32, locationLng: 51.52,
+        bookingType: 'HOURLY', pricingModel: 'PER_PERSON',
+        pricePerPerson: 100, capacity: 10,
+        durationValue: 2, checkInTime: '09:00', checkOutTime: '21:00',
+        coverImage: '/placeholder.webp', status: 'ACTIVE',
+      },
+    });
+
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' }, create: { id: 'singleton' }, update: {},
+    });
+    await ctx.prisma.user.update({
+      where: { id: seed.customer.id }, data: { loyaltyPoints: 40_000 },
+    });
+    await ctx.prisma.loyaltyLedger.create({
+      data: {
+        userId: seed.customer.id, delta: 40_000, balanceAfter: 40_000,
+        source: 'ADMIN_ADJUST', actorType: 'SYSTEM', reason: 'genesis',
+      },
+    });
+
+    const r1 = await svc.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7), slotTime: '10:00', guests: 1,
+      bookingPhone: '+97455100001', redeemPoints: 15_000,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    const r2 = await svc.createBooking(seed.customer.id, {
+      activityId: activity2.id,
+      checkInDate: futureDate(7), slotTime: '14:00', guests: 1,
+      bookingPhone: '+97455100002', redeemPoints: 15_000,
+      idempotencyKey: crypto.randomUUID(),
+    });
+
+    const allVendorRows = await ctx.prisma.emailOutbox.findMany({
+      where: { emailType: 'VENDOR_BOOKING_NOTIFICATION' },
+    });
+    expect(allVendorRows).toHaveLength(2);
+
+    const row1 = allVendorRows.find((r) => r.bookingId === r1.booking.id);
+    const row2 = allVendorRows.find((r) => r.bookingId === r2.booking.id);
+    expect(row1!.recipient).toBe(seed.vendorUser.email);
+    expect(row2!.recipient).toBe(vendorUser2.email);
+    // Belt-and-braces — never crossed wires.
+    expect(row1!.recipient).not.toBe(vendorUser2.email);
+    expect(row2!.recipient).not.toBe(seed.vendorUser.email);
+  });
+
+  test('soft-deleted vendor (email ends @deleted.local) → no vendor outbox row is created', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+
+    // Soft-delete the vendor's user — anonymise email to the sentinel.
+    await ctx.prisma.user.update({
+      where: { id: seed.vendorUser.id },
+      data: { email: `${seed.vendorUser.id}@deleted.local`, deletedAt: new Date() },
+    });
+
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' }, create: { id: 'singleton' }, update: {},
+    });
+    await ctx.prisma.user.update({
+      where: { id: seed.customer.id }, data: { loyaltyPoints: 20_000 },
+    });
+    await ctx.prisma.loyaltyLedger.create({
+      data: {
+        userId: seed.customer.id, delta: 20_000, balanceAfter: 20_000,
+        source: 'ADMIN_ADJUST', actorType: 'SYSTEM', reason: 'genesis',
+      },
+    });
+
+    const res = await svc.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7), slotTime: '10:00', guests: 1,
+      bookingPhone: '+97455100099', redeemPoints: 15_000,
+      idempotencyKey: crypto.randomUUID(),
+    });
+
+    const vendorRow = await ctx.prisma.emailOutbox.findFirst({
+      where: { bookingId: res.booking.id, emailType: 'VENDOR_BOOKING_NOTIFICATION' },
+    });
+    expect(vendorRow).toBeNull();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

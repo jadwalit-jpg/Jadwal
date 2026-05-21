@@ -1586,7 +1586,17 @@ export class BookingsService {
     if (booking.status === 'CONFIRMED') {
       // Pull `slug` alongside `userId` — the vendor portal is namespaced by
       // slug (/vendor/[slug]/*). Linking to /vendor/<UUID>/bookings 404s.
-      const vendorUser = await db.vendor.findUnique({ where: { id: booking.vendorId }, select: { userId: true, slug: true } });
+      // Also pull the vendor user's email + name + preferred language so we
+      // can enqueue the vendor booking-notification email in the same block
+      // without a second round-trip.
+      const vendorUser = await db.vendor.findUnique({
+        where: { id: booking.vendorId },
+        select: {
+          userId: true,
+          slug: true,
+          user: { select: { email: true, fullName: true, preferredLanguage: true } },
+        },
+      });
       if (vendorUser) {
         this.notificationService.send({
           userId: vendorUser.userId,
@@ -1595,6 +1605,61 @@ export class BookingsService {
           message: `New booking ${booking.ref} — ${dto.guests} guest(s)`,
           link: `/vendor/${vendorUser.slug}/bookings`,
         });
+
+        // Vendor booking-notification email — fires on every CONFIRMED-at-
+        // create-time booking (full-Wanasa-points coverage; PAY2M is skipped).
+        // The PAY2M success branch in payment.service.handleCallback enqueues
+        // the parallel email for paid bookings. Cross-vendor leak proof:
+        // `booking.vendorId` is a non-null FK, vendor.userId is @unique, so
+        // exactly one User.email is reachable per booking.
+        const vendorEmail = vendorUser.user.email;
+        if (vendorEmail && !vendorEmail.endsWith('@deleted.local')) {
+          // Mirror the date/time formatting used by the customer enqueue at
+          // payment.service.handleCallback (~line 905-913). totalPrice is
+          // ALREADY post-coupon (set as afterCouponPrice during create) —
+          // subtracting couponDiscount again would double-count the discount.
+          // Vendor sees the customer's gross booking value (post-coupon
+          // activity price + service fee), Wanasa redemption excluded since
+          // points reduce what the customer pays, not what the vendor earns.
+          const totalForEmail = Number(booking.totalPrice) + Number(booking.serviceFee);
+          const startDate = new Date(booking.startDatetime);
+          const dateStr = startDate.toLocaleDateString('en-GB', {
+            day: 'numeric', month: 'short', year: 'numeric',
+          });
+          const timeStr = activity.bookingType === 'HOURLY'
+            ? startDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })
+            : activity.checkInTime ?? undefined;
+          try {
+            await db.emailOutbox.create({
+              data: {
+                emailType: 'VENDOR_BOOKING_NOTIFICATION',
+                recipient: vendorEmail,
+                bookingId: booking.id,
+                payload: {
+                  vendorName: vendorUser.user.fullName,
+                  vendorSlug: vendorUser.slug,
+                  bookingRef: booking.ref,
+                  bookingId: booking.id,
+                  activityTitle: activity.titleEn,
+                  date: dateStr,
+                  ...(timeStr ? { time: timeStr } : {}),
+                  guests: dto.guests,
+                  totalAmount: totalForEmail.toFixed(2),
+                  currency: booking.currencyCode,
+                  customerName: auditUser?.fullName ?? 'Customer',
+                  customerPhone: booking.bookingPhone,
+                  ...(activity.locationAddress ? { locationAddress: activity.locationAddress } : {}),
+                },
+              },
+            });
+          } catch (err: unknown) {
+            // Booking is already committed; swallow the enqueue failure to
+            // avoid breaking the booking flow. Reconciliation can spot a
+            // CONFIRMED booking with no vendor outbox row.
+            const kind = err instanceof Error ? err.name : 'UnknownError';
+            console.warn(`[bookings] vendor email enqueue failed for booking ${booking.id} (${kind})`);
+          }
+        }
       }
       this.notificationService.notifyAdmins({
         type: 'BOOKING_NEW',

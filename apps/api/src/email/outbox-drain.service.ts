@@ -112,10 +112,61 @@ export class OutboxDrainService {
         );
         return ok ? 'sent' : 'send_failed';
       }
+      case 'VENDOR_BOOKING_NOTIFICATION': {
+        // Defence-in-depth: validate the payload shape before passing to the
+        // template. A buggy enqueue site can land a row here with missing
+        // fields; without this guard the template would render literal
+        // "undefined" strings or crash inside escapeHtml(). A malformed row
+        // is classified `unknown_type` so it gives up after MAX_ATTEMPTS
+        // with EMAIL_OUTBOX_UNKNOWN_TYPE rather than masquerading as a
+        // Resend outage in lastError.
+        if (!OutboxDrainService.isVendorBookingNotificationPayload(row.payload)) {
+          this.logger.error({ event: 'EMAIL_OUTBOX_INVALID_PAYLOAD', emailType: row.emailType });
+          return 'unknown_type';
+        }
+        const ok = await this.emailService.sendVendorBookingNotification(
+          row.recipient,
+          row.payload,
+        );
+        return ok ? 'sent' : 'send_failed';
+      }
       default:
         this.logger.error({ event: 'EMAIL_OUTBOX_UNKNOWN_TYPE', emailType: row.emailType });
         return 'unknown_type';
     }
+  }
+
+  /**
+   * Runtime shape guard for the VENDOR_BOOKING_NOTIFICATION payload. The
+   * `payload` Json column is typed loosely in Prisma; this narrows it before
+   * we feed it to the template. Required string fields must be non-empty;
+   * `guests` must be a number; optional fields (`time`, `locationAddress`)
+   * pass if absent or string-typed.
+   */
+  private static isVendorBookingNotificationPayload(
+    payload: unknown,
+  ): payload is Parameters<EmailService['sendVendorBookingNotification']>[1] {
+    if (!payload || typeof payload !== 'object') return false;
+    const p = payload as Record<string, unknown>;
+    // Required strings must be present AND non-empty after trimming —
+    // an empty string would render literal whitespace in the email body
+    // (e.g. a missing bookingRef would produce "Reference: " with nothing
+    // after the colon). vendorName/customerName etc. don't have to be
+    // sanitary-clean; the template's escapeHtml() handles that. We only
+    // reject genuinely empty values here.
+    const requiredStrings = [
+      'vendorName', 'bookingRef', 'bookingId', 'vendorSlug',
+      'activityTitle', 'date', 'totalAmount', 'currency',
+      'customerName', 'customerPhone',
+    ] as const;
+    for (const k of requiredStrings) {
+      const v = p[k];
+      if (typeof v !== 'string' || v.trim().length === 0) return false;
+    }
+    if (typeof p.guests !== 'number' || !Number.isFinite(p.guests)) return false;
+    if (p.time !== undefined && typeof p.time !== 'string') return false;
+    if (p.locationAddress !== undefined && typeof p.locationAddress !== 'string') return false;
+    return true;
   }
 
   /** Bump the attempt counter; either schedule the next retry (jittered
