@@ -48,6 +48,13 @@ function VendorAuthContent() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState(false);
   const [countryId, setCountryId] = useState('');
+  // Explicit T&P consent — gated submit on the register tab. Per the launch-prep
+  // §5.A plan the vendor agreement carries different commercial weight than
+  // the customer agreement (commission, payouts, suspension are vendor-only),
+  // so we require a checkbox tick instead of the implied-consent text the
+  // customer form uses. T&P content reuses the existing customer
+  // `/privacy` + `/terms` pages until the lawyer-reviewed vendor pages ship.
+  const [agreedTerms, setAgreedTerms] = useState(false);
   const [businessNameEn, setBusinessNameEn] = useState('');
   const [slug, setSlug] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
@@ -142,6 +149,10 @@ function VendorAuthContent() {
     if (!slugCheck.valid) errs.slug = (slugCheck as { error: string }).error;
 
     if (!countryId) errs.countryId = 'Please select a country';
+
+    // Defence in depth — the submit button is also disabled until the checkbox
+    // is ticked, but a hand-crafted POST could bypass the disabled attribute.
+    if (!agreedTerms) errs.agreedTerms = t('vendor.mustAgreeTerms');
 
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
@@ -317,6 +328,16 @@ function VendorAuthContent() {
                 >
                   {isLoggingIn ? t('auth.signingIn') : t('vendor.signIn')}
                 </button>
+
+                {/* Informational T&P note on the login tab — no checkbox here
+                    (consent was given at registration). The visible reminder
+                    keeps the legal links one click away on every sign-in. */}
+                <p className="mt-4 text-center text-xs text-gray-500 dark:text-slate-500">
+                  {t('vendor.loginAgreeNote')}{' '}
+                  <Link href="/terms" className="underline hover:text-gray-700 dark:hover:text-slate-300">{t('terms.title')}</Link>
+                  {' '}{t('auth.and')}{' '}
+                  <Link href="/privacy" className="underline hover:text-gray-700 dark:hover:text-slate-300">{t('privacy.title')}</Link>
+                </p>
               </form>
             )}
 
@@ -406,10 +427,41 @@ function VendorAuthContent() {
                   />
                 </div>
 
+                {/* T&P consent — mandatory. Submit button stays disabled
+                    until the checkbox is ticked AND handleRegister also
+                    re-asserts the value as defence in depth. */}
+                <div>
+                  <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={agreedTerms}
+                      onChange={(e) => {
+                        setAgreedTerms(e.target.checked);
+                        if (e.target.checked && fieldErrors.agreedTerms) {
+                          setFieldErrors((prev) => {
+                            const { agreedTerms: _, ...rest } = prev;
+                            return rest;
+                          });
+                        }
+                      }}
+                      className="mt-0.5 h-4 w-4 rounded border-gray-300 dark:border-slate-700 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <span>
+                      {t('vendor.agreeTerms')}{' '}
+                      <Link href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 underline hover:text-blue-700 dark:hover:text-blue-300">{t('terms.title')}</Link>
+                      {' '}{t('auth.and')}{' '}
+                      <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 underline hover:text-blue-700 dark:hover:text-blue-300">{t('privacy.title')}</Link>
+                    </span>
+                  </label>
+                  {fieldErrors.agreedTerms && (
+                    <p className="mt-1.5 text-xs text-red-500">{fieldErrors.agreedTerms}</p>
+                  )}
+                </div>
+
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 shadow-sm"
+                  disabled={isSubmitting || !agreedTerms}
+                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                 >
                   {isSubmitting ? t('vendor.submitting') : t('vendor.submitRegistration')}
                 </button>
