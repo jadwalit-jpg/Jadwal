@@ -73,20 +73,16 @@ const REQUIRED_IN_PRODUCTION = [
   // feedback loop goes dark, which is a Resend-account-ban risk. Store as
   // SSM SecureString /jadwal/prod/RESEND_WEBHOOK_SECRET.
   'RESEND_WEBHOOK_SECRET',
+  // HMAC key for the per-(customer, activity) reviewer pseudonym in
+  // GET /catalog/activities/:slug (see CatalogController.reviewerPseudonym).
+  // The pseudonym still works without it (degrades to unkeyed SHA-256) but
+  // defense against database compromise is reduced — an attacker with leaked
+  // customerId + activityId pairs could rebuild every pseudonym without the
+  // secret. Once the SSM param + task-def wiring are in place this becomes
+  // a fail-fast guard so a future regression can't ship prod without it.
+  // Store as SSM SecureString /jadwal/prod/REVIEW_HASH_SECRET.
+  'REVIEW_HASH_SECRET',
 ];
-
-// NOT in REQUIRED_IN_PRODUCTION (but RECOMMENDED) — `REVIEW_HASH_SECRET`
-// is the HMAC key for the per-(customer, activity) reviewer pseudonym in
-// GET /catalog/activities/:slug. When empty (current default), the pseudonym
-// still works but degrades to unkeyed SHA-256 — defense against DB
-// compromise is reduced. Adding it would block prod deploy until the SSM
-// param exists, so we leave the var optional and surface the ops follow-up
-// in the SECURITY.md Defense Architecture section instead.
-//
-// Generate via `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
-// and store as SSM SecureString /jadwal/prod/REVIEW_HASH_SECRET. Once the
-// SSM param is created AND wired into infra/ecs/api-task.json's secrets[],
-// a follow-up PR can promote this to REQUIRED_IN_PRODUCTION.
 
 async function bootstrap() {
   // ─── Production env guard ────────────────────────────────────────────────

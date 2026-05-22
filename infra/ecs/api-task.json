@@ -67,6 +67,7 @@
         { "name": "EMAIL_QUOTA_PER_IP_PER_DAY",   "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/EMAIL_QUOTA_PER_IP_PER_DAY" },
         { "name": "EMAIL_QUOTA_PLATFORM_PER_DAY", "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/EMAIL_QUOTA_PLATFORM_PER_DAY" },
         { "name": "UNSUBSCRIBE_TOKEN_SECRET",     "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/UNSUBSCRIBE_TOKEN_SECRET" },
+        { "name": "REVIEW_HASH_SECRET",           "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/REVIEW_HASH_SECRET" },
         { "name": "REFERENCE_CACHE_ENABLED",      "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/REFERENCE_CACHE_ENABLED" },
         { "name": "REFERENCE_CACHE_TTL_SEC",      "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/REFERENCE_CACHE_TTL_SEC" },
         { "name": "AVAILABILITY_CACHE_ENABLED",   "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/AVAILABILITY_CACHE_ENABLED" },
