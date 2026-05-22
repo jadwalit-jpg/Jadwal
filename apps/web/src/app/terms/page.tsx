@@ -6,7 +6,7 @@ import { ScrollText } from 'lucide-react';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 
-const LAST_UPDATED = '2026-04-30';
+const LAST_UPDATED = '2026-05-22';
 
 export default function TermsPage() {
   const { t } = useTranslation();
@@ -15,9 +15,12 @@ export default function TermsPage() {
     { key: 'acceptance', paragraphs: ['terms.acceptance.p1'] },
     { key: 'platform', paragraphs: ['terms.platform.p1'] },
     { key: 'accounts', paragraphs: ['terms.accounts.p1', 'terms.accounts.p2'] },
+    { key: 'accountTermination', paragraphs: ['terms.accountTermination.p1', 'terms.accountTermination.p2'] },
     { key: 'bookings', paragraphs: ['terms.bookings.p1', 'terms.bookings.p2'] },
     { key: 'cancellation', paragraphs: ['terms.cancellation.p1', 'terms.cancellation.p2'] },
+    { key: 'forceMajeure', paragraphs: ['terms.forceMajeure.p1'] },
     { key: 'vendorResp', paragraphs: ['terms.vendorResp.p1'] },
+    { key: 'vendorCommercial', paragraphs: ['terms.vendorCommercial.p1', 'terms.vendorCommercial.p2', 'terms.vendorCommercial.p3'] },
     { key: 'prohibited', paragraphs: ['terms.prohibited.p1'] },
     { key: 'ip', paragraphs: ['terms.ip.p1'] },
     { key: 'liability', paragraphs: ['terms.liability.p1'] },

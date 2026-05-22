@@ -6,7 +6,7 @@ import { ShieldCheck } from 'lucide-react';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 
-const LAST_UPDATED = '2026-04-30';
+const LAST_UPDATED = '2026-05-22';
 
 type SectionDef =
   | { key: string; paragraphs: string[] }
