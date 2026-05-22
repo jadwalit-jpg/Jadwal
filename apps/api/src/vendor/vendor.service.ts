@@ -417,7 +417,19 @@ export class VendorService {
       db.booking.findMany({
         where,
         include: {
-          customer: { select: { fullName: true, email: true, phone: true } },
+          // Vendor needs `fullName` to greet the customer + `phone` to
+          // coordinate the booking. `email` is intentionally OMITTED:
+          // vendors don't operationally need to email customers directly
+          // — the platform's booking-confirmation + vendor-notification
+          // emails handle that. Withholding email minimises PII exposure
+          // (PDPPL data minimisation) AND limits damage if a vendor
+          // account is compromised: the attacker can't harvest a target
+          // list of customer email addresses for spam/phishing.
+          //
+          // If a future vendor support workflow needs vendor-to-customer
+          // email, route it through a platform-mediated endpoint that
+          // audits + rate-limits each outbound message.
+          customer: { select: { fullName: true, phone: true } },
           // bookingType + durationValue let the UI render the actual booked
           // time range for HOURLY bookings (now flex-length), not just the
           // date. Without these the vendor can't tell if a customer booked
