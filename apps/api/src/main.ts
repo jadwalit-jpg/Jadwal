@@ -20,6 +20,7 @@ import { join } from 'path';
 import { json as bodyJson, raw as bodyRaw, urlencoded as bodyUrlencoded } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { envNumber } from './common/env';
+import { parseCorsOrigins } from './common/cors-origins';
 
 const REQUIRED_IN_PRODUCTION = [
   'JWT_SECRET',
@@ -216,6 +217,13 @@ async function bootstrap() {
           formAction: ["'self'", 'https://pay.pay2m.com'],
         },
       },
+      // crossOriginEmbedderPolicy disabled: COEP would block the PAY2M
+      // checkout iframe (pay.pay2m.com — allowed in `formAction` above).
+      // Google OAuth is unaffected: it uses a full-page redirect, not
+      // an embed. Real damage is bounded: our own pages never embed
+      // third-party scripts or iframes that need postMessage isolation
+      // from our origin, and CSP `frame-ancestors 'none'` already blocks
+      // anyone from framing us.
       crossOriginEmbedderPolicy: false,
       // HSTS gated on ENABLE_HSTS=true. NODE_ENV=production isn't
       // enough — the local prod-build container still runs over HTTP
@@ -312,13 +320,24 @@ async function bootstrap() {
 
   // ─── CORS ───────────────────────────────────────────────────────────────
   // Production: CORS_ORIGIN is required (enforced by startup guard above).
+  // Each entry is URL-validated via `parseCorsOrigins` so a typo'd origin
+  // (e.g. "https://jadwal.q" instead of ".qa") fails-fast at boot rather
+  // than silently dropping cross-origin requests at runtime — silent drops
+  // are invisible on the server side and only visible as a CORS error in
+  // the browser's console.
   // maxAge: 24h preflight cache — Chrome/Firefox cap at 86400; higher
   // values are silently truncated. Safari caps at 5 min regardless.
   // optionsSuccessStatus: 204 — explicit no-body response on preflight;
   // some legacy proxies dislike 200 with no body.
-  const corsOrigin = process.env.CORS_ORIGIN!;
+  let allowedOrigins: string[];
+  try {
+    allowedOrigins = parseCorsOrigins(process.env.CORS_ORIGIN ?? '');
+  } catch (err) {
+    console.error(`\n[FATAL] ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
   app.enableCors({
-    origin: corsOrigin.split(',').map((o) => o.trim()),
+    origin: allowedOrigins,
     credentials: true,
     maxAge: 86_400,
     optionsSuccessStatus: 204,
