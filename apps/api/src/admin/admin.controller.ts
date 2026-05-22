@@ -551,24 +551,29 @@ export class AdminController {
   }
 
   // ─── Export Data ──────────────────────────────────────────────
+  // All four export endpoints now require pagination via ExportPaginationDto
+  // (default 1000, max 5000). Previously these called findMany() with no
+  // `take` limit — fine today but a memory + DB-CPU bomb at scale. The
+  // payload shape is unchanged; admins paginating large exports send
+  // `?page=N&limit=M` (limit capped at 5000).
   @Get('export/users')
-  exportUsers(@Query('role') role?: string) {
-    return this.adminService.exportUsers(role);
+  exportUsers(@Query('role') role: string | undefined, @Query() query: ExportPaginationDto) {
+    return this.adminService.exportUsers(role, query);
   }
 
   @Get('export/vendors')
-  exportVendors() {
-    return this.adminService.exportVendors();
+  exportVendors(@Query() query: ExportPaginationDto) {
+    return this.adminService.exportVendors(query);
   }
 
   @Get('export/activities')
-  exportActivities() {
-    return this.adminService.exportActivities();
+  exportActivities(@Query() query: ExportPaginationDto) {
+    return this.adminService.exportActivities(query);
   }
 
   @Get('export/bookings')
-  exportBookings() {
-    return this.adminService.exportBookings();
+  exportBookings(@Query() query: ExportPaginationDto) {
+    return this.adminService.exportBookings(query);
   }
 
   // ─── System Maintenance ─────────────────────────────────────────────────────
