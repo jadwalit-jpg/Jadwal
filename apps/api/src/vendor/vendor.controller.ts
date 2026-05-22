@@ -113,8 +113,11 @@ export class VendorController {
 
   // ─── Refund Requests ─────────────────────────────────────
   // Queue of customer-cancelled bookings awaiting this vendor's refund decision.
+  // Sits at the class-level RATE_LIMIT_VENDOR (60/min) — kept in line with the
+  // rest of the vendor dashboard reads. The previous RATE_LIMIT_READ override
+  // (15/min) was too tight for a busy vendor checking the queue during a
+  // refund spike.
   @Get('refund-requests')
-  @Throttle(RATE_LIMIT_READ)
   getRefundRequests(@CurrentUser() user: RequestUser) {
     return this.bookingsService.getVendorRefundRequests(user.id);
   }
