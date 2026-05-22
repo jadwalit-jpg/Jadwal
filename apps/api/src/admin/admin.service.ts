@@ -2735,23 +2735,98 @@ export class AdminService {
     return { updated: result.count };
   }
 
+  /**
+   * Bulk soft-delete users.
+   *
+   * Mirrors single-user `deleteUser` safety + cascade:
+   *   1. Refuse if ANY user in the batch is ADMIN (no role-targeted purge).
+   *   2. Refuse if ANY user has an unresolved booking (PENDING / CONFIRMED)
+   *      as either customer OR vendor side. Either resolve those first
+   *      (cancel + refund) or suspend the vendor to trigger the auto-refund
+   *      cascade — same operator workflow as single delete.
+   *   3. Iterate `deleteUser(userId)` for each user → reuses the tested
+   *      $transaction-bound soft-delete cascade (anonymise PII, set
+   *      deletedAt + isDeactivated, soft-delete vendor profile + activities,
+   *      hard-delete ephemerals: refreshTokens, pushSubscriptions,
+   *      notifications, claimedCoupons, likes).
+   *
+   * The pre-check is atomic across the batch (all-or-nothing): a single
+   * blocking user fails the whole batch. The per-user soft-delete is then
+   * idempotent — `deleteUser` short-circuits on `deletedAt != null` — so
+   * retrying a partially-applied batch is safe.
+   *
+   * Previous implementation was a hard `deleteMany` that bypassed every
+   * safety check + would FK-fail (Prisma P2003) on any user with bookings.
+   * That failure mode was inconsistent (admin couldn't tell from the error
+   * which user blocked, and a clean batch hard-deleted bookings via cascade
+   * loss-of-audit-trail). The new path is explicit + auditable.
+   */
   async bulkDeleteUsers(userIds: string[]) {
-    // Prevent deleting admins
-    const admins = await this.prisma.client.user.findMany({
+    if (userIds.length === 0) return { deleted: 0 };
+
+    const db = this.prisma.client;
+
+    // ── 1. Refuse if any in the batch is ADMIN ─────────────────────
+    const admins = await db.user.findMany({
       where: { id: { in: userIds }, role: 'ADMIN' },
-      select: { id: true },
+      select: { id: true, fullName: true },
     });
     if (admins.length > 0) {
-      throw new ForbiddenException('Cannot bulk delete admin users');
+      throw new ForbiddenException(
+        `Cannot bulk delete admin users (${admins.length} of ${userIds.length} are ADMIN).`,
+      );
     }
-    const result = await this.prisma.client.user.deleteMany({
-      where: { id: { in: userIds }, role: { not: 'ADMIN' } },
-    });
-    return { deleted: result.count };
+
+    // ── 2. Refuse if any user has unresolved bookings ─────────────
+    // Two angles per the single-user pattern: bookings as customer, and
+    // bookings on vendor activities (via vendor.userId join). One Promise.all
+    // = two count queries regardless of batch size.
+    const [blockingAsCustomer, blockingAsVendor] = await Promise.all([
+      db.booking.count({
+        where: {
+          customerId: { in: userIds },
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        },
+      }),
+      db.booking.count({
+        where: {
+          vendor: { userId: { in: userIds } },
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        },
+      }),
+    ]);
+    const totalBlocking = blockingAsCustomer + blockingAsVendor;
+    if (totalBlocking > 0) {
+      throw new ForbiddenException(
+        `Cannot bulk delete: ${totalBlocking} unresolved booking(s) in the batch (${blockingAsCustomer} as customer, ${blockingAsVendor} as vendor). Resolve or suspend the relevant vendor first.`,
+      );
+    }
+
+    // ── 3. Iterate single-user soft-delete (idempotent) ────────────
+    // `deleteUser` is idempotent on already-deletedAt rows so a replay of
+    // this bulk call after a partial failure is safe. Sequential is fine —
+    // bulk is capped at 100 user IDs (BulkDeleteUsersDto.ArrayMaxSize) and
+    // each soft-delete is a single transaction.
+    let deleted = 0;
+    for (const userId of userIds) {
+      await this.deleteUser(userId);
+      deleted++;
+    }
+    return { deleted };
   }
 
   // ─── Export Data ──────────────────────────────────────────────
-  async exportUsers(role?: string) {
+  // Export endpoints share the same pagination + ordering contract as
+  // exportPayouts (defined above): ExportPaginationDto gives a higher
+  // ceiling (5000 max) than the standard PaginationDto, suitable for
+  // admin CSV exports. Stable `[createdAt desc, id desc]` tie-break so
+  // rows created in the same second don't shuffle between pages.
+  //
+  // Without these caps, a /admin/export/{users,vendors,activities,bookings}
+  // call would `findMany({})` with no `take` limit — fine today at a few
+  // thousand rows but a memory + DB-CPU bomb once the platform scales.
+
+  async exportUsers(role: string | undefined, query: ExportPaginationDto = {}) {
     // Whitelist the role value to avoid injecting arbitrary strings into the WHERE clause.
     // Exports are role-scoped by policy — no mixed-role CSVs allowed.
     const ALLOWED_ROLES = ['CUSTOMER', 'VENDOR', 'ADMIN'] as const;
@@ -2759,36 +2834,50 @@ export class AdminService {
     if (role && (ALLOWED_ROLES as readonly string[]).includes(role)) {
       where.role = role as (typeof ALLOWED_ROLES)[number];
     }
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 1_000;
     return this.prisma.client.user.findMany({
       where,
       select: { id: true, fullName: true, email: true, phone: true, role: true, isDeactivated: true, createdAt: true },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: (page - 1) * limit,
     });
   }
 
-  async exportVendors() {
+  async exportVendors(query: ExportPaginationDto = {}) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 1_000;
     return this.prisma.client.vendor.findMany({
       include: {
         user: { select: { fullName: true, email: true } },
         country: { select: { nameEn: true } },
         _count: { select: { activities: true, bookings: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: (page - 1) * limit,
     });
   }
 
-  async exportActivities() {
+  async exportActivities(query: ExportPaginationDto = {}) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 1_000;
     return this.prisma.client.activity.findMany({
       include: {
         vendor: { select: { businessNameEn: true } },
         country: { select: { nameEn: true } },
         category: { select: { nameEn: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: (page - 1) * limit,
     });
   }
 
-  async exportBookings() {
+  async exportBookings(query: ExportPaginationDto = {}) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 1_000;
     return this.prisma.client.booking.findMany({
       include: {
         customer: { select: { fullName: true, email: true } },
@@ -2796,7 +2885,9 @@ export class AdminService {
         vendor: { select: { businessNameEn: true } },
         payment: { select: { status: true, method: true, paidAt: true, amount: true, gatewayTxnId: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: (page - 1) * limit,
     });
   }
 
