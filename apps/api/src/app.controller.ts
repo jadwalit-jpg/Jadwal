@@ -1,5 +1,6 @@
 import { Controller, Get, HttpCode, ServiceUnavailableException, Logger } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import { Public } from './auth/decorators/public.decorator';
 import { AppService } from './app.service';
 import { PrismaService } from './prisma/prisma.service';
 import { RedisService } from './redis/redis.service';
@@ -37,6 +38,7 @@ export class AppController {
    * reachable. /api/health stays as a deeper liveness signal (process alive,
    * event loop responsive) for orchestration tools that distinguish the two.
    */
+  @Public()
   @Get('health')
   @SkipThrottle()
   getHealth(): string {
@@ -62,6 +64,7 @@ export class AppController {
    * here would mean a ready probe taking 15+ s to return, which the ALB
    * interprets as unhealthy. A fast 503 is better than a slow 200.
    */
+  @Public()
   @Get('health/ready')
   @SkipThrottle()
   @HttpCode(200)

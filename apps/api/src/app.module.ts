@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { RealIpThrottlerGuard } from './common/guards/real-ip-throttler.guard';
+import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { APP_GUARD } from '@nestjs/core';
 import { SentryModule } from '@sentry/nestjs/setup';
 import { LoggerModule } from 'nestjs-pino';
@@ -161,9 +162,20 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
   controllers: [AppController],
   providers: [
     AppService,
-    // Custom throttler that keys on cf-connecting-ip (real client IP) so
-    // per-IP rate limits actually fire per user — see real-ip-throttler.guard.ts.
+    // Global guards run in registration order. Order matters here:
+    //   1. RealIpThrottlerGuard — extracts the real client IP from
+    //      cf-connecting-ip / req.ip and applies per-IP rate limits BEFORE
+    //      any auth lookup. A flood of un-authed requests can't burn DB
+    //      lookups in the JWT strategy.
+    //   2. JwtAuthGuard — enforces JWT authentication by default on every
+    //      endpoint. Endpoints that should remain public carry `@Public()`
+    //      (see auth/decorators/public.decorator.ts). This makes the auth
+    //      posture fail-CLOSED: a new endpoint that the developer forgot
+    //      to think about ships authenticated, not publicly accessible.
+    //      Existing per-controller `@UseGuards(JwtAuthGuard)` declarations
+    //      are preserved as belt-and-suspenders.
     { provide: APP_GUARD, useClass: RealIpThrottlerGuard },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],
 })
 export class AppModule implements NestModule {

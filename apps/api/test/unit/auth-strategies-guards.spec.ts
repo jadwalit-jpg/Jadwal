@@ -12,6 +12,7 @@ import { GoogleStrategy } from '../../src/auth/strategies/google.strategy';
 import { RolesGuard } from '../../src/auth/guards/roles.guard';
 import { JwtAuthGuard } from '../../src/auth/guards/jwt-auth.guard';
 import { GoogleAuthGuard } from '../../src/auth/guards/google-auth.guard';
+import { Reflector } from '@nestjs/core';
 import { UnauthorizedException } from '@nestjs/common';
 import { ROLES_KEY } from '../../src/auth/decorators/roles.decorator';
 
@@ -200,7 +201,11 @@ describe('RolesGuard', () => {
 
 describe('JwtAuthGuard + GoogleAuthGuard', () => {
   test('JwtAuthGuard is an instance of AuthGuard(jwt)', () => {
-    const g = new JwtAuthGuard();
+    // Reflector arg added 2026-05-22: JwtAuthGuard now reads @Public()
+    // metadata to short-circuit auth for opted-out routes under the
+    // globally-registered APP_GUARD. Tests that previously did
+    // `new JwtAuthGuard()` now need to pass a Reflector.
+    const g = new JwtAuthGuard(new Reflector());
     expect(g.canActivate).toBeInstanceOf(Function);
   });
 

@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { Public } from './decorators/public.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { RequestUser } from './interfaces/request-user.interface';
 import { GoogleProfile } from './strategies/google.strategy';
@@ -28,6 +29,7 @@ export class AuthController {
     private configService: ConfigService,
   ) {}
 
+  @Public()
   @Post('register')
   // STRICT (3/min) per-IP — bumped from AUTH on the live-prod hardening
   // pass. Account creation is high-value to attackers (bot signup → review
@@ -39,6 +41,7 @@ export class AuthController {
     return this.authService.registerAndLogin(dto, req);
   }
 
+  @Public()
   @Get('verify-email')
   @Throttle(RATE_LIMIT_AUTH)
   async verifyEmail(
@@ -57,18 +60,21 @@ export class AuthController {
     return this.authService.verifyEmail(token, response, req);
   }
 
+  @Public()
   @Post('resend-verification')
   @Throttle(RATE_LIMIT_STRICT)
   async resendVerification(@Body() dto: ResendVerificationDto, @Req() req: Request) {
     return this.authService.resendVerification(dto.email, req);
   }
 
+  @Public()
   @Post('register/vendor')
   @Throttle(RATE_LIMIT_STRICT)
   async registerVendor(@Body() dto: RegisterVendorDto, @Req() req: Request) {
     return this.authService.registerVendor(dto, req);
   }
 
+  @Public()
   @Post('login')
   // STRICT (3/min) on login — credential-stuffing attacks rely on
   // high-throughput login attempts. Per-account lockout (5 fails) +
@@ -82,7 +88,12 @@ export class AuthController {
     return this.authService.loginWithCheck(dto.email, dto.password, response, req);
   }
 
+  @Public()
   @Post('refresh')
+  // Refresh endpoint must be @Public(): the access-token JWT may already
+  // be expired (that's why the client is calling refresh). Auth here is
+  // by the RefreshToken cookie, which auth.service.refreshTokens
+  // validates against the DB.
   @Throttle(RATE_LIMIT_WRITE)
   async refresh(
     @Req() req: Request,
@@ -260,13 +271,16 @@ export class AuthController {
   // (20/min, 100/10min) — generous for an auth-completing endpoint that mints
   // session cookies. RATE_LIMIT_AUTH brings them in line with the rest of /auth/*.
 
+  @Public()
   @Get('google')
   @Throttle(RATE_LIMIT_AUTH)
   @UseGuards(GoogleAuthGuard)
   googleAuth() {
-    // GoogleAuthGuard embeds callbackUrl in OAuth state, then Passport redirects to Google
+    // GoogleAuthGuard embeds callbackUrl in OAuth state, then Passport redirects to Google.
+    // @Public() skips the global JwtAuthGuard; GoogleAuthGuard still runs.
   }
 
+  @Public()
   @Get('google/callback')
   @Throttle(RATE_LIMIT_AUTH)
   @UseGuards(GoogleAuthGuard)
@@ -336,12 +350,14 @@ export class AuthController {
 
   // ─── Password Reset ─────────────────────────────────────────────────────
 
+  @Public()
   @Post('forgot-password')
   @Throttle(RATE_LIMIT_STRICT)
   async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
     return this.authService.forgotPassword(dto.email, req);
   }
 
+  @Public()
   @Post('reset-password')
   // STRICT (3/min) — reset uses a one-time token, but tightening
   // per-IP throttle prevents token brute-forcing if the token entropy

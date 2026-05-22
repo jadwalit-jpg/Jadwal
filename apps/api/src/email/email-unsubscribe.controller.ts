@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
+import { Public } from '../auth/decorators/public.decorator';
 import { RATE_LIMIT_AUTH } from '../common/throttle-config';
 import { SecurityLoggerService } from '../common/services/security-logger.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -43,6 +44,7 @@ import { UnsubscribeDto } from './dto/unsubscribe.dto';
  * defense-in-depth against burst replay attempts.
  */
 @Controller('email/unsubscribe')
+@Public()
 export class EmailUnsubscribeController {
   private readonly logger = new Logger(EmailUnsubscribeController.name);
 
