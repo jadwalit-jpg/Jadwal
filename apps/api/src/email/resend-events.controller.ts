@@ -12,6 +12,7 @@ import type { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import { Webhook } from 'svix';
+import { Public } from '../auth/decorators/public.decorator';
 import { RATE_LIMIT_CALLBACK } from '../common/throttle-config';
 import { EmailSuppressionService } from './email-suppression.service';
 
@@ -87,6 +88,7 @@ export class ResendEventsController {
     this.webhook = secret ? new Webhook(secret) : null;
   }
 
+  @Public()
   @Post()
   @HttpCode(HttpStatus.OK)
   @Throttle(RATE_LIMIT_CALLBACK)

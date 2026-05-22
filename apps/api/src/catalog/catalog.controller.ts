@@ -1,5 +1,6 @@
 import { Controller, Get, Header, Param, Query, NotFoundException } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { Public } from '../auth/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReferenceDataCacheService } from '../redis/reference-data-cache.service';
 import { RATE_LIMIT_VENDOR } from '../common/throttle-config';
@@ -42,6 +43,7 @@ const CACHE_LISTING     = 'public, s-maxage=120,  stale-while-revalidate=600';
  * Base URL: /catalog
  */
 @Controller('catalog')
+@Public()
 export class CatalogController {
   constructor(
     private prisma: PrismaService,

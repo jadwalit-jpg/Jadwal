@@ -1,6 +1,7 @@
 import { Body, Controller, HttpCode, HttpStatus, Logger, Post, Req } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
+import { Public } from '../../auth/decorators/public.decorator';
 import { ClientErrorDto } from '../dto/client-error.dto';
 import { RATE_LIMIT_STRICT } from '../throttle-config';
 
@@ -33,6 +34,7 @@ import { RATE_LIMIT_STRICT } from '../throttle-config';
 export class ClientErrorController {
   private readonly logger = new Logger('ClientError');
 
+  @Public()
   @Post('client-error')
   @HttpCode(HttpStatus.NO_CONTENT)
   @Throttle(RATE_LIMIT_STRICT)

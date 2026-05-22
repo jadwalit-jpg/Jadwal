@@ -1,5 +1,6 @@
 import { Controller, Get, Req } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { Public } from '../auth/decorators/public.decorator';
 import { RATE_LIMIT_CALLBACK } from '../common/throttle-config';
 import { Request } from 'express';
 import { GeoService } from './geo.service';
@@ -9,6 +10,7 @@ import { GeoService } from './geo.service';
 export class GeoController {
   constructor(private geoService: GeoService) {}
 
+  @Public()
   @Get('detect')
   detect(@Req() req: Request) {
     // Single source of truth for proxy trust lives in main.ts via

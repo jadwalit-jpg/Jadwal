@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Query, BadRequestException } from '@nestjs/common';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
+import { Public } from '../auth/decorators/public.decorator';
 import { BookingsService } from './bookings.service';
 
 /**
@@ -8,6 +9,7 @@ import { BookingsService } from './bookings.service';
  * Skips the 'short' and 'long' global throttlers — those are for authenticated endpoints.
  */
 @Controller('availability')
+@Public()
 @SkipThrottle({ short: true, long: true })
 @Throttle({ availability: {} })
 export class AvailabilityController {

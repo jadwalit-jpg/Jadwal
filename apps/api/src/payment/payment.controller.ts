@@ -15,6 +15,7 @@ import { RATE_LIMIT_AUTH, RATE_LIMIT_CALLBACK, RATE_LIMIT_READ } from '../common
 import { ConfigService } from '@nestjs/config';
 import { PaymentService } from './payment.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/interfaces/request-user.interface';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
@@ -46,6 +47,7 @@ export class PaymentController {
    * No auth — customer may have lost session during redirect.
    * Verifies response, updates DB, then redirects to frontend.
    */
+  @Public()
   @Get('callback')
   @Throttle(RATE_LIMIT_CALLBACK)
   async handleCallback(
@@ -103,6 +105,7 @@ export class PaymentController {
    * Backup verification in case the browser redirect callback fails.
    * Processes identically to the callback but returns 200 OK instead of redirecting.
    */
+  @Public()
   @Post('callback/ipn')
   @Throttle(RATE_LIMIT_CALLBACK)
   async handleIpn(@Body() body: Pay2mCallbackDto) {

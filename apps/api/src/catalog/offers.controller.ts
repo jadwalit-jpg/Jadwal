@@ -4,6 +4,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { RATE_LIMIT_READ, RATE_LIMIT_WRITE } from '../common/throttle-config';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,6 +23,7 @@ export class OffersController {
    * Only shows admin coupons (vendorId = null), APPROVED, not expired.
    * NEVER returns the coupon code.
    */
+  @Public()
   @Get()
   @Throttle(RATE_LIMIT_READ)
   async listOffers(@Query() query: PaginationDto) {
