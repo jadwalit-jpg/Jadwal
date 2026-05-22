@@ -1194,47 +1194,62 @@
       "p1": "You must provide accurate information when creating an account. You are responsible for maintaining the security of your account credentials. You must not share your account with others or create multiple accounts.",
       "p2": "Phone verification is required to complete a booking. Email verification is required for email/password accounts."
     },
+    "accountTermination": {
+      "title": "4. Account Suspension and Termination",
+      "p1": "We may suspend or terminate your account if you breach these Terms, engage in fraudulent activity, or violate applicable laws. Where practicable, we will give you advance notice and an opportunity to address the issue before termination. In cases of suspected fraud, repeated abuse, or actions that risk other users or vendors, we may suspend access immediately without prior notice.",
+      "p2": "You may close your own account at any time via the account settings page. After termination, your personal data is anonymised in accordance with our Privacy Policy, but records required for accounting, tax, or regulatory compliance — including booking history, payment records, and audit logs — are retained for the periods required by Qatari law. If you believe your account was terminated in error, you may appeal by contacting our support team at the address listed in the Contact section."
+    },
     "bookings": {
-      "title": "4. Bookings & Payments",
+      "title": "5. Bookings & Payments",
       "p1": "All bookings are subject to availability and vendor confirmation. Prices displayed include the activity fee and a platform service fee. Payment is processed securely through our payment gateway — Jadwal never stores your card details.",
       "p2": "Upon successful payment, you will receive a booking confirmation with a reference number, activity details, and location information."
     },
     "cancellation": {
-      "title": "5. Cancellation & Refunds",
+      "title": "6. Cancellation & Refunds",
       "p1": "Cancellation policies are set by individual vendors and displayed on each activity page. If you cancel a confirmed booking, the applicable refund amount depends on the vendor's cancellation policy.",
-      "p2": "Jadwal reserves the right to cancel bookings in cases of fraud, vendor unavailability, or force majeure events. In such cases, a full refund will be processed."
+      "p2": "Jadwal reserves the right to cancel bookings in cases of fraud, vendor unavailability, or force majeure events. In such cases, a full refund will be processed. These cancellation and refund practices operate in compliance with the Qatar Consumer Protection Law (Law No. 8 of 2008), which sets minimum protections for consumers in commercial transactions."
+    },
+    "forceMajeure": {
+      "title": "7. Force Majeure",
+      "p1": "Neither Jadwal nor vendors shall be liable for any failure or delay in performing their obligations under these Terms when such failure or delay arises from circumstances beyond their reasonable control — including but not limited to acts of God, natural disasters, severe weather, war, terrorism, civil unrest, governmental action or restrictions, pandemics or public-health emergencies, strikes or labour disputes, network or utility failures, or any other event of force majeure. In such circumstances, affected bookings may be cancelled or rescheduled and any payments made will be refunded in accordance with the cancellation policy in effect at the time."
     },
     "vendorResp": {
-      "title": "6. Vendor Responsibilities",
+      "title": "8. Vendor Responsibilities",
       "p1": "Vendors are responsible for the accuracy of their activity listings, pricing, availability, and the quality of service delivered. Jadwal moderates listings but does not guarantee vendor performance."
     },
+    "vendorCommercial": {
+      "title": "9. Vendor Commercial Terms",
+      "p1": "Vendors who list activities on Jadwal agree to a platform commission on each completed booking. The applicable commission rate and any additional fees are disclosed in the vendor onboarding agreement and displayed in the vendor dashboard. Jadwal may adjust commission rates with prior notice communicated through the vendor portal.",
+      "p2": "Payouts to vendors are processed on a regular schedule (typically weekly), subject to a minimum payout threshold and verified bank details. Jadwal may withhold payouts in cases of pending disputes, suspected fraud, regulatory inquiries, or where required by court order. Bank-detail changes are subject to a security cool-down period before the next payout request can be approved.",
+      "p3": "Jadwal may suspend or terminate a vendor account for violations of these Terms, repeated customer complaints, regulatory non-compliance, or actions that damage the platform's reputation. Suspended vendors may appeal via the support channel. Earnings on completed bookings remain due to the vendor (subject to clawback for fraud or chargebacks), and pending bookings will be cancelled and refunded to customers in line with the cancellation policy."
+    },
     "prohibited": {
-      "title": "7. Prohibited Conduct",
+      "title": "10. Prohibited Conduct",
       "p1": "You agree not to: use the Platform for fraudulent purposes, attempt to circumvent payment systems, harass other users or vendors, upload malicious content, or violate any applicable laws."
     },
     "ip": {
-      "title": "8. Intellectual Property",
+      "title": "11. Intellectual Property",
       "p1": "All content on the Platform (logos, design, text, software) is owned by Jadwal or its licensors. You may not reproduce, distribute, or create derivative works without written permission."
     },
     "liability": {
-      "title": "9. Limitation of Liability",
+      "title": "12. Limitation of Liability",
       "p1": "Jadwal is not liable for any direct, indirect, or consequential damages arising from your use of the Platform or from any activity booked through the Platform. Our total liability is limited to the amount you paid for the specific booking in question."
     },
     "law": {
-      "title": "10. Governing Law",
-      "p1": "These Terms are governed by the laws of the State of Qatar. Any disputes shall be resolved in the courts of Doha, Qatar."
+      "title": "13. Governing Law",
+      "p1": "These Terms are governed by the laws of the State of Qatar, including (without limitation) the Qatar Personal Data Privacy Protection Law (Law No. 13 of 2016) and the Qatar Consumer Protection Law (Law No. 8 of 2008). Any disputes arising out of or in connection with these Terms shall be resolved exclusively in the competent courts of Doha, Qatar."
     },
     "loyalty": {
-      "title": "11. Wanasa Loyalty Points",
+      "title": "14. Wanasa Loyalty Points",
       "p1": "Customers earn Wanasa loyalty points on completed bookings according to the rate published in the Loyalty section of the Platform. Points have no cash value, are non-transferable, and cannot be exchanged for currency outside of the Platform's redemption flow.",
       "p2": "Jadwal reserves the right to adjust the earning rate, redemption rate, minimum redemption threshold, and expiry policy at any time, with reasonable notice posted on the Platform. Points obtained through fraud, refunded bookings, or violation of these Terms may be revoked without notice."
     },
     "changes": {
-      "title": "12. Changes to Terms",
+      "title": "15. Changes to Terms",
       "p1": "We may update these Terms from time to time. Continued use of the Platform after changes constitutes acceptance of the updated Terms. We will notify registered users of significant changes via email."
     },
     "contact": {
-      "title": "13. Contact",
+      "title": "16. Contact",
       "p1": "For questions about these Terms, contact AL Jadwal at jadwalit@gmail.com or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
     }
   },
@@ -1328,15 +1343,16 @@
     },
     "rights": {
       "title": "8. Your Rights",
-      "intro": "You have the right to:",
+      "intro": "Under the Qatar Personal Data Privacy Protection Law (Law No. 13 of 2016) — the PDPPL — you have the right to:",
       "items": [
         "Access your personal data",
         "Correct inaccurate data",
         "Delete your account and associated data",
         "Export your booking history",
-        "Withdraw consent for optional data processing"
+        "Withdraw consent for optional data processing",
+        "Object to processing of your personal data based on our legitimate interests (PDPPL Article 5)"
       ],
-      "contact": "To exercise these rights, contact us at the address below."
+      "contact": "To exercise these rights, contact us at the address below. We respond within the timeframes required by the PDPPL."
     },
     "children": {
       "title": "9. Children's Privacy",
@@ -1344,7 +1360,7 @@
     },
     "intlTransfer": {
       "title": "10. International Data Transfers",
-      "p1": "Jadwal is a Qatar-based platform, but for technical reasons our infrastructure runs on cloud providers outside Qatar. Specifically: (a) our database, application servers, and backups are hosted in Amazon Web Services Frankfurt (Germany) region; (b) our content delivery network and DNS are operated by Cloudflare globally; (c) push notifications are routed through Apple, Google, or Mozilla push services depending on your browser. By using the Platform, you acknowledge that your personal data is transferred and processed outside of Qatar. We rely on contractual safeguards (AWS Data Processing Addendum, Cloudflare Data Processing Addendum) to maintain confidentiality and integrity in transit and at rest."
+      "p1": "Jadwal is a Qatar-based platform, but for technical reasons our infrastructure runs on cloud providers outside Qatar. Specifically: (a) our database, application servers, and backups are hosted in Amazon Web Services Frankfurt (Germany) region; (b) our content delivery network and DNS are operated by Cloudflare globally; (c) push notifications are routed through Apple, Google, or Mozilla push services depending on your browser. By using the Platform, you acknowledge that your personal data is transferred and processed outside of Qatar. We rely on contractual safeguards (AWS Data Processing Addendum, Cloudflare Data Processing Addendum) to maintain confidentiality and integrity in transit and at rest. We process your personal data in compliance with the Qatar Personal Data Privacy Protection Law (Law No. 13 of 2016) ('PDPPL'), and we apply the appropriate safeguards required by Article 8 of the PDPPL when transferring personal data outside the State of Qatar."
     },
     "changes": {
       "title": "11. Changes to This Policy",
