@@ -217,12 +217,13 @@ async function bootstrap() {
           formAction: ["'self'", 'https://pay.pay2m.com'],
         },
       },
-      // crossOriginEmbedderPolicy disabled: COEP would block our PAY2M
-      // checkout iframe (pay.pay2m.com — allowed in `formAction` above) and
-      // Google OAuth's cross-origin popup. Real damage is bounded: our own
-      // pages never embed third-party scripts or iframes that need
-      // postMessage isolation from our origin, and CSP `frame-ancestors`
-      // already blocks us from being framed by anyone else.
+      // crossOriginEmbedderPolicy disabled: COEP would block the PAY2M
+      // checkout iframe (pay.pay2m.com — allowed in `formAction` above).
+      // Google OAuth is unaffected: it uses a full-page redirect, not
+      // an embed. Real damage is bounded: our own pages never embed
+      // third-party scripts or iframes that need postMessage isolation
+      // from our origin, and CSP `frame-ancestors 'none'` already blocks
+      // anyone from framing us.
       crossOriginEmbedderPolicy: false,
       // HSTS gated on ENABLE_HSTS=true. NODE_ENV=production isn't
       // enough — the local prod-build container still runs over HTTP

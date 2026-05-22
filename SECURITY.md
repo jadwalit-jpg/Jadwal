@@ -85,8 +85,10 @@ nonces. The threat model under which the above is sufficient:
 - All authenticated endpoints accept the credential **only** via the
   cookie — never via a header or query string an attacker page could
   forge.
-- No popup OAuth flow that would require relaxing `SameSite` to `Lax`.
-  (Google OAuth uses a full-page redirect, which is `Strict`-compatible.)
+- Google OAuth uses a full-page redirect (`window.location` →
+  Google → callback), **not** a popup. This is `SameSite=Strict`-
+  compatible because the cookie travels with a same-origin navigation
+  on return.
 
 If a future change adds a popup OAuth flow or an embed scenario that
 forces `SameSite=Lax`, this decision must be revisited — at that point a
@@ -121,9 +123,10 @@ debugging ergonomics for unknown clients.
 ### `crossOriginEmbedderPolicy: false`
 
 Helmet's COEP is disabled because it would block the PAY2M checkout
-iframe (`pay.pay2m.com`) and the Google OAuth popup. Cross-origin
-embeds we don't need are still blocked by `frame-ancestors 'none'` in
-the CSP — no page can iframe us.
+iframe (`pay.pay2m.com`). Google OAuth is unaffected — it uses a
+full-page redirect (see CSRF section above), not an embed. Cross-
+origin frames we don't need are still blocked by `frame-ancestors
+'none'` in the CSP — no page can iframe us.
 
 ### Audit-trail completeness — items considered and dismissed
 

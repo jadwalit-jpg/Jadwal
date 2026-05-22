@@ -27,6 +27,24 @@ describe('parseCorsOrigins', () => {
     expect(parseCorsOrigins('http://localhost:3000')).toEqual(['http://localhost:3000']);
   });
 
+  test('normalizes trailing slashes — Express cors does exact-string match', () => {
+    // A common operator typo: `CORS_ORIGIN=https://jadwal.qa/` (with slash).
+    // The browser sends `Origin: https://jadwal.qa` (no slash), and Express
+    // would silently reject every request. Normalising to `URL.origin`
+    // makes the env var forgiving for the operator.
+    expect(parseCorsOrigins('https://jadwal.qa/')).toEqual(['https://jadwal.qa']);
+  });
+
+  test('strips any accidental path / query / hash from each entry', () => {
+    expect(parseCorsOrigins('https://jadwal.qa/some/path?q=1#frag')).toEqual([
+      'https://jadwal.qa',
+    ]);
+  });
+
+  test('preserves port + http scheme through normalization', () => {
+    expect(parseCorsOrigins('http://localhost:3000/')).toEqual(['http://localhost:3000']);
+  });
+
   test('throws on a clearly malformed entry', () => {
     expect(() => parseCorsOrigins('https://jadwal.qa,not-a-url')).toThrow(
       /Malformed CORS_ORIGIN entry "not-a-url"/,
