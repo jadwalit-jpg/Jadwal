@@ -1,5 +1,7 @@
 import { Controller, Get, Header, Param, Query, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
+import * as crypto from 'crypto';
 import { Public } from '../auth/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReferenceDataCacheService } from '../redis/reference-data-cache.service';
@@ -45,10 +47,51 @@ const CACHE_LISTING     = 'public, s-maxage=120,  stale-while-revalidate=600';
 @Controller('catalog')
 @Public()
 export class CatalogController {
+  /**
+   * Secret used to HMAC-derive per-(customer, activity) reviewer pseudonyms.
+   * Required non-empty in production (see REQUIRED_IN_PRODUCTION in main.ts).
+   * In dev / test it defaults to empty — the HMAC still works (just with a
+   * zero-byte key), and the threat model only changes if the database is
+   * also compromised (in which case the secret is what stops the attacker
+   * from reconstructing pseudonyms from leaked customerId + activityId
+   * pairs). Empty key in dev keeps the local stack functional without
+   * forcing every contributor to mint a 32-byte secret.
+   */
+  private readonly reviewHashSecret: string;
+
   constructor(
     private prisma: PrismaService,
     private refCache: ReferenceDataCacheService,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.reviewHashSecret = (config.get<string>('REVIEW_HASH_SECRET', '') ?? '').trim();
+  }
+
+  /**
+   * Generate a stable, non-reversible reviewer pseudonym for a given
+   * (customerId, activityId) pair. Same customer reviewing two different
+   * activities gets two DIFFERENT pseudonyms — this is the privacy
+   * guarantee: an attacker can't link reviews back to a single customer
+   * across activities.
+   *
+   * Returns `Reviewer #abc123` (6 hex chars = 24 bits of entropy = ~16M
+   * possible values per activity — collision rate on a single activity's
+   * reviews is negligible, and any collision between activities is fine
+   * because it doesn't reveal identity).
+   *
+   * If REVIEW_HASH_SECRET is empty (dev only — main.ts requires it in prod),
+   * HMAC degrades to an unkeyed SHA-256 of the input. Even then the customer
+   * is identified only via the (private) customerId; the public API never
+   * exposes that ID, so the secret is defense-in-depth against DB compromise.
+   */
+  private reviewerPseudonym(customerId: string, activityId: string): string {
+    const code = crypto
+      .createHmac('sha256', this.reviewHashSecret)
+      .update(`${customerId}:${activityId}`)
+      .digest('hex')
+      .slice(0, 6);
+    return `Reviewer #${code}`;
+  }
 
   // C1: origin-side cache for slow-changing reference data. CDN handles
   // edge caching; this prevents thundering-herd Postgres hits on every CDN
@@ -441,7 +484,18 @@ export class CatalogController {
         country: { select: { nameEn: true, nameAr: true, currencyCode: true, defaultTimezone: true, serviceFeeFixed: true } },
         vendor: { select: { businessNameEn: true, businessNameAr: true, slug: true, status: true } },
         reviews: {
-          include: { customer: { select: { fullName: true } } },
+          // customerId pulled so we can derive a per-(customer,activity) HMAC
+          // pseudonym. fullName intentionally NOT selected — the pseudonym
+          // replaces it entirely so the customer's real name never leaves
+          // the API server.
+          select: {
+            id: true,
+            rating: true,
+            text: true,
+            vendorReply: true,
+            createdAt: true,
+            customerId: true,
+          },
           orderBy: { createdAt: 'desc' },
           take: 10,
         },
@@ -456,14 +510,18 @@ export class CatalogController {
     const { status: _vs, ...vendorPublic } = activity.vendor;
     const { status: _as, ...rest } = activity;
 
-    // Privacy: truncate reviewer names to first name + last initial
-    const safeReviews = rest.reviews.map((r: any) => {
-      const name = r.customer?.fullName || '';
-      const parts = name.trim().split(/\s+/);
-      const displayName = parts.length > 1
-        ? `${parts[0]} ${parts[parts.length - 1][0]}.`
-        : parts[0] || 'Anonymous';
-      return { ...r, customer: { displayName } };
+    // Privacy: replace each review's customer with a per-(customer, activity)
+    // HMAC pseudonym. Same customer reviewing two different activities
+    // produces two DIFFERENT pseudonyms — defeats the previous
+    // `"First L."` truncation pattern that let attackers link the same
+    // customer's reviews across activities. customerId never leaves
+    // this method.
+    const safeReviews = rest.reviews.map((r) => {
+      const { customerId, ...reviewFields } = r;
+      return {
+        ...reviewFields,
+        customer: { displayName: this.reviewerPseudonym(customerId, activity.id) },
+      };
     });
 
     return { ...rest, reviews: safeReviews, vendor: vendorPublic };
