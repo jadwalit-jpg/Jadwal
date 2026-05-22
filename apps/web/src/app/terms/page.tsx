@@ -6,7 +6,7 @@ import { ScrollText } from 'lucide-react';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 
-const LAST_UPDATED = '2026-05-23';
+const LAST_UPDATED = '2026-05-22';
 
 export default function TermsPage() {
   const { t } = useTranslation();
