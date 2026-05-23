@@ -410,31 +410,19 @@ async function main() {
     });
   }
 
-  // ─── Phase F enrichment: 2 reviews on the COMPLETED booking activity ──
-  // admin-reviews + vendor-reviews specs can render rows; customer-review-
-  // after-completion has prior reviews to verify rating updates against.
-  // Review schema has no @@unique constraint, so multiple rows for the
-  // same (activityId, customerId) pair are valid.
-  const existingReviews = await prisma.review.findMany({
-    where: { activityId: activity.id, customerId: customerUser.id },
+  // Review schema enforces @@unique([activityId, customerId]) — one review
+  // per (customer, activity) pair. Upsert is idempotent across re-seeds;
+  // update:{} preserves any rating/text the test suite mutated.
+  await prisma.review.upsert({
+    where: { activityId_customerId: { activityId: activity.id, customerId: customerUser.id } },
+    create: {
+      activityId: activity.id,
+      customerId: customerUser.id,
+      rating: 5,
+      text: 'Outstanding experience — guide was knowledgeable and the route well-paced.',
+    },
+    update: {},
   });
-  if (existingReviews.length < 2) {
-    const toCreate = 2 - existingReviews.length;
-    const reviewSeeds = [
-      { rating: 5, text: 'Outstanding experience — guide was knowledgeable and the route well-paced.' },
-      { rating: 4, text: 'Good overall, minor pacing issues but worth it for the views.' },
-    ];
-    for (let i = 0; i < toCreate; i += 1) {
-      await prisma.review.create({
-        data: {
-          activityId: activity.id,
-          customerId: customerUser.id,
-          rating: reviewSeeds[i].rating,
-          text: reviewSeeds[i].text,
-        },
-      });
-    }
-  }
 
   // ─── Phase F enrichment: 2nd coupon, claimed by the customer ──────────
   const claimedCoupon = await prisma.coupon.upsert({

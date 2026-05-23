@@ -17,21 +17,22 @@ name: Playwright E2E
 #   - test-results/         → traces + screenshots + videos on failure
 
 on:
-  # ───────────────────────────────────────────────────────────────────
-  # TEMPORARILY PAUSED — 2026-05-06.
-  # PR / push triggers disabled to avoid blocking deploys while we
-  # land the migrations-via-Secrets-Manager + sslmode=verify-full
-  # follow-up. Re-enable by restoring the `pull_request:` and
-  # `schedule:` blocks below from git history once those PRs are live
-  # and verified. Manual `workflow_dispatch` stays available so the
-  # suite can still be run on-demand for spot checks.
-  # ───────────────────────────────────────────────────────────────────
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/web/**'
+      - 'apps/api/**'
+      - '.github/workflows/playwright-e2e.yml'
   workflow_dispatch:
     inputs:
       grep_pattern:
         description: 'Optional --grep pattern to filter specs'
         required: false
         type: string
+  schedule:
+    # Nightly at 02:00 UTC — catches network / dependency flake before
+    # business hours.
+    - cron: '0 2 * * *'
 
 permissions:
   contents: read
@@ -76,6 +77,9 @@ env:
   VAPID_PUBLIC_KEY: placeholder-overridden-by-generate-step
   VAPID_PRIVATE_KEY: placeholder-overridden-by-generate-step
   VAPID_SUBJECT: mailto:ci@jadwal.qa
+  # EmailUnsubscribeTokenService throws at module load if missing OR <32 chars,
+  # independent of NODE_ENV. Test-only — never used to sign real emails.
+  UNSUBSCRIBE_TOKEN_SECRET: ci-only-test-unsubscribe-secret-do-not-use-in-prod-eeeeee
   # Disable telemetry / analytics so CI runs are quiet.
   NEXT_TELEMETRY_DISABLED: 1
   PLAYWRIGHT_BROWSERS_PATH: 0
