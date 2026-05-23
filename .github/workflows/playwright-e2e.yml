@@ -77,6 +77,9 @@ env:
   VAPID_PUBLIC_KEY: placeholder-overridden-by-generate-step
   VAPID_PRIVATE_KEY: placeholder-overridden-by-generate-step
   VAPID_SUBJECT: mailto:ci@jadwal.qa
+  # EmailUnsubscribeTokenService throws at module load if missing OR <32 chars,
+  # independent of NODE_ENV. Test-only — never used to sign real emails.
+  UNSUBSCRIBE_TOKEN_SECRET: ci-only-test-unsubscribe-secret-do-not-use-in-prod-eeeeee
   # Disable telemetry / analytics so CI runs are quiet.
   NEXT_TELEMETRY_DISABLED: 1
   PLAYWRIGHT_BROWSERS_PATH: 0
