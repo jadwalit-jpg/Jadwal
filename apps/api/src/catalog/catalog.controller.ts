@@ -182,6 +182,11 @@ export class CatalogController {
         image: true, eventDate: true, countryId: true,
       },
       orderBy: { createdAt: 'desc' },
+      // Defensive cap — trendingEvent is admin-curated (homepage banners,
+      // realistically a handful of rows), but a bulk insert mistake must
+      // not make this @Public(), edge-cached endpoint return an unbounded
+      // payload. 100 is far above any real curated count.
+      take: 100,
     });
   }
 
