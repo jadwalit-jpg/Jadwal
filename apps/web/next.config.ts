@@ -67,6 +67,34 @@ const nextConfig: NextConfig = {
   // low-risk software-version disclosure; removing it makes drive-by
   // scanners' job marginally harder.
   poweredByHeader: false,
+  async redirects() {
+    return [
+      // ── Canonical host: www → apex (301) ──
+      // SEO tools flagged that www.jadwal.qa and jadwal.qa both resolve
+      // without redirect (duplicate-content risk). Force the apex as the
+      // single canonical host. Only fires for the literal www host, so
+      // local dev (localhost) and the apex itself are untouched.
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: "www.jadwal.qa" }],
+        destination: "https://jadwal.qa/:path*",
+        permanent: true,
+      },
+      // ── Legacy Shopify URL equity recovery (301) ──
+      // The old store lived on Shopify with /collections/* and /products/*
+      // (and /ar/* mirrors). ~900 backlinks still point there. The new
+      // Next.js app has NO such routes (verified — they'd 404), so we
+      // 301 them to the closest live page to preserve link equity.
+      { source: "/collections/:path*", destination: "/explore", permanent: true },
+      { source: "/products/:path*", destination: "/explore", permanent: true },
+      { source: "/ar/collections/:path*", destination: "/explore", permanent: true },
+      { source: "/ar/products/:path*", destination: "/explore", permanent: true },
+      // Other legacy Arabic paths → homepage (new app is cookie-locale,
+      // there is no /ar route). Specific /ar/collections|products handled above.
+      { source: "/ar/:path*", destination: "/", permanent: true },
+      { source: "/ar", destination: "/", permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       // Browser hits /api/* on the same origin as the page. Next.js

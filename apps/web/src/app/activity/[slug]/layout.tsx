@@ -1,48 +1,46 @@
 /**
- * Per-activity metadata layout — emits Open Graph + Twitter Card tags
- * server-side so WhatsApp / Telegram / iMessage / Slack / Twitter render
- * a rich preview (cover image + title + description) when an activity
- * link is shared. The interactive client page underneath is unchanged.
+ * Per-activity SEO layout. Two server-side jobs:
+ *   1. generateMetadata → Open Graph + Twitter Card tags so WhatsApp /
+ *      Telegram / iMessage / Slack / Twitter render a rich preview when an
+ *      activity link is shared.
+ *   2. The layout body → schema.org JSON-LD (Product + Offer +
+ *      AggregateRating + BreadcrumbList) so Google can show price, star
+ *      rating and breadcrumb rich results. Classic rich-result SEO.
  *
- * Why a layout (not the page itself): the activity detail page is a
- * client component (`'use client'`), and only server components can
- * export `generateMetadata`. A nested layout.tsx runs server-side per
- * request, fetches the public activity record, and emits the metadata
- * — without forcing the page itself to be rewritten.
+ * Both read the same public /catalog/activities/:slug endpoint (which 404s
+ * non-ACTIVE listings / vendors, so neither previews nor schema can leak a
+ * pending/rejected activity). Next.js request-memoises identical fetches, so
+ * generateMetadata + the layout body share ONE network call per request.
  *
- * Security:
- *   - We hit the same /catalog/activities/:slug endpoint the public
- *     page uses; it already filters out non-ACTIVE activities and
- *     non-ACTIVE vendors with a 404. So OG previews can never leak a
- *     pending/rejected listing.
- *   - 3s AbortSignal timeout keeps a slow API from hanging the
- *     navigation request.
- *   - Description is truncated to 160 chars (the SEO + social-card
- *     standard) and stripped of any stray angle brackets defensively.
- *   - Image URL is normalised to an absolute origin so social
- *     scrapers can fetch it (relative paths break them).
- *   - On any error we fall back to brand-level metadata so the page
- *     still renders.
- *
- * Performance:
- *   - `next: { revalidate: 60 }` caches the metadata fetch for 60s
- *     across requests — same activity slug only hits the API once a
- *     minute under load. The client page below this still does its
- *     own (fresher) TanStack-Query fetch for live data like reviews.
+ * Security / robustness:
+ *   - 3s AbortSignal timeout; any error falls back to brand metadata and
+ *     simply omits JSON-LD (page still renders).
+ *   - Description truncated to 160 chars and stripped of angle brackets.
+ *   - Image URL normalised to an absolute allowlisted origin.
+ *   - JSON-LD is emitted via the audited <JsonLd> component (server-built
+ *     object, JSON.stringify'd, `<` escaped — never raw user HTML).
  */
 
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
+import { JsonLd } from '@/components/json-ld';
 
 const META_FETCH_TIMEOUT_MS = 3000;
 const DESCRIPTION_MAX = 160;
 
 interface PublicActivity {
+  slug?: string;
   titleEn?: string;
   titleAr?: string;
   descriptionEn?: string | null;
   descriptionAr?: string | null;
   coverImage?: string | null;
+  pricePerPerson?: number | string | null;
+  avgRating?: number | null;
+  reviewCount?: number | null;
+  category?: { nameEn?: string | null; nameAr?: string | null; slug?: string | null } | null;
+  country?: { nameEn?: string | null; currencyCode?: string | null } | null;
+  vendor?: { businessNameEn?: string | null; businessNameAr?: string | null } | null;
 }
 
 /** Strip stray HTML brackets and clamp to a social-card-friendly length. */
@@ -67,12 +65,9 @@ function assetOrigin(): string | null {
 
 /**
  * Build an absolute URL for the cover image, AND drop the image entirely
- * if it points to an off-domain origin. Defense-in-depth: vendor activity
- * approval already gates what's published, but if a malicious cover URL
- * ever slipped past review (e.g. `http://evil.cdn/x.jpg`) we don't want
- * Jadwal-branded share previews emitting it. Allowed origin is whatever
- * NEXT_PUBLIC_API_URL resolves to (the CDN/upload host). Future hosts can
- * be added to the allowlist below.
+ * if it points to an off-domain origin (defense-in-depth on share previews
+ * + schema images). Allowed origin is whatever NEXT_PUBLIC_API_URL resolves
+ * to (the CDN/upload host).
  */
 function absoluteImageUrl(coverImage: string | null | undefined): string | null {
   if (!coverImage) return null;
@@ -94,11 +89,39 @@ function absoluteImageUrl(coverImage: string | null | undefined): string | null 
   } catch {
     return null;
   }
-
-  // Allow only the configured asset origin. Add future hosts (CDN, S3
-  // public bucket, etc.) here when they come online.
   const allowed = new Set<string>([origin]);
   return allowed.has(parsed.origin) ? parsed.toString() : null;
+}
+
+/** Site origin for absolute schema URLs (canonical/breadcrumb items). */
+function siteOrigin(): string {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://jadwal.qa').origin;
+  } catch {
+    return 'https://jadwal.qa';
+  }
+}
+
+/**
+ * Fetch the public activity record. Shared by generateMetadata and the
+ * layout body — Next.js dedupes the two identical fetches into one request.
+ */
+async function fetchActivity(slug: string): Promise<PublicActivity | null> {
+  const internalUrl = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (!internalUrl) return null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), META_FETCH_TIMEOUT_MS);
+    const res = await fetch(
+      `${internalUrl}/catalog/activities/${encodeURIComponent(slug)}`,
+      { signal: controller.signal, next: { revalidate: 60 }, headers: { Accept: 'application/json' } },
+    );
+    clearTimeout(timer);
+    if (res.ok) return (await res.json()) as PublicActivity;
+  } catch {
+    /* network / timeout / non-2xx — caller falls back */
+  }
+  return null;
 }
 
 export async function generateMetadata({
@@ -107,23 +130,8 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-
-  // Pick language from the same cookie the rest of the app reads, so
-  // shared links preserve the language the sharer was browsing in.
   const cookieStore = await cookies();
   const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
-
-  // SSR-time fetches need a URL that resolves from the rendering process.
-  // Two scenarios:
-  //   1. Docker dev/prod: web container can't reach the api container via
-  //      its sibling network name on its loopback interface. Use
-  //      INTERNAL_API_URL=http://api:4000/api set in docker-compose / ECS.
-  //   2. Plain `npm run dev` on host: Node 18+ resolves `127.0.0.1` IPv4-
-  //      first which is what we want. The browser-facing API URL must
-  //      already be IPv4 (set NEXT_PUBLIC_API_URL=http://127.0.0.1:4000/api
-  //      for non-Docker dev — same caveat applies on Windows where
-  //      localhost-as-IPv6 trips Node's HTTP client).
-  const internalUrl = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
 
   const fallback: Metadata = {
     title: 'Jadwal',
@@ -133,32 +141,11 @@ export async function generateMetadata({
         : 'Discover and book the best activities and experiences in the Gulf',
   };
 
-  if (!internalUrl) return fallback;
-
-  let activity: PublicActivity | null = null;
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), META_FETCH_TIMEOUT_MS);
-    const res = await fetch(
-      `${internalUrl}/catalog/activities/${encodeURIComponent(slug)}`,
-      {
-        signal: controller.signal,
-        next: { revalidate: 60 },
-        headers: { Accept: 'application/json' },
-      },
-    );
-    clearTimeout(timer);
-    if (res.ok) activity = (await res.json()) as PublicActivity;
-  } catch {
-    /* network / timeout / non-2xx — fall through to fallback */
-  }
-
+  const activity = await fetchActivity(slug);
   if (!activity) return fallback;
 
   const title =
-    (lang === 'ar' ? activity.titleAr : activity.titleEn) ||
-    activity.titleEn ||
-    'Jadwal';
+    (lang === 'ar' ? activity.titleAr : activity.titleEn) || activity.titleEn || 'Jadwal';
   const description = safeDescription(
     lang === 'ar' ? activity.descriptionAr : activity.descriptionEn,
   );
@@ -183,11 +170,98 @@ export async function generateMetadata({
   return {
     title,
     description: description || undefined,
+    alternates: { canonical: `/activity/${slug}` },
     openGraph: og,
     twitter,
   };
 }
 
-export default function ActivityLayout({ children }: { children: React.ReactNode }) {
-  return children;
+export default async function ActivityLayout({
+  children,
+  params,
+}: {
+  children: React.ReactNode;
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  const cookieStore = await cookies();
+  const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  const activity = await fetchActivity(slug);
+
+  // No activity (404 / API down) → render the page without schema.
+  if (!activity) return <>{children}</>;
+
+  const origin = siteOrigin();
+  const activityUrl = `${origin}/activity/${slug}`;
+  const title =
+    (lang === 'ar' ? activity.titleAr : activity.titleEn) || activity.titleEn || 'Jadwal';
+  const description = safeDescription(
+    lang === 'ar' ? activity.descriptionAr : activity.descriptionEn,
+  );
+  const image = absoluteImageUrl(activity.coverImage);
+  const price = activity.pricePerPerson != null ? Number(activity.pricePerPerson) : null;
+  const currency = activity.country?.currencyCode || 'QAR';
+  const brand = lang === 'ar'
+    ? activity.vendor?.businessNameAr || activity.vendor?.businessNameEn
+    : activity.vendor?.businessNameEn;
+  const categoryName = lang === 'ar' ? activity.category?.nameAr : activity.category?.nameEn;
+  const categorySlug = activity.category?.slug;
+  const reviewCount = activity.reviewCount ?? 0;
+  const avgRating = activity.avgRating ?? 0;
+
+  // ── Product (+ Offer + AggregateRating) ──
+  const product: Record<string, unknown> = {
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: title,
+    url: activityUrl,
+  };
+  if (description) product.description = description;
+  if (image) product.image = [image];
+  if (brand) product.brand = { '@type': 'Brand', name: brand };
+  if (price != null && Number.isFinite(price) && price >= 0) {
+    product.offers = {
+      '@type': 'Offer',
+      price: price.toFixed(2),
+      priceCurrency: currency,
+      availability: 'https://schema.org/InStock',
+      url: activityUrl,
+    };
+  }
+  if (reviewCount > 0 && avgRating > 0) {
+    product.aggregateRating = {
+      '@type': 'AggregateRating',
+      ratingValue: avgRating.toFixed(1),
+      reviewCount: String(reviewCount),
+      bestRating: '5',
+      worstRating: '1',
+    };
+  }
+
+  // ── BreadcrumbList: Home → [Category] → Activity ──
+  const crumbs: Array<Record<string, unknown>> = [
+    { '@type': 'ListItem', position: 1, name: lang === 'ar' ? 'الرئيسية' : 'Home', item: origin },
+  ];
+  if (categoryName && categorySlug) {
+    crumbs.push({
+      '@type': 'ListItem',
+      position: 2,
+      name: categoryName,
+      item: `${origin}/explore?category=${encodeURIComponent(categorySlug)}`,
+    });
+  }
+  crumbs.push({ '@type': 'ListItem', position: crumbs.length + 1, name: title, item: activityUrl });
+  const breadcrumb = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: crumbs,
+  };
+
+  return (
+    <>
+      <JsonLd data={product} />
+      <JsonLd data={breadcrumb} />
+      {children}
+    </>
+  );
 }
