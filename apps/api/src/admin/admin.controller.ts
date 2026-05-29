@@ -135,7 +135,7 @@ export class AdminController {
   @Patch('loyalty/users/:id/points')
   @Throttle(RATE_LIMIT_WRITE)
   adjustUserPoints(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AdjustUserPointsDto,
     @CurrentUser() actor: RequestUser,
   ) {
@@ -158,20 +158,20 @@ export class AdminController {
   // wave of automated role flips can compromise the whole platform fast.
   @Patch('users/:id/role')
   @Throttle(RATE_LIMIT_STRICT)
-  updateUserRole(@Param('id') id: string, @Body() dto: UpdateUserRoleDto) {
+  updateUserRole(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateUserRoleDto) {
     return this.adminService.updateUserRole(id, dto.role);
   }
 
   // Deactivate revokes sessions + hides data — destructive, use STRICT.
   @Patch('users/:id/deactivate')
   @Throttle(RATE_LIMIT_STRICT)
-  deactivateUser(@Param('id') id: string, @Body() dto: DeactivateUserDto) {
+  deactivateUser(@Param('id', ParseUUIDPipe) id: string, @Body() dto: DeactivateUserDto) {
     return this.adminService.deactivateUser(id, dto.isDeactivated);
   }
 
   @Delete('users/:id')
   @Throttle(RATE_LIMIT_WRITE)
-  deleteUser(@Param('id') id: string) {
+  deleteUser(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.deleteUser(id);
   }
 
@@ -190,7 +190,7 @@ export class AdminController {
   @Throttle(RATE_LIMIT_WRITE)
   updateVendorStatus(
     @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateVendorStatusDto,
   ) {
     return this.adminService.updateVendorStatus(id, dto.status, user.id);
@@ -198,7 +198,7 @@ export class AdminController {
 
   @Patch('vendors/:id/trust')
   @Throttle(RATE_LIMIT_WRITE)
-  updateVendorTrust(@Param('id') id: string, @Body() dto: UpdateVendorTrustDto) {
+  updateVendorTrust(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateVendorTrustDto) {
     return this.adminService.updateVendorTrust(id, dto.trustLevel);
   }
 
@@ -206,13 +206,13 @@ export class AdminController {
   // sweep the whole vendor table at 120/min.
   @Patch('vendors/:id/commission')
   @Throttle(RATE_LIMIT_STRICT)
-  updateVendorCommission(@Param('id') id: string, @Body() dto: UpdateVendorCommissionDto) {
+  updateVendorCommission(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateVendorCommissionDto) {
     return this.adminService.updateVendorCommission(id, dto.commissionPct);
   }
 
   @Delete('vendors/:id')
   @Throttle(RATE_LIMIT_WRITE)
-  deleteVendor(@Param('id') id: string) {
+  deleteVendor(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.deleteVendor(id);
   }
 
@@ -223,7 +223,7 @@ export class AdminController {
   }
 
   @Get('activities/:id')
-  getActivity(@Param('id') id: string) {
+  getActivity(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.getActivity(id);
   }
 
@@ -231,7 +231,7 @@ export class AdminController {
   @Throttle(RATE_LIMIT_WRITE)
   updateActivityStatus(
     @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateActivityStatusDto,
   ) {
     return this.adminService.updateActivityStatus(id, dto.status, user.id, dto.reason);
@@ -239,13 +239,13 @@ export class AdminController {
 
   @Patch('activities/:id')
   @Throttle(RATE_LIMIT_WRITE)
-  updateActivity(@Param('id') id: string, @Body() dto: UpdateActivityDto) {
+  updateActivity(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateActivityDto) {
     return this.adminService.updateActivity(id, dto);
   }
 
   @Patch('activities/:id/feature')
   @Throttle(RATE_LIMIT_WRITE)
-  toggleFeatured(@Param('id') id: string) {
+  toggleFeatured(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.toggleFeatured(id);
   }
 
@@ -259,7 +259,7 @@ export class AdminController {
   @Throttle(RATE_LIMIT_CALLBACK)
   updateBookingStatus(
     @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateBookingStatusDto,
   ) {
     return this.adminService.updateBookingStatus(user.id, id, dto.status);
@@ -414,13 +414,13 @@ export class AdminController {
 
   @Patch('coupons/:id/status')
   @Throttle(RATE_LIMIT_CALLBACK)
-  updateCouponStatus(@Param('id') id: string, @Body() dto: UpdateCouponStatusDto) {
+  updateCouponStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCouponStatusDto) {
     return this.adminService.updateCouponStatus(id, dto.status);
   }
 
   @Delete('coupons/:id')
   @Throttle(RATE_LIMIT_WRITE)
-  deleteCoupon(@Param('id') id: string) {
+  deleteCoupon(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.deleteCoupon(id);
   }
 
@@ -488,13 +488,13 @@ export class AdminController {
 
   @Delete('reviews/:id')
   @Throttle(RATE_LIMIT_WRITE)
-  deleteReview(@Param('id') id: string) {
+  deleteReview(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.deleteReview(id);
   }
 
   // ─── Vendor Analytics ─────────────────────────────────────────
   @Get('vendors/:id/analytics')
-  getVendorAnalytics(@Param('id') id: string) {
+  getVendorAnalytics(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.getVendorAnalytics(id);
   }
 
