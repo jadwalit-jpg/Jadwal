@@ -199,6 +199,41 @@ export class CatalogController {
    * sweep-line). A higher tier would invite DoS; a lower tier would throttle
    * legitimate catalog browsing.
    */
+  /**
+   * Bulk slug export for the dynamic XML sitemap (apps/web/src/app/sitemap.ts).
+   * Returns ALL publicly-visible activity slugs + root category slugs with
+   * their updatedAt timestamps. Unlike the paginated /activities listing
+   * (capped at 20), this is unbounded-but-ceilinged at Google's 50k-URLs-per-
+   * sitemap limit so crawlers get a complete URL set. Public, edge-cached,
+   * select-only (slug + updatedAt — no PII). Same visibility filter as the
+   * public listing so a pending/rejected/soft-deleted activity is never
+   * exposed.
+   */
+  @Get('sitemap-urls')
+  @Throttle(RATE_LIMIT_VENDOR)
+  @Header('Cache-Control', CACHE_LIVE_SHORT)
+  async getSitemapUrls() {
+    const SITEMAP_MAX = 50000;
+    const [activities, categories] = await Promise.all([
+      this.prisma.client.activity.findMany({
+        where: {
+          status: 'ACTIVE',
+          deletedAt: null,
+          vendor: { status: 'ACTIVE', deletedAt: null },
+        },
+        select: { slug: true, updatedAt: true },
+        orderBy: { updatedAt: 'desc' },
+        take: SITEMAP_MAX,
+      }),
+      this.prisma.client.category.findMany({
+        where: { parentId: null },
+        select: { slug: true, updatedAt: true },
+        orderBy: { nameEn: 'asc' },
+      }),
+    ]);
+    return { activities, categories };
+  }
+
   @Get('activities')
   @Throttle(RATE_LIMIT_VENDOR)
   @Header('Cache-Control', CACHE_LISTING)

@@ -1,74 +1,96 @@
 import type { MetadataRoute } from 'next';
 
 /**
- * sitemap.xml — auto-generated at build time by Next.js App Router.
+ * sitemap.xml — static routes + dynamic per-activity / per-category URLs.
  *
- * Lists the static + commonly-crawled public routes. Dynamic routes
- * (per-activity, per-vendor, per-category) are intentionally NOT
- * pulled from the API at build time because:
- *   1. The build runs in CI without DB access — would 500 the build.
- *   2. Activities and vendors change frequently — a stale sitemap is
- *      worse than no sitemap. We rely on Cloudflare's "Crawler Hints"
- *      (already enabled) to notify Google when content changes.
- *   3. Locale-aware URL generation belongs in middleware, not the build.
+ * Dynamic URLs are fetched at request time from the API's
+ * GET /catalog/sitemap-urls (bulk slug export) and the result is cached for
+ * an hour via `revalidate` — so crawlers get a complete, reasonably-fresh
+ * URL set without hitting the DB on every request.
  *
- * If we later want a deeper sitemap (every activity), the right move is
- * a Next.js Route Handler at /sitemap-activities.xml that fetches at
- * request-time with caching, then we add a sitemap-index here pointing
- * to both this static file and the dynamic one.
+ * Robustness: the fetch is wrapped in a timeout + try/catch and FALLS BACK
+ * to the static route list on any error. This is why the original build-time
+ * concern (CI builds run without DB access → a fetch would 500 the build) no
+ * longer applies: during `next build` in CI the fetch simply fails and we
+ * emit the static-only sitemap; once deployed (API reachable) the first
+ * post-revalidation request fills in the dynamic URLs.
  */
 
 const BASE_URL = 'https://jadwal.qa';
+const FETCH_TIMEOUT_MS = 4000;
 
-export default function sitemap(): MetadataRoute.Sitemap {
+// Cache the generated sitemap for 1h (ISR) — not regenerated per crawl.
+export const revalidate = 3600;
+
+interface SitemapUrls {
+  activities: Array<{ slug: string; updatedAt: string }>;
+  categories: Array<{ slug: string; updatedAt: string }>;
+}
+
+const STATIC_ROUTES: Array<{
+  path: string;
+  changeFrequency: MetadataRoute.Sitemap[number]['changeFrequency'];
+  priority: number;
+}> = [
+  { path: '', changeFrequency: 'daily', priority: 1.0 },
+  { path: '/home', changeFrequency: 'daily', priority: 0.95 },
+  { path: '/explore', changeFrequency: 'daily', priority: 0.9 },
+  { path: '/offers', changeFrequency: 'weekly', priority: 0.8 },
+  { path: '/about', changeFrequency: 'monthly', priority: 0.7 },
+  { path: '/privacy', changeFrequency: 'yearly', priority: 0.5 },
+  { path: '/terms', changeFrequency: 'yearly', priority: 0.5 },
+];
+
+async function fetchSitemapUrls(): Promise<SitemapUrls | null> {
+  const api = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (!api) return null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const res = await fetch(`${api}/catalog/sitemap-urls`, {
+      signal: controller.signal,
+      next: { revalidate: 3600 },
+      headers: { Accept: 'application/json' },
+    });
+    clearTimeout(timer);
+    if (res.ok) return (await res.json()) as SitemapUrls;
+  } catch {
+    /* network / timeout / non-2xx — fall back to static routes */
+  }
+  return null;
+}
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
 
-  return [
-    {
-      url: BASE_URL,
-      lastModified: now,
-      changeFrequency: 'daily',
-      priority: 1.0,
-    },
-    {
-      // `/home` — the marketplace homepage (replaced the old build; the
-      // legacy code is preserved under `app/_archive/home-page.tsx` and is
-      // not routed). Priority 0.95 — just below the root `/` (which is
-      // still the Coming Soon landing for now).
-      url: `${BASE_URL}/home`,
-      lastModified: now,
-      changeFrequency: 'daily',
-      priority: 0.95,
-    },
-    {
-      url: `${BASE_URL}/explore`,
-      lastModified: now,
-      changeFrequency: 'daily',
-      priority: 0.9,
-    },
-    {
-      url: `${BASE_URL}/offers`,
-      lastModified: now,
-      changeFrequency: 'weekly',
-      priority: 0.8,
-    },
-    {
-      url: `${BASE_URL}/about`,
-      lastModified: now,
-      changeFrequency: 'monthly',
-      priority: 0.7,
-    },
-    {
-      url: `${BASE_URL}/privacy`,
-      lastModified: now,
-      changeFrequency: 'yearly',
-      priority: 0.5,
-    },
-    {
-      url: `${BASE_URL}/terms`,
-      lastModified: now,
-      changeFrequency: 'yearly',
-      priority: 0.5,
-    },
-  ];
+  const entries: MetadataRoute.Sitemap = STATIC_ROUTES.map((r) => ({
+    url: `${BASE_URL}${r.path}`,
+    lastModified: now,
+    changeFrequency: r.changeFrequency,
+    priority: r.priority,
+  }));
+
+  const dynamic = await fetchSitemapUrls();
+  if (dynamic) {
+    for (const a of dynamic.activities ?? []) {
+      if (!a?.slug) continue;
+      entries.push({
+        url: `${BASE_URL}/activity/${encodeURIComponent(a.slug)}`,
+        lastModified: a.updatedAt ? new Date(a.updatedAt) : now,
+        changeFrequency: 'weekly',
+        priority: 0.8,
+      });
+    }
+    for (const c of dynamic.categories ?? []) {
+      if (!c?.slug) continue;
+      entries.push({
+        url: `${BASE_URL}/explore?category=${encodeURIComponent(c.slug)}`,
+        lastModified: c.updatedAt ? new Date(c.updatedAt) : now,
+        changeFrequency: 'weekly',
+        priority: 0.6,
+      });
+    }
+  }
+
+  return entries;
 }
