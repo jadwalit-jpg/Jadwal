@@ -213,7 +213,13 @@ export class CatalogController {
   @Throttle(RATE_LIMIT_VENDOR)
   @Header('Cache-Control', CACHE_LIVE_SHORT)
   async getSitemapUrls() {
-    const SITEMAP_MAX = 50000;
+    // Google's hard limit is 50,000 URLs per sitemap file. The frontend
+    // (apps/web/src/app/sitemap.ts) appends the 7 static routes + one URL per
+    // root category on top of these activities, so cap the activities query
+    // below 50k to leave headroom; the frontend ALSO hard-caps the assembled
+    // total as a final guarantee. (Past ~50k activities the right move is a
+    // sitemap index via Next.js generateSitemaps — post-launch follow-up.)
+    const SITEMAP_MAX = 49000;
     const [activities, categories] = await Promise.all([
       this.prisma.client.activity.findMany({
         where: {

@@ -18,6 +18,12 @@ import type { MetadataRoute } from 'next';
 
 const BASE_URL = 'https://jadwal.qa';
 const FETCH_TIMEOUT_MS = 4000;
+// Google ignores everything past 50,000 URLs in a single sitemap file. We
+// assemble static + activities + categories here, so this is the authoritative
+// total cap (the API also leaves headroom). Entries are ordered static →
+// activities → categories, so if the cap ever bites, the least SEO-critical
+// entries (categories) drop first.
+const MAX_SITEMAP_URLS = 50000;
 
 // Cache the generated sitemap for 1h (ISR) — not regenerated per crawl.
 export const revalidate = 3600;
@@ -92,5 +98,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     }
   }
 
-  return entries;
+  // Hard guarantee we never emit more than Google reads (it silently drops
+  // the overflow otherwise). Static routes + activities come first, so any
+  // truncation only sheds trailing category URLs.
+  return entries.slice(0, MAX_SITEMAP_URLS);
 }
