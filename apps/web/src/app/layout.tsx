@@ -13,6 +13,7 @@ import { ToastProvider } from "@/components/toast";
 // Verified safe: 0 useGeo calls in admin / vendor source.
 import { CustomerShell } from "@/components/customer-shell";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { JsonLd } from "@/components/json-ld";
 import { readLangCookieServer } from "@/lib/lang-cookie.server";
 
 const inter = Inter({
@@ -159,6 +160,34 @@ export default async function RootLayout({
     }
   })();
 
+  // Site-wide structured data (schema.org). Organization powers the Google
+  // Knowledge Panel / brand entity; WebSite + SearchAction enables the
+  // sitelinks search box in Google results (targets /explore?search=, the
+  // param the explore page actually reads). Emitted on every page via the
+  // root layout. Classic rich-result SEO — not AI/GEO.
+  const orgJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "Jadwal",
+    url: siteUrl.toString(),
+    logo: new URL("/android-chrome-512x512.png", siteUrl).toString(),
+    sameAs: ["https://www.instagram.com/jadwal.qtr/"],
+  };
+  const webSiteJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "Jadwal",
+    url: siteUrl.toString(),
+    potentialAction: {
+      "@type": "SearchAction",
+      target: {
+        "@type": "EntryPoint",
+        urlTemplate: new URL("/explore?search={search_term_string}", siteUrl).toString(),
+      },
+      "query-input": "required name=search_term_string",
+    },
+  };
+
   return (
     <html lang={lang} dir={dir} suppressHydrationWarning>
       <head>
@@ -168,6 +197,8 @@ export default async function RootLayout({
             <link rel="dns-prefetch" href={apiOrigin} />
           </>
         ) : null}
+        <JsonLd data={orgJsonLd} />
+        <JsonLd data={webSiteJsonLd} />
       </head>
       <body
         className={`${inter.variable} ${outfit.variable} ${tajawal.variable} antialiased font-outfit`}

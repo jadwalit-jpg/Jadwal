@@ -32,6 +32,30 @@ import HomeBelowFoldLoader from '../_home-islands/home-below-fold-loader';
  */
 export const metadata: Metadata = {
   title: 'Jadwal — Local experiences in the Gulf',
+  description:
+    'Book activities, tours and experiences across Qatar and the GCC on Jadwal — desert safaris, water activities, caravans, resorts and more, from trusted local vendors.',
+  openGraph: {
+    type: 'website',
+    siteName: 'Jadwal',
+    title: 'Jadwal — Local experiences in the Gulf',
+    description:
+      'Book activities, tours and experiences across Qatar and the GCC — desert safaris, water activities, caravans, resorts and more, from trusted local vendors.',
+    images: [
+      {
+        url: '/android-chrome-512x512.png',
+        width: 512,
+        height: 512,
+        alt: 'Jadwal',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary',
+    title: 'Jadwal — Local experiences in the Gulf',
+    description:
+      'Book activities, tours and experiences across Qatar and the GCC, from trusted local vendors.',
+    images: ['/android-chrome-512x512.png'],
+  },
 };
 
 export default function HomePage() {

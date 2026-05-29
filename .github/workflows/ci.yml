@@ -309,7 +309,12 @@ jobs:
 
       - name: No dangerouslySetInnerHTML
         run: |
-          FOUND=$(grep -rn "dangerouslySetInnerHTML" apps/web/src/ --include="*.tsx" | grep -v "node_modules" || true)
+          # Single audited exception: components/json-ld.tsx is the sole
+          # sanctioned emitter of schema.org JSON-LD (server-built objects,
+          # JSON.stringify'd, with `<` escaped to < so a "</script>"
+          # field can't break out). It is NOT a user-HTML sink. The ban stays
+          # fully active for every other file. See that file's header.
+          FOUND=$(grep -rn "dangerouslySetInnerHTML" apps/web/src/ --include="*.tsx" | grep -v "node_modules" | grep -v "components/json-ld.tsx" || true)
           if [ -n "$FOUND" ]; then
             echo "❌ FAILED: dangerouslySetInnerHTML found:"
             echo "$FOUND"
