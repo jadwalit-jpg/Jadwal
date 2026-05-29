@@ -82,6 +82,16 @@ export const metadata: Metadata = {
   // should canonicalize to the un-filtered root).
   alternates: {
     canonical: "./",
+    // Jadwal serves both languages from the SAME URL set (locale is
+    // cookie-driven, not path-prefixed like /ar/*), so every hreflang
+    // points at the same canonical. This tells search engines the page
+    // exists for en + ar and prevents duplicate-content flags. Revisit
+    // if locale-pathed routes (/ar/...) are ever introduced.
+    languages: {
+      en: "/",
+      ar: "/",
+      "x-default": "/",
+    },
   },
   icons: {
     icon: [
