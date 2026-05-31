@@ -82,6 +82,53 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
           process.env.NODE_ENV === 'development'
             ? { target: 'pino-pretty', options: { colorize: true, singleLine: true } }
             : undefined,
+        // FAIL-CLOSED request/response log serializers.
+        //
+        // pino-http binds the Express req/res to a per-request child logger,
+        // so EVERY log line (HTTP_REQUEST, SLOW_QUERY, errors, …) carries this
+        // context. The library's DEFAULT serializers dump the entire header set
+        // and full URL — which on this stack leaks PII straight into CloudWatch:
+        //   - client IP        → cf-connecting-ip / x-forwarded-for / x-real-ip
+        //   - precise geo      → cf-iplatitude / cf-iplongitude / cf-ipcity / cf-region
+        //   - secrets in query → OAuth `code`, PAY2M `Response_Key`, reset/verify tokens
+        // That breaks the platform rule "IP addresses NEVER logged — log only
+        // country code" and the PDPPL data-minimisation we commit to in the
+        // privacy policy.
+        //
+        // These replacements project req/res to a minimal, non-PII shape using
+        // an ALLOWLIST: any field not explicitly returned is dropped, so a
+        // future sensitive header can never silently leak (fail-closed). The
+        // `redact` block below stays as defence-in-depth for log *payloads*
+        // (bodies passed to log() calls), independent of these serializers.
+        serializers: {
+          req(req: {
+            id?: unknown;
+            method?: string;
+            url?: string;
+            headers?: Record<string, unknown>;
+          }) {
+            const h = req.headers ?? {};
+            const ua = h['user-agent'];
+            const country = h['cf-ipcountry'];
+            const contentType = h['content-type'];
+            return {
+              id: req.id,
+              method: req.method,
+              // Path only — the query string can carry OAuth codes, payment
+              // hashes and reset/verify tokens.
+              url: typeof req.url === 'string' ? req.url.split('?', 1)[0] : undefined,
+              // Coarse, non-identifying country code is explicitly permitted.
+              country: typeof country === 'string' ? country : undefined,
+              userAgent: typeof ua === 'string' ? ua.slice(0, 200) : undefined,
+              contentType: typeof contentType === 'string' ? contentType : undefined,
+            };
+          },
+          res(res: { statusCode?: number }) {
+            // Status code only — NEVER response headers (Set-Cookie carries the
+            // session + refresh tokens).
+            return { statusCode: res.statusCode };
+          },
+        },
         redact: {
           paths: [
             'req.headers.authorization',
