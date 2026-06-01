@@ -1019,6 +1019,94 @@ export class AdminService {
       }
     }
 
+    // ── Resolve orphaned pending refunds ──────────────────────────────────
+    // The loop above only touches bookings still PENDING/CONFIRMED. A booking
+    // the CUSTOMER already cancelled sits in REFUND_PENDING awaiting a vendor/
+    // admin decision (the cancellation-policy step). If the activity is THEN
+    // blocked/deactivated, that decision may never come and the refund is
+    // stranded — payment stuck at REFUND_PENDING, 0 Wanasa points credited,
+    // while the customer was told the refund was issued. Blocking/deactivating
+    // an activity is an unambiguous platform-side cancellation, so auto-approve
+    // those pending refunds at 100% → Wanasa points (same conversion + ledger
+    // path as a manual refund decision). Idempotent: the REFUND_PENDING
+    // optimistic lock means a concurrent/duplicate run is a no-op, so an admin
+    // can safely re-toggle the status to retry.
+    const orphanedPending = await db.booking.findMany({
+      where: {
+        activityId,
+        status: 'CANCELLED',
+        payment: { is: { status: 'REFUND_PENDING' } },
+      },
+      select: {
+        id: true,
+        ref: true,
+        customerId: true,
+        payment: { select: { id: true, amount: true } },
+      },
+      take: CASCADE_MAX,
+    });
+
+    let resolvedPending = 0;
+    for (const bk of orphanedPending) {
+      if (!bk.payment) continue;
+      try {
+        const paidAmount = Number(bk.payment.amount);
+        const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+        const committed = await db.$transaction(async (tx: any) => {
+          // Optimistic lock — only the first writer flips REFUND_PENDING.
+          const upd = await tx.payment.updateMany({
+            where: { id: bk.payment!.id, status: 'REFUND_PENDING' },
+            data: { status: 'REFUNDED', refundAmount: paidAmount, refundedAt: new Date() },
+          });
+          if (upd.count === 0) return false; // already decided concurrently
+          await tx.booking.update({
+            where: { id: bk.id },
+            data: {
+              refundDecisionAt: new Date(),
+              refundDecisionBy: adminUserId,
+              refundDecisionActor: 'ADMIN',
+              refundDecisionNote: refundNote,
+            },
+          });
+          if (refundPoints > 0) {
+            await this.loyalty.refund(tx, {
+              userId: bk.customerId,
+              amount: refundPoints,
+              bookingId: bk.id,
+              source: 'ADMIN_REFUND_APPROVED',
+              actorType: 'ADMIN',
+              actorId: adminUserId,
+              note: `Auto-approved pending refund on activity ${reasonText}: ${paidAmount} → ${refundPoints} points, booking ${bk.ref}`,
+            });
+          }
+          return true;
+        });
+        if (!committed) continue;
+        resolvedPending++;
+        // Fire-and-forget — never roll back the refund on a notification error.
+        this.notificationService.send({
+          userId: bk.customerId,
+          type: 'BOOKING_CANCELLED',
+          title: 'Your refund was approved',
+          message:
+            refundPoints > 0
+              ? `Your pending refund for booking ${bk.ref} was approved — ${refundPoints} Wanasa points have been added to your balance.`
+              : `Your pending refund for booking ${bk.ref} has been processed.`,
+          link: `/bookings/${bk.id}`,
+        });
+      } catch (err: unknown) {
+        const kind = err instanceof Error ? err.name : 'UnknownError';
+        this.logger.error(`Orphan refund resolve failed for booking ${bk.id} (${kind})`);
+        failed++;
+      }
+    }
+
+    if (resolvedPending > 0) {
+      this.logger.log(
+        `Cascade ${reasonText}: auto-approved ${resolvedPending} orphaned pending refund(s) for activity ${activityId}`,
+      );
+    }
+
     if (cancelled > 0) {
       void this.availabilityCache.invalidate(activityId);
     }
