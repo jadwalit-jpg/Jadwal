@@ -263,6 +263,9 @@ export default function AdminLoyaltyPage() {
               ) : (
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{config.pointsPerQar}</p>
               )}
+              <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
+                Points a customer <strong>earns</strong> for every 1 QAR spent on a booking. Example: 1 = the customer gets 1 point per QAR paid.
+              </p>
             </div>
 
             {/* QAR per Point */}
@@ -283,6 +286,9 @@ export default function AdminLoyaltyPage() {
               ) : (
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{config.qarPerPoint}</p>
               )}
+              <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
+                How much each point is <strong>worth</strong> when redeemed, and the rate used to convert refunds to points. Refund credit = refund amount ÷ this value (rounded down). Example: 0.1 → 10 points = 1 QAR; a 1 QAR refund at 0.1 = 10 points. If this is larger than the refund (e.g. 2), a 1 QAR refund rounds down to 0 points.
+              </p>
             </div>
 
             {/* Min Redemption */}
@@ -303,6 +309,9 @@ export default function AdminLoyaltyPage() {
               ) : (
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{config.minRedemption}</p>
               )}
+              <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
+                Fewest points a customer must spend in one booking before points can be redeemed. Stops tiny &ldquo;dust&rdquo; redemptions. Example: 100 = a customer needs at least 100 points to apply any discount.
+              </p>
             </div>
           </div>
         </div>
