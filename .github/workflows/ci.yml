@@ -238,12 +238,12 @@ jobs:
 
       - name: Jest integration suite
         working-directory: apps/api
-        # `geo-sms-cron.int.spec.ts` cross-file mock-isolation flake:
-        # passes solo, fails when a previous suite leaves a mock state
-        # behind. Tracked separately; allow CI to keep going while the
-        # underlying mock-isolation refactor is scheduled.
+        # Hard gate — the integration suite must pass for the PR to merge.
+        # The historical `geo-sms-cron.int.spec.ts` cross-file mock-isolation
+        # flake was removed together with the SMS feature (PR #264); the suite
+        # is stable, so the prior `continue-on-error` soft-fail was dropped at
+        # the 2026-06-04 launch.
         run: npx jest --silent --ci --config jest.integration.config.js --maxWorkers=1
-        continue-on-error: true
 
   # ─── Stage 5: Security Scan ─────────────────────────────────────
   security:
