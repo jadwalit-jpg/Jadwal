@@ -64,7 +64,7 @@ describe('OutboxDrainService.drain', () => {
     expect(after.lastError).toBeNull();
   });
 
-  test('send returns false → PENDING, attempts=1, nextAttemptAt in the future, lastError=SES_SEND_FAILED', async () => {
+  test('send returns false → PENDING, attempts=1, nextAttemptAt in the future, lastError=EMAIL_SEND_FAILED', async () => {
     const row = await seedRow();
     const { svc } = makeDrainService(async () => false);
 
@@ -73,7 +73,7 @@ describe('OutboxDrainService.drain', () => {
     const after = await ctx.prisma.emailOutbox.findUniqueOrThrow({ where: { id: row.id } });
     expect(after.status).toBe('PENDING');
     expect(after.attempts).toBe(1);
-    expect(after.lastError).toBe('SES_SEND_FAILED');
+    expect(after.lastError).toBe('EMAIL_SEND_FAILED');
     expect(after.nextAttemptAt.getTime()).toBeGreaterThan(Date.now());
   });
 

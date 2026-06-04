@@ -45,7 +45,7 @@ function makeServices() {
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
   return {
-    admin: new AdminService(prismaSvc, notificationService, loyalty, availabilityCache),
+    admin: new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any),
     vendor: new VendorService(prismaSvc, notificationService, loyalty, availabilityCache),
   };
 }
@@ -161,6 +161,7 @@ describe('vendor.getEarnings — refund exclusion invariant', () => {
           create: {
             ref: 'JDWL-MIX1',
             activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: seed.customer.id,
+            bookingPhone: '+97455123456',
             guests: 1, totalPrice: 100, serviceFee: 5,
             commissionPct: 10, commissionAmount: 10,
             currencyCode: 'QAR',
@@ -181,6 +182,7 @@ describe('vendor.getEarnings — refund exclusion invariant', () => {
           create: {
             ref: 'JDWL-MIX2',
             activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: seed.customer.id,
+            bookingPhone: '+97455123456',
             guests: 2, totalPrice: 200, serviceFee: 5,
             commissionPct: 10, commissionAmount: 20,
             currencyCode: 'QAR',
@@ -255,6 +257,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
           create: {
             ref: 'JDWL-LOCK', activityId: seed.activity.id, vendorId: seed.vendor.id,
             customerId: seed.customer.id,
+            bookingPhone: '+97455123456',
             guests: 2, totalPrice: 200, serviceFee: 5,
             commissionPct: 10, commissionAmount: 20,
             currencyCode: 'QAR',
@@ -294,6 +297,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
           create: {
             ref: 'JDWL-COMP', activityId: seed.activity.id, vendorId: seed.vendor.id,
             customerId: seed.customer.id,
+            bookingPhone: '+97455123456',
             guests: 2, totalPrice: 200, serviceFee: 5,
             commissionPct: 10, commissionAmount: 20,
             currencyCode: 'QAR',
@@ -341,6 +345,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
           create: {
             ref: 'JDWL-SLIP', activityId: seed.activity.id, vendorId: seed.vendor.id,
             customerId: seed.customer.id,
+            bookingPhone: '+97455123456',
             guests: 2, totalPrice: 200, serviceFee: 5,
             commissionPct: 10, commissionAmount: 20,
             currencyCode: 'QAR',
@@ -390,6 +395,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
             ref: 'JDWL-SCAM',
             activityId: seed.activity.id, vendorId: seed.vendor.id,
             customerId: seed.customer.id,
+            bookingPhone: '+97455123456',
             guests: 2, totalPrice: 200, serviceFee: 5,
             commissionPct: 10, commissionAmount: 20,
             currencyCode: 'QAR',
@@ -419,7 +425,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
       data: { status: 'REFUNDED', refundAmount: 200, refundedAt: new Date() },
     });
     await ctx.prisma.booking.update({
-      where: { id: payment.booking!.id },
+      where: { id: (payment as any).booking.id },
       data: { status: 'CANCELLED' },
     });
 
@@ -454,6 +460,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
           create: {
             ref: 'JDWL-MIXOK',
             activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: seed.customer.id,
+            bookingPhone: '+97455123456',
             guests: 2, totalPrice: 200, serviceFee: 5,
             commissionPct: 10, commissionAmount: 20,
             currencyCode: 'QAR',
@@ -472,6 +479,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
           create: {
             ref: 'JDWL-MIXRF',
             activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: seed.customer.id,
+            bookingPhone: '+97455123456',
             guests: 2, totalPrice: 200, serviceFee: 5,
             commissionPct: 10, commissionAmount: 20,
             currencyCode: 'QAR',
@@ -528,6 +536,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
           create: {
             ref: 'JDWL-HAPPY',
             activityId: seed.activity.id, vendorId: seed.vendor.id, customerId: seed.customer.id,
+            bookingPhone: '+97455123456',
             guests: 2, totalPrice: 200, serviceFee: 5,
             commissionPct: 10, commissionAmount: 20,
             currencyCode: 'QAR',
@@ -574,6 +583,7 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
         booking: {
           create: {
             ref: 'JDWL-BATCH',
+            bookingPhone: '+97455123456',
             activityId: success.seed.activity.id, vendorId: success.seed.vendor.id,
             customerId: success.seed.customer.id,
             guests: 1, totalPrice: 50, serviceFee: 5,

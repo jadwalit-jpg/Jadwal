@@ -60,6 +60,7 @@ function makeBookingsService() {
     svc: new BookingsService(
       prismaSvc, auditLogger, notificationService, redisLock,
       configService, loyalty, availabilityCache,
+      { sendBookingOtp: jest.fn().mockResolvedValue(undefined) } as any, { tryConsume: jest.fn().mockResolvedValue(true) } as any, { log: jest.fn() } as any,
     ),
     notificationService,
     availabilityCache,
@@ -753,6 +754,7 @@ describe('BookingsService.createBooking — coupon', () => {
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 2,           // 200 QAR total
+      bookingPhone: '+97455123456',
       couponCode: 'SAVE10', // 10% off → 20 QAR discount
       idempotencyKey: crypto.randomUUID(),
     });

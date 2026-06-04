@@ -40,7 +40,7 @@ function makeAdmin() {
     invalidate: jest.fn().mockResolvedValue(undefined),
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
-  return new AdminService(prismaSvc, notif, loyalty, cache);
+  return new AdminService(prismaSvc, notif, loyalty, cache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any);
 }
 
 async function seedCustomerWithHistory() {

@@ -228,7 +228,7 @@ describe('PaymentService.handleCallback — SUCCESS path', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('PaymentService.handleCallback — email outbox (R4)', () => {
-  test('SUCCESS enqueues exactly one PENDING email_outbox row with the booking payload', async () => {
+  test('SUCCESS enqueues the customer + vendor PENDING email_outbox rows with the booking payload', async () => {
     const { svc, emailService } = makePaymentService();
     const { basketId, bookingId, amountStr } = await seedPendingPayment(200);
 
@@ -240,11 +240,16 @@ describe('PaymentService.handleCallback — email outbox (R4)', () => {
     // No direct SES send on the hot path anymore — the worker owns it.
     expect(emailService.sendBookingConfirmation).not.toHaveBeenCalled();
 
+    // SUCCESS enqueues TWO PENDING emails — the customer BOOKING_CONFIRMATION
+    // and the VENDOR_BOOKING_NOTIFICATION (both delivered later by the worker).
     const rows = await ctx.prisma.emailOutbox.findMany({ where: { bookingId } });
-    expect(rows).toHaveLength(1);
-    const row = rows[0];
-    expect(row.status).toBe('PENDING');
-    expect(row.emailType).toBe('BOOKING_CONFIRMATION');
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.status === 'PENDING')).toBe(true);
+    expect(rows.map((r) => r.emailType).sort()).toEqual([
+      'BOOKING_CONFIRMATION',
+      'VENDOR_BOOKING_NOTIFICATION',
+    ]);
+    const row = rows.find((r) => r.emailType === 'BOOKING_CONFIRMATION')!;
     expect(row.attempts).toBe(0);
     const payload = row.payload as Record<string, unknown>;
     expect(payload.bookingId).toBe(bookingId);

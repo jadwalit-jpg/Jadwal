@@ -131,6 +131,7 @@ describe('B8 — audit retention split honours actionCategory', () => {
       config,
       {} as any,
       { invalidate: jest.fn(), invalidateMany: jest.fn() } as any,
+      { acquire: jest.fn().mockResolvedValue('lock-token'), release: jest.fn().mockResolvedValue(undefined) } as any,
     );
 
     await (svc as any).cleanOldAuditLogs();

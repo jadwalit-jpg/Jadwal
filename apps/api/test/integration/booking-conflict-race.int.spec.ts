@@ -52,6 +52,7 @@ function makeBookingsService() {
     configService,
     loyalty,
     availabilityCache,
+    { sendBookingOtp: jest.fn().mockResolvedValue(undefined) } as any, { tryConsume: jest.fn().mockResolvedValue(true) } as any, { log: jest.fn() } as any,
   );
 }
 

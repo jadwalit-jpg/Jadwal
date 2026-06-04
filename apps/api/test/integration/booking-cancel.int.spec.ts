@@ -40,6 +40,7 @@ function makeBookingsService() {
       { get: (_: string, f?: string) => f } as any,
       loyalty,
       { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any,
+      { sendBookingOtp: jest.fn().mockResolvedValue(undefined) } as any, { tryConsume: jest.fn().mockResolvedValue(true) } as any, { log: jest.fn() } as any,
     ),
   };
 }
