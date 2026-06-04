@@ -32,7 +32,7 @@ function makeServices() {
     invalidate:     jest.fn().mockResolvedValue(undefined),
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
-  const admin  = new AdminService(prismaSvc, notificationService, loyalty, availabilityCache);
+  const admin  = new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any);
   const vendor = new VendorService(prismaSvc, notificationService, loyalty, availabilityCache);
   return { admin, vendor, notificationService };
 }

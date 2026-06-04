@@ -36,7 +36,7 @@ function makeAdminService() {
     invalidate: jest.fn().mockResolvedValue(undefined),
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
-  return new AdminService(prisma, notification, loyalty, availabilityCache);
+  return new AdminService(prisma, notification, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any);
 }
 
 function makeVendorService() {

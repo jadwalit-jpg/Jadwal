@@ -43,7 +43,7 @@ function makeServices() {
     acquire: jest.fn().mockResolvedValue('tok'),
     release: jest.fn().mockResolvedValue(undefined),
   } as any;
-  const admin = new AdminService(prismaSvc, notificationService, loyalty, availabilityCache);
+  const admin = new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any);
   const vendor = new VendorService(prismaSvc, notificationService, loyalty, availabilityCache);
   const bookings = new BookingsService(
     prismaSvc,
@@ -53,6 +53,7 @@ function makeServices() {
     { get: (_: string, f?: string) => f } as any,
     loyalty,
     availabilityCache,
+    { sendBookingOtp: jest.fn().mockResolvedValue(undefined) } as any, { tryConsume: jest.fn().mockResolvedValue(true) } as any, { log: jest.fn() } as any,
   );
   return { admin, vendor, bookings };
 }

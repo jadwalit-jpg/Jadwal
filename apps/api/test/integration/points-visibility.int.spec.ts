@@ -54,11 +54,12 @@ function makeServices() {
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
   return {
-    admin: new AdminService(prismaSvc, notificationService, loyalty, availabilityCache),
+    admin: new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any),
     vendor: new VendorService(prismaSvc, notificationService, loyalty, availabilityCache),
     bookings: new BookingsService(
       prismaSvc, auditLogger, notificationService, redisLock,
       configService, loyalty, availabilityCache,
+      { sendBookingOtp: jest.fn().mockResolvedValue(undefined) } as any, { tryConsume: jest.fn().mockResolvedValue(true) } as any, { log: jest.fn() } as any,
     ),
   };
 }

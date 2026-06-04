@@ -413,6 +413,7 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
         activityId: seed.activity.id,
         vendorId: seed.vendor.id,
         customerId: seed.customer.id,
+        bookingPhone: '+97455123456',
         guests: 2, guestBreakdown: {},
         startDatetime: startDt, endDatetime: endDt,
         totalPrice: 180,           // 200 - 10% coupon discount
@@ -568,6 +569,7 @@ describe('§M6 — callback un-cancels SYSTEM-cancelled booking when safe', () =
         activityId: seed.activity.id,
         vendorId: seed.vendor.id,
         customerId: seed.customer.id,
+        bookingPhone: '+97455123456',
         guests: opts.guests ?? 2,
         guestBreakdown: {},
         startDatetime: startDt,

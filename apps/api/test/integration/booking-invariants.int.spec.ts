@@ -39,6 +39,7 @@ async function mkBooking(
     data: {
       ref,
       currencyCode: 'QAR',
+      bookingPhone: '+97455123456',
       guests: 2, totalPrice: 200, serviceFee: 5, commissionAmount: 20,
       status: 'CONFIRMED',
       startDatetime: start, endDatetime: end,

@@ -30,6 +30,7 @@ function makeBookingsService() {
     { get: (_: string, f?: string) => f } as any,
     loyalty,
     { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any,
+    { sendBookingOtp: jest.fn().mockResolvedValue(undefined) } as any, { tryConsume: jest.fn().mockResolvedValue(true) } as any, { log: jest.fn() } as any,
   );
 }
 
@@ -167,7 +168,7 @@ describe('BookingsService.getDailyAvailability', () => {
       ctx.prisma.booking.create({
         data: {
           ref: `JDWL-UNIT-${crypto.randomUUID().slice(0, 6)}`,
-          currencyCode: 'QAR', guests,
+          currencyCode: 'QAR', guests, bookingPhone: '+97455123456',
           totalPrice: 200, serviceFee: 5, commissionAmount: 20,
           status: 'CONFIRMED',
           startDatetime: new Date(`${checkIn}T14:00:00Z`),
