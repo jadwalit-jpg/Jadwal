@@ -80,6 +80,11 @@ const nextConfig: NextConfig = {
         destination: "https://jadwal.qa/:path*",
         permanent: true,
       },
+      // ── Launch swap: legacy /home → canonical apex (301) ──
+      // The marketplace homepage moved from /home to / at launch
+      // (2026-06-04). /home was already indexed, so 301 it to the apex to
+      // consolidate ranking signals and avoid duplicate content.
+      { source: "/home", destination: "/", permanent: true },
       // ── Legacy Shopify URL equity recovery (301) ──
       // The old store lived on Shopify with /collections/* and /products/*
       // (and /ar/* mirrors). ~900 backlinks still point there. The new

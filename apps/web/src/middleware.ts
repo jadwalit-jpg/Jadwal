@@ -143,7 +143,7 @@ function buildCsp(nonce: string, isProd: boolean): string {
 
 // ─── Kill switch (Z.144) ───────────────────────────────────────────
 // When `LAUNCH_DISABLED=true` is set on the web task, every public route
-// redirects to `/` (the Coming Soon page). Staff routes (/admin/*,
+// redirects to `/maintenance` (the holding page). Staff routes (/admin/*,
 // /vendor/*) and auth routes stay reachable so support + engineering
 // can log in and investigate. /api/* is already excluded from this
 // middleware via the matcher config below, so the backend keeps running
@@ -177,7 +177,7 @@ const KILL_SWITCH_ALLOWED_PREFIXES = [
 ];
 
 function isAllowedDuringKillswitch(pathname: string): boolean {
-  if (pathname === '/') return true; // the Coming Soon page itself
+  if (pathname === '/maintenance') return true; // the holding page itself
   return KILL_SWITCH_ALLOWED_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );
@@ -200,8 +200,8 @@ export function middleware(request: NextRequest) {
   const applyCspHeaders = (res: NextResponse) => {
     res.headers.set('Content-Security-Policy', csp);
 
-    // ─── /home browser-only cache ──────────────────────────────
-    // /home renders a per-request geo-aware eyebrow ("Qatar · Local
+    // ─── / (home) browser-only cache ───────────────────────────
+    // / renders a per-request geo-aware eyebrow ("Qatar · Local
     // experiences" via CF-IPCountry). Edge caching shares one HTML across
     // all visitors → first cache populator's country leaks to everyone.
     //
@@ -215,7 +215,7 @@ export function middleware(request: NextRequest) {
     // CSP nonce safety: the browser caches headers + body atomically, so
     // the cached `<script nonce="X">` always matches the cached CSP
     // header's `nonce-X` directive. No re-stamping needed.
-    if (pathname === '/home') {
+    if (pathname === '/') {
       res.headers.set('Cache-Control', 'private, max-age=300, must-revalidate');
     }
 
@@ -224,7 +224,7 @@ export function middleware(request: NextRequest) {
 
   // ─── Kill switch — runs before any auth / route logic ───────
   if (LAUNCH_DISABLED && !isAllowedDuringKillswitch(pathname)) {
-    return applyCspHeaders(NextResponse.redirect(new URL('/', request.url)));
+    return applyCspHeaders(NextResponse.redirect(new URL('/maintenance', request.url)));
   }
 
   const authCookie = request.cookies.get('Authentication');
