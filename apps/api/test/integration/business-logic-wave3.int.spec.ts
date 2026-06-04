@@ -721,7 +721,8 @@ describe('booking snapshot is server-derived', () => {
       createdAt: new Date('2030-01-01T09:00:00Z'),
     };
     const snap = buildBookingSnapshot(fakeBookingRow);
-    expect(snap.v).toBe(1);
+    expect(snap.v).toBe(2);
+    expect(snap.bookingPhone).toBe('+97455123456');
     expect(snap.totalPrice).toBe('200.00');
     expect(snap.commissionAmount).toBe('20.00');
     expect(snap.startDatetime).toBe('2030-01-01T10:00:00.000Z');

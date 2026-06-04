@@ -85,6 +85,9 @@ async function seedPendingBooking(
       ref: `JDWL-INIT-${crypto.randomUUID().slice(0, 6)}`,
       currencyCode: 'QAR', guests: 2, totalPrice: 200, serviceFee: 5, commissionAmount: 20,
       bookingPhone,
+      // initiatePayment refuses unverified bookings (email-OTP gate), so the
+      // seeded booking must be marked email-verified.
+      emailOtpVerifiedAt: new Date(),
       status: 'PENDING',
       startDatetime: new Date('2030-10-01T10:00:00Z'),
       endDatetime:   new Date('2030-10-01T12:00:00Z'),
