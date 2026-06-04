@@ -39,7 +39,6 @@ const STATIC_ROUTES: Array<{
   priority: number;
 }> = [
   { path: '', changeFrequency: 'daily', priority: 1.0 },
-  { path: '/home', changeFrequency: 'daily', priority: 0.95 },
   { path: '/explore', changeFrequency: 'daily', priority: 0.9 },
   { path: '/offers', changeFrequency: 'weekly', priority: 0.8 },
   { path: '/about', changeFrequency: 'monthly', priority: 0.7 },

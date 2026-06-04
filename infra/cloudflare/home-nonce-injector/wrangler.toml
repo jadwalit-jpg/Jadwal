@@ -1,4 +1,4 @@
-# Cloudflare Worker — /home CSP-nonce re-injector. See worker.js for the why.
+# Cloudflare Worker — / (homepage) CSP-nonce re-injector. See worker.js for the why.
 #
 # ── Deploy ───────────────────────────────────────────────────────────────────
 #   cd infra/cloudflare/home-nonce-injector
@@ -9,11 +9,12 @@
 #                                  #   "Zone → Workers Routes: Edit" on jadwal.qa
 #
 # ── Rollout order (IMPORTANT — Worker FIRST, cache SECOND) ────────────────────
-#   1. Deploy this Worker. While /home is NOT yet edge-cached this is a no-op:
-#      it re-stamps an already-fresh nonce. Verify /home still loads + hydrates.
-#   2. THEN turn on edge-caching for /home with a Cloudflare Cache Rule
+#   1. Deploy this Worker. While / is NOT yet edge-cached this is a no-op:
+#      it re-stamps an already-fresh nonce. Verify / still loads + hydrates, and
+#      confirm it does NOT run on deep links (e.g. /explore is untouched).
+#   2. THEN turn on edge-caching for / with a Cloudflare Cache Rule
 #      (http_request_cache_settings phase):
-#        expression : (http.request.uri.path eq "/home" and not http.cookie contains "jadwal_lang")
+#        expression : (http.request.uri.path eq "/" and not http.cookie contains "jadwal_lang")
 #        action     : cache = true
 #                     edge_ttl    = { mode: "override_origin", default: 60 }   # cache 60s even though origin says no-store
 #                     browser_ttl = { mode: "respect_origin" }                 # browser keeps no-store → always re-fetches → fresh nonce
@@ -21,24 +22,25 @@
 #          have switched language get a fresh dynamic render, so the cached EN
 #          copy is never shown to an AR user. CF free tier supports cookie
 #          checks in rule expressions. )
-#   3. Verify:  curl -sI https://jadwal.qa/home  → after one warm-up request,
+#   3. Verify:  curl -sI https://jadwal.qa/  → after one warm-up request,
 #      cf-cache-status: HIT; run it twice → the `'nonce-…'` in the
 #      Content-Security-Policy header differs each time (Worker is re-stamping);
-#      load /home in a browser → no CSP errors in console, page hydrates.
+#      load / in a browser → no CSP errors in console, page hydrates.
 #      With a jadwal_lang cookie set → cf-cache-status: DYNAMIC (bypassed).
 #
 # ── Off switch ───────────────────────────────────────────────────────────────
-#   Delete the /home Cache Rule (instant — /home goes back to DYNAMIC). The
-#   Worker can stay deployed; it's harmless when /home isn't cached.
+#   Delete the / Cache Rule (instant — / goes back to DYNAMIC). The
+#   Worker can stay deployed; it's harmless when / isn't cached.
 
 name = "jadwal-home-nonce-injector"
 main = "worker.js"
 compatibility_date = "2025-05-01"
 
-# Run only on /home — the marketplace homepage. (Old heavy `/home` was
-# replaced by the lighter build in this PR; the route URL is unchanged so the
-# Worker route stays as-is. The legacy code is parked under
-# `apps/web/src/app/_archive/home-page.tsx` and is not served.)
+# Run only on / — the marketplace homepage (moved from /home to the apex at
+# launch, 2026-06-04). The pattern matches the root path ONLY — it must NOT
+# match /explore, /activity/*, etc. (those have no eyebrow/nonce-cache need and
+# buffering + rewriting every page would be wasteful). The legacy heavy home is
+# parked under `apps/web/src/app/_archive/home-page.tsx` and is not served.
 [[routes]]
-pattern = "jadwal.qa/home"
+pattern = "jadwal.qa/"
 zone_name = "jadwal.qa"
