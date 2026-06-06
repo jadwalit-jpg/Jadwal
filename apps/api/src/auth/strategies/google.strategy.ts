@@ -34,10 +34,27 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     profile: Profile,
     done: VerifyCallback,
   ): Promise<void> {
-    const email = profile.emails?.[0]?.value;
+    const emailEntry = profile.emails?.[0] as
+      | { value?: string; verified?: boolean | string }
+      | undefined;
+    const email = emailEntry?.value;
 
     if (!email) {
       return done(new Error('No email returned from Google'), undefined);
+    }
+
+    // Only trust the address if Google itself says it's verified. Without this,
+    // a Google account whose email is unverified could be used to claim or
+    // auto-link a Jadwal account at that address (the OAuth-link path trusts
+    // this email). Google's raw userinfo carries `email_verified`; passport also
+    // surfaces a per-address `verified` flag — accept either.
+    const json = profile._json as { email_verified?: boolean } | undefined;
+    const emailVerified =
+      json?.email_verified === true ||
+      emailEntry?.verified === true ||
+      emailEntry?.verified === 'true';
+    if (!emailVerified) {
+      return done(new Error('Google account email is not verified'), undefined);
     }
 
     const user: GoogleProfile = {
