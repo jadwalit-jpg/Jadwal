@@ -107,7 +107,11 @@ function siteOrigin(): string {
  * layout body — Next.js dedupes the two identical fetches into one request.
  */
 async function fetchActivity(slug: string): Promise<PublicActivity | null> {
-  const internalUrl = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
+  // Server-side fetch needs an ABSOLUTE base. NEXT_PUBLIC_API_URL is the
+  // relative "/api" proxy path in prod (no origin on the server → fetch throws →
+  // OG/JSON-LD silently degrade). API_PROXY_TARGET is the absolute internal API
+  // URL set in prod (see next.config.ts); prefer it for this server-side call.
+  const internalUrl = process.env.INTERNAL_API_URL || process.env.API_PROXY_TARGET || process.env.NEXT_PUBLIC_API_URL;
   if (!internalUrl) return null;
   try {
     const controller = new AbortController();

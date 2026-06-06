@@ -180,7 +180,7 @@ export class CleanupService {
           { createdAt: { lt: fallbackCutoff } },
         ],
       },
-      select: { id: true, paymentId: true, activityId: true, customerId: true, couponCode: true },
+      select: { id: true, ref: true, paymentId: true, activityId: true, customerId: true, couponCode: true, pointsRedeemed: true },
     });
 
     if (staleBookings.length === 0) return;
@@ -209,6 +209,24 @@ export class CleanupService {
       for (const b of staleBookings) {
         if (b.couponCode) {
           await refundCouponUsage(tx, b.couponCode, b.customerId);
+        }
+        // Return any Wanasa points redeemed on this PENDING booking. Points are
+        // debited at booking-create time (so the same points can't double-book),
+        // so hard-deleting an abandoned booking without refunding them would
+        // silently confiscate the customer's store credit. Mirrors the
+        // customer-cancel-unpaid path (bookings.service.ts) — source
+        // CANCEL_REFUND_UNPAID; the ledger row's bookingId is a soft pointer, so
+        // the delete below doesn't invalidate it.
+        if (b.pointsRedeemed > 0) {
+          await this.loyalty.refund(tx, {
+            userId: b.customerId,
+            amount: b.pointsRedeemed,
+            bookingId: b.id,
+            source: 'CANCEL_REFUND_UNPAID',
+            actorType: 'SYSTEM',
+            actorId: 'cron',
+            note: `Stale PENDING auto-cancel — returned ${b.pointsRedeemed} redeemed points, booking ${b.ref}`,
+          });
         }
       }
 

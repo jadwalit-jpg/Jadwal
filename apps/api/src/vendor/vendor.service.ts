@@ -479,25 +479,43 @@ export class VendorService {
       );
     }
 
+    let cancelledNow = false;
     const updated = await db.$transaction(async (tx: any) => {
       // Vendor-initiated cancellation stamps cancelledAt/By for history.
       // Vendor-initiated cancel does NOT go through the refund queue — the
       // vendor is already making the call, so refund is immediate at 100%.
-      const result = await tx.booking.update({
-        where: { id: bookingId },
-        data: {
-          status: newStatus as any,
-          ...(newStatus === 'CANCELLED'
-            ? {
-                cancelledAt: new Date(),
-                cancelledBy: 'VENDOR',
-                refundDecisionAt: new Date(),
-                refundDecisionBy: userId,
-                refundDecisionActor: 'VENDOR',
-              }
-            : {}),
-        },
-      });
+      //
+      // CANCELLED is the money-mutating transition. Claim it optimistically so
+      // exactly ONE concurrent cancel (double-click / two tabs / retried
+      // request) wins — otherwise the refund + loyalty-credit block below runs
+      // twice and the customer is credited their refund points twice. Mirrors
+      // the customer cancelBooking guard (bookings.service.ts).
+      if (newStatus === 'CANCELLED') {
+        const claim = await tx.booking.updateMany({
+          where: { id: bookingId, status: { not: 'CANCELLED' } },
+          data: {
+            status: 'CANCELLED',
+            cancelledAt: new Date(),
+            cancelledBy: 'VENDOR',
+            refundDecisionAt: new Date(),
+            refundDecisionBy: userId,
+            refundDecisionActor: 'VENDOR',
+          },
+        });
+        if (claim.count === 0) {
+          // Lost the race — already cancelled. Skip all refunds; return current row.
+          return tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
+        }
+        cancelledNow = true;
+      }
+
+      const result =
+        newStatus === 'CANCELLED'
+          ? await tx.booking.findUniqueOrThrow({ where: { id: bookingId } })
+          : await tx.booking.update({
+              where: { id: bookingId },
+              data: { status: newStatus as any },
+            });
 
       // Handle payment state when vendor cancels a paid booking.
       // Refund goes to Wanasa points (store credit), NOT back to card.
@@ -590,7 +608,7 @@ export class VendorService {
     // CANCELLED is the only transition that frees capacity. CONFIRMED and
     // COMPLETED both consume capacity identically, so those don't require a
     // cache bump.
-    if (newStatus === 'CANCELLED') {
+    if (newStatus === 'CANCELLED' && cancelledNow) {
       void this.availabilityCache.invalidate(booking.activityId);
 
       // Customer notification — they didn't initiate this cancel, so they need

@@ -47,7 +47,12 @@ const STATIC_ROUTES: Array<{
 ];
 
 async function fetchSitemapUrls(): Promise<SitemapUrls | null> {
-  const api = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
+  // Server-side fetch needs an ABSOLUTE base. In production NEXT_PUBLIC_API_URL
+  // is the relative "/api" (the browser proxy path), which has no origin on the
+  // server → the fetch throws → we silently fell back to the static-only sitemap
+  // (zero /activity URLs). API_PROXY_TARGET is the absolute internal API URL set
+  // in prod (see next.config.ts), so prefer it for this server-side call.
+  const api = process.env.INTERNAL_API_URL || process.env.API_PROXY_TARGET || process.env.NEXT_PUBLIC_API_URL;
   if (!api) return null;
   try {
     const controller = new AbortController();

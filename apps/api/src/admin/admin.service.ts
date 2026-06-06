@@ -1208,30 +1208,62 @@ export class AdminService {
       );
     }
 
+    let cancelledNow = false;
     const updated = await db.$transaction(async (tx: any) => {
       // Admin-initiated cancel stamps cancelledAt/By for history. Admin does
       // NOT go through the refund queue — admin is final arbiter and refund
       // is recorded immediately at 100%. Handles edge cases like suspended
       // vendors who can't log in to process their own queue.
-      const result = await tx.booking.update({
-        where: { id: bookingId },
-        data: {
-          status: status as any,
-          ...(status === 'CANCELLED'
-            ? {
-                cancelledAt: new Date(),
-                cancelledBy: 'ADMIN',
-                refundDecisionAt: new Date(),
-                refundDecisionBy: adminUserId,
-                refundDecisionActor: 'ADMIN',
-              }
-            : {}),
-        },
-        include: {
-          customer: { select: { fullName: true } },
-          activity: { select: { titleEn: true } },
-        },
-      });
+      //
+      // CANCELLED is the money-mutating transition. Claim it optimistically so
+      // exactly ONE concurrent cancel (double-click / two tabs / retried
+      // request) wins — otherwise the refund + loyalty-credit block below runs
+      // twice and the customer is credited their refund points twice. Mirrors
+      // the customer cancelBooking guard (bookings.service.ts). CONFIRMED /
+      // COMPLETED keep the plain update (they have their own guards).
+      if (status === 'CANCELLED') {
+        const claim = await tx.booking.updateMany({
+          where: { id: bookingId, status: { not: 'CANCELLED' } },
+          data: {
+            status: 'CANCELLED',
+            cancelledAt: new Date(),
+            cancelledBy: 'ADMIN',
+            refundDecisionAt: new Date(),
+            refundDecisionBy: adminUserId,
+            refundDecisionActor: 'ADMIN',
+          },
+        });
+        if (claim.count === 0) {
+          // Lost the race — already cancelled by a concurrent request. Do NOT
+          // re-run any refund; just return the current row.
+          return tx.booking.findUniqueOrThrow({
+            where: { id: bookingId },
+            include: {
+              customer: { select: { fullName: true } },
+              activity: { select: { titleEn: true } },
+            },
+          });
+        }
+        cancelledNow = true;
+      }
+
+      const result =
+        status === 'CANCELLED'
+          ? await tx.booking.findUniqueOrThrow({
+              where: { id: bookingId },
+              include: {
+                customer: { select: { fullName: true } },
+                activity: { select: { titleEn: true } },
+              },
+            })
+          : await tx.booking.update({
+              where: { id: bookingId },
+              data: { status: status as any },
+              include: {
+                customer: { select: { fullName: true } },
+                activity: { select: { titleEn: true } },
+              },
+            });
 
       // Handle payment state when admin cancels a paid booking.
       // Refund goes to Wanasa points (store credit), NOT back to card.
@@ -1362,7 +1394,7 @@ export class AdminService {
 
     // CANCELLED is the only transition that frees capacity. Other transitions
     // (CONFIRMED, COMPLETED) keep the booking blocking the slot.
-    if (status === 'CANCELLED') {
+    if (status === 'CANCELLED' && cancelledNow) {
       void this.availabilityCache.invalidate(booking.activityId);
 
       // Customer notification — admin action, customer didn't initiate.
