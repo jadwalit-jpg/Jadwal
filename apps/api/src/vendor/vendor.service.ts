@@ -511,7 +511,14 @@ export class VendorService {
 
       const result =
         newStatus === 'CANCELLED'
-          ? await tx.booking.findUniqueOrThrow({ where: { id: bookingId } })
+          // Fresh in-tx snapshot AFTER winning the claim — the refund logic
+          // below reads payment status, pointsRedeemed and pointsAwarded from
+          // THIS row, never the pre-tx `booking` read, so a concurrent payment
+          // callback or completion can't drive a stale refund.
+          ? await tx.booking.findUniqueOrThrow({
+              where: { id: bookingId },
+              include: { payment: { select: { id: true, status: true, amount: true } } },
+            })
           : await tx.booking.update({
               where: { id: bookingId },
               data: { status: newStatus as any },
@@ -519,11 +526,11 @@ export class VendorService {
 
       // Handle payment state when vendor cancels a paid booking.
       // Refund goes to Wanasa points (store credit), NOT back to card.
-      if (newStatus === 'CANCELLED' && booking.payment) {
-        if (booking.payment.status === 'SUCCESS') {
-          const paidAmount = Number(booking.payment.amount);
+      if (newStatus === 'CANCELLED' && result.payment) {
+        if (result.payment.status === 'SUCCESS') {
+          const paidAmount = Number(result.payment.amount);
           await tx.payment.update({
-            where: { id: booking.payment.id },
+            where: { id: result.payment.id },
             data: {
               status: 'REFUNDED',
               refundAmount: paidAmount,
@@ -538,39 +545,39 @@ export class VendorService {
           const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
           if (refundPoints > 0) {
             await this.loyalty.refund(tx, {
-              userId: booking.customerId,
+              userId: result.customerId,
               amount: refundPoints,
               bookingId,
               source: 'VENDOR_REFUND_APPROVED',
               actorType: 'VENDOR',
               actorId: userId,
-              note: `Vendor cancel: ${paidAmount} refund → ${refundPoints} points, booking ${booking.ref}`,
+              note: `Vendor cancel: ${paidAmount} refund → ${refundPoints} points, booking ${result.ref}`,
             });
           }
-        } else if (booking.payment.status === 'PENDING') {
+        } else if (result.payment.status === 'PENDING') {
           await tx.payment.update({
-            where: { id: booking.payment.id },
+            where: { id: result.payment.id },
             data: { status: 'FAILED' },
           });
         }
 
         // Refund redeemed loyalty points back to customer (ledger: CANCEL_REFUND_PAID)
-        const redeemedPoints = Number(booking.pointsRedeemed) || 0;
+        const redeemedPoints = Number(result.pointsRedeemed) || 0;
         if (redeemedPoints > 0) {
           await this.loyalty.refund(tx, {
-            userId: booking.customerId,
+            userId: result.customerId,
             amount: redeemedPoints,
             bookingId,
             source: 'CANCEL_REFUND_PAID',
             actorType: 'VENDOR',
             actorId: userId,
-            note: `Vendor cancel returned redeemed points on booking ${booking.ref}`,
+            note: `Vendor cancel returned redeemed points on booking ${result.ref}`,
           });
         }
 
         // Refund the coupon usage so usage counters stay accurate and
         // platform vouchers become re-applicable on future bookings.
-        await refundCouponUsage(tx, booking.couponCode, booking.customerId);
+        await refundCouponUsage(tx, result.couponCode, result.customerId);
       }
 
       // Award loyalty points when booking becomes COMPLETED (ledger: BOOKING_EARN)
