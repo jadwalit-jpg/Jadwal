@@ -511,7 +511,14 @@ export class VendorService {
 
       const result =
         newStatus === 'CANCELLED'
-          ? await tx.booking.findUniqueOrThrow({ where: { id: bookingId } })
+          // Fresh in-tx snapshot AFTER winning the claim — the refund logic
+          // below reads payment status, pointsRedeemed and pointsAwarded from
+          // THIS row, never the pre-tx `booking` read, so a concurrent payment
+          // callback or completion can't drive a stale refund.
+          ? await tx.booking.findUniqueOrThrow({
+              where: { id: bookingId },
+              include: { payment: { select: { id: true, status: true, amount: true } } },
+            })
           : await tx.booking.update({
               where: { id: bookingId },
               data: { status: newStatus as any },
@@ -519,11 +526,11 @@ export class VendorService {
 
       // Handle payment state when vendor cancels a paid booking.
       // Refund goes to Wanasa points (store credit), NOT back to card.
-      if (newStatus === 'CANCELLED' && booking.payment) {
-        if (booking.payment.status === 'SUCCESS') {
-          const paidAmount = Number(booking.payment.amount);
+      if (newStatus === 'CANCELLED' && result.payment) {
+        if (result.payment.status === 'SUCCESS') {
+          const paidAmount = Number(result.payment.amount);
           await tx.payment.update({
-            where: { id: booking.payment.id },
+            where: { id: result.payment.id },
             data: {
               status: 'REFUNDED',
               refundAmount: paidAmount,
@@ -538,39 +545,39 @@ export class VendorService {
           const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
           if (refundPoints > 0) {
             await this.loyalty.refund(tx, {
-              userId: booking.customerId,
+              userId: result.customerId,
               amount: refundPoints,
               bookingId,
               source: 'VENDOR_REFUND_APPROVED',
               actorType: 'VENDOR',
               actorId: userId,
-              note: `Vendor cancel: ${paidAmount} refund → ${refundPoints} points, booking ${booking.ref}`,
+              note: `Vendor cancel: ${paidAmount} refund → ${refundPoints} points, booking ${result.ref}`,
             });
           }
-        } else if (booking.payment.status === 'PENDING') {
+        } else if (result.payment.status === 'PENDING') {
           await tx.payment.update({
-            where: { id: booking.payment.id },
+            where: { id: result.payment.id },
             data: { status: 'FAILED' },
           });
         }
 
         // Refund redeemed loyalty points back to customer (ledger: CANCEL_REFUND_PAID)
-        const redeemedPoints = Number(booking.pointsRedeemed) || 0;
+        const redeemedPoints = Number(result.pointsRedeemed) || 0;
         if (redeemedPoints > 0) {
           await this.loyalty.refund(tx, {
-            userId: booking.customerId,
+            userId: result.customerId,
             amount: redeemedPoints,
             bookingId,
             source: 'CANCEL_REFUND_PAID',
             actorType: 'VENDOR',
             actorId: userId,
-            note: `Vendor cancel returned redeemed points on booking ${booking.ref}`,
+            note: `Vendor cancel returned redeemed points on booking ${result.ref}`,
           });
         }
 
         // Refund the coupon usage so usage counters stay accurate and
         // platform vouchers become re-applicable on future bookings.
-        await refundCouponUsage(tx, booking.couponCode, booking.customerId);
+        await refundCouponUsage(tx, result.couponCode, result.customerId);
       }
 
       // Award loyalty points when booking becomes COMPLETED (ledger: BOOKING_EARN)
@@ -1176,14 +1183,50 @@ export class VendorService {
       });
     }
 
-    const request = await db.payoutRequest.create({
-      data: {
-        vendorId: vendor.id,
-        amount: eligibility.available,
-        currency: eligibility.currency,
-        status: 'PENDING',
-      },
-    });
+    // Atomicity guard for the double-request race. evaluatePayoutEligibility()
+    // already blocks when an inflight (PENDING/APPROVED) request exists, but that
+    // check and this create are NOT atomic — two concurrent calls (double-click /
+    // two tabs / a retried request) can both pass the check and each insert a
+    // PENDING request for the same money, which an admin could then approve twice
+    // (paying the vendor twice). Re-check + insert inside a SERIALIZABLE
+    // transaction: for two truly-simultaneous requests Postgres aborts one with a
+    // serialization failure (P2034); the in-tx re-check catches the slightly-later
+    // one. Either way the loser gets the same friendly inflight error.
+    const inflightError = () =>
+      new BadRequestException({
+        statusCode: 400,
+        code: 'INFLIGHT_PENDING',
+        message:
+          'You already have a pending payout request. Wait for admin review before requesting another.',
+      });
+
+    const request = await db
+      .$transaction(
+        async (tx) => {
+          const dup = await tx.payoutRequest.findFirst({
+            where: { vendorId: vendor.id, status: { in: ['PENDING', 'APPROVED'] } },
+            select: { id: true },
+          });
+          if (dup) throw inflightError();
+          return tx.payoutRequest.create({
+            data: {
+              vendorId: vendor.id,
+              amount: eligibility.available,
+              currency: eligibility.currency,
+              status: 'PENDING',
+            },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      )
+      .catch((err: unknown) => {
+        // A concurrent insert makes Serializable abort the loser with P2034 —
+        // surface it as the same friendly inflight error the re-check throws.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034') {
+          throw inflightError();
+        }
+        throw err;
+      });
 
     this.notificationService.notifyAdmins({
       type: 'PAYOUT_REQUESTED',

@@ -15,6 +15,10 @@ import { BookingsService } from '../../src/bookings/bookings.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import * as crypto from 'crypto';
 
+// Must match the pepper the BookingsService mock config returns below, so the
+// hash stampOtp() seeds verifies against hashBookingOtp()'s peppered HMAC.
+const OTP_PEPPER = 'test-otp-pepper';
+
 const ctx = getTestContext();
 
 beforeAll(async () => { await ctx.start(); }, 30_000);
@@ -39,6 +43,7 @@ function makeBookingsService() {
         RESERVATION_WINDOW_MINUTES: '15',
         BOOKING_MAX_ADVANCE_YEARS: '2',
         REDIS_LOCK_TTL_MS: '30000',
+        BOOKING_OTP_PEPPER: OTP_PEPPER,
       };
       return cfg[k] ?? fallback;
     },
@@ -104,7 +109,7 @@ async function stampOtp(bookingId: string, code: string): Promise<void> {
   await ctx.prisma.booking.update({
     where: { id: bookingId },
     data: {
-      emailOtpHash: crypto.createHash('sha256').update(code).digest('hex'),
+      emailOtpHash: crypto.createHmac('sha256', OTP_PEPPER).update(code).digest('hex'),
       emailOtpExpiry: new Date(Date.now() + 10 * 60 * 1000),
       emailOtpAttempts: 0,
     },

@@ -1251,9 +1251,15 @@ export class AdminService {
         status === 'CANCELLED'
           ? await tx.booking.findUniqueOrThrow({
               where: { id: bookingId },
+              // Fresh in-tx snapshot AFTER winning the claim — the refund /
+              // reversal logic below reads payment status, pointsRedeemed and
+              // pointsAwarded from THIS row, never the pre-tx `booking` read, so
+              // a concurrent payment callback or completion can't drive a stale
+              // refund or a missed/incorrect reversal.
               include: {
                 customer: { select: { fullName: true } },
                 activity: { select: { titleEn: true } },
+                payment: { select: { id: true, status: true, amount: true } },
               },
             })
           : await tx.booking.update({
@@ -1267,11 +1273,11 @@ export class AdminService {
 
       // Handle payment state when admin cancels a paid booking.
       // Refund goes to Wanasa points (store credit), NOT back to card.
-      if (status === 'CANCELLED' && booking.payment) {
-        if (booking.payment.status === 'SUCCESS') {
-          const paidAmount = Number(booking.payment.amount);
+      if (status === 'CANCELLED' && result.payment) {
+        if (result.payment.status === 'SUCCESS') {
+          const paidAmount = Number(result.payment.amount);
           await tx.payment.update({
-            where: { id: booking.payment.id },
+            where: { id: result.payment.id },
             data: {
               status: 'REFUNDED',
               refundAmount: paidAmount,
@@ -1287,33 +1293,33 @@ export class AdminService {
           const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
           if (refundPoints > 0) {
             await this.loyalty.refund(tx, {
-              userId: booking.customerId,
+              userId: result.customerId,
               amount: refundPoints,
               bookingId,
               source: 'ADMIN_REFUND_APPROVED',
               actorType: 'ADMIN',
               actorId: null,
-              note: `Admin cancel: ${paidAmount} refund → ${refundPoints} points, booking ${booking.ref}`,
+              note: `Admin cancel: ${paidAmount} refund → ${refundPoints} points, booking ${result.ref}`,
             });
           }
-        } else if (booking.payment.status === 'PENDING') {
+        } else if (result.payment.status === 'PENDING') {
           await tx.payment.update({
-            where: { id: booking.payment.id },
+            where: { id: result.payment.id },
             data: { status: 'FAILED' },
           });
         }
 
         // Refund redeemed loyalty points back to customer (separate from refund-to-points above)
-        const redeemedPoints = Number(booking.pointsRedeemed) || 0;
+        const redeemedPoints = Number(result.pointsRedeemed) || 0;
         if (redeemedPoints > 0) {
           await this.loyalty.refund(tx, {
-            userId: booking.customerId,
+            userId: result.customerId,
             amount: redeemedPoints,
             bookingId,
             source: 'CANCEL_REFUND_PAID',
             actorType: 'ADMIN',
             actorId: null,
-            note: `Admin cancel returned redeemed points on booking ${booking.ref}`,
+            note: `Admin cancel returned redeemed points on booking ${result.ref}`,
           });
         }
 
@@ -1326,7 +1332,7 @@ export class AdminService {
         // flipped to false alongside the debit so re-cancel attempts (which
         // shouldn't happen because of the double-cancel guard, but defence
         // in depth) don't double-reverse.
-        if (booking.pointsAwarded === true) {
+        if (result.pointsAwarded === true) {
           let loyaltyConfigForReverse = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
           if (!loyaltyConfigForReverse) loyaltyConfigForReverse = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
           // Mirrors the formula in bookings.service.ts awardLoyaltyPoints —
@@ -1335,16 +1341,16 @@ export class AdminService {
           // exactly matches what the cron credited.
           const pointsPerQar = loyaltyConfigForReverse.pointsPerQar.toNumber();
           const awardedPoints = pointsPerQar > 0
-            ? Math.floor(Number(booking.totalPrice) * pointsPerQar)
+            ? Math.floor(Number(result.totalPrice) * pointsPerQar)
             : 0;
           if (awardedPoints > 0) {
             await this.loyalty.reverseAwarded(tx, {
-              userId: booking.customerId,
+              userId: result.customerId,
               amount: awardedPoints,
               bookingId,
               actorType: 'ADMIN',
               actorId: null,
-              note: `Admin cancel of COMPLETED booking ${booking.ref} — debiting ${awardedPoints} previously-awarded points`,
+              note: `Admin cancel of COMPLETED booking ${result.ref} — debiting ${awardedPoints} previously-awarded points`,
             });
             await tx.booking.update({
               where: { id: bookingId },
@@ -1357,7 +1363,7 @@ export class AdminService {
       // Coupon refund when admin cancels — regardless of payment status so
       // the customer's voucher / usage count is restored.
       if (status === 'CANCELLED') {
-        await refundCouponUsage(tx, booking.couponCode, booking.customerId);
+        await refundCouponUsage(tx, result.couponCode, result.customerId);
       }
 
       // Award loyalty points when booking becomes COMPLETED
