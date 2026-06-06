@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateActivityDto } from './dto/create-activity.dto';
@@ -13,6 +13,8 @@ import { refundCouponUsage } from '../bookings/bookings.service';
 
 @Injectable()
 export class VendorService {
+  private readonly logger = new Logger(VendorService.name);
+
   constructor(
     private prisma: PrismaService,
     private notificationService: NotificationService,
@@ -480,6 +482,9 @@ export class VendorService {
     }
 
     let cancelledNow = false;
+    // Captured when a cancel refunds a booking whose vendor payout was already
+    // PAID — surfaced to admins after commit for manual recovery (no auto-clawback).
+    let clawbackNeeded: { amount: number; paymentId: string; ref: string } | null = null;
     const updated = await db.$transaction(async (tx: any) => {
       // Vendor-initiated cancellation stamps cancelledAt/By for history.
       // Vendor-initiated cancel does NOT go through the refund queue — the
@@ -517,7 +522,7 @@ export class VendorService {
           // callback or completion can't drive a stale refund.
           ? await tx.booking.findUniqueOrThrow({
               where: { id: bookingId },
-              include: { payment: { select: { id: true, status: true, amount: true } } },
+              include: { payment: { select: { id: true, status: true, amount: true, payoutStatus: true } } },
             })
           : await tx.booking.update({
               where: { id: bookingId },
@@ -537,6 +542,12 @@ export class VendorService {
               refundedAt: new Date(),
             },
           });
+
+          // Flag for manual clawback if the vendor was ALREADY paid out for this
+          // booking — the customer refund then leaves the platform out twice.
+          if (result.payment.payoutStatus === 'PAID') {
+            clawbackNeeded = { amount: paidAmount, paymentId: result.payment.id, ref: result.ref };
+          }
 
           // Convert full refund to Wanasa points (ledger: VENDOR_REFUND_APPROVED)
           let loyaltyConfig = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
@@ -632,6 +643,27 @@ export class VendorService {
         message: `The vendor cancelled booking ${booking.ref} for "${booking.activity.titleEn}".${refundLine}`,
         link: `/bookings/${bookingId}`,
       });
+
+      // Cancel-after-payout: the vendor was already paid for this booking, so the
+      // customer refund leaves the platform out-of-pocket. Flag for MANUAL
+      // recovery (policy: no auto-clawback) — alert admins + a durable log.
+      // clawbackNeeded is assigned inside the $transaction closure above; TS's
+      // control-flow can't see closure mutations, so re-widen via an explicit cast.
+      const clawback = clawbackNeeded as { amount: number; paymentId: string; ref: string } | null;
+      if (clawback) {
+        this.logger.warn({
+          event: 'PAYOUT_CLAWBACK_NEEDED',
+          paymentId: clawback.paymentId,
+          bookingRef: clawback.ref,
+          amount: clawback.amount,
+        });
+        this.notificationService.notifyAdmins({
+          type: 'SYSTEM',
+          title: 'Payout clawback needed',
+          message: `Vendor-cancelled booking ${clawback.ref} was refunded, but its payout was already PAID (${clawback.amount}). Recover the vendor's share manually.`,
+          link: '/admin/payouts',
+        });
+      }
     }
 
     return updated;

@@ -1209,6 +1209,10 @@ export class AdminService {
     }
 
     let cancelledNow = false;
+    // Captured when a cancel refunds a booking whose vendor payout was already
+    // PAID — surfaced to admins after commit so the vendor's share can be
+    // recovered manually (we do NOT auto-claw it back).
+    let clawbackNeeded: { amount: number; paymentId: string; ref: string } | null = null;
     const updated = await db.$transaction(async (tx: any) => {
       // Admin-initiated cancel stamps cancelledAt/By for history. Admin does
       // NOT go through the refund queue — admin is final arbiter and refund
@@ -1259,7 +1263,7 @@ export class AdminService {
               include: {
                 customer: { select: { fullName: true } },
                 activity: { select: { titleEn: true } },
-                payment: { select: { id: true, status: true, amount: true } },
+                payment: { select: { id: true, status: true, amount: true, payoutStatus: true } },
               },
             })
           : await tx.booking.update({
@@ -1284,6 +1288,13 @@ export class AdminService {
               refundedAt: new Date(),
             },
           });
+
+          // Flag for manual clawback if the vendor was ALREADY paid out for this
+          // booking — refunding the customer now leaves the platform out that
+          // money twice. We don't auto-reverse the payout; surface it post-commit.
+          if (result.payment.payoutStatus === 'PAID') {
+            clawbackNeeded = { amount: paidAmount, paymentId: result.payment.id, ref: result.ref };
+          }
 
           // Convert full refund to Wanasa points — routed through LoyaltyService
           // so the ledger records ADMIN_REFUND_APPROVED.
@@ -1417,6 +1428,27 @@ export class AdminService {
         message: `Booking ${booking.ref} for "${booking.activity.titleEn}" was cancelled by Jadwal support.${refundLine}`,
         link: `/bookings/${bookingId}`,
       });
+
+      // Cancel-after-payout: the vendor was already paid for this booking, so the
+      // customer refund leaves the platform out-of-pocket. Flag for MANUAL
+      // recovery (policy: no auto-clawback) — alert admins + a durable log.
+      // clawbackNeeded is assigned inside the $transaction closure above; TS's
+      // control-flow can't see closure mutations, so re-widen via an explicit cast.
+      const clawback = clawbackNeeded as { amount: number; paymentId: string; ref: string } | null;
+      if (clawback) {
+        this.logger.warn({
+          event: 'PAYOUT_CLAWBACK_NEEDED',
+          paymentId: clawback.paymentId,
+          bookingRef: clawback.ref,
+          amount: clawback.amount,
+        });
+        this.notificationService.notifyAdmins({
+          type: 'SYSTEM',
+          title: 'Payout clawback needed',
+          message: `Booking ${clawback.ref} was cancelled and refunded, but its vendor payout was already PAID (${clawback.amount}). Recover the vendor's share manually.`,
+          link: '/admin/payouts',
+        });
+      }
     }
 
     return updated;
