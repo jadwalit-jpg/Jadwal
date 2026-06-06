@@ -181,6 +181,11 @@ export class CleanupService {
         ],
       },
       select: { id: true, ref: true, paymentId: true, activityId: true, customerId: true, couponCode: true, pointsRedeemed: true },
+      // Bound the batch: a large backlog (e.g. after an outage or a PAY2M
+      // incident that strands many PENDING bookings) must not load unbounded
+      // rows into one transaction (statement_timeout / memory blow-up). 1000 is
+      // far above steady-state (<20/run); the next run (5 min) drains the rest.
+      take: 1000,
     });
 
     if (staleBookings.length === 0) return;

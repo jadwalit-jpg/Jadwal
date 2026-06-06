@@ -57,9 +57,14 @@ jobs:
 
       - name: Resolve image SHA
         id: img
+        # Pass the dispatch input through an env var instead of interpolating
+        # ${{ inputs.image_sha }} straight into the shell — direct interpolation
+        # lets a crafted input break out of the string and inject commands.
+        env:
+          INPUT_IMAGE_SHA: ${{ inputs.image_sha }}
         run: |
-          if [ -n "${{ inputs.image_sha }}" ]; then
-            SHA="${{ inputs.image_sha }}"
+          if [ -n "$INPUT_IMAGE_SHA" ]; then
+            SHA="$INPUT_IMAGE_SHA"
             echo "Using user-provided SHA: $SHA"
           else
             # Pick the most recently pushed tag on jadwal-api.
