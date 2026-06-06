@@ -74,6 +74,7 @@ async function mkPendingBooking(opts: {
   createdAt?: Date;
   paymentInitiatedAt?: Date | null;
   slotOffsetDays?: number;
+  pointsRedeemed?: number;
 }): Promise<{ bookingId: string; paymentId: string | null }> {
   const start = new Date('2030-09-01T10:00:00Z');
   start.setDate(start.getDate() + (opts.slotOffsetDays ?? 0));
@@ -108,6 +109,7 @@ async function mkPendingBooking(opts: {
       ref: `JDWL-STALE-${crypto.randomUUID().slice(0, 6)}`,
       currencyCode: 'QAR',
       guests: 2, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+      pointsRedeemed: opts.pointsRedeemed ?? 0,
       status: 'PENDING',
       startDatetime: start, endDatetime: end,
       activityId: opts.seed.activity.id,
@@ -159,6 +161,51 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
     if (paymentId) {
       expect(await ctx.prisma.payment.findUnique({ where: { id: paymentId } })).toBeNull();
     }
+  });
+
+  test('stale PENDING booking that redeemed Wanasa points → points REFUNDED on cleanup (no silent confiscation)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    // Customer redeemed 500 points at booking-create (balance debited to 0 then).
+    // The cron hard-deletes the abandoned booking — it MUST return those points
+    // (audit HIGH B1: previously they were silently confiscated).
+    await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 0 } });
+    const { bookingId } = await mkPendingBooking({
+      seed,
+      reservedUntil: new Date(Date.now() - 10_000),
+      paymentBasketId: null,
+      pointsRedeemed: 500,
+    });
+
+    const { svc } = makeCleanup();
+    await svc.autoCancelStalePendingBookings();
+
+    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+    const user = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
+    expect(user.loyaltyPoints).toBe(500);
+    const ledger = await ctx.prisma.loyaltyLedger.findFirst({
+      where: { userId: seed.customer.id, source: 'CANCEL_REFUND_UNPAID' },
+    });
+    expect(ledger).not.toBeNull();
+    expect(ledger?.delta).toBe(500);
+  });
+
+  test('stale PENDING booking with ZERO redeemed points → balance untouched, no ledger row', async () => {
+    const seed = await seedReference(ctx.prisma);
+    await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 0 } });
+    const { bookingId } = await mkPendingBooking({
+      seed,
+      reservedUntil: new Date(Date.now() - 10_000),
+      paymentBasketId: null,
+      pointsRedeemed: 0,
+    });
+
+    const { svc } = makeCleanup();
+    await svc.autoCancelStalePendingBookings();
+
+    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+    const user = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
+    expect(user.loyaltyPoints).toBe(0);
+    expect(await ctx.prisma.loyaltyLedger.findFirst({ where: { userId: seed.customer.id } })).toBeNull();
   });
 
   test('PENDING + fresh reservedUntil (future) → booking stays (customer is still checking out)', async () => {

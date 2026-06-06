@@ -459,7 +459,10 @@ describe('VendorService.updateBookingStatus — Complete guard', () => {
       activity: { titleEn: 'Tour' },
       payment: null,
     });
-    ctx.prisma._client.booking.update.mockResolvedValueOnce({ id: 'b1', status: 'CANCELLED' });
+    // Cancel now claims the row optimistically (updateMany + count) then
+    // re-fetches via findUniqueOrThrow — stub both (the old single update is gone).
+    ctx.prisma._client.booking.updateMany.mockResolvedValueOnce({ count: 1 });
+    ctx.prisma._client.booking.findUniqueOrThrow.mockResolvedValueOnce({ id: 'b1', status: 'CANCELLED' });
 
     // Future booking — but CANCELLED must succeed (customer no-show, etc.)
     const res = await ctx.sut.updateBookingStatus('u1', 'b1', 'CANCELLED');
