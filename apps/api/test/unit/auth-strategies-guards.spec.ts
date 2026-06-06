@@ -123,13 +123,26 @@ describe('GoogleStrategy', () => {
     expect(done.mock.calls[0][0].message).toMatch(/no email/i);
   });
 
+  test('validate(): email present but NOT verified → done(Error, undefined)', async () => {
+    const svc = new GoogleStrategy(makeConfig() as any);
+    const done = jest.fn();
+    await svc.validate('at', 'rt', {
+      id: 'g-abc',
+      displayName: 'Mallory',
+      emails: [{ value: 'mallory@gmail.com', verified: false }],
+      name: { givenName: 'M', familyName: 'B' },
+    } as any, done);
+    expect(done).toHaveBeenCalledWith(expect.any(Error), undefined);
+    expect(done.mock.calls[0][0].message).toMatch(/not verified/i);
+  });
+
   test('validate(): no displayName → falls back to givenName + familyName', async () => {
     const svc = new GoogleStrategy(makeConfig() as any);
     const done = jest.fn();
     await svc.validate('at', 'rt', {
       id: 'g-abc',
       displayName: '',
-      emails: [{ value: 'alice@gmail.com' }],
+      emails: [{ value: 'alice@gmail.com', verified: true }],
       name: { givenName: 'Alice', familyName: 'Liddell' },
     } as any, done);
     expect(done).toHaveBeenCalledWith(null, expect.objectContaining({
@@ -142,7 +155,7 @@ describe('GoogleStrategy', () => {
     const done = jest.fn();
     await svc.validate('at', 'rt', {
       id: 'g', displayName: 'A',
-      emails: [{ value: 'a@g.com' }],
+      emails: [{ value: 'a@g.com', verified: true }],
       name: { givenName: 'A', familyName: '' },
     } as any, done);
     expect(done).toHaveBeenCalledWith(null, expect.objectContaining({ picture: null }));

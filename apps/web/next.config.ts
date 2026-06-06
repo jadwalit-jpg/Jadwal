@@ -250,6 +250,14 @@ const nextConfig: NextConfig = {
           // with a cryptographic nonce — see middleware for the full policy.
         ],
       },
+      {
+        // The kill-switch holding page must never be indexed. The page sets a
+        // <meta name="robots"> noindex, but an X-Robots-Tag HTTP header is also
+        // honored on non-HTML / error responses and by crawlers that don't
+        // parse the body — belt-and-suspenders for /maintenance.
+        source: "/maintenance",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
     ];
   },
 };
