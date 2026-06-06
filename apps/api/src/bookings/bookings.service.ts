@@ -2391,12 +2391,28 @@ export class BookingsService {
   private static readonly BOOKING_OTP_MAX_ATTEMPTS = 5;
 
   /**
+   * HMAC the 6-digit booking OTP with a server-side pepper instead of a bare
+   * SHA-256. The code space is only 10^6, so a leaked emailOtpHash would be
+   * trivially reversible offline without a secret key mixed in; the pepper
+   * (JWT_SECRET — always set + boot-validated in prod) blocks that. Output is
+   * still a 32-byte hex digest, so the downstream constant-time length check is
+   * unaffected. OTPs still expire in minutes regardless.
+   */
+  private hashBookingOtp(code: string): string {
+    const pepper =
+      this.configService.get<string>('BOOKING_OTP_PEPPER') ||
+      this.configService.get<string>('JWT_SECRET') ||
+      '';
+    return crypto.createHmac('sha256', pepper).update(code).digest('hex');
+  }
+
+  /**
    * Generate a fresh 6-digit code, stamp it on the booking, and email it.
    * Used by both the booking-create fire-and-forget path AND the explicit
    * resend endpoint.
    *
    * Plaintext code lives only in the email body and the customer's memory.
-   * The DB stores ONLY the SHA-256 hex digest. Logs never see the code.
+   * The DB stores ONLY a peppered HMAC-SHA-256 hex digest. Logs never see the code.
    */
   private async generateAndSendBookingOtp(
     bookingId: string,
@@ -2406,7 +2422,7 @@ export class BookingsService {
   ): Promise<void> {
     // Cryptographic randomness — NOT Math.random(). 100000-999999 inclusive.
     const code = String(crypto.randomInt(100000, 1000000));
-    const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+    const codeHash = this.hashBookingOtp(code);
     const expiry = new Date(Date.now() + BookingsService.BOOKING_OTP_TTL_MS);
 
     // Stamp hash + expiry + reset attempts. The reset is what makes the
@@ -2562,7 +2578,7 @@ export class BookingsService {
       data: { emailOtpAttempts: { increment: 1 } },
     });
 
-    const providedHash = crypto.createHash('sha256').update(code).digest('hex');
+    const providedHash = this.hashBookingOtp(code);
     const stored = Buffer.from(booking.emailOtpHash, 'hex');
     const provided = Buffer.from(providedHash, 'hex');
 

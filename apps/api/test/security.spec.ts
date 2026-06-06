@@ -278,8 +278,11 @@ describe('Booking Email-OTP Security', () => {
 
   test('HIGH: OTP code never logged + only hash stored', () => {
     const bs = readSrc('src/bookings/bookings.service.ts');
-    // SHA-256 hex digest is the only thing stored.
-    expect(bs).toMatch(/createHash\('sha256'\)\.update\(code\)\.digest\('hex'\)/);
+    // A peppered HMAC-SHA-256 hex digest is the only thing stored (never the
+    // plaintext code) — hashing is centralised in hashBookingOtp() and used at
+    // both the generate and verify call sites.
+    expect(bs).toMatch(/createHmac\('sha256',\s*pepper\)\.update\(code\)\.digest\('hex'\)/);
+    expect(bs).toContain('this.hashBookingOtp(code)');
     // Constant-time compare on the hashes (not on the plaintext code).
     expect(bs).toContain('timingSafeEqual');
     // securityLogger.log details strings must NEVER reference the `code`
