@@ -2034,7 +2034,7 @@ export class BookingsService {
         id: true, ref: true, status: true, vendorId: true, customerId: true,
         activity: { select: { titleEn: true } },
         vendor: { select: { userId: true, slug: true } },
-        payment: { select: { id: true, status: true, amount: true } },
+        payment: { select: { id: true, status: true, amount: true, payoutStatus: true } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
@@ -2168,6 +2168,26 @@ export class BookingsService {
       message: customerMessage,
       link: action === 'APPROVE' ? '/profile' : `/bookings/${bookingId}`,
     });
+
+    // Cancel-after-payout: an APPROVED refund on a booking whose vendor payout was
+    // already PAID leaves the platform out that money twice. Flag for MANUAL
+    // recovery (policy: no auto-clawback) — alert admins + a durable log. This is
+    // the customer-cancel → vendor/admin-approve route; the direct admin/vendor
+    // cancel paths carry the same guard.
+    if (action === 'APPROVE' && finalAmount > 0 && booking.payment!.payoutStatus === 'PAID') {
+      this.logger.warn({
+        event: 'PAYOUT_CLAWBACK_NEEDED',
+        paymentId: booking.payment!.id,
+        bookingRef: booking.ref,
+        amount: finalAmount,
+      });
+      this.notificationService.notifyAdmins({
+        type: 'SYSTEM',
+        title: 'Payout clawback needed',
+        message: `Refund approved for booking ${booking.ref} (${finalAmount} QAR), but its vendor payout was already PAID. Recover the vendor's share manually.`,
+        link: '/admin/payouts',
+      });
+    }
 
     return {
       message: action === 'APPROVE'
