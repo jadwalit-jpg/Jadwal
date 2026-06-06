@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
   BadRequestException,
@@ -343,6 +344,7 @@ function activeBookingFilter(now: Date) {
 
 @Injectable()
 export class BookingsService {
+  private readonly logger = new Logger(BookingsService.name);
   private readonly reservationWindowMinutes: number;
   private readonly bookingMaxAdvanceYears: number;
   private readonly redisLockTtlMs: number;
@@ -1565,7 +1567,7 @@ export class BookingsService {
           booking.ref,
         ).catch((err: unknown) => {
           const kind = err instanceof Error ? err.name : 'UnknownError';
-          console.warn(`[bookings] OTP send failed for booking ${booking.id} (${kind})`);
+          this.logger.warn(`OTP send failed for booking ${booking.id} (${kind})`);
         });
       }
     }
@@ -1657,7 +1659,7 @@ export class BookingsService {
             // avoid breaking the booking flow. Reconciliation can spot a
             // CONFIRMED booking with no vendor outbox row.
             const kind = err instanceof Error ? err.name : 'UnknownError';
-            console.warn(`[bookings] vendor email enqueue failed for booking ${booking.id} (${kind})`);
+            this.logger.warn(`vendor email enqueue failed for booking ${booking.id} (${kind})`);
           }
         }
       }
