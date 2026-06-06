@@ -13,6 +13,7 @@ import {
   Matches,
 } from 'class-validator';
 import { IsValidCouponDiscount } from '../../common/validators/coupon-discount';
+import { IsDateAfter } from '../../common/validators/is-date-after';
 
 export class CreateVendorCouponDto {
   @IsString()
@@ -34,6 +35,7 @@ export class CreateVendorCouponDto {
   validFrom!: string;
 
   @IsDateString()
+  @IsDateAfter('validFrom', { message: 'validTo must be after validFrom' })
   validTo!: string;
 
   @IsNumber()
