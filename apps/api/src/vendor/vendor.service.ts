@@ -1158,14 +1158,50 @@ export class VendorService {
       });
     }
 
-    const request = await db.payoutRequest.create({
-      data: {
-        vendorId: vendor.id,
-        amount: eligibility.available,
-        currency: eligibility.currency,
-        status: 'PENDING',
-      },
-    });
+    // Atomicity guard for the double-request race. evaluatePayoutEligibility()
+    // already blocks when an inflight (PENDING/APPROVED) request exists, but that
+    // check and this create are NOT atomic — two concurrent calls (double-click /
+    // two tabs / a retried request) can both pass the check and each insert a
+    // PENDING request for the same money, which an admin could then approve twice
+    // (paying the vendor twice). Re-check + insert inside a SERIALIZABLE
+    // transaction: for two truly-simultaneous requests Postgres aborts one with a
+    // serialization failure (P2034); the in-tx re-check catches the slightly-later
+    // one. Either way the loser gets the same friendly inflight error.
+    const inflightError = () =>
+      new BadRequestException({
+        statusCode: 400,
+        code: 'INFLIGHT_PENDING',
+        message:
+          'You already have a pending payout request. Wait for admin review before requesting another.',
+      });
+
+    const request = await db
+      .$transaction(
+        async (tx) => {
+          const dup = await tx.payoutRequest.findFirst({
+            where: { vendorId: vendor.id, status: { in: ['PENDING', 'APPROVED'] } },
+            select: { id: true },
+          });
+          if (dup) throw inflightError();
+          return tx.payoutRequest.create({
+            data: {
+              vendorId: vendor.id,
+              amount: eligibility.available,
+              currency: eligibility.currency,
+              status: 'PENDING',
+            },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      )
+      .catch((err: unknown) => {
+        // A concurrent insert makes Serializable abort the loser with P2034 —
+        // surface it as the same friendly inflight error the re-check throws.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034') {
+          throw inflightError();
+        }
+        throw err;
+      });
 
     this.notificationService.notifyAdmins({
       type: 'PAYOUT_REQUESTED',
