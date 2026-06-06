@@ -181,6 +181,10 @@ export class CleanupService {
         ],
       },
       select: { id: true, ref: true, paymentId: true, activityId: true, customerId: true, couponCode: true, pointsRedeemed: true },
+      // Oldest-first so a backlog drains DETERMINISTICALLY across successive
+      // runs — without an explicit order, Postgres could return the same 1000
+      // rows each run (or skip the oldest), starving old abandoned bookings.
+      orderBy: { createdAt: 'asc' },
       // Bound the batch: a large backlog (e.g. after an outage or a PAY2M
       // incident that strands many PENDING bookings) must not load unbounded
       // rows into one transaction (statement_timeout / memory blow-up). 1000 is
