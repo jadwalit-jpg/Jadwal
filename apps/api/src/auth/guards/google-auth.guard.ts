@@ -1,6 +1,13 @@
 import { ExecutionContext, Injectable } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { Request } from 'express';
+import { Request, Response } from 'express';
+import * as crypto from 'crypto';
+
+// Short-lived cookie carrying the anti-CSRF nonce across the Google round-trip.
+// MUST be SameSite=Lax (not Strict like the session cookies) so it survives
+// Google's top-level redirect back to our callback. Scoped to the OAuth path.
+export const OAUTH_STATE_COOKIE = 'g_oauth_state';
+export const OAUTH_STATE_COOKIE_PATH = '/api/auth/google';
 
 /** Validates a callbackUrl is a safe relative path — blocks open redirect attacks. */
 function sanitizeCallbackUrl(raw: string | undefined): string {
@@ -41,8 +48,27 @@ function sanitizeCallbackUrl(raw: string | undefined): string {
 export class GoogleAuthGuard extends AuthGuard('google') {
   override getAuthenticateOptions(context: ExecutionContext) {
     const req = context.switchToHttp().getRequest<Request>();
+
+    // Callback leg (Google redirected back with ?code): Passport processes the
+    // code and the controller verifies the nonce — don't mint a new one here.
+    if (req.query.code) {
+      return { scope: ['email', 'profile'] };
+    }
+
+    // Initiation leg: embed callbackUrl + a fresh anti-CSRF nonce in `state`,
+    // and drop the nonce in a Lax cookie. The callback rejects the login unless
+    // the returned state.nonce matches this cookie — binding the flow to the
+    // browser that started it (defeats login-CSRF / forced-login).
     const callbackUrl = sanitizeCallbackUrl(req.query.callbackUrl as string | undefined);
-    const state = Buffer.from(JSON.stringify({ callbackUrl })).toString('base64url');
+    const nonce = crypto.randomBytes(16).toString('hex');
+    context.switchToHttp().getResponse<Response>().cookie(OAUTH_STATE_COOKIE, nonce, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: OAUTH_STATE_COOKIE_PATH,
+      maxAge: 10 * 60 * 1000,
+    });
+    const state = Buffer.from(JSON.stringify({ callbackUrl, nonce })).toString('base64url');
     return { scope: ['email', 'profile'], state };
   }
 }
