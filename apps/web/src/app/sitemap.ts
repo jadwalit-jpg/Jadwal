@@ -17,7 +17,13 @@ import type { MetadataRoute } from 'next';
  */
 
 const BASE_URL = 'https://jadwal.qa';
-const FETCH_TIMEOUT_MS = 4000;
+// 10s (was 4s): the bulk slug export is larger than a single-page fetch, and the
+// server-side call runs over the internal ALB hop whose first connection on a
+// COLD container can exceed a tight 4s budget — which made the very first
+// post-deploy generation time out and cache the static-only fallback for an
+// hour. The sitemap is generated in the background (ISR, hourly), so no user
+// ever waits on this and a longer ceiling is free.
+const FETCH_TIMEOUT_MS = 10000;
 // Google ignores everything past 50,000 URLs in a single sitemap file. We
 // assemble static + activities + categories here, so this is the authoritative
 // total cap (the API also leaves headroom). Entries are ordered static →
