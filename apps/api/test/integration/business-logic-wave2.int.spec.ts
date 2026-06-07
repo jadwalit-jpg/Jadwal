@@ -191,7 +191,7 @@ describe('B10 — ReconciliationService computes drift + alerts on mismatch', ()
 
     const stub = makeNotificationServiceStub();
     const auditLogger = new AuditLoggerService(makePrismaShim());
-    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc);
+    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc, { withLeaderLock: (_k: string, _t: number, fn: () => unknown) => fn() } as any);
 
     const result = await svc.runReconciliation();
 
@@ -243,7 +243,7 @@ describe('B10 — ReconciliationService computes drift + alerts on mismatch', ()
 
     const stub = makeNotificationServiceStub();
     const auditLogger = new AuditLoggerService(makePrismaShim());
-    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc);
+    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc, { withLeaderLock: (_k: string, _t: number, fn: () => unknown) => fn() } as any);
 
     const result = await svc.runReconciliation();
 
@@ -277,7 +277,7 @@ describe('B10 — ReconciliationService computes drift + alerts on mismatch', ()
 
     const stub = makeNotificationServiceStub();
     const auditLogger = new AuditLoggerService(makePrismaShim());
-    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc);
+    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc, { withLeaderLock: (_k: string, _t: number, fn: () => unknown) => fn() } as any);
 
     const result = await svc.runReconciliation();
     expect(result.totalRefunded).toBe(50);
@@ -297,7 +297,7 @@ describe('B10 — ReconciliationService computes drift + alerts on mismatch', ()
 
     const stub = makeNotificationServiceStub();
     const auditLogger = new AuditLoggerService(makePrismaShim());
-    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc);
+    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc, { withLeaderLock: (_k: string, _t: number, fn: () => unknown) => fn() } as any);
 
     await svc.runReconciliation();
     await svc.runReconciliation();

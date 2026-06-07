@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditLoggerService } from './audit-logger.service';
 import { NotificationService } from './notification.service';
+import { RedisLockService } from '../../redis/redis-lock.service';
 
 /**
  * Daily money-flow reconciliation cron (plan §B10).
@@ -40,29 +41,36 @@ export class ReconciliationService {
     private prisma: PrismaService,
     private auditLogger: AuditLoggerService,
     private notifications: NotificationService,
+    private lock: RedisLockService,
   ) {}
 
   /** Daily 5 AM cron — runs after the 1 AM auto-complete + 2 AM coupon-expire jobs. */
   @Cron('0 5 * * *')
   async handleDailyReconciliation(): Promise<void> {
-    this.logger.log('Starting daily reconciliation...');
-    try {
-      const result = await this.runReconciliation();
-      if (result.passed) {
-        this.logger.log(`Reconciliation passed (drift = ${result.drift.toFixed(2)} QAR).`);
-      } else {
-        this.logger.error(
-          `Reconciliation FAILED — drift = ${result.drift.toFixed(2)} QAR. ` +
-            `payments=${result.totalPayments.toFixed(2)} ` +
-            `vendor=${result.vendorEarnings.toFixed(2)} ` +
-            `fees=${result.platformFees.toFixed(2)} ` +
-            `refunded=${result.totalRefunded.toFixed(2)}`,
-        );
+    // Leader-election: with >1 ECS task this @Cron fires on EVERY task. Without
+    // a lock the reconciliation ran N times concurrently — wasted work, and on
+    // a drift day a DUPLICATED FINANCIAL audit row + duplicate admin alert. Only
+    // the lock winner runs it; the others no-op. ttl > worst-case runtime.
+    await this.lock.withLeaderLock('cron:daily-reconciliation', 10 * 60_000, async () => {
+      this.logger.log('Starting daily reconciliation...');
+      try {
+        const result = await this.runReconciliation();
+        if (result.passed) {
+          this.logger.log(`Reconciliation passed (drift = ${result.drift.toFixed(2)} QAR).`);
+        } else {
+          this.logger.error(
+            `Reconciliation FAILED — drift = ${result.drift.toFixed(2)} QAR. ` +
+              `payments=${result.totalPayments.toFixed(2)} ` +
+              `vendor=${result.vendorEarnings.toFixed(2)} ` +
+              `fees=${result.platformFees.toFixed(2)} ` +
+              `refunded=${result.totalRefunded.toFixed(2)}`,
+          );
+        }
+      } catch (err) {
+        const kind = err instanceof Error ? err.name : 'UnknownError';
+        this.logger.error(`Reconciliation cron failed (${kind}) — admin alert NOT fired.`);
       }
-    } catch (err) {
-      const kind = err instanceof Error ? err.name : 'UnknownError';
-      this.logger.error(`Reconciliation cron failed (${kind}) — admin alert NOT fired.`);
-    }
+    });
   }
 
   /**
