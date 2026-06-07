@@ -52,35 +52,63 @@ function safeDescription(raw: string | null | undefined): string {
     : stripped;
 }
 
-// Derive the asset origin (e.g. http://127.0.0.1:4000) from the API URL.
-function assetOrigin(): string | null {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-  if (!apiUrl) return null;
-  try {
-    return new URL(apiUrl).origin;
-  } catch {
-    return null;
+// Trusted origins for OG + schema images. Mirrors next.config `images.remotePatterns`
+// (the CDN + S3 upload buckets) PLUS any configured origins. This is the fix for a
+// prod bug where the image was silently dropped: cover images are served from
+// https://cdn.jadwal.qa/… but the old allowlist was derived solely from
+// NEXT_PUBLIC_API_URL, which is the RELATIVE "/api" in prod (no origin) — so every
+// image failed the check. Defense-in-depth is preserved: an off-domain / untrusted
+// coverImage is still rejected from share previews + structured data.
+const TRUSTED_IMAGE_HOSTS = [
+  'cdn.jadwal.qa',
+  'jadwal-assets.s3.amazonaws.com',
+  'jadwal-assets.s3.eu-central-1.amazonaws.com', // active region — matches the CSP allowlist in middleware.ts
+  'jadwal-assets.s3.me-south-1.amazonaws.com',   // legacy — matches next.config images.remotePatterns
+] as const;
+
+function trustedImageOrigins(): Set<string> {
+  const allowed = new Set<string>();
+  for (const host of TRUSTED_IMAGE_HOSTS) allowed.add(`https://${host}`);
+  for (const base of [
+    process.env.NEXT_PUBLIC_CDN_URL,
+    process.env.NEXT_PUBLIC_SITE_URL,
+    process.env.NEXT_PUBLIC_API_URL,
+    process.env.INTERNAL_API_URL,
+  ]) {
+    if (!base) continue;
+    try {
+      allowed.add(new URL(base).origin);
+    } catch {
+      /* relative ("/api") or invalid → contributes no origin; skip */
+    }
   }
+  return allowed;
 }
 
 /**
- * Build an absolute URL for the cover image, AND drop the image entirely
- * if it points to an off-domain origin (defense-in-depth on share previews
- * + schema images). Allowed origin is whatever NEXT_PUBLIC_API_URL resolves
- * to (the CDN/upload host).
+ * Build an absolute, ALLOWLISTED URL for the cover image, dropping it entirely
+ * if it points to an untrusted origin (defense-in-depth on share previews +
+ * schema images). Prod cover images are absolute `https://cdn.jadwal.qa/…` URLs;
+ * dev may serve a relative `/uploads/…` path from the API origin.
  */
 function absoluteImageUrl(coverImage: string | null | undefined): string | null {
   if (!coverImage) return null;
-  const origin = assetOrigin();
-  if (!origin) return null;
+  const allowed = trustedImageOrigins();
+  if (allowed.size === 0) return null;
 
   let absolute: string;
   if (/^https?:\/\//i.test(coverImage)) {
     absolute = coverImage;
-  } else if (coverImage.startsWith('/')) {
-    absolute = `${origin}${coverImage}`;
   } else {
-    absolute = `${origin}/${coverImage}`;
+    // Relative path (dev /uploads) → resolve against the API origin if it has one.
+    let apiOrigin: string | null = null;
+    try {
+      apiOrigin = process.env.NEXT_PUBLIC_API_URL ? new URL(process.env.NEXT_PUBLIC_API_URL).origin : null;
+    } catch {
+      apiOrigin = null;
+    }
+    if (!apiOrigin) return null;
+    absolute = coverImage.startsWith('/') ? `${apiOrigin}${coverImage}` : `${apiOrigin}/${coverImage}`;
   }
 
   let parsed: URL;
@@ -89,7 +117,6 @@ function absoluteImageUrl(coverImage: string | null | undefined): string | null 
   } catch {
     return null;
   }
-  const allowed = new Set<string>([origin]);
   return allowed.has(parsed.origin) ? parsed.toString() : null;
 }
 
