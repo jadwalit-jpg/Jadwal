@@ -2,7 +2,16 @@ User-agent: *
 Allow: /
 Disallow: /admin/
 Disallow: /vendor/
+# Block the API surface EXCEPT the public read-only catalog + geo endpoints:
+# client-rendered pages (e.g. /explore) fetch these to populate their content,
+# so crawlers must be allowed to fetch them to render + index the page. Google
+# honours longest-match, so /api/catalog/* and /api/geo/detect are allowed while
+# everything else under /api (auth, payment, push, etc.) stays blocked — and
+# those remain auth-gated regardless. These catalog/geo endpoints are already
+# fully public.
 Disallow: /api/
+Allow: /api/catalog/
+Allow: /api/geo/detect
 Disallow: /login
 Disallow: /register
 Disallow: /forgot-password
