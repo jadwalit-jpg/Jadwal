@@ -18,9 +18,10 @@
         { "containerPort": 3000, "hostPort": 3000, "protocol": "tcp" }
       ],
       "environment": [
-        { "name": "PORT",            "value": "3000" },
-        { "name": "HOSTNAME",        "value": "0.0.0.0" },
-        { "name": "LAUNCH_DISABLED", "value": "false" }
+        { "name": "PORT",             "value": "3000" },
+        { "name": "HOSTNAME",         "value": "0.0.0.0" },
+        { "name": "LAUNCH_DISABLED",  "value": "false" },
+        { "name": "INTERNAL_API_URL", "value": "http://jadwal-alb-957710002.eu-central-1.elb.amazonaws.com:8080/api" }
       ],
       "secrets": [
         { "name": "NODE_ENV",   "valueFrom": "arn:aws:ssm:<AWS_REGION>:<AWS_ACCOUNT_ID>:parameter/jadwal/prod/NODE_ENV" },
