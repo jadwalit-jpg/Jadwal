@@ -144,8 +144,8 @@ export class AdminController {
 
   // ─── Dashboard ──────────────────────────────────────────────
   @Get('dashboard/stats')
-  getDashboardStats() {
-    return this.adminService.getDashboardStats();
+  getDashboardStats(@Query('range') range?: string) {
+    return this.adminService.getDashboardStats(range);
   }
 
   // ─── Users ──────────────────────────────────────────────────

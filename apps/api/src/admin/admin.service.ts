@@ -146,8 +146,19 @@ export class AdminService {
   }
 
   // ─── Dashboard Stats ────────────────────────────────────────
-  async getDashboardStats() {
+  async getDashboardStats(range?: string) {
     const db = this.prisma.client;
+
+    // Period window for the TRANSACTIONAL KPIs (revenue / volume / commission /
+    // fees / booking counts) so the dashboard never sums the entire booking +
+    // payment history on a default load. Default 30 days; 'all' = lifetime (the
+    // old behaviour, explicit opt-in). Structural counts (users / vendors /
+    // activities) and current liabilities (payout owed / points / refunds) are
+    // NOT windowed — they are point-in-time snapshots, not period sums.
+    const allowedDays: Record<string, number> = { '30': 30, '60': 60, '90': 90 };
+    const windowDays = allowedDays[range ?? '30'] ?? 30;
+    const cutoff = range === 'all' ? null : new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+    const createdWindow = cutoff ? { createdAt: { gte: cutoff } } : {};
 
     const [
       totalUsers,
@@ -174,31 +185,31 @@ export class AdminService {
       db.vendor.count({ where: { status: 'PENDING' } }),
       db.activity.count(),
       db.activity.count({ where: { status: 'PENDING' } }),
-      db.booking.count(),
-      db.booking.count({ where: { status: 'CONFIRMED' } }),
+      db.booking.count({ where: createdWindow }),
+      db.booking.count({ where: { status: 'CONFIRMED', ...createdWindow } }),
       // Cash collected (PAY2M-settled portion). Wanasa-only bookings have
       // payment.amount=0 so they correctly do NOT count toward cash revenue.
-      db.payment.aggregate({ where: { status: 'SUCCESS' }, _sum: { amount: true } }),
+      db.payment.aggregate({ where: { status: 'SUCCESS', ...createdWindow }, _sum: { amount: true } }),
       // Full platform volume. totalPrice already carries the vendor's
       // full earned amount (regardless of how the customer paid), so we
       // only add back couponDiscount to reconstruct the nominal activity
       // value. pointsDiscount is NOT added — it's a customer-side saving,
       // not a deduction from vendor revenue.
       db.booking.aggregate({
-        where: { payment: { status: 'SUCCESS' } },
+        where: { payment: { status: 'SUCCESS' }, ...createdWindow },
         _sum: { totalPrice: true, pointsDiscount: true, couponDiscount: true },
       }),
       // Commission earned by the platform — lifetime gross margin on
       // every successfully-paid booking regardless of payout status.
       db.booking.aggregate({
-        where: { payment: { status: 'SUCCESS' } },
+        where: { payment: { status: 'SUCCESS' }, ...createdWindow },
         _sum: { commissionAmount: true },
       }),
       // Service fee earned by the platform. Zero on Wanasa-paid bookings
       // (fee is waived as a loyalty incentive), so this represents only
       // the cash-path fee revenue.
       db.booking.aggregate({
-        where: { payment: { status: 'SUCCESS' } },
+        where: { payment: { status: 'SUCCESS' }, ...createdWindow },
         _sum: { serviceFee: true },
       }),
       // Pending vendor payout balance: what the platform OWES vendors.
@@ -257,13 +268,15 @@ export class AdminService {
       totalPointsIssued,
       refundPendingCount: refundPendingStats._count ?? 0,
       refundPendingAmount: Number(refundPendingStats._sum.amount ?? 0),
+      // Echo the applied window so the UI can label the period cards.
+      range: cutoff ? String(windowDays) : 'all',
     };
   }
 
   // ─── Users ──────────────────────────────────────────────────
   async getUsers(query: PaginationDto) {
     const db = this.prisma.client;
-    const { page = 1, limit = 20, search, status, verified } = query;
+    const { page = 1, limit = 20, search, status, role, verified } = query;
     const skip = (page - 1) * limit;
 
     const where: Prisma.UserWhereInput = {};
@@ -273,8 +286,11 @@ export class AdminService {
         { email: { contains: search, mode: 'insensitive' } },
       ];
     }
-    if (status) {
-      where.role = status as any;
+    // The users page filters by role. `role` is the accurate param; `status`
+    // remains a backward-compat fallback (it historically carried the role value).
+    const roleFilter = role ?? status;
+    if (roleFilter) {
+      where.role = roleFilter as any;
     }
     if (verified === 'verified') where.emailVerified = true;
     else if (verified === 'unverified') where.emailVerified = false;
