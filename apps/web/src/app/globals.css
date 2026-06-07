@@ -131,7 +131,14 @@
 }
 
 body {
-  background: var(--background);
+  /* Use the app surface (--jadwal-bg) as the body canvas, NOT --background.
+     The page wrapper paints --jadwal-bg; when it's absent (route-level
+     loading.tsx skeletons are min-h-[60vh], short pages, overscroll) the body
+     showed through as a mismatched darker band (dark: #0a0a0a vs surface
+     #020617). Matching them removes that band on every page, in both themes.
+     (--background has zero `bg-background` usages, so this only affects the
+     body canvas.) */
+  background: var(--jadwal-bg);
   color: var(--foreground);
   /* Safety net: any element that overflows horizontally (long unbroken
      strings, oversized images, runaway grids) gets clipped at the body
