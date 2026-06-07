@@ -62,7 +62,8 @@ function safeDescription(raw: string | null | undefined): string {
 const TRUSTED_IMAGE_HOSTS = [
   'cdn.jadwal.qa',
   'jadwal-assets.s3.amazonaws.com',
-  'jadwal-assets.s3.me-south-1.amazonaws.com',
+  'jadwal-assets.s3.eu-central-1.amazonaws.com', // active region — matches the CSP allowlist in middleware.ts
+  'jadwal-assets.s3.me-south-1.amazonaws.com',   // legacy — matches next.config images.remotePatterns
 ] as const;
 
 function trustedImageOrigins(): Set<string> {
