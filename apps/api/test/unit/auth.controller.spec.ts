@@ -255,6 +255,14 @@ describe('AuthController — sessions (vendor/admin only)', () => {
 // AuthController — Google OAuth callback
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Anti-CSRF nonce shared by the callback tests: the guard sets this in a cookie
+// at initiation and echoes it in `state`; the callback rejects unless they match.
+const OAUTH_NONCE = 'test-oauth-nonce';
+const noncedState = (callbackUrl?: string) =>
+  Buffer.from(
+    JSON.stringify(callbackUrl ? { callbackUrl, nonce: OAUTH_NONCE } : { nonce: OAUTH_NONCE }),
+  ).toString('base64url');
+
 describe('AuthController — Google OAuth callback', () => {
   test('ADMIN → redirects to /admin/dashboard', async () => {
     const { ctrl, authSvc } = await buildCtrl();
@@ -262,7 +270,8 @@ describe('AuthController — Google OAuth callback', () => {
     const res = makeResponseMock();
     const req = makeRequestMock() as any;
     req.user = { googleId: 'g1' };
-    req.query = {};
+    req.query = { state: noncedState() };
+    req.cookies = { g_oauth_state: OAUTH_NONCE };
 
     await ctrl.googleCallback(req, res as any);
     expect(res.redirect).toHaveBeenCalledWith(expect.stringContaining('/admin/dashboard'));
@@ -274,7 +283,8 @@ describe('AuthController — Google OAuth callback', () => {
     const res = makeResponseMock();
     const req = makeRequestMock() as any;
     req.user = { googleId: 'g1' };
-    req.query = {};
+    req.query = { state: noncedState() };
+    req.cookies = { g_oauth_state: OAUTH_NONCE };
 
     await ctrl.googleCallback(req, res as any);
     expect(res.redirect).toHaveBeenCalledWith(expect.stringContaining('/vendor/dashboard'));
@@ -283,10 +293,11 @@ describe('AuthController — Google OAuth callback', () => {
   test('CUSTOMER with valid state.callbackUrl → redirects to callbackUrl', async () => {
     const { ctrl } = await buildCtrl();
     const res = makeResponseMock();
-    const state = Buffer.from(JSON.stringify({ callbackUrl: '/likes' })).toString('base64url');
+    const state = noncedState('/likes');
     const req = makeRequestMock() as any;
     req.user = {};
     req.query = { state };
+    req.cookies = { g_oauth_state: OAUTH_NONCE };
 
     await ctrl.googleCallback(req, res as any);
     expect(res.redirect).toHaveBeenCalledWith(expect.stringMatching(/\/likes$/));
@@ -295,10 +306,11 @@ describe('AuthController — Google OAuth callback', () => {
   test('CUSTOMER with OPEN-REDIRECT callbackUrl (//evil) → falls back to /', async () => {
     const { ctrl } = await buildCtrl();
     const res = makeResponseMock();
-    const state = Buffer.from(JSON.stringify({ callbackUrl: '//evil.com' })).toString('base64url');
+    const state = noncedState('//evil.com');
     const req = makeRequestMock() as any;
     req.user = {};
     req.query = { state };
+    req.cookies = { g_oauth_state: OAUTH_NONCE };
 
     await ctrl.googleCallback(req, res as any);
     const redirectUrl = res.redirect.mock.calls[0][0];
@@ -318,10 +330,11 @@ describe('AuthController — Google OAuth callback', () => {
   ])('CUSTOMER with backslash callbackUrl (%s) → falls back to /', async (callbackUrl) => {
     const { ctrl } = await buildCtrl();
     const res = makeResponseMock();
-    const state = Buffer.from(JSON.stringify({ callbackUrl })).toString('base64url');
+    const state = noncedState(callbackUrl);
     const req = makeRequestMock() as any;
     req.user = {};
     req.query = { state };
+    req.cookies = { g_oauth_state: OAUTH_NONCE };
 
     await ctrl.googleCallback(req, res as any);
     const redirectUrl = res.redirect.mock.calls[0][0];
@@ -336,7 +349,8 @@ describe('AuthController — Google OAuth callback', () => {
     const res = makeResponseMock();
     const req = makeRequestMock() as any;
     req.user = {};
-    req.query = {};
+    req.query = { state: noncedState() };
+    req.cookies = { g_oauth_state: OAUTH_NONCE };
 
     await ctrl.googleCallback(req, res as any);
     const url = res.redirect.mock.calls[0][0];
@@ -350,10 +364,25 @@ describe('AuthController — Google OAuth callback', () => {
     const res = makeResponseMock();
     const req = makeRequestMock() as any;
     req.user = {};
-    req.query = {};
+    req.query = { state: noncedState() };
+    req.cookies = { g_oauth_state: OAUTH_NONCE };
 
     await ctrl.googleCallback(req, res as any);
     expect(res.redirect.mock.calls[0][0]).toContain('error=deactivated');
+  });
+
+  test('mismatched state nonce vs cookie → oauth_failed, no session minted (login-CSRF guard)', async () => {
+    const { ctrl, authSvc } = await buildCtrl();
+    const res = makeResponseMock();
+    const req = makeRequestMock() as any;
+    req.user = { googleId: 'g1' };
+    // State carries the attacker's nonce; the browser cookie carries a different one.
+    req.query = { state: Buffer.from(JSON.stringify({ callbackUrl: '/', nonce: 'attacker' })).toString('base64url') };
+    req.cookies = { g_oauth_state: OAUTH_NONCE };
+
+    await ctrl.googleCallback(req, res as any);
+    expect(res.redirect.mock.calls[0][0]).toContain('/login?error=oauth_failed');
+    expect(authSvc.handleGoogleAuth).not.toHaveBeenCalled();
   });
 });
 

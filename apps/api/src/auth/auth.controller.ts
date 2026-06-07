@@ -2,7 +2,7 @@ import { Controller, Post, Body, Res, Req, UseGuards, Get, Delete, Param, Query,
 import { Response, Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { RATE_LIMIT_AUTH, RATE_LIMIT_STRICT, RATE_LIMIT_WRITE, RATE_LIMIT_READ, RATE_LIMIT_INTERACTION } from '../common/throttle-config';
-import { GoogleAuthGuard } from './guards/google-auth.guard';
+import { GoogleAuthGuard, OAUTH_STATE_COOKIE, OAUTH_STATE_COOKIE_PATH } from './guards/google-auth.guard';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -289,11 +289,13 @@ export class AuthController {
 
     // Decode the callbackUrl we embedded in OAuth state before redirecting to Google
     let callbackUrl = '/';
+    let stateNonce = '';
     try {
       const rawState = (req.query as Record<string, string>).state ?? '';
       if (rawState) {
         const parsed: unknown = JSON.parse(Buffer.from(rawState, 'base64url').toString());
         const raw = (parsed as Record<string, string>)?.callbackUrl ?? '';
+        stateNonce = (parsed as Record<string, string>)?.nonce ?? '';
         // Re-validate on the way back — second line of defence against open redirect.
         // Mirrors `sanitizeCallbackUrl` in google-auth.guard.ts: rejects `/\foo`
         // (Chrome/Firefox normalize backslash → forward slash, bypassing `//` check)
@@ -309,6 +311,16 @@ export class AuthController {
         }
       }
     } catch { /* malformed state — fall back to home */ }
+
+    // Anti-CSRF: the nonce echoed back in `state` MUST match the cookie set at
+    // initiation. Missing / mismatch = a forged or cross-browser flow (login-CSRF
+    // / forced-login) → reject before minting any session. Always clear the
+    // one-time cookie. (Lax cookie set in google-auth.guard.ts.)
+    const cookieNonce = (req.cookies as Record<string, string> | undefined)?.[OAUTH_STATE_COOKIE] ?? '';
+    response.clearCookie(OAUTH_STATE_COOKIE, { path: OAUTH_STATE_COOKIE_PATH });
+    if (!stateNonce || !cookieNonce || stateNonce !== cookieNonce) {
+      return response.redirect(`${frontendUrl}/login?error=oauth_failed`);
+    }
 
     try {
       const userData = await this.authService.handleGoogleAuth(req.user as GoogleProfile, response, req);
