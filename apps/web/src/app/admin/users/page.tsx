@@ -69,7 +69,9 @@ export default function AdminUsersPage() {
       params.set('page', String(page));
       params.set('limit', '20');
       if (debouncedSearch) params.set('search', debouncedSearch);
-      if (roleFilter) params.set('status', roleFilter);
+      // Send the role filter under its accurate name `role` (backend also still
+      // accepts the legacy `status` alias). Matches the export call below.
+      if (roleFilter) params.set('role', roleFilter);
       if (verifiedFilter) params.set('verified', verifiedFilter);
       const { data } = await api.get(`/admin/users?${params}`);
       return data;

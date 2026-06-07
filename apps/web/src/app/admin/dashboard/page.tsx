@@ -17,13 +17,13 @@
  *   5. Queues + Recent activity — pending verifications, moderation queue, platform feed.
  *   6. Quick actions — 4 links to the most-used admin pages.
  *
- * Things intentionally OUT of scope (no backend support yet):
- *   - Range tabs (7d/30d/MTD/…) — /admin/dashboard/stats has no period param.
+ * Period selector (30/60/90/All) windows the financial KPIs via the `range`
+ * query param on /admin/dashboard/stats (default 30d). Still OUT of scope:
  *   - Period-over-period trend deltas — no prior-period calc on server.
  *   - Platform-wide audit feed — no roll-up endpoint yet.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/auth-context';
@@ -438,10 +438,17 @@ function QuickAction({
 export default function AdminDashboardPage() {
   const { user } = useAuth();
 
+  // Period window for the financial KPIs — default 30 days so the dashboard
+  // never sums the entire booking/payment history on load; "All" is an explicit
+  // opt-in. Only the transactional cards (revenue / volume / commission / fees /
+  // bookings) react to this; structural counts + liabilities stay current-state.
+  const [range, setRange] = useState<'30' | '60' | '90' | 'all'>('30');
+  const periodLabel = range === 'all' ? 'all time' : `last ${range} days`;
+
   const { data: stats, isLoading, dataUpdatedAt } = useQuery<DashboardStats>({
-    queryKey: ['admin', 'dashboard-stats'],
+    queryKey: ['admin', 'dashboard-stats', range],
     queryFn: async () => {
-      const { data } = await api.get('/admin/dashboard/stats');
+      const { data } = await api.get('/admin/dashboard/stats', { params: { range } });
       return data;
     },
     staleTime: 60_000,
@@ -528,6 +535,26 @@ export default function AdminDashboardPage() {
             <span className="text-gray-500 dark:text-slate-400">Last sync {syncLabel}</span>
           </div>
         </div>
+        {/* Period selector — windows the financial KPIs below (revenue / volume /
+            commission / fees / bookings). Default 30d so we never sum the whole
+            history on load; "All" runs the lifetime aggregate on demand. */}
+        <div className="inline-flex items-center gap-1 rounded-xl border border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-1">
+          {(['30', '60', '90', 'all'] as const).map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setRange(r)}
+              aria-pressed={range === r}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                range === r
+                  ? 'bg-sky-500 text-white'
+                  : 'text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {r === 'all' ? 'All' : `${r}d`}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ─── Section 1: Platform overview ──────────────────── */}
@@ -556,9 +583,9 @@ export default function AdminDashboardPage() {
               <KpiCard
                 tone="gold"
                 icon={BookOpen}
-                label="Total bookings"
+                label="Bookings"
                 value={stats?.totalBookings ?? 0}
-                sub={`${stats?.confirmedBookings ?? 0} confirmed`}
+                sub={`${stats?.confirmedBookings ?? 0} confirmed · ${periodLabel}`}
               />
             </>
           )}
@@ -573,7 +600,7 @@ export default function AdminDashboardPage() {
                 icon={DollarSign}
                 label="Cash revenue"
                 value={`QAR ${Number(stats?.totalRevenue ?? 0).toLocaleString()}`}
-                sub="Cash settled this period"
+                sub={`Cash settled · ${periodLabel}`}
                 size="lg"
               />
               <KpiCard
@@ -581,7 +608,7 @@ export default function AdminDashboardPage() {
                 icon={Receipt}
                 label="Bookings value"
                 value={`QAR ${Number(stats?.bookingsValue ?? 0).toLocaleString()}`}
-                sub="Nominal value · cash + points + coupons"
+                sub={`Cash + points + coupons · ${periodLabel}`}
                 size="lg"
               />
               <KpiCard
@@ -589,7 +616,7 @@ export default function AdminDashboardPage() {
                 icon={Gift}
                 label="Wanasa funded"
                 value={`QAR ${Number(stats?.wanasaFundedValue ?? 0).toLocaleString()}`}
-                sub="Paid via loyalty points"
+                sub={`Paid via points · ${periodLabel}`}
                 size="lg"
               />
             </>
@@ -621,14 +648,14 @@ export default function AdminDashboardPage() {
                 icon={Percent}
                 label="Platform commission"
                 value={`QAR ${Number(stats?.totalCommission ?? 0).toLocaleString()}`}
-                sub="Lifetime gross margin"
+                sub={`Gross margin · ${periodLabel}`}
               />
               <KpiCard
                 tone="sky"
                 icon={Banknote}
                 label="Service fees collected"
                 value={`QAR ${Number(stats?.totalServiceFees ?? 0).toLocaleString()}`}
-                sub="Cash-path only · waived for Wanasa"
+                sub={`Cash-path · waived for Wanasa · ${periodLabel}`}
               />
               <KpiCard
                 tone="amber"
@@ -694,7 +721,7 @@ export default function AdminDashboardPage() {
             title="Revenue over time"
             sub="Cash settled · last 6 months"
             total={`QAR ${Number(stats?.totalRevenue ?? 0).toLocaleString()}`}
-            totalLabel="Lifetime"
+            totalLabel={periodLabel}
           >
             <RevenueAreaChart data={revenueSeries} />
           </ChartCard>
@@ -771,8 +798,9 @@ export default function AdminDashboardPage() {
       <div className="mt-8 rounded-xl border border-gray-100 dark:border-slate-800/60 bg-gray-50/60 dark:bg-slate-900/40 p-4 flex items-start gap-3">
         <Info className="h-4 w-4 text-gray-400 dark:text-slate-500 mt-0.5 shrink-0" aria-hidden="true" />
         <p className="text-xs text-gray-500 dark:text-slate-400 leading-relaxed">
-          Figures reflect lifetime platform totals. Period-filtering, trend deltas, and a platform-wide activity feed will be
-          added once the backend exposes time-window stats. <TrendingUp className="inline h-3 w-3" /> For finer-grained numbers, open the
+          Financial KPIs (revenue, bookings value, commission, fees, bookings) reflect the selected period — default {periodLabel};
+          use the range selector at the top. Structural counts (users, vendors, activities) and current liabilities (payout owed,
+          loyalty points, refunds) are always live totals. <TrendingUp className="inline h-3 w-3" /> For finer-grained numbers, open the
           relevant page via Quick actions.
         </p>
       </div>

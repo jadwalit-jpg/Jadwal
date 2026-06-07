@@ -39,6 +39,15 @@ export class PaginationDto {
   @Matches(/^[A-Z_]+$/, { message: 'status must be UPPERCASE_SNAKE_CASE' })
   status?: string;
 
+  // Filter /admin/users by User.role (the users page's role dropdown sends
+  // this). `role` is the accurate name; getUsers still accepts `status` as a
+  // backward-compat fallback (it historically carried the role value).
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  @Matches(/^[A-Z_]+$/, { message: 'role must be UPPERCASE_SNAKE_CASE' })
+  role?: string;
+
   // Filter by Payment.status — used by the admin refund queue page to show
   // only REFUND_PENDING bookings. Strict allowlist so arbitrary strings
   // can't reach the Prisma query.
