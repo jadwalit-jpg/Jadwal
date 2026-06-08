@@ -130,9 +130,12 @@ export class UsersService {
   // ─── Loyalty points ──────────────────────────────────────────────────────
 
   /**
-   * Returns the customer's loyalty points balance and the public-facing
-   * redemption config (qarPerPoint + minRedemption). Never exposes admin-only
-   * settings like pointsPerQar.
+   * Returns the customer's loyalty points balance and the public-facing loyalty
+   * rates the booking page shows the customer: pointsPerQar (EARN rate — needed
+   * for an accurate "you'll earn N points" preview), qarPerPoint (redemption
+   * rate), and minRedemption. All three are rates the customer is shown on the
+   * checkout page — public-facing, NOT sensitive internal settings (no cost,
+   * margin, or commission data is exposed).
    */
   async getPoints(userId: string) {
     const user = await this.prisma.client.user.findUnique({
@@ -153,6 +156,7 @@ export class UsersService {
 
     return {
       loyaltyPoints: user.loyaltyPoints,
+      pointsPerQar: config.pointsPerQar.toNumber(),
       qarPerPoint: config.qarPerPoint.toNumber(),
       minRedemption: config.minRedemption,
     };
