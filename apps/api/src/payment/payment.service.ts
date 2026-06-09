@@ -423,12 +423,20 @@ export class PaymentService {
    * acceptance.
    */
   private diagnoseHashRecipe(
-    params: { err_code: string; basket_id: string; transaction_id?: string; order_date?: string; Response_Key: string },
+    params: {
+      err_code: string;
+      err_msg?: string;
+      basket_id: string;
+      transaction_id?: string;
+      order_date?: string;
+      Response_Key: string;
+    },
     dbAmount: string,
   ): string {
-    const key =
-      typeof params.Response_Key === 'string' ? params.Response_Key.toLowerCase() : '';
-    if (!/^[a-f0-9]{64}$/.test(key)) return 'NONE';
+    // 'want' is PAY2M's hash. Compared in memory only — NEVER logged/returned.
+    const want = typeof params.Response_Key === 'string' ? params.Response_Key.trim() : '';
+    const wantLower = want.toLowerCase();
+    if (want.length < 16) return 'NONE';
 
     const n = Number(dbAmount);
     const amounts: Record<string, string> = { raw: String(dbAmount) };
@@ -444,20 +452,40 @@ export class PaymentService {
     const errs: Record<string, string> = { recv: params.err_code, '00': '00', '000': '000' };
     const txn = params.transaction_id ?? '';
     const odate = params.order_date ?? '';
+    const emsg = params.err_msg ?? '';
     const m = this.merchantId;
     const b = params.basket_id;
-    const s = this.secretWord;
-    // Standard recipe plus common variants that append an extra echoed field.
-    const fields: Record<string, (a: string, e: string) => string> = {
-      std: (a, e) => `${m}${b}${s}${a}${e}`,
-      'std+txn': (a, e) => `${m}${b}${s}${a}${e}${txn}`,
-      'std+odate': (a, e) => `${m}${b}${s}${a}${e}${odate}`,
+    const s = this.secretWord; // used ONLY inside the hash input below — never returned/logged
+    // Many plausible field arrangements (the documented one + reorderings +
+    // extra echoed fields).
+    const recipes: Record<string, (a: string, e: string) => string> = {
+      'm+b+s+a+e': (a, e) => `${m}${b}${s}${a}${e}`,
+      'm+b+s+a+e+txn': (a, e) => `${m}${b}${s}${a}${e}${txn}`,
+      'm+b+s+a+e+odate': (a, e) => `${m}${b}${s}${a}${e}${odate}`,
+      'm+b+s+a+e+emsg': (a, e) => `${m}${b}${s}${a}${e}${emsg}`,
+      'm+b+a+e+s': (a, e) => `${m}${b}${a}${e}${s}`,
+      's+m+b+a+e': (a, e) => `${s}${m}${b}${a}${e}`,
+      'a+m+b+s+e': (a, e) => `${a}${m}${b}${s}${e}`,
+      'm+b+s+e+a': (a, e) => `${m}${b}${s}${e}${a}`,
+      'b+m+s+a+e': (a, e) => `${b}${m}${s}${a}${e}`,
+      'm+s+b+a+e': (a, e) => `${m}${s}${b}${a}${e}`,
     };
-    for (const [fn, ff] of Object.entries(fields)) {
+    const algos = ['sha256', 'sha512', 'sha1', 'md5'];
+    for (const [rn, rf] of Object.entries(recipes)) {
       for (const [an, av] of Object.entries(amounts)) {
         for (const [en, ev] of Object.entries(errs)) {
-          const h = crypto.createHash('sha256').update(ff(av, ev)).digest('hex');
-          if (h === key) return `fields=${fn} amount=${an}(${av}) err=${en}(${ev})`;
+          const input = rf(av, ev);
+          for (const algo of algos) {
+            const digest = crypto.createHash(algo).update(input).digest();
+            // The descriptor names only the STRUCTURE (algorithm/encoding/field
+            // order/amount-form/code-form) — never the secret or the hash itself.
+            if (digest.toString('hex').toLowerCase() === wantLower) {
+              return `algo=${algo} enc=hex recipe=${rn} amount=${an} err=${en}`;
+            }
+            if (digest.toString('base64') === want) {
+              return `algo=${algo} enc=b64 recipe=${rn} amount=${an} err=${en}`;
+            }
+          }
         }
       }
     }
