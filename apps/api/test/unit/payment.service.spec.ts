@@ -118,15 +118,19 @@ describe('PaymentService.verifyCallbackHash', () => {
     expect(ctx.sut.verifyCallbackHash('JDWL-ABC', '1.00', '00', key)).toBe(true);
   });
 
-  // ── NAPS/QPay rail hash-format tolerance (regression, 2026-06-09) ──
-  // Live finding: NAPS payments returned err_code "000" (success) yet the
-  // booking stayed PENDING because PAY2M's Response_Key for the NAPS/QPay rail
-  // is built with a 3-decimal amount and/or the alternate success-code spelling.
-  // verifyCallbackHash now tries those canonical forms.
-  test('NAPS 3-decimal amount: hash built with "1.000" verifies when caller passes "1.00"', async () => {
+  // ── NAPS/QPay rail (regression, confirmed 2026-06-09 against live callbacks
+  //    basket JDWL-5829d075-f9a / JDWL-75dc69bf-b5e) ──
+  // PAY2M signs the NAPS Response_Key as merchant+basket+secret+ERR+AMOUNT —
+  // err_code BEFORE amount (opposite of card), with err "00" + an integer
+  // amount, while the callback's err_code field carries a 3-digit NAPS status
+  // (e.g. "001"). verifyCallbackHash tries both field orders.
+  test('NAPS swapped order: SHA256(merchant+basket+secret+err+amount) verifies', async () => {
     const ctx = await buildSut();
-    const key = buildResponseKey('JDWL-NAPS', '1.000', '00');
-    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '00', key)).toBe(true);
+    // err "00" + amount "1" (integer) in err+amount order → "00" + "1" = "001".
+    const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}JDWL-NAPS${PAY2M_CFG.PAY2M_SECRET_WORD}001`;
+    const key = crypto.createHash('sha256').update(raw).digest('hex');
+    // callback's err_code field carries the NAPS status "001"; we charged 1.00 QAR.
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '001', key)).toBe(true);
   });
 
   test('success-code spelling: hash built with "00" verifies when callback echoes "000"', async () => {
@@ -141,36 +145,55 @@ describe('PaymentService.verifyCallbackHash', () => {
     expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '100.00', '00', key)).toBe(true);
   });
 
-  test('combined NAPS case: 3-decimal amount + alternate success spelling verifies', async () => {
+  // SECURITY: trying extra amount forms / both field orders must NOT let a
+  // wrong amount or a non-success code masquerade as a valid success.
+  test('SECURITY: genuinely wrong amount still fails', async () => {
     const ctx = await buildSut();
-    const key = buildResponseKey('JDWL-NAPS', '1.000', '000');
-    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '00', key)).toBe(true);
-  });
-
-  test('NAPS integer minor-units: hash built with "100" verifies when caller passes "1.00"', async () => {
-    const ctx = await buildSut();
-    // Some Qatar rails hash the amount in integer minor units (dirhams/fils):
-    // 1.00 QAR → "100". verifyCallbackHash tries that form.
-    const key = buildResponseKey('JDWL-NAPS', '100', '00');
-    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '00', key)).toBe(true);
-  });
-
-  // SECURITY: broadening the candidate forms must NOT let a wrong amount or a
-  // non-success code masquerade as a valid success.
-  test('SECURITY: genuinely wrong amount still fails despite extra decimal forms', async () => {
-    const ctx = await buildSut();
-    const key = buildResponseKey('JDWL-NAPS', '100.000', '00'); // signed for 100
-    // We only ever charged 1.00 — no decimal rendering of "1" equals "100".
+    const key = buildResponseKey('JDWL-NAPS', '100.00', '00'); // signed for 100.00
+    // We only ever charged 1.00 — no rendering/order of "1" equals "100.00".
     expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '00', key)).toBe(false);
   });
 
   test('SECURITY: a failure-code signature cannot be replayed as a success', async () => {
     const ctx = await buildSut();
     // PAY2M signed this Response_Key for failure code "42"; a forged callback
-    // claims success "000". The success-spelling set is {"00","000"} — never
-    // "42" — so the hash cannot match.
+    // claims success "000". We only ever try {received, "00", "000"} — never
+    // "42" with a swapped amount — so the hash cannot match as success.
     const key = buildResponseKey('JDWL-NAPS', '100.00', '42');
     expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '100.00', '000', key)).toBe(false);
+  });
+
+  // ── resolveSignedErrCode: success is derived from the SIGNED code (private,
+  //    accessed via `as any`). handleCallback trusts the code that
+  //    cryptographically signed the hash — NOT the raw err_code field.
+  test('signed code: NAPS callback (field "001", swapped hash) resolves to success "00"', async () => {
+    const ctx = await buildSut();
+    const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}JDWL-NAPS${PAY2M_CFG.PAY2M_SECRET_WORD}001`; // err"00"+amt"1"
+    const key = crypto.createHash('sha256').update(raw).digest('hex');
+    const signed = (ctx.sut as any).resolveSignedErrCode('JDWL-NAPS', '1.00', '001', key);
+    expect(signed).toBe('00'); // handleCallback → isSuccess = true
+  });
+
+  test('signed code: card success resolves to its success code', async () => {
+    const ctx = await buildSut();
+    const key = buildResponseKey('JDWL-ABC', '100.00', '000'); // amount+err order
+    const signed = (ctx.sut as any).resolveSignedErrCode('JDWL-ABC', '100.00', '000', key);
+    expect(signed).toBe('000');
+  });
+
+  test('SECURITY signed code: a failure-signed hash resolves to the FAILURE code, never success', async () => {
+    const ctx = await buildSut();
+    // Real decline ("97" insufficient balance), amount+err order.
+    const key = buildResponseKey('JDWL-ABC', '100.00', '97');
+    const signed = (ctx.sut as any).resolveSignedErrCode('JDWL-ABC', '100.00', '97', key);
+    expect(signed).toBe('97');                                  // resolves to the failure code
+    expect(signed === '00' || signed === '000').toBe(false);    // → NOT treated as success
+  });
+
+  test('SECURITY signed code: forged/invalid hash resolves to null', async () => {
+    const ctx = await buildSut();
+    const signed = (ctx.sut as any).resolveSignedErrCode('JDWL-ABC', '100.00', '000', 'a'.repeat(64));
+    expect(signed).toBeNull();
   });
 
   // Regression (2026-04-22): defence-in-depth format gate.
