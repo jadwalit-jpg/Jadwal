@@ -338,158 +338,75 @@ export class PaymentService {
 
   // ─── Verify Callback Response ───────────────────────────────────────────
 
-  verifyCallbackHash(basketId: string, amount: string, errCode: string, responseKey: string): boolean {
-    // Upfront format gate — rejects obvious garbage (wrong length, non-hex)
-    // in O(1) before we spend O(n) on hashing + buffer construction.
+  /**
+   * Resolves PAY2M's Response_Key to the err_code that cryptographically SIGNED
+   * it — or null if no candidate matches (invalid / forged / foreign hash).
+   *
+   * Recipe: SHA256(merchant_id + basket_id + <secret word> + <amount/err pair>).
+   * The card rail signs `amount + err_code`; the NAPS/QPay rail signs
+   * `err_code + amount` (fields swapped — confirmed 2026-06-09 against live
+   * callbacks: card/Apple-Pay matched amount+err, NAPS matched err+amount with
+   * err "00" and an integer amount). We try BOTH orders, the canonical amount
+   * renderings (PAY2M strips trailing zeros), and the success spellings
+   * "00"/"000" (NAPS echoes a 3-digit status like "001" in the err_code field
+   * but signs the hash with the 2-digit gateway code "00").
+   *
+   * Returning the SIGNED code (not the raw field) lets handleCallback decide
+   * success from what PAY2M cryptographically asserted: a hash that verifies
+   * with "00"/"000" is an unforgeable success assertion. A failure is signed
+   * with its failure code, so no extra spelling we try can read it as success.
+   *
+   * ⚠ SECURITY: when the secret word is EMPTY the hash carries no secret — every
+   * other input is visible in the customer's browser, so the callback is
+   * forgeable. main.ts fails-fast in production if PAY2M_SECRET_WORD is empty.
+   */
+  private resolveSignedErrCode(
+    basketId: string,
+    amount: string,
+    receivedErrCode: string,
+    responseKey: string,
+  ): string | null {
+    // Format gate — reject obvious garbage in O(1) before hashing.
     if (typeof responseKey !== 'string' || !/^[a-f0-9]{64}$/i.test(responseKey)) {
-      return false;
+      return null;
     }
-    // PAY2M's Response_Key recipe (PAY2M Merchant Integration Guide, Table
-    // 1.2): SHA256(merchant_id + basket_id + <secret word> + amount +
-    // err_code). The recipe + SHA256 algorithm were confirmed against a
-    // live callback (2026-05-16).
-    //
-    // <secret word> is configured in the PAY2M merchant portal and mirrored
-    // into SSM as PAY2M_SECRET_WORD — `this.secretWord`. The two MUST match
-    // exactly or every callback mismatches.
-    //
-    // ⚠ SECURITY: when the secret word is EMPTY the hash carries no secret —
-    // every other input (MERCHANT_ID, BASKET_ID, TXNAMT, err_code) is
-    // visible in the customer's own browser, so the callback is forgeable
-    // (a customer could confirm an unpaid booking). A NON-EMPTY secret word
-    // makes it a real authentication signature. main.ts requires
-    // PAY2M_SECRET_WORD non-empty in production for exactly this reason.
-    //
-    // PAY2M normalises the amount (strips trailing zeros): a transaction
-    // sent as "1.00" comes back hashed as "1". We try the canonical numeric
-    // forms so the check is robust to that normalisation.
     const n = Number(amount);
     const amountForms = new Set<string>([String(amount)]);
     if (Number.isFinite(n)) {
-      amountForms.add(n.toString());   // "1.00" → "1", "1.50" → "1.5"
-      amountForms.add(n.toFixed(0));   // → "1"
-      amountForms.add(n.toFixed(1));   // → "1.0"
-      amountForms.add(n.toFixed(2));   // → "1.00"
-      amountForms.add(n.toFixed(3));   // → "1.000" (QAR/NAPS-QPay 3-decimal hashing)
-      // Integer minor units — some rails hash the amount in dirhams/fils rather
-      // than the decimal QAR string (e.g. 1.00 QAR → "100" or "1000").
-      amountForms.add(String(Math.round(n * 100)));   // 2-decimal minor units → "100"
-      amountForms.add(String(Math.round(n * 1000)));  // 3-decimal minor units → "1000"
+      amountForms.add(n.toString());  // "1.00" → "1" (PAY2M strips trailing zeros)
+      amountForms.add(n.toFixed(0));  // → "1"   (NAPS uses the integer form)
+      amountForms.add(n.toFixed(2));  // → "1.00" (card form)
     }
-    // err_code normalisation. PAY2M signals success as "00" or "000" depending
-    // on the rail; some rails (observed on NAPS/QPay) sign the Response_Key with
-    // one spelling while echoing the other in the err_code field, so a genuine
-    // success would mismatch if we only hashed the received spelling. Try both
-    // canonical success spellings. This is NOT a security relaxation: the hash
-    // still binds merchant_id + basket_id + <secret word> + amount, so an
-    // attacker without the secret cannot forge a match for ANY spelling, and
-    // `isSuccess` is decided from the *received* err_code (handleCallback) — never
-    // from whichever spelling happened to match the hash here.
-    const errCodeForms = new Set<string>([errCode]);
-    if (errCode === '00' || errCode === '000') {
-      errCodeForms.add('00');
-      errCodeForms.add('000');
-    }
+    // Always try the canonical success spellings alongside the received code.
+    // The secret word still gates every attempt, so a forger cannot make ANY
+    // spelling verify; a genuine failure is signed with its failure code, which
+    // is the only code that will match for that callback.
+    const errForms = new Set<string>([receivedErrCode, '00', '000']);
     const target = Buffer.from(responseKey.toLowerCase(), 'hex');
-    for (const amt of amountForms) {
-      for (const ec of errCodeForms) {
-        const expected = Buffer.from(
-          crypto
-            .createHash('sha256')
-            .update(`${this.merchantId}${basketId}${this.secretWord}${amt}${ec}`)
-            .digest('hex'),
-          'hex',
-        );
-        // timingSafeEqual needs equal-length buffers — both are 32 bytes.
-        if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  /**
-   * SAFE diagnostic — only called AFTER verifyCallbackHash already returned
-   * false (callback already rejected). Tests a broad matrix of candidate PAY2M
-   * Response_Key recipes against the received hash IN MEMORY and returns a short
-   * descriptor of the FIRST recipe that matches (e.g.
-   * "fields=std amount=minor2(100) err=00"), or 'NONE'.
-   *
-   * Security: it NEVER returns/logs the Response_Key or the secret word — only
-   * the structural descriptor. A match tells us which format PAY2M signed with
-   * (so verifyCallbackHash can be made exact); 'NONE' means no reasonable recipe
-   * matched under our secret ⇒ likely a PAY2M-side hash bug. It does NOT affect
-   * acceptance.
-   */
-  private diagnoseHashRecipe(
-    params: {
-      err_code: string;
-      err_msg?: string;
-      basket_id: string;
-      transaction_id?: string;
-      order_date?: string;
-      Response_Key: string;
-    },
-    dbAmount: string,
-  ): string {
-    // 'want' is PAY2M's hash. Compared in memory only — NEVER logged/returned.
-    const want = typeof params.Response_Key === 'string' ? params.Response_Key.trim() : '';
-    const wantLower = want.toLowerCase();
-    if (want.length < 16) return 'NONE';
-
-    const n = Number(dbAmount);
-    const amounts: Record<string, string> = { raw: String(dbAmount) };
-    if (Number.isFinite(n)) {
-      amounts.d0 = n.toFixed(0);
-      amounts.d1 = n.toFixed(1);
-      amounts.d2 = n.toFixed(2);
-      amounts.d3 = n.toFixed(3);
-      amounts.str = n.toString();
-      amounts.minor2 = String(Math.round(n * 100));
-      amounts.minor3 = String(Math.round(n * 1000));
-    }
-    const errs: Record<string, string> = { recv: params.err_code, '00': '00', '000': '000' };
-    const txn = params.transaction_id ?? '';
-    const odate = params.order_date ?? '';
-    const emsg = params.err_msg ?? '';
-    const m = this.merchantId;
-    const b = params.basket_id;
-    const s = this.secretWord; // used ONLY inside the hash input below — never returned/logged
-    // Many plausible field arrangements (the documented one + reorderings +
-    // extra echoed fields).
-    const recipes: Record<string, (a: string, e: string) => string> = {
-      'm+b+s+a+e': (a, e) => `${m}${b}${s}${a}${e}`,
-      'm+b+s+a+e+txn': (a, e) => `${m}${b}${s}${a}${e}${txn}`,
-      'm+b+s+a+e+odate': (a, e) => `${m}${b}${s}${a}${e}${odate}`,
-      'm+b+s+a+e+emsg': (a, e) => `${m}${b}${s}${a}${e}${emsg}`,
-      'm+b+a+e+s': (a, e) => `${m}${b}${a}${e}${s}`,
-      's+m+b+a+e': (a, e) => `${s}${m}${b}${a}${e}`,
-      'a+m+b+s+e': (a, e) => `${a}${m}${b}${s}${e}`,
-      'm+b+s+e+a': (a, e) => `${m}${b}${s}${e}${a}`,
-      'b+m+s+a+e': (a, e) => `${b}${m}${s}${a}${e}`,
-      'm+s+b+a+e': (a, e) => `${m}${s}${b}${a}${e}`,
-    };
-    const algos = ['sha256', 'sha512', 'sha1', 'md5'];
-    for (const [rn, rf] of Object.entries(recipes)) {
-      for (const [an, av] of Object.entries(amounts)) {
-        for (const [en, ev] of Object.entries(errs)) {
-          const input = rf(av, ev);
-          for (const algo of algos) {
-            const digest = crypto.createHash(algo).update(input).digest();
-            // The descriptor names only the STRUCTURE (algorithm/encoding/field
-            // order/amount-form/code-form) — never the secret or the hash itself.
-            if (digest.toString('hex').toLowerCase() === wantLower) {
-              return `algo=${algo} enc=hex recipe=${rn} amount=${an} err=${en}`;
-            }
-            if (digest.toString('base64') === want) {
-              return `algo=${algo} enc=b64 recipe=${rn} amount=${an} err=${en}`;
-            }
+    for (const ec of errForms) {
+      for (const amt of amountForms) {
+        // card rail: amount+err ; NAPS/QPay rail: err+amount.
+        for (const tail of [`${amt}${ec}`, `${ec}${amt}`]) {
+          const expected = Buffer.from(
+            crypto
+              .createHash('sha256')
+              .update(`${this.merchantId}${basketId}${this.secretWord}${tail}`)
+              .digest('hex'),
+            'hex',
+          );
+          // timingSafeEqual needs equal-length buffers — both are 32 bytes.
+          if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
+            return ec;
           }
         }
       }
     }
-    return 'NONE';
+    return null;
+  }
+
+  /** Boolean convenience wrapper — true iff the Response_Key verifies. */
+  verifyCallbackHash(basketId: string, amount: string, errCode: string, responseKey: string): boolean {
+    return this.resolveSignedErrCode(basketId, amount, errCode, responseKey) !== null;
   }
 
   // ─── Initiate Payment ───────────────────────────────────────────────────
@@ -711,68 +628,52 @@ export class PaymentService {
       return { bookingId: payment.bookingId!, status: 'success' };
     }
 
-    // 3. Check if success (err_code 00 or 000)
-    const isSuccess = params.err_code === '00' || params.err_code === '000';
-
-    // 2b. CRITICAL: If payment was marked FAILED by cleanup cron but PAY2M now sends SUCCESS,
-    // the customer WAS charged — we MUST recover the booking. This handles the race condition
-    // where the reservation timer expires while the customer is entering card details on PAY2M.
-    // Without this, the customer loses money with no booking.
-    if (payment.status === 'FAILED' && !isSuccess) {
-      return { bookingId: payment.bookingId!, status: 'failed', error: 'Payment was previously declined' };
-    }
-    // If payment.status === 'FAILED' && isSuccess → fall through to process as new SUCCESS
-    // (the optimistic lock below handles the update safely)
-
-    // 4. Verify the PAY2M Response_Key hash on every callback.
+    // 3. Resolve the Response_Key and derive success from the SIGNED code.
     //
-    // The hash includes the PAY2M secret word (verifyCallbackHash). When a
-    // non-empty secret word is configured — in the PAY2M merchant portal AND
-    // the matching SSM PAY2M_SECRET_WORD — this is a genuine authentication
-    // signature: a customer cannot forge it.
+    // resolveSignedErrCode returns the err_code that cryptographically validates
+    // PAY2M's Response_Key (or null if none does). We trust THAT signed code for
+    // success — not the raw err_code field — because the NAPS/QPay rail echoes a
+    // 3-digit status (e.g. "001") in the field yet signs the hash with the
+    // 2-digit gateway code "00". A hash that verifies with "00"/"000" is PAY2M
+    // cryptographically asserting success, unforgeable without the secret word;
+    // a failure is signed with its own failure code, so it can never resolve to
+    // a success code.
     //
-    // ⚠ LAUNCH BLOCKER while the secret word is EMPTY: with no secret word,
-    // every hash input is visible in the customer's browser, so a forged
-    // `err_code=000` callback could confirm an unpaid booking. Closing this
-    // = set a strong secret word in the PAY2M portal + mirror it to SSM.
-    // main.ts fails-fast in production if PAY2M_SECRET_WORD is empty, so a
-    // production deploy cannot ship with the forgeable configuration.
+    // ⚠ LAUNCH BLOCKER while the secret word is EMPTY: every hash input is
+    // otherwise visible in the customer's browser, so a forged callback could
+    // confirm an unpaid booking. main.ts fails-fast in production if
+    // PAY2M_SECRET_WORD is empty, so a deploy cannot ship that configuration.
     const amount = Number(payment.amount).toFixed(2);
-    const hashValid = this.verifyCallbackHash(
+    const signedErrCode = this.resolveSignedErrCode(
       params.basket_id,
       amount,
       params.err_code,
       params.Response_Key,
     );
+    const hashValid = signedErrCode !== null;
+    const isSuccess = signedErrCode === '00' || signedErrCode === '000';
 
-    // The hash is verified on every callback regardless of err_code — a
-    // mismatch means a corrupted or malformed callback. (It cannot, on its
-    // own, distinguish a forgery — see the launch-blocker note above.)
+    // 2b. CRITICAL: If payment was marked FAILED by the cleanup cron but PAY2M
+    // now sends a VERIFIED success, the customer WAS charged — recover the
+    // booking (the reservation timer expired while they were on the PAY2M page).
+    // If it's FAILED and this callback is not a verified success, stay failed.
+    if (payment.status === 'FAILED' && !isSuccess) {
+      return { bookingId: payment.bookingId!, status: 'failed', error: 'Payment was previously declined' };
+    }
+    // FAILED && isSuccess → fall through to recover (optimistic lock below).
+
+    // 4. Reject any callback whose Response_Key does not verify (corrupt,
+    // malformed, foreign-rail, or forged).
     if (!hashValid) {
-      // Only NON-sensitive transaction metadata is logged: basket_id (also in
-      // the audit row below), the amount we used, and err_code. None are PII,
-      // card data, tokens, or secrets.
-      //
-      // We deliberately DO NOT log PAY2M's Response_Key. It is a SHA256 of
-      // merchant_id + basket_id + <secret word> + amount + err_code; every field
-      // except the secret word is otherwise known, so logging the hash beside
-      // them would form an offline oracle to brute-force the secret word if it
-      // were ever weak. These fields still flag "our format set is incomplete
-      // for this rail" without that risk.
-      // SAFE diagnostic: test a broad matrix of candidate recipes against the
-      // received Response_Key IN MEMORY and report only the matching recipe's
-      // *descriptor* (e.g. "amount=minor2 err=00 fields=std"). This reveals the
-      // exact format PAY2M signed with — WITHOUT logging the Response_Key or the
-      // secret word (so no brute-force oracle). 'NONE' ⇒ no reasonable recipe
-      // matched with our secret ⇒ strong evidence PAY2M's hash is wrong/foreign.
-      const recipeMatch = this.diagnoseHashRecipe(params, amount);
+      // Logs only NON-sensitive transaction metadata (basket/amount/err_code) —
+      // never the Response_Key or secret word, which together with the otherwise
+      // known inputs would form an offline brute-force oracle for the secret.
       this.logger.warn({
         event: 'PAY2M_HASH_MISMATCH',
         paymentId: payment.id,
         errCode: params.err_code,
         basketId: params.basket_id,
         amountUsed: amount,
-        recipeMatch,
       });
       await this.auditLogger.log({
         actorType: 'SYSTEM',
