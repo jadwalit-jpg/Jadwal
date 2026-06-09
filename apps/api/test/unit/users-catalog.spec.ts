@@ -127,7 +127,7 @@ describe('UsersService.getPoints', () => {
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce({ loyaltyPoints: 500 });
     ctx.prisma._client.loyaltyConfig.findUnique.mockResolvedValueOnce(null);
     ctx.prisma._client.loyaltyConfig.create.mockResolvedValueOnce({
-      id: 'singleton', qarPerPoint: mockDecimal(0.1), minRedemption: 100,
+      id: 'singleton', pointsPerQar: mockDecimal(1), qarPerPoint: mockDecimal(0.1), minRedemption: 100,
     });
 
     const r = await ctx.sut.getPoints('u1');
@@ -135,7 +135,7 @@ describe('UsersService.getPoints', () => {
     expect(ctx.prisma._client.loyaltyConfig.create).toHaveBeenCalled();
   });
 
-  test('response does NOT include pointsPerQar (admin-only config)', async () => {
+  test('response includes pointsPerQar (public earn rate for the booking-page preview)', async () => {
     const ctx = await buildUsersSut();
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce({ loyaltyPoints: 0 });
     ctx.prisma._client.loyaltyConfig.findUnique.mockResolvedValueOnce({
@@ -143,7 +143,14 @@ describe('UsersService.getPoints', () => {
     });
 
     const r = await ctx.sut.getPoints('u1');
-    expect(r).not.toHaveProperty('pointsPerQar');
+    // pointsPerQar is the EARN rate the customer is shown ("earn N points per QAR") —
+    // a public-facing loyalty rate exactly like qarPerPoint (already exposed), not a
+    // sensitive internal setting (no cost/margin/commission). The booking-page
+    // "you'll earn N points" preview needs it; without it the UI mis-derived the earn
+    // count from qarPerPoint and over-stated points ~100x.
+    expect(r.pointsPerQar).toBe(1);
+    expect(r.qarPerPoint).toBe(0.1);
+    expect(r.minRedemption).toBe(100);
   });
 });
 
