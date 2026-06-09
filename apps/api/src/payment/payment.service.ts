@@ -377,27 +377,32 @@ export class PaymentService {
       amountForms.add(n.toFixed(0));  // → "1"   (NAPS uses the integer form)
       amountForms.add(n.toFixed(2));  // → "1.00" (card form)
     }
-    // Always try the canonical success spellings alongside the received code.
-    // The secret word still gates every attempt, so a forger cannot make ANY
-    // spelling verify; a genuine failure is signed with its failure code, which
-    // is the only code that will match for that callback.
+    // We try the received code plus the canonical success spellings ("00" vs
+    // "000"). The secret word gates every attempt, so a forger can't verify and
+    // a genuine failure only matches its own failure code.
+    //
+    // ⚠ NAPS/QPay (err+amount order) is intentionally NOT accepted here. PAY2M
+    // emits a code-"00" callback for NAPS at a PENDING/session stage — BEFORE the
+    // money is captured — so verifying it confirmed an UNPAID booking (observed
+    // live 2026-06-09: basket JDWL-939bd325-fa3 was confirmed on code "00" while
+    // PAY2M's status stayed "Pending" and no card was charged). NAPS support is
+    // paused until we have a reliable captured-vs-pending signal from PAY2M; only
+    // the card/Apple-Pay (amount+err) rail, which signals capture on code "00",
+    // is verified.
     const errForms = new Set<string>([receivedErrCode, '00', '000']);
     const target = Buffer.from(responseKey.toLowerCase(), 'hex');
     for (const ec of errForms) {
       for (const amt of amountForms) {
-        // card rail: amount+err ; NAPS/QPay rail: err+amount.
-        for (const tail of [`${amt}${ec}`, `${ec}${amt}`]) {
-          const expected = Buffer.from(
-            crypto
-              .createHash('sha256')
-              .update(`${this.merchantId}${basketId}${this.secretWord}${tail}`)
-              .digest('hex'),
-            'hex',
-          );
-          // timingSafeEqual needs equal-length buffers — both are 32 bytes.
-          if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
-            return ec;
-          }
+        const expected = Buffer.from(
+          crypto
+            .createHash('sha256')
+            .update(`${this.merchantId}${basketId}${this.secretWord}${amt}${ec}`)
+            .digest('hex'),
+          'hex',
+        );
+        // timingSafeEqual needs equal-length buffers — both are 32 bytes.
+        if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
+          return ec;
         }
       }
     }
