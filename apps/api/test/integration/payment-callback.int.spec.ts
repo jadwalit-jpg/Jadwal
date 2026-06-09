@@ -100,6 +100,12 @@ function signCallback(basketId: string, amount: string, errCode: string): string
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
+/** NAPS/QPay rail Response_Key — err_code + amount order (the swapped rail). */
+function signCallbackNaps(basketId: string, amount: string, errCode: string): string {
+  const raw = `${PAY2M.MERCHANT_ID}${basketId}${PAY2M.SECRET_WORD}${errCode}${amount}`;
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
 /** Seed a PENDING payment + booking pair ready for a callback. Returns handles. */
 async function seedPendingPayment(amountQar = 200) {
   const seed = await seedReference(ctx.prisma);
@@ -702,5 +708,38 @@ describe('PaymentService.handleCallback — inquiry gate ON', () => {
 
     expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('SUCCESS');
     expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('CONFIRMED');
+  });
+
+  // CodeRabbit Finding 3 regression: a REAL NAPS callback signs err+amount. It
+  // must pass the authenticity gate (reach the inquiry), and then book ONLY
+  // because the inquiry says captured — never from the callback alone.
+  test('NAPS swapped-order (err+amount) hash + captured verdict → CONFIRMED (NAPS now reaches the inquiry)', async () => {
+    const { svc } = makePaymentService(INQUIRY_ON);
+    const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
+    jest.spyOn(svc as any, 'getCaptureVerdict').mockResolvedValue({ captured: true, authorizedNotCaptured: false, failed: false, transactionId: 'TXN-NAPS' });
+
+    // NAPS echoes "001" in err_code and signs err+amount with the integer amount.
+    const res = await svc.handleCallback({
+      err_code: '001', basket_id: basketId, transaction_id: 'TXN-NAPS',
+      Response_Key: signCallbackNaps(basketId, '200', '00'),
+    });
+
+    expect(res.status).toBe('success');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('SUCCESS');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('CONFIRMED');
+  });
+
+  test('NAPS swapped-order hash + transient verdict → authenticity accepted but booking STAYS PENDING (no false confirm)', async () => {
+    const { svc } = makePaymentService(INQUIRY_ON);
+    const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
+    jest.spyOn(svc as any, 'getCaptureVerdict').mockResolvedValue({ captured: false, authorizedNotCaptured: false, failed: false, responseCode: '001' });
+
+    const res = await svc.handleCallback({
+      err_code: '001', basket_id: basketId, Response_Key: signCallbackNaps(basketId, '200', '00'),
+    });
+
+    expect(res.status).toBe('failed'); // not rejected (authentic) but not confirmed (pending)
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('PENDING');
   });
 });

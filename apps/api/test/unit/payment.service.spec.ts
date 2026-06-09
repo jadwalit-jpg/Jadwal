@@ -7,7 +7,7 @@
  * Full fetch → PAY2M network path is exercised at the integration tier.
  */
 
-import { BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as crypto from 'crypto';
 import { PaymentService } from '../../src/payment/payment.service';
@@ -751,5 +751,95 @@ describe('PaymentService.handleCallback — inquiry gate ON', () => {
 
     expect(r).toMatchObject({ status: 'failed' });
     expect(ctx.prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Inquiry-mode authenticity (verifyCallbackAuthentic) — accepts BOTH hash rails
+//
+// NAPS/QPay signs err_code+amount; card/Apple-Pay signs amount+err_code. The
+// inquiry gate verifies authenticity only (success comes from the inquiry), so
+// it MUST accept both orderings — otherwise NAPS callbacks are rejected before
+// the inquiry and the fix doesn't fix NAPS (CodeRabbit Finding 3).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** NAPS/QPay rail Response_Key: SHA256(merchant + basket + secret + err + amount). */
+function buildResponseKeyNaps(basketId: string, amount: string, errCode: string): string {
+  const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}${basketId}${PAY2M_CFG.PAY2M_SECRET_WORD}${errCode}${amount}`;
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+describe('PaymentService.verifyCallbackAuthentic', () => {
+  test('accepts the card/Apple-Pay ordering (amount+err)', async () => {
+    const { sut } = await buildSut();
+    const ok = (sut as any).verifyCallbackAuthentic('JDWL-aaaaaaaaaaaa', '100.00', '00', buildResponseKey('JDWL-aaaaaaaaaaaa', '100.00', '00'));
+    expect(ok).toBe(true);
+  });
+
+  test('accepts the NAPS/QPay ordering (err+amount) — integer amount form', async () => {
+    const { sut } = await buildSut();
+    // PAY2M signs NAPS with the integer amount form; verifier tries toFixed(0).
+    const key = buildResponseKeyNaps('JDWL-bbbbbbbbbbbb', '100', '00');
+    const ok = (sut as any).verifyCallbackAuthentic('JDWL-bbbbbbbbbbbb', '100.00', '00', key);
+    expect(ok).toBe(true);
+  });
+
+  test('rejects a forged / garbage Response_Key (neither ordering matches)', async () => {
+    const { sut } = await buildSut();
+    expect((sut as any).verifyCallbackAuthentic('JDWL-cccccccccccc', '100.00', '00', 'a'.repeat(64))).toBe(false);
+    expect((sut as any).verifyCallbackAuthentic('JDWL-cccccccccccc', '100.00', '00', 'not-hex')).toBe(false);
+  });
+});
+
+describe('PaymentService.handleCallback — inquiry gate ON, NAPS swapped-order hash', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  test('NAPS err+amount callback passes the authenticity gate → inquiry runs (not rejected)', async () => {
+    const ctx = await buildSut(true, INQUIRY_CFG);
+    ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({ id: 'p1', bookingId: 'b1', amount: 100, status: 'PENDING' });
+    const verdictSpy = jest.spyOn(ctx.sut as any, 'getCaptureVerdict')
+      .mockResolvedValue({ captured: false, authorizedNotCaptured: false, failed: false, statusCode: '', responseCode: '001' });
+
+    // err_code "001" (NAPS echoes a 3-digit status) signed in err+amount order.
+    const r = await ctx.sut.handleCallback({
+      err_code: '001', basket_id: 'JDWL-eeeeeeeeeeee', Response_Key: buildResponseKeyNaps('JDWL-eeeeeeeeeeee', '100', '00'),
+    });
+
+    // The crux of Finding 3: a real NAPS callback is NOT rejected — it reaches the inquiry.
+    expect(verdictSpy).toHaveBeenCalledWith('JDWL-eeeeeeeeeeee', '100.00');
+    expect(ctx.audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: 'PAYMENT_HASH_MISMATCH' }));
+    expect(r).toMatchObject({ status: 'failed' }); // pending verdict → stays PENDING (no false confirm)
+  });
+});
+
+describe('PaymentService.getCaptureVerdict — capture-once lock (A path)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  test('lock acquired → capture proceeds + lock released', async () => {
+    const { sut, lock } = await buildSut(true, INQUIRY_CFG);
+    jest.spyOn(globalThis, 'fetch').mockImplementation(makeFetchMock({
+      inquiry: { data: { status_code: 'A', response_code: '00', transaction_id: 'TXN-A', transaction_amount: 100 } },
+      capture: { code: '00' },
+    }) as any);
+
+    const v = await (sut as any).getCaptureVerdict('JDWL-fffffffffff1', '100.00');
+    expect(v.captured).toBe(true);
+    expect(lock.acquire).toHaveBeenCalledWith('pay2m:capture:TXN-A', 30_000);
+    expect(lock.release).toHaveBeenCalledWith('pay2m:capture:TXN-A', 'lock-token-1');
+  });
+
+  test('lock busy (acquire→null) → capture NOT issued, verdict not-captured', async () => {
+    const { sut, lock } = await buildSut(true, INQUIRY_CFG);
+    lock.acquire.mockResolvedValueOnce(null);
+    const fetchMock = makeFetchMock({
+      inquiry: { data: { status_code: 'A', response_code: '00', transaction_id: 'TXN-B', transaction_amount: 100 } },
+      capture: { code: '00' },
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as any);
+
+    const v = await (sut as any).getCaptureVerdict('JDWL-fffffffffff2', '100.00');
+    expect(v.captured).toBe(false);
+    expect(v.authorizedNotCaptured).toBe(true);
+    expect(fetchMock.mock.calls.filter((c: any[]) => String(c[0]).includes('/transaction/capture/'))).toHaveLength(0);
   });
 });

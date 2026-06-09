@@ -527,7 +527,24 @@ export class PaymentService {
     }
     if (statusCode === 'A') {
       this.logger.log({ event: 'PAY2M_CAPTURE_ATTEMPT', basketId, transactionId });
-      const captured = transactionId ? await this.captureTransaction(transactionId, token) : false;
+      // Capture-once guard: PAY2M does not document idempotency for repeated
+      // capture requests, and a browser callback + IPN (or two retries) can race
+      // on the same transaction. Hold a short Redis lock keyed by transactionId
+      // so only one capture call is in flight. If the lock is held by a
+      // concurrent caller, treat this as not-yet-captured (transient) — the
+      // holder will capture and that callback confirms; this one leaves PENDING.
+      let captured = false;
+      const lockKey = transactionId ? `pay2m:capture:${transactionId}` : null;
+      const lockToken = lockKey ? await this.redisLock.acquire(lockKey, 30_000) : null;
+      try {
+        if (transactionId && lockToken) {
+          captured = await this.captureTransaction(transactionId, token);
+        } else if (transactionId && !lockToken) {
+          this.logger.warn({ event: 'PAY2M_CAPTURE_LOCK_BUSY', basketId, transactionId });
+        }
+      } finally {
+        if (lockKey && lockToken) await this.redisLock.release(lockKey, lockToken);
+      }
       this.logger.log({ event: 'PAY2M_CAPTURE_RESULT', basketId, transactionId, captured });
       return { captured, authorizedNotCaptured: !captured, failed: false, transactionId, responseCode, statusCode };
     }
@@ -653,6 +670,52 @@ export class PaymentService {
   /** Boolean convenience wrapper — true iff the Response_Key verifies. */
   verifyCallbackHash(basketId: string, amount: string, errCode: string, responseKey: string): boolean {
     return this.resolveSignedErrCode(basketId, amount, errCode, responseKey) !== null;
+  }
+
+  /**
+   * Inquiry-mode AUTHENTICITY check — true iff the Response_Key verifies under
+   * EITHER hash ordering: card/Apple-Pay `amount+err_code` OR NAPS/QPay
+   * `err_code+amount`. Used ONLY when the inquiry gate is on, where the hash
+   * proves the callback genuinely came from PAY2M (anti-forgery) while SUCCESS is
+   * decided solely by the server-to-server capture inquiry. Accepting the NAPS
+   * ordering here does NOT re-introduce the #369 false-confirm bug — a verified
+   * NAPS "00" is no longer treated as success; only a captured inquiry confirms.
+   * Both orderings are gated by the secret word, so a forger cannot verify either.
+   * (resolveSignedErrCode stays amount+err-only because in LEGACY mode the signed
+   * code IS the success signal, and the NAPS "00" arrives pre-capture.)
+   */
+  private verifyCallbackAuthentic(
+    basketId: string,
+    amount: string,
+    receivedErrCode: string,
+    responseKey: string,
+  ): boolean {
+    if (typeof responseKey !== 'string' || !/^[a-f0-9]{64}$/i.test(responseKey)) {
+      return false;
+    }
+    const n = Number(amount);
+    const amountForms = new Set<string>([String(amount)]);
+    if (Number.isFinite(n)) {
+      amountForms.add(n.toString());
+      amountForms.add(n.toFixed(0));
+      amountForms.add(n.toFixed(2));
+    }
+    const errForms = new Set<string>([receivedErrCode, '00', '000']);
+    const target = Buffer.from(responseKey.toLowerCase(), 'hex');
+    for (const ec of errForms) {
+      for (const amt of amountForms) {
+        for (const raw of [
+          `${this.merchantId}${basketId}${this.secretWord}${amt}${ec}`, // card / Apple-Pay
+          `${this.merchantId}${basketId}${this.secretWord}${ec}${amt}`, // NAPS / QPay
+        ]) {
+          const expected = Buffer.from(crypto.createHash('sha256').update(raw).digest('hex'), 'hex');
+          if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   // ─── Initiate Payment ───────────────────────────────────────────────────
@@ -941,7 +1004,15 @@ export class PaymentService {
     let isSuccess: boolean;
     if (this.inquiryEnabled) {
       // Anti-forgery FIRST — reject a non-verifying callback before asking PAY2M.
-      if (!hashValid) {
+      // In inquiry mode the hash proves AUTHENTICITY only (success is decided by
+      // the capture inquiry), so accept EITHER rail ordering — card/Apple-Pay
+      // (amount+err) AND NAPS/QPay (err+amount). This is REQUIRED: NAPS callbacks
+      // sign err+amount, which resolveSignedErrCode/hashValid (amount+err only)
+      // rejects — without this they'd never reach the inquiry. Accepting the NAPS
+      // ordering here is safe: a verified NAPS "00" is no longer treated as
+      // success (only a captured inquiry confirms), so the #369 false-confirm bug
+      // cannot recur; both orderings are still gated by the secret word.
+      if (!this.verifyCallbackAuthentic(params.basket_id, amount, params.err_code, params.Response_Key)) {
         await this.rejectUnverifiedCallback(payment.id, params, amount, false);
       }
       const verdict = await this.getCaptureVerdict(params.basket_id, amount);
