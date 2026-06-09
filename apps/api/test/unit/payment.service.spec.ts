@@ -118,6 +118,53 @@ describe('PaymentService.verifyCallbackHash', () => {
     expect(ctx.sut.verifyCallbackHash('JDWL-ABC', '1.00', '00', key)).toBe(true);
   });
 
+  // ── NAPS/QPay rail hash-format tolerance (regression, 2026-06-09) ──
+  // Live finding: NAPS payments returned err_code "000" (success) yet the
+  // booking stayed PENDING because PAY2M's Response_Key for the NAPS/QPay rail
+  // is built with a 3-decimal amount and/or the alternate success-code spelling.
+  // verifyCallbackHash now tries those canonical forms.
+  test('NAPS 3-decimal amount: hash built with "1.000" verifies when caller passes "1.00"', async () => {
+    const ctx = await buildSut();
+    const key = buildResponseKey('JDWL-NAPS', '1.000', '00');
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '00', key)).toBe(true);
+  });
+
+  test('success-code spelling: hash built with "00" verifies when callback echoes "000"', async () => {
+    const ctx = await buildSut();
+    const key = buildResponseKey('JDWL-NAPS', '100.00', '00');
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '100.00', '000', key)).toBe(true);
+  });
+
+  test('success-code spelling: hash built with "000" verifies when callback echoes "00"', async () => {
+    const ctx = await buildSut();
+    const key = buildResponseKey('JDWL-NAPS', '100.00', '000');
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '100.00', '00', key)).toBe(true);
+  });
+
+  test('combined NAPS case: 3-decimal amount + alternate success spelling verifies', async () => {
+    const ctx = await buildSut();
+    const key = buildResponseKey('JDWL-NAPS', '1.000', '000');
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '00', key)).toBe(true);
+  });
+
+  // SECURITY: broadening the candidate forms must NOT let a wrong amount or a
+  // non-success code masquerade as a valid success.
+  test('SECURITY: genuinely wrong amount still fails despite extra decimal forms', async () => {
+    const ctx = await buildSut();
+    const key = buildResponseKey('JDWL-NAPS', '100.000', '00'); // signed for 100
+    // We only ever charged 1.00 — no decimal rendering of "1" equals "100".
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '00', key)).toBe(false);
+  });
+
+  test('SECURITY: a failure-code signature cannot be replayed as a success', async () => {
+    const ctx = await buildSut();
+    // PAY2M signed this Response_Key for failure code "42"; a forged callback
+    // claims success "000". The success-spelling set is {"00","000"} — never
+    // "42" — so the hash cannot match.
+    const key = buildResponseKey('JDWL-NAPS', '100.00', '42');
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '100.00', '000', key)).toBe(false);
+  });
+
   // Regression (2026-04-22): defence-in-depth format gate.
   // Prior implementation hit `Buffer.from(responseKey.toLowerCase())` BEFORE
   // any length/shape check, so a 10 MB garbage input paid O(n) string +

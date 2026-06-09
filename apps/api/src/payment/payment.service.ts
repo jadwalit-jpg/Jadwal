@@ -367,20 +367,39 @@ export class PaymentService {
     const amountForms = new Set<string>([String(amount)]);
     if (Number.isFinite(n)) {
       amountForms.add(n.toString());   // "1.00" → "1", "1.50" → "1.5"
+      amountForms.add(n.toFixed(0));   // → "1"
+      amountForms.add(n.toFixed(1));   // → "1.0"
       amountForms.add(n.toFixed(2));   // → "1.00"
+      amountForms.add(n.toFixed(3));   // → "1.000" (QAR/NAPS-QPay 3-decimal hashing)
+    }
+    // err_code normalisation. PAY2M signals success as "00" or "000" depending
+    // on the rail; some rails (observed on NAPS/QPay) sign the Response_Key with
+    // one spelling while echoing the other in the err_code field, so a genuine
+    // success would mismatch if we only hashed the received spelling. Try both
+    // canonical success spellings. This is NOT a security relaxation: the hash
+    // still binds merchant_id + basket_id + <secret word> + amount, so an
+    // attacker without the secret cannot forge a match for ANY spelling, and
+    // `isSuccess` is decided from the *received* err_code (handleCallback) — never
+    // from whichever spelling happened to match the hash here.
+    const errCodeForms = new Set<string>([errCode]);
+    if (errCode === '00' || errCode === '000') {
+      errCodeForms.add('00');
+      errCodeForms.add('000');
     }
     const target = Buffer.from(responseKey.toLowerCase(), 'hex');
     for (const amt of amountForms) {
-      const expected = Buffer.from(
-        crypto
-          .createHash('sha256')
-          .update(`${this.merchantId}${basketId}${this.secretWord}${amt}${errCode}`)
-          .digest('hex'),
-        'hex',
-      );
-      // timingSafeEqual needs equal-length buffers — both are 32 bytes.
-      if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
-        return true;
+      for (const ec of errCodeForms) {
+        const expected = Buffer.from(
+          crypto
+            .createHash('sha256')
+            .update(`${this.merchantId}${basketId}${this.secretWord}${amt}${ec}`)
+            .digest('hex'),
+          'hex',
+        );
+        // timingSafeEqual needs equal-length buffers — both are 32 bytes.
+        if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
+          return true;
+        }
       }
     }
     return false;
@@ -643,7 +662,19 @@ export class PaymentService {
     // mismatch means a corrupted or malformed callback. (It cannot, on its
     // own, distinguish a forgery — see the launch-blocker note above.)
     if (!hashValid) {
-      this.logger.warn({ event: 'PAY2M_HASH_MISMATCH', paymentId: payment.id, errCode: params.err_code });
+      // Diagnostic fields are SAFE to log: responseKey is PAY2M's SHA256 output
+      // (already transmitted in the redirect URL — not the secret word, which is
+      // never logged), and basket/amount/err_code are transaction metadata, not
+      // PII. They let us reverse-engineer PAY2M's exact hash recipe per rail
+      // (e.g. NAPS/QPay) from the next mismatch without a code change.
+      this.logger.warn({
+        event: 'PAY2M_HASH_MISMATCH',
+        paymentId: payment.id,
+        errCode: params.err_code,
+        basketId: params.basket_id,
+        amountUsed: amount,
+        responseKey: params.Response_Key,
+      });
       await this.auditLogger.log({
         actorType: 'SYSTEM',
         actorId: 'pay2m-callback',
