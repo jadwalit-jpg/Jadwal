@@ -662,18 +662,22 @@ export class PaymentService {
     // mismatch means a corrupted or malformed callback. (It cannot, on its
     // own, distinguish a forgery — see the launch-blocker note above.)
     if (!hashValid) {
-      // Diagnostic fields are SAFE to log: responseKey is PAY2M's SHA256 output
-      // (already transmitted in the redirect URL — not the secret word, which is
-      // never logged), and basket/amount/err_code are transaction metadata, not
-      // PII. They let us reverse-engineer PAY2M's exact hash recipe per rail
-      // (e.g. NAPS/QPay) from the next mismatch without a code change.
+      // Only NON-sensitive transaction metadata is logged: basket_id (also in
+      // the audit row below), the amount we used, and err_code. None are PII,
+      // card data, tokens, or secrets.
+      //
+      // We deliberately DO NOT log PAY2M's Response_Key. It is a SHA256 of
+      // merchant_id + basket_id + <secret word> + amount + err_code; every field
+      // except the secret word is otherwise known, so logging the hash beside
+      // them would form an offline oracle to brute-force the secret word if it
+      // were ever weak. These fields still flag "our format set is incomplete
+      // for this rail" without that risk.
       this.logger.warn({
         event: 'PAY2M_HASH_MISMATCH',
         paymentId: payment.id,
         errCode: params.err_code,
         basketId: params.basket_id,
         amountUsed: amount,
-        responseKey: params.Response_Key,
       });
       await this.auditLogger.log({
         actorType: 'SYSTEM',
