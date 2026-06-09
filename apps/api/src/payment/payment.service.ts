@@ -23,6 +23,49 @@ interface Pay2mTokenResponse {
   GENERATED_DATE_TIME: string;
 }
 
+// PAY2M REST "token" response (Twyla doc §2.1/§3.1) — used by the status-inquiry
+// client (distinct from the hosted-checkout GetAccessToken above).
+interface Pay2mRestTokenResponse {
+  token?: string;
+}
+
+// PAY2M "Get Transaction Info by Basket Id" response (Twyla doc §3.5).
+// data.status_code: "S" = captured successfully, "A" = authorized (needs capture).
+interface Pay2mTxnInfoResponse {
+  code?: string;
+  message?: string;
+  data?: {
+    transaction_id?: string;
+    basket_id?: string;
+    transaction_amount?: number | string;
+    status_code?: string; // "S" | "A"
+    status?: string; // "success" | ...
+    response_code?: string; // "00" | "001" | "3000" | ...
+  };
+}
+
+// PAY2M Capture (§1.13) response.
+interface Pay2mCaptureResponse {
+  code?: string;
+  message?: string;
+}
+
+/**
+ * Authoritative verdict from the server-to-server Status Inquiry. The browser
+ * callback's err_code is unreliable for NAPS/QPay (001 = Pending, 00 can be
+ * pre-capture), so a booking is confirmed ONLY when `captured` is true.
+ * Exactly one of captured/failed is the terminal signal; everything else
+ * (incl. inquiry unavailable) is transient → leave the booking PENDING.
+ */
+interface InquiryVerdict {
+  captured: boolean; // status_code "S" / status "success" (or a successful capture of an "A")
+  authorizedNotCaptured: boolean; // status_code "A" and capture did not (yet) succeed
+  failed: boolean; // definitive decline (status "failed" / response_code "3000")
+  transactionId?: string;
+  responseCode?: string;
+  statusCode?: string;
+}
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
@@ -64,6 +107,19 @@ export class PaymentService {
   //     PAY2M when it's recovering.
   private readonly breaker: CircuitBreaker;
 
+  // ─── Server-to-server Status-Inquiry (capture gate) ──────────────────────
+  // The browser-redirect callback's err_code is unreliable for NAPS/QPay
+  // (001 = Pending; 00 can arrive pre-capture). When enabled, handleCallback
+  // confirms a booking ONLY after this server-to-server inquiry reports the
+  // payment actually CAPTURED (Twyla doc §3.5). Ships dark (default off) so the
+  // PR is a no-op until the prod REST base URL + auth are confirmed with PAY2M.
+  private readonly inquiryEnabled: boolean;
+  private readonly inquiryBaseUrl: string; // REST base, e.g. https://payments.pay2m.com/api/ (≠ hosted-checkout PAY2M_API_URL)
+  private readonly inquiryTimeoutMs: number;
+  // Separate breaker so an inquiry-API outage trips independently of the
+  // hosted-checkout token breaker above.
+  private readonly inquiryBreaker: CircuitBreaker;
+
   constructor(
     private config: ConfigService,
     private prisma: PrismaService,
@@ -103,6 +159,26 @@ export class PaymentService {
       name: 'pay2m-token',
       failureThreshold: parsePositiveInt(this.config.get('PAY2M_BREAKER_FAILURE_THRESHOLD'), 10),
       openTimeoutMs: parsePositiveInt(this.config.get('PAY2M_BREAKER_OPEN_MS'), 30000),
+      disabled: this.config.get('EXTERNAL_BREAKER_DISABLED', 'false') === 'true',
+      onStateChange: (e) =>
+        this.logger.warn({
+          event: 'CIRCUIT_BREAKER_STATE_CHANGE',
+          breaker: e.name,
+          from: e.from,
+          to: e.to,
+          consecutiveFailures: e.consecutiveFailures,
+        }),
+    });
+
+    // Status-Inquiry capture gate (ships dark). When OFF, handleCallback keeps
+    // the legacy signed-err_code behaviour byte-for-byte.
+    this.inquiryEnabled = this.config.get('PAY2M_INQUIRY_ENABLED', 'false') === 'true';
+    this.inquiryBaseUrl = (this.config.get<string>('PAY2M_INQUIRY_BASE_URL', '') ?? '').replace(/\/+$/, '');
+    this.inquiryTimeoutMs = parsePositiveInt(this.config.get('PAY2M_INQUIRY_TIMEOUT_MS'), 8000);
+    this.inquiryBreaker = new CircuitBreaker({
+      name: 'pay2m-inquiry',
+      failureThreshold: parsePositiveInt(this.config.get('PAY2M_INQUIRY_BREAKER_FAILURE_THRESHOLD'), 10),
+      openTimeoutMs: parsePositiveInt(this.config.get('PAY2M_INQUIRY_BREAKER_OPEN_MS'), 30000),
       disabled: this.config.get('EXTERNAL_BREAKER_DISABLED', 'false') === 'true',
       onStateChange: (e) =>
         this.logger.warn({
@@ -264,7 +340,7 @@ export class PaymentService {
     const chunks: Uint8Array[] = [];
     let totalBytes = 0;
     try {
-      // eslint-disable-next-line no-constant-condition
+       
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -297,6 +373,171 @@ export class PaymentService {
     }
 
     return data.ACCESS_TOKEN;
+  }
+
+  // ─── Status-Inquiry capture gate (server-to-server) ──────────────────────
+
+  // Resilient JSON fetch for the inquiry REST API (retry + breaker + per-attempt
+  // timeout + 16 KiB cap + JSON parse). Unlike getAccessToken (which throws on
+  // the initiate path), this NEVER throws — it returns null on any failure so
+  // the caller degrades to a TRANSIENT verdict (leave the booking PENDING; never
+  // confirm without a capture signal).
+  private async inquiryFetchJson<T>(label: string, url: string, init: RequestInit): Promise<T | null> {
+    const MAX_ATTEMPTS = 3;
+    let response: globalThis.Response | undefined;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        response = await this.inquiryBreaker.run(async () => {
+          const res = await withTimeout((signal) => fetch(url, { ...init, signal }), this.inquiryTimeoutMs);
+          if (res.status >= 500 || res.status === 429) {
+            const e = new Error(`PAY2M_INQUIRY_UPSTREAM_${res.status}`);
+            e.name = 'Pay2mUpstreamError';
+            throw e;
+          }
+          return res;
+        });
+        break;
+      } catch (err: unknown) {
+        if (err instanceof CircuitBreakerOpenError) {
+          this.logger.warn({ event: 'PAY2M_INQUIRY_UNAVAILABLE', label, reason: 'breaker_open' });
+          return null;
+        }
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, 300 * 2 ** (attempt - 1) + Math.random() * 100));
+          continue;
+        }
+        this.logger.warn({ event: 'PAY2M_INQUIRY_UNAVAILABLE', label, reason: 'exhausted' });
+        return null;
+      }
+    }
+    if (!response || !response.ok) {
+      this.logger.warn({ event: 'PAY2M_INQUIRY_UNAVAILABLE', label, status: response?.status });
+      return null;
+    }
+    const contentLength = Number(response.headers.get('content-length') ?? '0');
+    if (contentLength > PaymentService.PAY2M_MAX_RESPONSE_BYTES) {
+      this.logger.warn({ event: 'PAY2M_INQUIRY_UNAVAILABLE', label, reason: 'too_large' });
+      return null;
+    }
+    const reader = response.body?.getReader();
+    if (!reader) return null;
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+       
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > PaymentService.PAY2M_MAX_RESPONSE_BYTES) {
+          await reader.cancel();
+          this.logger.warn({ event: 'PAY2M_INQUIRY_UNAVAILABLE', label, reason: 'too_large_stream' });
+          return null;
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    try {
+      return JSON.parse(Buffer.concat(chunks).toString('utf-8')) as T;
+    } catch {
+      this.logger.warn({ event: 'PAY2M_INQUIRY_UNAVAILABLE', label, reason: 'not_json' });
+      return null;
+    }
+  }
+
+  // REST access token (Twyla §2.1/§3.1). Returns null on failure. The Bearer
+  // token is NEVER logged. NOTE: exact grant_type/field contract is a PAY2M
+  // prerequisite (see plan) — confined to this one method.
+  private async getInquiryToken(): Promise<string | null> {
+    const body = new URLSearchParams({
+      merchant_id: this.merchantId,
+      secured_key: this.securedKey,
+      grant_type: 'client_credentials',
+    });
+    const data = await this.inquiryFetchJson<Pay2mRestTokenResponse>('token', `${this.inquiryBaseUrl}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Jadwal-API/1.0' },
+      body: body.toString(),
+    });
+    return data?.token ?? null;
+  }
+
+  // Get Transaction Info by Basket Id (Twyla §3.5). At most once per callback.
+  private async inquireCaptureStatus(
+    basketId: string,
+    token: string,
+  ): Promise<NonNullable<Pay2mTxnInfoResponse['data']> | null> {
+    const url = `${this.inquiryBaseUrl}/api/transaction/view/basket/id?basket_id=${encodeURIComponent(basketId)}`;
+    const data = await this.inquiryFetchJson<Pay2mTxnInfoResponse>('inquiry', url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'Jadwal-API/1.0' },
+    });
+    return data?.data ?? null;
+  }
+
+  // Capture an authorized ("A") transaction (Twyla §1.13). True iff captured.
+  private async captureTransaction(transactionId: string, token: string): Promise<boolean> {
+    const data = await this.inquiryFetchJson<Pay2mCaptureResponse>(
+      'capture',
+      `${this.inquiryBaseUrl}/transaction/capture/${encodeURIComponent(transactionId)}`,
+      { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'Jadwal-API/1.0' } },
+    );
+    const code = (data?.code ?? '').trim();
+    return code === '00' || code === '000' || code === '0';
+  }
+
+  /**
+   * Authoritative capture verdict for a basket: token → inquiry → (capture if
+   * authorized). NEVER throws — any error/outage yields a TRANSIENT verdict so
+   * handleCallback leaves the booking PENDING rather than confirming an unpaid
+   * one or deleting a still-processing one. Logs only structural fields — never
+   * the token, Response_Key, secret, or PAN.
+   */
+  private async getCaptureVerdict(basketId: string, amount: string): Promise<InquiryVerdict> {
+    const transient: InquiryVerdict = { captured: false, authorizedNotCaptured: false, failed: false };
+    if (!this.inquiryBaseUrl) {
+      this.logger.warn({ event: 'PAY2M_INQUIRY_UNAVAILABLE', basketId, reason: 'no_base_url' });
+      return transient;
+    }
+    this.logger.log({ event: 'PAY2M_INQUIRY_START', basketId });
+    const token = await this.getInquiryToken();
+    if (!token) return transient;
+    const info = await this.inquireCaptureStatus(basketId, token);
+    if (!info) return transient;
+
+    const statusCode = (info.status_code ?? '').trim().toUpperCase();
+    const status = (info.status ?? '').trim().toLowerCase();
+    const responseCode = (info.response_code ?? '').trim();
+    const transactionId = info.transaction_id;
+    this.logger.log({ event: 'PAY2M_INQUIRY_RESULT', basketId, statusCode, status, responseCode, transactionId });
+
+    // Amount integrity — the inquiry's amount must match what we expect.
+    if (info.transaction_amount != null) {
+      const got = Number(info.transaction_amount);
+      if (Number.isFinite(got) && Math.abs(got - Number(amount)) > 0.005) {
+        this.logger.warn({ event: 'PAY2M_INQUIRY_AMOUNT_MISMATCH', basketId, statusCode });
+        return { ...transient, statusCode, responseCode, transactionId };
+      }
+    }
+
+    if (statusCode === 'S' || status === 'success') {
+      return { captured: true, authorizedNotCaptured: false, failed: false, transactionId, responseCode, statusCode };
+    }
+    if (statusCode === 'A') {
+      this.logger.log({ event: 'PAY2M_CAPTURE_ATTEMPT', basketId, transactionId });
+      const captured = transactionId ? await this.captureTransaction(transactionId, token) : false;
+      this.logger.log({ event: 'PAY2M_CAPTURE_RESULT', basketId, transactionId, captured });
+      return { captured, authorizedNotCaptured: !captured, failed: false, transactionId, responseCode, statusCode };
+    }
+    // Only an explicit failed/3000 deletes the booking; pending/timeout/unknown
+    // stay PENDING (transient) for the cleanup cron / a later IPN.
+    if (status === 'failed' || responseCode === '3000') {
+      return { captured: false, authorizedNotCaptured: false, failed: true, transactionId, responseCode, statusCode };
+    }
+    this.logger.log({ event: 'PAY2M_INQUIRY_PENDING', basketId, statusCode, responseCode });
+    return { ...transient, statusCode, responseCode, transactionId };
   }
 
   // ─── Build Form Payload ─────────────────────────────────────────────────
@@ -585,6 +826,37 @@ export class PaymentService {
     }
   }
 
+  // Reject a callback whose Response_Key does not verify (corrupt, malformed,
+  // foreign-rail, or forged). Logs only NON-sensitive transaction metadata —
+  // never the Response_Key or secret word, which together with the otherwise
+  // known inputs would form an offline brute-force oracle for the secret.
+  // Always throws (Promise<never>).
+  private async rejectUnverifiedCallback(
+    paymentId: string,
+    params: { err_code: string; basket_id: string },
+    amount: string,
+    isSuccess: boolean,
+  ): Promise<never> {
+    this.logger.warn({
+      event: 'PAY2M_HASH_MISMATCH',
+      paymentId,
+      errCode: params.err_code,
+      basketId: params.basket_id,
+      amountUsed: amount,
+    });
+    await this.auditLogger.log({
+      actorType: 'SYSTEM',
+      actorId: 'pay2m-callback',
+      actorName: 'PAY2M Gateway',
+      action: 'PAYMENT_HASH_MISMATCH',
+      entity: 'Payment',
+      entityId: paymentId,
+      details: `err_code: ${params.err_code}, basket: ${params.basket_id}, isSuccess: ${isSuccess}`,
+      actionCategory: 'FINANCIAL',
+    });
+    throw new BadRequestException('Payment verification failed');
+  }
+
   // ─── Handle Callback from PAY2M ────────────────────────────────────────
 
   async handleCallback(params: {
@@ -656,41 +928,61 @@ export class PaymentService {
       params.Response_Key,
     );
     const hashValid = signedErrCode !== null;
-    const isSuccess = signedErrCode === '00' || signedErrCode === '000';
 
-    // 2b. CRITICAL: If payment was marked FAILED by the cleanup cron but PAY2M
-    // now sends a VERIFIED success, the customer WAS charged — recover the
-    // booking (the reservation timer expired while they were on the PAY2M page).
-    // If it's FAILED and this callback is not a verified success, stay failed.
-    if (payment.status === 'FAILED' && !isSuccess) {
-      return { bookingId: payment.bookingId!, status: 'failed', error: 'Payment was previously declined' };
-    }
-    // FAILED && isSuccess → fall through to recover (optimistic lock below).
+    // Outcome decision (two modes):
+    //  • inquiry gate ON  — the Response_Key is verified for AUTHENTICITY only;
+    //    the booking is confirmed strictly on the server-to-server capture
+    //    verdict (getCaptureVerdict). The callback err_code is NOT trusted for
+    //    success (NAPS 001 = Pending; 00 can be pre-capture). A transient /
+    //    pending verdict makes NO destructive write — the booking is left
+    //    PENDING for the IPN retry / cleanup cron.
+    //  • inquiry gate OFF — legacy behaviour preserved byte-for-byte: success is
+    //    the signed err_code; FAILED-recovery, then hash-mismatch rejection.
+    let isSuccess: boolean;
+    if (this.inquiryEnabled) {
+      // Anti-forgery FIRST — reject a non-verifying callback before asking PAY2M.
+      if (!hashValid) {
+        await this.rejectUnverifiedCallback(payment.id, params, amount, false);
+      }
+      const verdict = await this.getCaptureVerdict(params.basket_id, amount);
+      isSuccess = verdict.captured;
+      // FAILED→SUCCESS recovery: a cron-FAILED payment that PAY2M now confirms
+      // captured is recovered below; otherwise it stays failed.
+      if (payment.status === 'FAILED' && !isSuccess) {
+        return { bookingId: payment.bookingId!, status: 'failed', error: 'Payment was previously declined' };
+      }
+      // Transient (pending / authorized-not-captured / inquiry unavailable): do
+      // NOT confirm and do NOT delete the booking — only an explicit capture
+      // confirms; only an explicit failure deletes. Leave it PENDING.
+      if (!verdict.captured && !verdict.failed) {
+        await this.auditLogger.log({
+          actorType: 'SYSTEM',
+          actorId: 'pay2m-callback',
+          actorName: 'PAY2M Gateway',
+          action: 'PAYMENT_INQUIRY_PENDING',
+          entity: 'Payment',
+          entityId: payment.id,
+          details: `basket: ${params.basket_id}, statusCode: ${verdict.statusCode ?? ''}, responseCode: ${verdict.responseCode ?? ''}`,
+          actionCategory: 'FINANCIAL',
+        });
+        return { bookingId: payment.bookingId ?? '', status: 'failed', error: 'Payment is still being processed' };
+      }
+    } else {
+      isSuccess = signedErrCode === '00' || signedErrCode === '000';
+      // 2b. CRITICAL: If payment was marked FAILED by the cleanup cron but PAY2M
+      // now sends a VERIFIED success, the customer WAS charged — recover the
+      // booking (the reservation timer expired while they were on the PAY2M page).
+      // If it's FAILED and this callback is not a verified success, stay failed.
+      if (payment.status === 'FAILED' && !isSuccess) {
+        return { bookingId: payment.bookingId!, status: 'failed', error: 'Payment was previously declined' };
+      }
+      // FAILED && isSuccess → fall through to recover (optimistic lock below).
 
-    // 4. Reject any callback whose Response_Key does not verify (corrupt,
-    // malformed, foreign-rail, or forged).
-    if (!hashValid) {
-      // Logs only NON-sensitive transaction metadata (basket/amount/err_code) —
-      // never the Response_Key or secret word, which together with the otherwise
-      // known inputs would form an offline brute-force oracle for the secret.
-      this.logger.warn({
-        event: 'PAY2M_HASH_MISMATCH',
-        paymentId: payment.id,
-        errCode: params.err_code,
-        basketId: params.basket_id,
-        amountUsed: amount,
-      });
-      await this.auditLogger.log({
-        actorType: 'SYSTEM',
-        actorId: 'pay2m-callback',
-        actorName: 'PAY2M Gateway',
-        action: 'PAYMENT_HASH_MISMATCH',
-        entity: 'Payment',
-        entityId: payment.id,
-        details: `err_code: ${params.err_code}, basket: ${params.basket_id}, isSuccess: ${isSuccess}`,
-        actionCategory: 'FINANCIAL',
-      });
-      throw new BadRequestException('Payment verification failed');
+      // 4. Reject any callback whose Response_Key does not verify (corrupt,
+      // malformed, foreign-rail, or forged).
+      if (!hashValid) {
+        await this.rejectUnverifiedCallback(payment.id, params, amount, isSuccess);
+      }
     }
 
     // 4b. Coupon expiry-race detection. The customer may have created the

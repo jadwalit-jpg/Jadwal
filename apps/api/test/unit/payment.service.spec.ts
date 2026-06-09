@@ -7,7 +7,7 @@
  * Full fetch → PAY2M network path is exercised at the integration tier.
  */
 
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as crypto from 'crypto';
 import { PaymentService } from '../../src/payment/payment.service';
@@ -34,9 +34,9 @@ const PAY2M_CFG = {
   PAY2M_RETURN_URL:     'https://jadwal.example/payment/callback',
 };
 
-async function buildSut(enabled = true) {
+async function buildSut(enabled = true, extraConfig: Record<string, string> = {}) {
   const prisma  = makePrismaMock();
-  const config  = makeConfigMock({ ...PAY2M_CFG, PAYMENT_ENABLED: enabled ? 'true' : 'false' });
+  const config  = makeConfigMock({ ...PAY2M_CFG, PAYMENT_ENABLED: enabled ? 'true' : 'false', ...extraConfig });
   const lock    = makeRedisLockMock();
   const cache   = makeAvailabilityCacheMock();
   const audit   = makeAuditLoggerMock();
@@ -528,5 +528,228 @@ describe('PaymentService.getPaymentStatus', () => {
     });
     const r = await ctx.sut.getPaymentStatus('b1', 'u1');
     expect(r.errorMessage).toBeUndefined();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Status-Inquiry capture gate — server-to-server verdict (getCaptureVerdict)
+//
+// The browser callback's err_code is unreliable for NAPS/QPay (001 = Pending,
+// 00 can be pre-capture). getCaptureVerdict asks PAY2M for the REAL status and
+// confirms only on a capture. It must NEVER throw (any outage → transient
+// verdict → leave the booking PENDING) and must NEVER log the token/secret.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const INQUIRY_CFG = {
+  PAY2M_INQUIRY_ENABLED:  'true',
+  PAY2M_INQUIRY_BASE_URL: 'https://inq.example',
+};
+const BEARER_CANARY = 'BEARER_LEAK_CANARY_TOKEN';
+
+/** A minimal `fetch` Response that drives the inquiryFetchJson stream-read path. */
+function fakeFetchResponse(body: unknown, status = 200): any {
+  const bytes = Buffer.from(JSON.stringify(body), 'utf-8');
+  let sent = false;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (h: string) => (h.toLowerCase() === 'content-length' ? String(bytes.byteLength) : null) },
+    body: {
+      getReader: () => ({
+        read: async () => (sent ? { done: true, value: undefined } : ((sent = true), { done: false, value: new Uint8Array(bytes) })),
+        cancel: async () => undefined,
+        releaseLock: () => undefined,
+      }),
+    },
+  };
+}
+
+/** Route a mocked fetch by URL → token / inquiry / capture response. */
+function makeFetchMock(opts: { token?: any; tokenStatus?: number; inquiry?: any; capture?: any }) {
+  return jest.fn(async (url: string) => {
+    if (url.includes('/transaction/capture/')) return fakeFetchResponse(opts.capture ?? { code: '00' });
+    if (url.includes('/transaction/view/basket/id')) return fakeFetchResponse(opts.inquiry ?? {});
+    if (url.endsWith('/token')) return fakeFetchResponse(opts.token ?? { token: BEARER_CANARY }, opts.tokenStatus ?? 200);
+    throw new Error('unexpected fetch url: ' + url);
+  });
+}
+
+describe('PaymentService.getCaptureVerdict (Status-Inquiry capture gate)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  test('status_code "S" → captured; capture NOT called; inquiry called exactly once', async () => {
+    const { sut } = await buildSut(true, INQUIRY_CFG);
+    const fetchMock = makeFetchMock({
+      inquiry: { data: { status_code: 'S', status: 'success', response_code: '00', transaction_id: 'TXN1', transaction_amount: 100 } },
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as any);
+
+    const v = await (sut as any).getCaptureVerdict('JDWL-aaaaaaaaaaaa', '100.00');
+
+    expect(v.captured).toBe(true);
+    expect(v.failed).toBe(false);
+    expect(v.transactionId).toBe('TXN1');
+    const viewCalls = fetchMock.mock.calls.filter((c: any[]) => String(c[0]).includes('/transaction/view/basket/id'));
+    const captureCalls = fetchMock.mock.calls.filter((c: any[]) => String(c[0]).includes('/transaction/capture/'));
+    expect(viewCalls).toHaveLength(1);
+    expect(captureCalls).toHaveLength(0);
+  });
+
+  test('status_code "A" + capture success → captured (capture POST issued)', async () => {
+    const { sut } = await buildSut(true, INQUIRY_CFG);
+    const fetchMock = makeFetchMock({
+      inquiry: { data: { status_code: 'A', response_code: '00', transaction_id: 'TXN2', transaction_amount: 100 } },
+      capture: { code: '00', message: 'Captured' },
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as any);
+
+    const v = await (sut as any).getCaptureVerdict('JDWL-bbbbbbbbbbbb', '100.00');
+
+    expect(v.captured).toBe(true);
+    expect(fetchMock.mock.calls.filter((c: any[]) => String(c[0]).includes('/transaction/capture/'))).toHaveLength(1);
+  });
+
+  test('status_code "A" + capture fails → NOT captured (transient, authorizedNotCaptured)', async () => {
+    const { sut } = await buildSut(true, INQUIRY_CFG);
+    jest.spyOn(globalThis, 'fetch').mockImplementation(makeFetchMock({
+      inquiry: { data: { status_code: 'A', response_code: '00', transaction_id: 'TXN3', transaction_amount: 100 } },
+      capture: { code: '3000', message: 'Declined' },
+    }) as any);
+
+    const v = await (sut as any).getCaptureVerdict('JDWL-cccccccccccc', '100.00');
+    expect(v.captured).toBe(false);
+    expect(v.failed).toBe(false);
+    expect(v.authorizedNotCaptured).toBe(true);
+  });
+
+  test('pending (response_code 001) → transient (no terminal flag set)', async () => {
+    const { sut } = await buildSut(true, INQUIRY_CFG);
+    jest.spyOn(globalThis, 'fetch').mockImplementation(makeFetchMock({
+      inquiry: { data: { status_code: '', status: 'pending', response_code: '001', transaction_id: 'TXN4', transaction_amount: 100 } },
+    }) as any);
+
+    const v = await (sut as any).getCaptureVerdict('JDWL-dddddddddddd', '100.00');
+    expect(v.captured).toBe(false);
+    expect(v.failed).toBe(false);
+    expect(v.authorizedNotCaptured).toBe(false);
+  });
+
+  test('failed (response_code 3000) → definitive failure', async () => {
+    const { sut } = await buildSut(true, INQUIRY_CFG);
+    jest.spyOn(globalThis, 'fetch').mockImplementation(makeFetchMock({
+      inquiry: { data: { status_code: '', status: 'failed', response_code: '3000', transaction_id: 'TXN5', transaction_amount: 100 } },
+    }) as any);
+
+    const v = await (sut as any).getCaptureVerdict('JDWL-eeeeeeeeeeee', '100.00');
+    expect(v.failed).toBe(true);
+    expect(v.captured).toBe(false);
+  });
+
+  test('token endpoint 5xx → transient, never throws', async () => {
+    const { sut } = await buildSut(true, INQUIRY_CFG);
+    jest.spyOn(globalThis, 'fetch').mockImplementation(makeFetchMock({ tokenStatus: 503 }) as any);
+
+    const v = await (sut as any).getCaptureVerdict('JDWL-ffffffffffff', '100.00');
+    expect(v).toEqual({ captured: false, authorizedNotCaptured: false, failed: false });
+  });
+
+  test('empty base URL → transient, fetch never called', async () => {
+    const { sut } = await buildSut(true, { PAY2M_INQUIRY_ENABLED: 'true' }); // no base URL
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+
+    const v = await (sut as any).getCaptureVerdict('JDWL-000000000000', '100.00');
+    expect(v.captured).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test('transaction_amount mismatch → NOT captured even when status_code "S"', async () => {
+    const { sut } = await buildSut(true, INQUIRY_CFG);
+    jest.spyOn(globalThis, 'fetch').mockImplementation(makeFetchMock({
+      inquiry: { data: { status_code: 'S', status: 'success', response_code: '00', transaction_id: 'TXN6', transaction_amount: 999 } },
+    }) as any);
+
+    const v = await (sut as any).getCaptureVerdict('JDWL-111111111111', '100.00');
+    expect(v.captured).toBe(false);
+  });
+
+  test('SECURITY: bearer token + secured_key never appear in any log line', async () => {
+    const logged: string[] = [];
+    jest.spyOn(Logger.prototype, 'log').mockImplementation((m: any) => { logged.push(JSON.stringify(m)); });
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation((m: any) => { logged.push(JSON.stringify(m)); });
+    jest.spyOn(Logger.prototype, 'error').mockImplementation((m: any) => { logged.push(JSON.stringify(m)); });
+    const { sut } = await buildSut(true, INQUIRY_CFG);
+    jest.spyOn(globalThis, 'fetch').mockImplementation(makeFetchMock({
+      token: { token: BEARER_CANARY },
+      inquiry: { data: { status_code: 'S', status: 'success', response_code: '00', transaction_id: 'TXN7', transaction_amount: 100 } },
+    }) as any);
+
+    await (sut as any).getCaptureVerdict('JDWL-222222222222', '100.00');
+
+    const all = logged.join('\n');
+    expect(all).not.toContain(BEARER_CANARY);
+    expect(all).not.toContain('test-secured-key'); // PAY2M_CFG.PAY2M_SECURED_KEY
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// handleCallback — inquiry gate ON (decision wiring; full tx covered in integration)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('PaymentService.handleCallback — inquiry gate ON', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  test('valid hash + transient verdict → no $transaction, PAYMENT_INQUIRY_PENDING audit, "still processing"', async () => {
+    const ctx = await buildSut(true, INQUIRY_CFG);
+    ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({ id: 'p1', bookingId: 'b1', amount: 100, status: 'PENDING' });
+    const verdictSpy = jest.spyOn(ctx.sut as any, 'getCaptureVerdict')
+      .mockResolvedValue({ captured: false, authorizedNotCaptured: false, failed: false, statusCode: '', responseCode: '001' });
+
+    const r = await ctx.sut.handleCallback({
+      err_code: '00', basket_id: 'JDWL-aaaaaaaaaaaa', Response_Key: buildResponseKey('JDWL-aaaaaaaaaaaa', '100.00', '00'),
+    });
+
+    expect(verdictSpy).toHaveBeenCalledWith('JDWL-aaaaaaaaaaaa', '100.00');
+    expect(ctx.prisma.$transaction).not.toHaveBeenCalled();
+    expect(ctx.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'PAYMENT_INQUIRY_PENDING' }));
+    expect(r).toMatchObject({ status: 'failed' });
+    expect(r.error).toMatch(/still being processed/i);
+  });
+
+  test('forged hash → rejected BEFORE inquiry (getCaptureVerdict never called)', async () => {
+    const ctx = await buildSut(true, INQUIRY_CFG);
+    ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({ id: 'p1', bookingId: 'b1', amount: 100, status: 'PENDING' });
+    const verdictSpy = jest.spyOn(ctx.sut as any, 'getCaptureVerdict');
+
+    await expect(ctx.sut.handleCallback({
+      err_code: '00', basket_id: 'JDWL-bbbbbbbbbbbb', Response_Key: 'a'.repeat(64),
+    })).rejects.toThrow(/verification failed/i);
+
+    expect(verdictSpy).not.toHaveBeenCalled();
+    expect(ctx.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'PAYMENT_HASH_MISMATCH' }));
+  });
+
+  test('already-SUCCESS → idempotent early return, inquiry never called', async () => {
+    const ctx = await buildSut(true, INQUIRY_CFG);
+    ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({ id: 'p1', bookingId: 'b1', amount: 100, status: 'SUCCESS' });
+    const verdictSpy = jest.spyOn(ctx.sut as any, 'getCaptureVerdict');
+
+    const r = await ctx.sut.handleCallback({ err_code: '00', basket_id: 'JDWL-cccccccccccc', Response_Key: 'x' });
+
+    expect(r).toEqual({ bookingId: 'b1', status: 'success' });
+    expect(verdictSpy).not.toHaveBeenCalled();
+  });
+
+  test('FAILED payment + transient verdict → stays failed, no $transaction', async () => {
+    const ctx = await buildSut(true, INQUIRY_CFG);
+    ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({ id: 'p1', bookingId: 'b1', amount: 100, status: 'FAILED' });
+    jest.spyOn(ctx.sut as any, 'getCaptureVerdict')
+      .mockResolvedValue({ captured: false, authorizedNotCaptured: false, failed: false });
+
+    const r = await ctx.sut.handleCallback({
+      err_code: '00', basket_id: 'JDWL-dddddddddddd', Response_Key: buildResponseKey('JDWL-dddddddddddd', '100.00', '00'),
+    });
+
+    expect(r).toMatchObject({ status: 'failed' });
+    expect(ctx.prisma.$transaction).not.toHaveBeenCalled();
   });
 });

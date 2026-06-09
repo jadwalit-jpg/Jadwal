@@ -569,3 +569,138 @@ describe('PaymentService.handleCallback — cron-race recovery', () => {
     expect(p.refundAmount?.toString()).toBe('200');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Status-Inquiry capture gate ON — booking confirmed ONLY on a verified capture
+//
+// With PAY2M_INQUIRY_ENABLED=true the success decision comes from the
+// server-to-server capture verdict (getCaptureVerdict), NOT the callback
+// err_code. getCaptureVerdict is spied here so PAY2M HTTP stays mocked; the
+// unit suite covers the token→inquiry→capture wiring itself. These prove the
+// 4 production incident cases are resolved consistently.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const INQUIRY_ON = { PAY2M_INQUIRY_ENABLED: 'true', PAY2M_INQUIRY_BASE_URL: 'https://inq.example' };
+
+describe('PaymentService.handleCallback — inquiry gate ON', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  test('captured verdict → SUCCESS + CONFIRMED + paidAt + gatewayTxnId + 2 outbox (Case 1/4 fixed)', async () => {
+    const { svc } = makePaymentService(INQUIRY_ON);
+    const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(200);
+    jest.spyOn(svc as any, 'getCaptureVerdict').mockResolvedValue({
+      captured: true, authorizedNotCaptured: false, failed: false, transactionId: 'TXN-INQ', responseCode: '00', statusCode: 'S',
+    });
+
+    const res = await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'TXN-INQ',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    expect(res.status).toBe('success');
+    const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(p.status).toBe('SUCCESS');
+    expect(p.paidAt).toBeInstanceOf(Date);
+    expect(p.gatewayTxnId).toBe('TXN-INQ');
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
+    expect(b.status).toBe('CONFIRMED');
+    expect(await ctx.prisma.emailOutbox.findMany({ where: { bookingId } })).toHaveLength(2);
+  });
+
+  test('transient (pending) verdict → payment+booking STAY PENDING, 0 outbox, nothing deleted (the NAPS incident — Case 2 fixed)', async () => {
+    const { svc, availabilityCache } = makePaymentService(INQUIRY_ON);
+    const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(200);
+    jest.spyOn(svc as any, 'getCaptureVerdict').mockResolvedValue({
+      captured: false, authorizedNotCaptured: false, failed: false, statusCode: '', responseCode: '001',
+    });
+
+    const res = await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'TXN-PEND',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    expect(res.status).toBe('failed'); // controller maps to a non-success redirect
+    // The crux: nothing destructive — the booking is neither confirmed (no money)
+    // nor deleted (PAY2M may still capture); it is left PENDING for IPN/cron.
+    const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(p.status).toBe('PENDING');
+    expect(p.paidAt).toBeNull();
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
+    expect(b.status).toBe('PENDING');
+    expect(await ctx.prisma.emailOutbox.findMany({ where: { bookingId } })).toHaveLength(0);
+    expect(availabilityCache.invalidate).not.toHaveBeenCalled();
+  });
+
+  test('definitive failure verdict → booking + payment deleted, slot freed', async () => {
+    const { svc, availabilityCache } = makePaymentService(INQUIRY_ON);
+    const { basketId, paymentId, bookingId, seed, amountStr } = await seedPendingPayment(200);
+    jest.spyOn(svc as any, 'getCaptureVerdict').mockResolvedValue({
+      captured: false, authorizedNotCaptured: false, failed: true, statusCode: '', responseCode: '3000',
+    });
+
+    const res = await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    expect(res.status).toBe('failed');
+    expect(await ctx.prisma.payment.findUnique({ where: { id: paymentId } })).toBeNull();
+    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+    expect(availabilityCache.invalidate).toHaveBeenCalledWith(seed.activity.id);
+  });
+
+  test('forged hash → rejected before inquiry; payment stays PENDING; getCaptureVerdict NOT called', async () => {
+    const { svc, auditLogger } = makePaymentService(INQUIRY_ON);
+    const { basketId, paymentId } = await seedPendingPayment(200);
+    const verdictSpy = jest.spyOn(svc as any, 'getCaptureVerdict');
+
+    await expect(svc.handleCallback({
+      err_code: '00', basket_id: basketId, Response_Key: 'a'.repeat(64),
+    })).rejects.toThrow(/verification failed/i);
+
+    expect(verdictSpy).not.toHaveBeenCalled();
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+    expect(auditLogger.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'PAYMENT_HASH_MISMATCH' }));
+  });
+
+  test('idempotency: captured verdict twice → 2nd is a no-op, paidAt unchanged', async () => {
+    const { svc } = makePaymentService(INQUIRY_ON);
+    const { basketId, paymentId, amountStr } = await seedPendingPayment(200);
+    jest.spyOn(svc as any, 'getCaptureVerdict').mockResolvedValue({ captured: true, authorizedNotCaptured: false, failed: false });
+
+    await svc.handleCallback({ err_code: '00', basket_id: basketId, transaction_id: 'T1', Response_Key: signCallback(basketId, amountStr, '00') });
+    const after1 = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+
+    const res2 = await svc.handleCallback({ err_code: '00', basket_id: basketId, transaction_id: 'T1', Response_Key: signCallback(basketId, amountStr, '00') });
+    expect(res2.status).toBe('success');
+    const after2 = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(after2.paidAt?.getTime()).toBe(after1.paidAt?.getTime());
+  });
+
+  test('inquiry transient then captured (IPN retry) → 1st leaves PENDING, 2nd CONFIRMS', async () => {
+    const { svc } = makePaymentService(INQUIRY_ON);
+    const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(200);
+    jest.spyOn(svc as any, 'getCaptureVerdict')
+      .mockResolvedValueOnce({ captured: false, authorizedNotCaptured: false, failed: false })
+      .mockResolvedValueOnce({ captured: true, authorizedNotCaptured: false, failed: false });
+
+    await svc.handleCallback({ err_code: '00', basket_id: basketId, Response_Key: signCallback(basketId, amountStr, '00') });
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+
+    await svc.handleCallback({ err_code: '00', basket_id: basketId, Response_Key: signCallback(basketId, amountStr, '00') });
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('SUCCESS');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('CONFIRMED');
+  });
+
+  test('cron-race: payment=FAILED + captured verdict → recovers to SUCCESS + CONFIRMED', async () => {
+    const { svc } = makePaymentService(INQUIRY_ON);
+    const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(200);
+    await ctx.prisma.payment.update({ where: { id: paymentId }, data: { status: 'FAILED' } });
+    jest.spyOn(svc as any, 'getCaptureVerdict').mockResolvedValue({ captured: true, authorizedNotCaptured: false, failed: false });
+
+    await svc.handleCallback({ err_code: '00', basket_id: basketId, transaction_id: 'LATE', Response_Key: signCallback(basketId, amountStr, '00') });
+
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('SUCCESS');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('CONFIRMED');
+  });
+});

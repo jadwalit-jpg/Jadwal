@@ -164,6 +164,20 @@ async function bootstrap() {
       );
       process.exit(1);
     }
+
+    // PAY2M status-inquiry capture gate. The flag ships OFF (legacy callback
+    // behaviour) and is NOT in REQUIRED_IN_PRODUCTION — prod must boot without
+    // the inquiry base URL until PAY2M confirms it. But if someone ENABLES the
+    // gate (PAY2M_INQUIRY_ENABLED=true) without the REST base URL, every NAPS
+    // callback would silently degrade to a transient verdict (no bookings ever
+    // confirmed). Fail-fast on that specific misconfiguration only.
+    if (
+      process.env.PAY2M_INQUIRY_ENABLED === 'true' &&
+      !process.env.PAY2M_INQUIRY_BASE_URL?.trim()
+    ) {
+      console.error('\n[FATAL] PAY2M_INQUIRY_ENABLED=true requires PAY2M_INQUIRY_BASE_URL to be set.\n');
+      process.exit(1);
+    }
   }
 
   // Pino logging via nestjs-pino — wired in app.module.ts LoggerModule.forRoot.
