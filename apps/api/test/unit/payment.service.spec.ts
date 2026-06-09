@@ -118,19 +118,17 @@ describe('PaymentService.verifyCallbackHash', () => {
     expect(ctx.sut.verifyCallbackHash('JDWL-ABC', '1.00', '00', key)).toBe(true);
   });
 
-  // ── NAPS/QPay rail (regression, confirmed 2026-06-09 against live callbacks
-  //    basket JDWL-5829d075-f9a / JDWL-75dc69bf-b5e) ──
-  // PAY2M signs the NAPS Response_Key as merchant+basket+secret+ERR+AMOUNT —
-  // err_code BEFORE amount (opposite of card), with err "00" + an integer
-  // amount, while the callback's err_code field carries a 3-digit NAPS status
-  // (e.g. "001"). verifyCallbackHash tries both field orders.
-  test('NAPS swapped order: SHA256(merchant+basket+secret+err+amount) verifies', async () => {
+  // ── NAPS/QPay rail (err+amount order) is INTENTIONALLY REJECTED ──
+  // PAY2M signs NAPS as merchant+basket+secret+err+amount, but emits a code-"00"
+  // callback at a PENDING (pre-capture) stage — confirming it booked an UNPAID
+  // activity (live incident 2026-06-09, basket JDWL-939bd325-fa3). Until PAY2M
+  // provides a reliable captured-vs-pending signal, the swapped order is NOT
+  // accepted, so a NAPS callback can never confirm a booking.
+  test('NAPS swapped order is REJECTED (pending-confirmation safety)', async () => {
     const ctx = await buildSut();
-    // err "00" + amount "1" (integer) in err+amount order → "00" + "1" = "001".
     const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}JDWL-NAPS${PAY2M_CFG.PAY2M_SECRET_WORD}001`;
     const key = crypto.createHash('sha256').update(raw).digest('hex');
-    // callback's err_code field carries the NAPS status "001"; we charged 1.00 QAR.
-    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '001', key)).toBe(true);
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '001', key)).toBe(false);
   });
 
   test('success-code spelling: hash built with "00" verifies when callback echoes "000"', async () => {
@@ -166,12 +164,12 @@ describe('PaymentService.verifyCallbackHash', () => {
   // ── resolveSignedErrCode: success is derived from the SIGNED code (private,
   //    accessed via `as any`). handleCallback trusts the code that
   //    cryptographically signed the hash — NOT the raw err_code field.
-  test('signed code: NAPS callback (field "001", swapped hash) resolves to success "00"', async () => {
+  test('signed code: NAPS swapped-order callback resolves to null (not accepted)', async () => {
     const ctx = await buildSut();
     const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}JDWL-NAPS${PAY2M_CFG.PAY2M_SECRET_WORD}001`; // err"00"+amt"1"
     const key = crypto.createHash('sha256').update(raw).digest('hex');
     const signed = (ctx.sut as any).resolveSignedErrCode('JDWL-NAPS', '1.00', '001', key);
-    expect(signed).toBe('00'); // handleCallback → isSuccess = true
+    expect(signed).toBeNull(); // NAPS order rejected → no confirmation
   });
 
   test('signed code: card success resolves to its success code', async () => {
