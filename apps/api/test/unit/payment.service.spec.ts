@@ -147,6 +147,14 @@ describe('PaymentService.verifyCallbackHash', () => {
     expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '00', key)).toBe(true);
   });
 
+  test('NAPS integer minor-units: hash built with "100" verifies when caller passes "1.00"', async () => {
+    const ctx = await buildSut();
+    // Some Qatar rails hash the amount in integer minor units (dirhams/fils):
+    // 1.00 QAR → "100". verifyCallbackHash tries that form.
+    const key = buildResponseKey('JDWL-NAPS', '100', '00');
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '00', key)).toBe(true);
+  });
+
   // SECURITY: broadening the candidate forms must NOT let a wrong amount or a
   // non-success code masquerade as a valid success.
   test('SECURITY: genuinely wrong amount still fails despite extra decimal forms', async () => {

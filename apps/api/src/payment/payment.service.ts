@@ -371,6 +371,10 @@ export class PaymentService {
       amountForms.add(n.toFixed(1));   // → "1.0"
       amountForms.add(n.toFixed(2));   // → "1.00"
       amountForms.add(n.toFixed(3));   // → "1.000" (QAR/NAPS-QPay 3-decimal hashing)
+      // Integer minor units — some rails hash the amount in dirhams/fils rather
+      // than the decimal QAR string (e.g. 1.00 QAR → "100" or "1000").
+      amountForms.add(String(Math.round(n * 100)));   // 2-decimal minor units → "100"
+      amountForms.add(String(Math.round(n * 1000)));  // 3-decimal minor units → "1000"
     }
     // err_code normalisation. PAY2M signals success as "00" or "000" depending
     // on the rail; some rails (observed on NAPS/QPay) sign the Response_Key with
@@ -403,6 +407,61 @@ export class PaymentService {
       }
     }
     return false;
+  }
+
+  /**
+   * SAFE diagnostic — only called AFTER verifyCallbackHash already returned
+   * false (callback already rejected). Tests a broad matrix of candidate PAY2M
+   * Response_Key recipes against the received hash IN MEMORY and returns a short
+   * descriptor of the FIRST recipe that matches (e.g.
+   * "fields=std amount=minor2(100) err=00"), or 'NONE'.
+   *
+   * Security: it NEVER returns/logs the Response_Key or the secret word — only
+   * the structural descriptor. A match tells us which format PAY2M signed with
+   * (so verifyCallbackHash can be made exact); 'NONE' means no reasonable recipe
+   * matched under our secret ⇒ likely a PAY2M-side hash bug. It does NOT affect
+   * acceptance.
+   */
+  private diagnoseHashRecipe(
+    params: { err_code: string; basket_id: string; transaction_id?: string; order_date?: string; Response_Key: string },
+    dbAmount: string,
+  ): string {
+    const key =
+      typeof params.Response_Key === 'string' ? params.Response_Key.toLowerCase() : '';
+    if (!/^[a-f0-9]{64}$/.test(key)) return 'NONE';
+
+    const n = Number(dbAmount);
+    const amounts: Record<string, string> = { raw: String(dbAmount) };
+    if (Number.isFinite(n)) {
+      amounts.d0 = n.toFixed(0);
+      amounts.d1 = n.toFixed(1);
+      amounts.d2 = n.toFixed(2);
+      amounts.d3 = n.toFixed(3);
+      amounts.str = n.toString();
+      amounts.minor2 = String(Math.round(n * 100));
+      amounts.minor3 = String(Math.round(n * 1000));
+    }
+    const errs: Record<string, string> = { recv: params.err_code, '00': '00', '000': '000' };
+    const txn = params.transaction_id ?? '';
+    const odate = params.order_date ?? '';
+    const m = this.merchantId;
+    const b = params.basket_id;
+    const s = this.secretWord;
+    // Standard recipe plus common variants that append an extra echoed field.
+    const fields: Record<string, (a: string, e: string) => string> = {
+      std: (a, e) => `${m}${b}${s}${a}${e}`,
+      'std+txn': (a, e) => `${m}${b}${s}${a}${e}${txn}`,
+      'std+odate': (a, e) => `${m}${b}${s}${a}${e}${odate}`,
+    };
+    for (const [fn, ff] of Object.entries(fields)) {
+      for (const [an, av] of Object.entries(amounts)) {
+        for (const [en, ev] of Object.entries(errs)) {
+          const h = crypto.createHash('sha256').update(ff(av, ev)).digest('hex');
+          if (h === key) return `fields=${fn} amount=${an}(${av}) err=${en}(${ev})`;
+        }
+      }
+    }
+    return 'NONE';
   }
 
   // ─── Initiate Payment ───────────────────────────────────────────────────
@@ -672,12 +731,20 @@ export class PaymentService {
       // them would form an offline oracle to brute-force the secret word if it
       // were ever weak. These fields still flag "our format set is incomplete
       // for this rail" without that risk.
+      // SAFE diagnostic: test a broad matrix of candidate recipes against the
+      // received Response_Key IN MEMORY and report only the matching recipe's
+      // *descriptor* (e.g. "amount=minor2 err=00 fields=std"). This reveals the
+      // exact format PAY2M signed with — WITHOUT logging the Response_Key or the
+      // secret word (so no brute-force oracle). 'NONE' ⇒ no reasonable recipe
+      // matched with our secret ⇒ strong evidence PAY2M's hash is wrong/foreign.
+      const recipeMatch = this.diagnoseHashRecipe(params, amount);
       this.logger.warn({
         event: 'PAY2M_HASH_MISMATCH',
         paymentId: payment.id,
         errCode: params.err_code,
         basketId: params.basket_id,
         amountUsed: amount,
+        recipeMatch,
       });
       await this.auditLogger.log({
         actorType: 'SYSTEM',
