@@ -252,7 +252,7 @@ export default function BookActivityPage() {
   });
 
   // Fetch loyalty points + config
-  const { data: loyaltyData } = useQuery<{ loyaltyPoints: number; qarPerPoint: number; minRedemption: number }>({
+  const { data: loyaltyData } = useQuery<{ loyaltyPoints: number; pointsPerQar: number; qarPerPoint: number; minRedemption: number }>({
     queryKey: ['user-points-checkout'],
     queryFn: () => api.get('/users/points').then(r => r.data),
     enabled: !!user,
@@ -1406,7 +1406,7 @@ export default function BookActivityPage() {
                 {/* Earn-on-complete preview */}
                 {user &&
                 loyaltyData &&
-                loyaltyData.qarPerPoint > 0 &&
+                loyaltyData.pointsPerQar > 0 &&
                 bookingCost > 0 ? (
                   <div className="mt-3 flex items-center gap-1.5 text-[11px] text-jadwal-accent-text justify-end">
                     <Gift
@@ -1418,13 +1418,18 @@ export default function BookActivityPage() {
                         defaultValue:
                           "You'll earn {{n}} points when this completes",
                         n: Math.floor(
+                          // Mirror the backend earn basis EXACTLY (bookings.service):
+                          // points = floor(afterCouponPrice * pointsPerQar), where
+                          // afterCouponPrice = gross - coupon/voucher. The points/cash
+                          // split does NOT reduce what's earned — the customer earns on
+                          // the full service value either way. Rate is pointsPerQar; the
+                          // old code divided by qarPerPoint (a ~100x over-count).
                           Math.max(
                             0,
                             bookingCost -
                               (appliedCoupon?.discount ?? 0) -
-                              (selectedVoucher?.discount ?? 0) -
-                              pointsDiscount,
-                          ) / loyaltyData.qarPerPoint,
+                              (selectedVoucher?.discount ?? 0),
+                          ) * loyaltyData.pointsPerQar,
                         ),
                       })}
                     </span>
