@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
-import { CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Clock } from 'lucide-react';
 import Link from 'next/link';
 
 function CallbackContent() {
@@ -19,6 +19,9 @@ function CallbackContent() {
   const error = searchParams.get('error');
 
   const isSuccess = status === 'success';
+  // 'pending' = the gateway verified the payment message but the capture is
+  // still being confirmed (NAPS rail) — not a success yet, NOT a failure.
+  const isPending = status === 'pending';
 
   // Invalidate booking caches so detail page shows updated status
   useEffect(() => {
@@ -70,6 +73,37 @@ function CallbackContent() {
                 {t('payment.viewBooking')}
               </Link>
             )}
+          </>
+        ) : isPending ? (
+          <>
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ delay: 0.1, type: 'spring', stiffness: 200 }}
+              className="w-20 h-20 mx-auto mb-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center"
+            >
+              <Clock className="h-10 w-10 text-amber-600 dark:text-amber-400" />
+            </motion.div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('payment.pendingTitle')}</h1>
+            <p className="text-sm text-gray-500 dark:text-slate-400 mb-6">
+              {t('payment.pendingDesc')}
+            </p>
+            <div className="flex flex-col gap-3">
+              {bookingId && (
+                <Link
+                  href={`/bookings/${bookingId}`}
+                  className="inline-block px-6 py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-xl transition-colors text-sm"
+                >
+                  {t('payment.viewBooking')}
+                </Link>
+              )}
+              <Link
+                href="/bookings"
+                className="text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 transition-colors"
+              >
+                {t('payment.backToBookings')}
+              </Link>
+            </div>
           </>
         ) : (
           <>

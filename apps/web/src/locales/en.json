@@ -1175,6 +1175,8 @@
     "viewBooking": "View Booking",
     "failed": "Payment Failed",
     "failedDesc": "Your payment could not be processed. Please try again.",
+    "pendingTitle": "Verifying Your Payment",
+    "pendingDesc": "We received your payment details and are confirming them with the bank. Your booking will be confirmed automatically once verified — you'll get an email. No need to pay again.",
     "tryAgain": "Try Again",
     "backToBookings": "Back to My Bookings"
   },
