@@ -340,21 +340,31 @@ export class PaymentService {
 
   /**
    * Resolves PAY2M's Response_Key to the err_code that cryptographically SIGNED
-   * it — or null if no candidate matches (invalid / forged / foreign hash).
+   * it plus the RAIL that produced it — or null if no candidate matches
+   * (invalid / forged / foreign hash).
    *
    * Recipe: SHA256(merchant_id + basket_id + <secret word> + <amount/err pair>).
    * The card rail signs `amount + err_code`; the NAPS/QPay rail signs
-   * `err_code + amount` (fields swapped — confirmed 2026-06-09 against live
-   * callbacks: card/Apple-Pay matched amount+err, NAPS matched err+amount with
-   * err "00" and an integer amount). We try BOTH orders, the canonical amount
-   * renderings (PAY2M strips trailing zeros), and the success spellings
-   * "00"/"000" (NAPS echoes a 3-digit status like "001" in the err_code field
-   * but signs the hash with the 2-digit gateway code "00").
+   * `err_code + amount` (fields swapped — proven from live production logs
+   * 2026-06-10: the recipeMatch diagnostic printed `recipe=m+b+s+e+a amount=d0
+   * err=00` on real NAPS callbacks, i.e. err-first with the integer amount,
+   * signed "00" while the visible err_code field echoed "001"). We try BOTH
+   * orders, the canonical amount renderings (PAY2M strips trailing zeros), and
+   * the success spellings "00"/"000".
    *
-   * Returning the SIGNED code (not the raw field) lets handleCallback decide
-   * success from what PAY2M cryptographically asserted: a hash that verifies
-   * with "00"/"000" is an unforgeable success assertion. A failure is signed
-   * with its failure code, so no extra spelling we try can read it as success.
+   * BOTH orders verify AUTHENTICITY only — every attempt is gated by the secret
+   * word, so a forger can't produce a match for either order, and a genuine
+   * failure is signed with its own failure code (no spelling we try can read it
+   * as success). What the orders additionally tell us is WHICH RAIL sent the
+   * callback, and the rails differ in what a success signature MEANS:
+   *   - card  (amount+err): a signed "00" is only emitted post-capture → safe
+   *     to confirm the booking on it.
+   *   - naps  (err+amount): a signed "00" can be emitted at a PENDING/session
+   *     stage BEFORE the money moves (observed live 2026-06-09: basket
+   *     JDWL-939bd325-fa3 verified as success while PAY2M's status stayed
+   *     "Pending" and no card was charged). So a NAPS success proves the
+   *     message is genuine — NOT that the money was captured. handleCallback
+   *     therefore HOLDS NAPS successes instead of confirming them.
    *
    * ⚠ SECURITY: when the secret word is EMPTY the hash carries no secret — every
    * other input is visible in the customer's browser, so the callback is
@@ -365,7 +375,7 @@ export class PaymentService {
     amount: string,
     receivedErrCode: string,
     responseKey: string,
-  ): string | null {
+  ): { errCode: string; rail: 'card' | 'naps' } | null {
     // Format gate — reject obvious garbage in O(1) before hashing.
     if (typeof responseKey !== 'string' || !/^[a-f0-9]{64}$/i.test(responseKey)) {
       return null;
@@ -380,36 +390,34 @@ export class PaymentService {
     // We try the received code plus the canonical success spellings ("00" vs
     // "000"). The secret word gates every attempt, so a forger can't verify and
     // a genuine failure only matches its own failure code.
-    //
-    // ⚠ NAPS/QPay (err+amount order) is intentionally NOT accepted here. PAY2M
-    // emits a code-"00" callback for NAPS at a PENDING/session stage — BEFORE the
-    // money is captured — so verifying it confirmed an UNPAID booking (observed
-    // live 2026-06-09: basket JDWL-939bd325-fa3 was confirmed on code "00" while
-    // PAY2M's status stayed "Pending" and no card was charged). NAPS support is
-    // paused until we have a reliable captured-vs-pending signal from PAY2M; only
-    // the card/Apple-Pay (amount+err) rail, which signals capture on code "00",
-    // is verified.
     const errForms = new Set<string>([receivedErrCode, '00', '000']);
     const target = Buffer.from(responseKey.toLowerCase(), 'hex');
     for (const ec of errForms) {
       for (const amt of amountForms) {
-        const expected = Buffer.from(
-          crypto
-            .createHash('sha256')
-            .update(`${this.merchantId}${basketId}${this.secretWord}${amt}${ec}`)
-            .digest('hex'),
-          'hex',
-        );
-        // timingSafeEqual needs equal-length buffers — both are 32 bytes.
-        if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
-          return ec;
+        // card rail: amount+err ; NAPS/QPay rail: err+amount.
+        const candidates: Array<{ tail: string; rail: 'card' | 'naps' }> = [
+          { tail: `${amt}${ec}`, rail: 'card' },
+          { tail: `${ec}${amt}`, rail: 'naps' },
+        ];
+        for (const { tail, rail } of candidates) {
+          const expected = Buffer.from(
+            crypto
+              .createHash('sha256')
+              .update(`${this.merchantId}${basketId}${this.secretWord}${tail}`)
+              .digest('hex'),
+            'hex',
+          );
+          // timingSafeEqual needs equal-length buffers — both are 32 bytes.
+          if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
+            return { errCode: ec, rail };
+          }
         }
       }
     }
     return null;
   }
 
-  /** Boolean convenience wrapper — true iff the Response_Key verifies. */
+  /** Boolean convenience wrapper — true iff the Response_Key verifies (either rail). */
   verifyCallbackHash(basketId: string, amount: string, errCode: string, responseKey: string): boolean {
     return this.resolveSignedErrCode(basketId, amount, errCode, responseKey) !== null;
   }
@@ -585,6 +593,52 @@ export class PaymentService {
     }
   }
 
+  /** How far a held NAPS booking's reservation is extended so the out-of-band
+   *  capture confirmation (PAY2M's delayed IPN: 5–15 min documented) has room
+   *  to arrive before the cleanup cron reaps the slot. */
+  private static readonly NAPS_HOLD_EXTENSION_MS = 30 * 60_000;
+
+  /**
+   * Hold a verified NAPS-rail success WITHOUT confirming or deleting anything.
+   * The hash proves the callback genuinely came from PAY2M, but on this rail a
+   * success signature can precede the actual capture — so the only safe move
+   * is to keep payment + booking PENDING, give the confirmation time to arrive
+   * (forward-only reservation extension), and leave a FINANCIAL audit trail.
+   * Logs carry only non-sensitive transaction metadata — never the
+   * Response_Key or secret word.
+   */
+  private async holdNapsSuccess(
+    paymentId: string,
+    bookingId: string | null,
+    params: { err_code: string; basket_id: string; transaction_id?: string },
+  ): Promise<void> {
+    if (bookingId) {
+      const extendTo = new Date(Date.now() + PaymentService.NAPS_HOLD_EXTENSION_MS);
+      // Forward-only and PENDING-only: never shorten a longer hold, never
+      // resurrect a cancelled/expired booking's reservation.
+      await this.prisma.client.booking.updateMany({
+        where: { id: bookingId, status: 'PENDING', reservedUntil: { lt: extendTo } },
+        data: { reservedUntil: extendTo },
+      });
+    }
+    this.logger.log({
+      event: 'PAY2M_NAPS_SUCCESS_HELD',
+      paymentId,
+      basketId: params.basket_id,
+      errCode: params.err_code,
+    });
+    await this.auditLogger.log({
+      actorType: 'SYSTEM',
+      actorId: 'pay2m-callback',
+      actorName: 'PAY2M Gateway',
+      action: 'PAYMENT_NAPS_AWAITING_CAPTURE',
+      entity: 'Payment',
+      entityId: paymentId,
+      details: `basket: ${params.basket_id}, err_code: ${params.err_code}, txn: ${params.transaction_id || 'N/A'} — NAPS success verified (authentic) but capture unconfirmed; booking held PENDING`,
+      actionCategory: 'FINANCIAL',
+    });
+  }
+
   // ─── Handle Callback from PAY2M ────────────────────────────────────────
 
   async handleCallback(params: {
@@ -594,7 +648,9 @@ export class PaymentService {
     transaction_id?: string;
     Response_Key: string;
     order_date?: string;
-  }): Promise<{ bookingId: string; status: 'success' | 'failed'; error?: string }> {
+    // 'pending' = a verified NAPS-rail success held awaiting capture
+    // confirmation — neither confirmed nor failed yet.
+  }): Promise<{ bookingId: string; status: 'success' | 'failed' | 'pending'; error?: string }> {
     // 0. Reject callbacks when payment is disabled (maintenance, misconfiguration)
     if (!this.enabled) {
       this.logger.warn({ event: 'PAY2M_CALLBACK_WHILE_DISABLED' });
@@ -633,39 +689,55 @@ export class PaymentService {
       return { bookingId: payment.bookingId!, status: 'success' };
     }
 
-    // 3. Resolve the Response_Key and derive success from the SIGNED code.
+    // 3. Resolve the Response_Key and derive success from the SIGNED code plus
+    //    the RAIL that signed it.
     //
     // resolveSignedErrCode returns the err_code that cryptographically validates
-    // PAY2M's Response_Key (or null if none does). We trust THAT signed code for
-    // success — not the raw err_code field — because the NAPS/QPay rail echoes a
-    // 3-digit status (e.g. "001") in the field yet signs the hash with the
-    // 2-digit gateway code "00". A hash that verifies with "00"/"000" is PAY2M
-    // cryptographically asserting success, unforgeable without the secret word;
-    // a failure is signed with its own failure code, so it can never resolve to
+    // PAY2M's Response_Key and which rail signed it (or null if nothing
+    // matches). We trust THAT signed code for success — not the raw err_code
+    // field — because the NAPS/QPay rail echoes a 3-digit status (e.g. "001")
+    // in the field yet signs the hash with the 2-digit gateway code "00". A
+    // failure is signed with its own failure code, so it can never resolve to
     // a success code.
+    //
+    // The rail decides what a verified SUCCESS means:
+    //   - card: "00" is only emitted post-capture → confirm the booking.
+    //   - naps: "00" can be emitted at a PENDING stage BEFORE any money moves
+    //     (live incident 2026-06-09, basket JDWL-939bd325-fa3) → HOLD the
+    //     booking (no confirm, no delete) until PAY2M confirms the capture
+    //     out-of-band (IPN / status inquiry — the trigger lands in a follow-up).
     //
     // ⚠ LAUNCH BLOCKER while the secret word is EMPTY: every hash input is
     // otherwise visible in the customer's browser, so a forged callback could
     // confirm an unpaid booking. main.ts fails-fast in production if
     // PAY2M_SECRET_WORD is empty, so a deploy cannot ship that configuration.
     const amount = Number(payment.amount).toFixed(2);
-    const signedErrCode = this.resolveSignedErrCode(
+    const resolved = this.resolveSignedErrCode(
       params.basket_id,
       amount,
       params.err_code,
       params.Response_Key,
     );
-    const hashValid = signedErrCode !== null;
-    const isSuccess = signedErrCode === '00' || signedErrCode === '000';
+    const hashValid = resolved !== null;
+    const signedSuccess = resolved !== null && (resolved.errCode === '00' || resolved.errCode === '000');
+    const isNapsHeldSuccess = signedSuccess && resolved!.rail === 'naps';
+    // Only a CARD-rail success may confirm a booking in this handler; a
+    // NAPS-rail success is authentic but capture-ambiguous and is held.
+    const isSuccess = signedSuccess && resolved!.rail === 'card';
 
     // 2b. CRITICAL: If payment was marked FAILED by the cleanup cron but PAY2M
     // now sends a VERIFIED success, the customer WAS charged — recover the
     // booking (the reservation timer expired while they were on the PAY2M page).
-    // If it's FAILED and this callback is not a verified success, stay failed.
+    // A NAPS-rail success is NOT capture proof, so it must not trigger the
+    // recovery either — it is held exactly like the pre-FAILED case below.
     if (payment.status === 'FAILED' && !isSuccess) {
+      if (isNapsHeldSuccess) {
+        await this.holdNapsSuccess(payment.id, payment.bookingId, params);
+        return { bookingId: payment.bookingId ?? '', status: 'pending' };
+      }
       return { bookingId: payment.bookingId!, status: 'failed', error: 'Payment was previously declined' };
     }
-    // FAILED && isSuccess → fall through to recover (optimistic lock below).
+    // FAILED && isSuccess (card rail) → fall through to recover (optimistic lock below).
 
     // 4. Reject any callback whose Response_Key does not verify (corrupt,
     // malformed, foreign-rail, or forged).
@@ -691,6 +763,22 @@ export class PaymentService {
         actionCategory: 'FINANCIAL',
       });
       throw new BadRequestException('Payment verification failed');
+    }
+
+    // 4a. NAPS-rail verified success → HOLD (no confirm, no delete). The
+    // message is genuine (secret-gated hash, unforgeable) but this rail emits
+    // success-signed callbacks pre-capture: confirming here booked UNPAID
+    // orders (#369 incident, basket 939bd325) and rejecting here destroyed
+    // PAID ones (#370, money-taken-no-booking). We do neither — payment and
+    // booking stay PENDING, the reservation is extended so a delayed capture
+    // confirmation (PAY2M's delayed IPN is documented at 5–15 min) doesn't
+    // lose the slot, and the hold is audited. The capture-confirmation
+    // trigger (IPN with a source allow-list / status inquiry) lands in a
+    // follow-up — until then NOTHING can confirm a NAPS booking, which is
+    // fail-safe in both directions.
+    if (isNapsHeldSuccess) {
+      await this.holdNapsSuccess(payment.id, payment.bookingId, params);
+      return { bookingId: payment.bookingId ?? '', status: 'pending' };
     }
 
     // 4b. Coupon expiry-race detection. The customer may have created the

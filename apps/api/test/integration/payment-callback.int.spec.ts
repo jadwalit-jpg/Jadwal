@@ -100,6 +100,18 @@ function signCallback(basketId: string, amount: string, errCode: string): string
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
+/**
+ * NAPS/QPay rail Response_Key — the SWAPPED order (err_code + amount), as
+ * proven from live production recipeMatch diagnostics (2026-06-10): NAPS signs
+ * SHA256(merchant_id + basket_id + secret_word + err_code + amount) with the
+ * gateway code "00" and the integer amount form, while echoing "001" in the
+ * visible err_code field.
+ */
+function signCallbackNaps(basketId: string, amount: string, errCode: string): string {
+  const raw = `${PAY2M.MERCHANT_ID}${basketId}${PAY2M.SECRET_WORD}${errCode}${amount}`;
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
 /** Seed a PENDING payment + booking pair ready for a callback. Returns handles. */
 async function seedPendingPayment(amountQar = 200) {
   const seed = await seedReference(ctx.prisma);
@@ -567,5 +579,132 @@ describe('PaymentService.handleCallback — cron-race recovery', () => {
     const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(p.status).toBe('REFUND_PENDING');
     expect(p.refundAmount?.toString()).toBe('200');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NAPS/QPay rail — rail-aware hold semantics against a real DB
+//
+// A verified NAPS success is authentic but capture-ambiguous (the rail can
+// sign "00" pre-capture — live basket 939bd325 booked with no money — AND
+// post-capture — Apple Pay/Fawran captures lost their bookings when rejected).
+// So: NAPS success → HOLD (payment+booking stay PENDING, reservation extended,
+// audited, status 'pending'); NAPS failure → normal cleanup; card → unchanged.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('PaymentService.handleCallback — NAPS rail (err+amount order)', () => {
+  test('verified NAPS success → HELD: stays PENDING, reservation extended, audited, 0 outbox, nothing deleted', async () => {
+    const { svc, auditLogger, availabilityCache } = makePaymentService();
+    const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
+    const before = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId }, select: { reservedUntil: true } });
+
+    // Real NAPS shape: visible err_code "001", hash signed err "00" + INTEGER amount.
+    const res = await svc.handleCallback({
+      err_code: '001', basket_id: basketId, transaction_id: 'TXN-NAPS-HELD',
+      Response_Key: signCallbackNaps(basketId, '200', '00'),
+    });
+
+    expect(res.status).toBe('pending');
+    expect(res.bookingId).toBe(bookingId);
+
+    // Money-state untouched: neither confirmed (no money proof) nor deleted (money may be real).
+    const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(p.status).toBe('PENDING');
+    expect(p.paidAt).toBeNull();
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
+    expect(b.status).toBe('PENDING');
+
+    // Reservation extended forward (seed gives +10 min; hold extends to ~+30 min).
+    expect(b.reservedUntil!.getTime()).toBeGreaterThan(before.reservedUntil!.getTime());
+    expect(b.reservedUntil!.getTime()).toBeGreaterThan(Date.now() + 20 * 60_000);
+
+    // No success side-effects fired.
+    expect(await ctx.prisma.emailOutbox.findMany({ where: { bookingId } })).toHaveLength(0);
+    expect(availabilityCache.invalidate).not.toHaveBeenCalled();
+
+    // Forensic trail: held-awaiting-capture, not success/failure.
+    expect(auditLogger.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_NAPS_AWAITING_CAPTURE', actionCategory: 'FINANCIAL' }),
+    );
+  });
+
+  test('duplicate NAPS success callbacks → idempotent holds (still PENDING, never confirmed)', async () => {
+    const { svc } = makePaymentService();
+    const { basketId, paymentId } = await seedPendingPayment(200);
+
+    const key = signCallbackNaps(basketId, '200', '00');
+    await svc.handleCallback({ err_code: '001', basket_id: basketId, Response_Key: key });
+    const res2 = await svc.handleCallback({ err_code: '001', basket_id: basketId, Response_Key: key });
+
+    expect(res2.status).toBe('pending');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+  });
+
+  test('verified NAPS FAILURE (901 customer-cancel) → booking + payment deleted, slot freed', async () => {
+    const { svc, availabilityCache } = makePaymentService();
+    const { basketId, paymentId, bookingId, seed } = await seedPendingPayment(200);
+
+    const res = await svc.handleCallback({
+      err_code: '901', basket_id: basketId,
+      Response_Key: signCallbackNaps(basketId, '200', '901'),
+    });
+
+    expect(res.status).toBe('failed');
+    expect(await ctx.prisma.payment.findUnique({ where: { id: paymentId } })).toBeNull();
+    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+    expect(availabilityCache.invalidate).toHaveBeenCalledWith(seed.activity.id);
+  });
+
+  test('cron-FAILED payment + late NAPS success → held as pending, payment stays FAILED (no capture-ambiguous recovery)', async () => {
+    const { svc, auditLogger } = makePaymentService();
+    const { basketId, paymentId } = await seedPendingPayment(200);
+    await ctx.prisma.payment.update({ where: { id: paymentId }, data: { status: 'FAILED' } });
+
+    const res = await svc.handleCallback({
+      err_code: '001', basket_id: basketId,
+      Response_Key: signCallbackNaps(basketId, '200', '00'),
+    });
+
+    expect(res.status).toBe('pending');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('FAILED');
+    expect(auditLogger.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_NAPS_AWAITING_CAPTURE' }),
+    );
+  });
+
+  test('SECURITY: forged NAPS-shaped callback (wrong key) still rejected; nothing held or deleted', async () => {
+    const { svc } = makePaymentService();
+    const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
+
+    await expect(svc.handleCallback({
+      err_code: '001', basket_id: basketId, Response_Key: 'a'.repeat(64),
+    })).rejects.toThrow(/verification failed/i);
+
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('PENDING');
+  });
+
+  test('SECURITY: NAPS-order signature for the WRONG amount does not verify (amount tamper)', async () => {
+    const { svc } = makePaymentService();
+    const { basketId } = await seedPendingPayment(200);
+
+    // Signed for 1 QAR but the payment is 200 QAR — must not pass on any form/order.
+    await expect(svc.handleCallback({
+      err_code: '001', basket_id: basketId, Response_Key: signCallbackNaps(basketId, '1', '00'),
+    })).rejects.toThrow(/verification failed/i);
+  });
+
+  test('card SUCCESS regression: amount+err order still confirms exactly as before', async () => {
+    const { svc } = makePaymentService();
+    const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(150);
+
+    const res = await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'TXN-CARD-REG',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    expect(res.status).toBe('success');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('SUCCESS');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('CONFIRMED');
   });
 });

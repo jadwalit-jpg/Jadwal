@@ -75,6 +75,12 @@ export class PaymentController {
       if (result.status === 'success') {
         return res.redirect(buildRedirect({ status: 'success', bookingId: safeBookingId }));
       }
+      if (result.status === 'pending') {
+        // Verified NAPS-rail success held awaiting capture confirmation —
+        // neither a success nor a failure yet. The frontend shows a
+        // "payment being verified" state instead of a false failure.
+        return res.redirect(buildRedirect({ status: 'pending', bookingId: safeBookingId }));
+      }
       return res.redirect(
         buildRedirect({
           status: 'failed',
