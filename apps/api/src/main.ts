@@ -153,7 +153,10 @@ async function bootstrap() {
     // SMS_ENABLED is no longer injected by the task definition.
     const requiredServices: Array<{ key: string; name: string }> = [
       { key: 'EMAIL_ENABLED', name: 'Email (Resend)' },
-      { key: 'PAYMENT_ENABLED', name: 'Payment (PAY2M)' },
+      // PAYMENT_ENABLED is intentionally NOT in this "must be true" list. It may
+      // be deliberately set to 'false' to PAUSE payments (e.g. during a gateway
+      // incident) WITHOUT taking the whole API down — it is validated as an
+      // explicit boolean just below, so a missing/garbage value still fails fast.
     ];
     const disabled = requiredServices.filter((s) => process.env[s.key] !== 'true');
     if (disabled.length) {
@@ -163,6 +166,19 @@ async function bootstrap() {
           .join('\n  ')}\n`,
       );
       process.exit(1);
+    }
+
+    // Payment toggle: must be an explicit boolean. 'true' = live; 'false' =
+    // intentionally paused (initiate + callback return "Payment service is not
+    // available", but the rest of the API keeps running normally). A missing or
+    // typo'd value is a misconfiguration and still fails fast.
+    const paymentFlag = process.env.PAYMENT_ENABLED;
+    if (paymentFlag !== 'true' && paymentFlag !== 'false') {
+      console.error(`\n[FATAL] PAYMENT_ENABLED must be 'true' or 'false' (got: ${paymentFlag ?? 'unset'}).\n`);
+      process.exit(1);
+    }
+    if (paymentFlag === 'false') {
+      console.warn('\n[BOOT] PAYMENT_ENABLED=false — payments are PAUSED; the rest of the API is running normally.\n');
     }
   }
 
