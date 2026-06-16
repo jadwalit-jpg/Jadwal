@@ -24,6 +24,10 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title,
     description,
+    // Consolidate every /explore?country=…&category=… filter permutation onto
+    // the canonical /explore so the dozens of query-string variants don't dilute
+    // ranking or get indexed as duplicate content. /explore itself stays indexed.
+    alternates: { canonical: '/explore' },
     openGraph: {
       title,
       description,
