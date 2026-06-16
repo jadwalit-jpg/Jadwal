@@ -13,11 +13,11 @@ export async function generateMetadata(): Promise<Metadata> {
   const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
 
   const title =
-    lang === 'ar' ? 'العروض والكوبونات — جدول' : 'Offers & Coupons — Jadwal';
+    lang === 'ar' ? 'العروض والكوبونات — الجدول' : 'Offers & Coupons — AL Jadwal';
   const description =
     lang === 'ar'
       ? 'وفّر على تجاربك المفضلة في قطر مع كوبونات الخصم والعروض الحصرية من جدول.'
-      : 'Save on your favourite experiences in Qatar with exclusive Jadwal vouchers and discount coupons.';
+      : 'Save on your favourite experiences in Qatar with exclusive AL Jadwal vouchers and discount coupons.';
 
   return {
     title,
@@ -26,7 +26,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: 'website',
-      siteName: 'Jadwal',
+      siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
       images: [{ url: '/images/login-bg.webp', width: 1200, height: 630, alt: title }],
     },

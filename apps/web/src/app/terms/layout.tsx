@@ -15,7 +15,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const description =
     lang === 'ar'
       ? 'شروط استخدام منصة جدول لحجز الأنشطة والتجارب: الحسابات، الحجوزات، الإلغاء، مسؤوليات البائعين، والامتثال للقوانين القطرية.'
-      : 'The terms for using Jadwal to book activities and experiences: accounts, bookings, cancellations, vendor responsibilities and Qatar legal compliance.';
+      : 'The terms for using AL Jadwal to book activities and experiences: accounts, bookings, cancellations, vendor responsibilities and Qatar legal compliance.';
 
   return {
     title,
@@ -25,7 +25,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: 'website',
-      siteName: 'Jadwal',
+      siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
     },
     twitter: { card: 'summary', title, description },

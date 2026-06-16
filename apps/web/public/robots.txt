@@ -17,5 +17,13 @@ Disallow: /register
 Disallow: /forgot-password
 Disallow: /reset-password
 Disallow: /verify-email
+# Authenticated / per-user / non-content paths (also noindex per-page).
+Disallow: /profile
+Disallow: /account/
+Disallow: /bookings
+Disallow: /likes
+Disallow: /notifications
+Disallow: /payment/
+Disallow: /maintenance
 
 Sitemap: https://jadwal.qa/sitemap.xml

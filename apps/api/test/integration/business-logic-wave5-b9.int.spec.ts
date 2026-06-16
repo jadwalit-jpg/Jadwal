@@ -389,3 +389,31 @@ describe('§B9 — soft-deleted entities are hidden from public catalog queries'
     expect(found).toBeNull();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test-team bug (2026-06-15): a deleted vendor stayed visible in the admin
+// Vendors list. getVendors must exclude soft-deleted vendors end-to-end.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('§B9 — deleted vendor disappears from the admin Vendors list', () => {
+  test('getVendors no longer returns a vendor after deleteVendor', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = makeAdmin();
+
+    // Before: the active vendor is listed and counted.
+    const before: any = await admin.getVendors({});
+    expect(before.data.some((v: any) => v.id === seed.vendor.id)).toBe(true);
+    const totalBefore = before.total;
+
+    // Delete (soft-delete — row kept for audit).
+    await admin.deleteVendor(seed.vendor.id);
+
+    // After: gone from the list AND the total drops.
+    const after: any = await admin.getVendors({});
+    expect(after.data.some((v: any) => v.id === seed.vendor.id)).toBe(false);
+    expect(after.total).toBe(totalBefore - 1);
+
+    // But the row still exists in the DB (audit preserved) — just deletedAt-stamped.
+    const stillInDb = await ctx.prisma.vendor.findUnique({ where: { id: seed.vendor.id }, select: { deletedAt: true } });
+    expect(stillInDb!.deletedAt).not.toBeNull();
+  });
+});

@@ -34,6 +34,7 @@ import {
   X,
 } from 'lucide-react';
 import CustomSelect from '@/components/custom-select';
+import ActivityBlocksSummary from '@/components/activity-blocks-summary';
 
 const STATUS_VIS: Record<string, { classes: string; icon: React.ElementType }> = {
   PENDING: { classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400', icon: Clock },
@@ -357,6 +358,13 @@ export default function VendorActivitiesPage() {
                                       </p>
                                     )}
                                   </div>
+                                </div>
+
+                                <div>
+                                  <p className="text-xs font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5">
+                                    {t('vendor.activities.list.blockedTitle', 'Blocked dates & times')}
+                                  </p>
+                                  <ActivityBlocksSummary activityId={activity.id} />
                                 </div>
 
                                 <div>

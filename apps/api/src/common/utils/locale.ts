@@ -1,7 +1,7 @@
 /**
  * Email language resolution.
  *
- * Jadwal sends transactional email in English or Arabic. Two signals feed
+ * AL Jadwal sends transactional email in English or Arabic. Two signals feed
  * the choice (see EmailService.send): an explicit per-send locale, then the
  * recipient's stored `User.preferredLanguage`, then a hard default of EN.
  *

@@ -3,7 +3,7 @@
  * component (filters, search params, react-query). This RSC layout sits
  * above it and emits proper title / description / OG / Twitter tags so
  * Google ranks the page distinctly from the home, and WhatsApp/Twitter/
- * Slack render rich previews instead of the bland default ("Jadwal —
+ * Slack render rich previews instead of the bland default ("AL Jadwal —
  * Discover and book experiences in your city.") inherited from the root.
  */
 
@@ -15,7 +15,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
 
   const title =
-    lang === 'ar' ? 'استكشف الأنشطة — جدول' : 'Explore Activities — Jadwal';
+    lang === 'ar' ? 'استكشف الأنشطة — الجدول' : 'Explore Activities — AL Jadwal';
   const description =
     lang === 'ar'
       ? 'تصفح أكثر من 50 تجربة موثوقة عبر قطر — رحلات السفاري، الجولات الثقافية، الرياضات المائية، تجارب الطعام والمزيد.'
@@ -28,7 +28,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: 'website',
-      siteName: 'Jadwal',
+      siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
       images: [{ url: '/images/login-bg.webp', width: 1200, height: 630, alt: title }],
     },

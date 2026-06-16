@@ -69,6 +69,9 @@ export class VendorAuditInterceptor implements NestInterceptor {
       'PATCH:/vendor/activities/:id': 'UPDATE_ACTIVITY',
       'DELETE:/vendor/activities/:id': 'DELETE_ACTIVITY',
       'PATCH:/vendor/activities/:id/toggle': 'TOGGLE_ACTIVITY_STATUS',
+      'POST:/vendor/activities/:id/blocks': 'CREATE_ACTIVITY_BLOCK',
+      'POST:/vendor/activities/:id/blocks/bulk-delete': 'DELETE_ACTIVITY_BLOCKS_BULK',
+      'DELETE:/vendor/activities/:id/blocks/:blockId': 'DELETE_ACTIVITY_BLOCK',
       'PATCH:/vendor/bookings/:id/status': 'UPDATE_BOOKING_STATUS',
       'PATCH:/vendor/reviews/:id/reply': 'REPLY_TO_REVIEW',
       'PATCH:/vendor/settings': 'UPDATE_VENDOR_SETTINGS',
@@ -85,6 +88,9 @@ export class VendorAuditInterceptor implements NestInterceptor {
   }
 
   private resolveEntity(route: string): string {
+    // Check /blocks BEFORE /activities — the block routes contain both
+    // substrings and we want them attributed to ActivityBlock, not Activity.
+    if (route.includes('/blocks')) return 'ActivityBlock';
     if (route.includes('/activities')) return 'Activity';
     if (route.includes('/bookings')) return 'Booking';
     if (route.includes('/reviews')) return 'Review';

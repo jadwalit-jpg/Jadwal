@@ -15,7 +15,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const description =
     lang === 'ar'
       ? 'تواصل مع فريق جدول للأسئلة حول الحجوزات، أو الانضمام كبائع، أو الدعم — نرد عليك في أقرب وقت.'
-      : 'Get in touch with the Jadwal team for booking questions, becoming a vendor, or support — we’ll get back to you shortly.';
+      : 'Get in touch with the AL Jadwal team for booking questions, becoming a vendor, or support — we’ll get back to you shortly.';
 
   return {
     title,
@@ -25,7 +25,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: 'website',
-      siteName: 'Jadwal',
+      siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
     },
     twitter: { card: 'summary', title, description },

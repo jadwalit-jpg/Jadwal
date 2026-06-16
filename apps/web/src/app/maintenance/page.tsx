@@ -25,17 +25,17 @@ import type { Metadata } from 'next';
  */
 
 export const metadata: Metadata = {
-  title: 'Jadwal — Coming Soon',
+  title: 'AL Jadwal — Coming Soon',
   description:
-    'Jadwal is launching soon — the GCC marketplace for booking activities and experiences. Stay tuned.',
+    'AL Jadwal is launching soon — the GCC marketplace for booking activities and experiences. Stay tuned.',
   // Holding page — never index it; the real homepage is at `/`.
   robots: { index: false, follow: false },
   openGraph: {
-    title: 'Jadwal — Coming Soon',
+    title: 'AL Jadwal — Coming Soon',
     description:
-      'Jadwal is launching soon — the GCC marketplace for booking activities and experiences.',
+      'AL Jadwal is launching soon — the GCC marketplace for booking activities and experiences.',
     type: 'website',
-    siteName: 'Jadwal',
+    siteName: 'AL Jadwal',
     url: '/maintenance',
     locale: 'en_US',
     alternateLocale: ['ar_QA'],
@@ -44,15 +44,15 @@ export const metadata: Metadata = {
         url: '/android-chrome-512x512.png',
         width: 512,
         height: 512,
-        alt: 'Jadwal',
+        alt: 'AL Jadwal',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Jadwal — Coming Soon',
+    title: 'AL Jadwal — Coming Soon',
     description:
-      'Jadwal is launching soon — the GCC marketplace for booking activities and experiences.',
+      'AL Jadwal is launching soon — the GCC marketplace for booking activities and experiences.',
     images: ['/android-chrome-512x512.png'],
   },
 };

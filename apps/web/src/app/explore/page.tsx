@@ -24,7 +24,9 @@ interface Activity {
   pricePerPerson: number;
   pricingModel: string;
   capacity: number;
-  bookedToday: number;
+  hasUnits: boolean;
+  unitCount: number;
+  unitCapacity: number;
   locationAddress: string | null;
   gallery: string[];
   coverImage: string | null;
@@ -34,6 +36,7 @@ interface Activity {
   city: { nameEn: string; nameAr: string } | null;
   country: { nameEn: string; currencyCode: string } | null;
   vendor: { businessNameEn: string; slug: string } | null;
+  avgRating: number | null;
   _count: { reviews: number };
 }
 
@@ -488,6 +491,14 @@ function ExploreContent() {
                         {localized(activity.category, 'name')}
                       </span>
                     )}
+                    {/* Rating badge — top-end corner of the cover. Star + score only
+                        (no "reviews" word). Shown only when the activity has reviews. */}
+                    {activity.avgRating != null && (
+                      <span className="absolute top-3 inset-e-3 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/90 dark:bg-slate-900/90 text-gray-800 dark:text-slate-100 backdrop-blur-sm">
+                        <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
+                        {activity.avgRating.toFixed(1)}
+                      </span>
+                    )}
                   </div>
 
                   {/* Content */}
@@ -512,21 +523,14 @@ function ExploreContent() {
                             : t('explore.multiDay')
                           : `${activity.durationValue} ${t(activity.durationValue! > 1 ? 'explore.hours' : 'explore.hour')}`}
                       </span>
-                      {activity.capacity != null && activity.capacity > 0 && (() => {
-                        const available = Math.max(0, activity.capacity - activity.bookedToday);
-                        return (
-                          <span className={`flex items-center gap-1 ${available === 0 ? 'text-red-500 dark:text-red-400' : available <= 5 ? 'text-amber-500 dark:text-amber-400' : ''}`}>
-                            <Users className="h-3.5 w-3.5" />
-                            {available === 0
-                              ? t('explore.fullyBookedToday')
-                              : t(available === 1 ? 'explore.spotLeft' : 'explore.spotsLeft', { count: available })}
-                          </span>
-                        );
-                      })()}
-                      {activity._count.reviews > 0 && (
+                      {activity.capacity != null && activity.capacity > 0 && (
                         <span className="flex items-center gap-1">
-                          <Star className="h-3.5 w-3.5" />
-                          {activity._count.reviews} {t(activity._count.reviews === 1 ? 'explore.review' : 'explore.reviews')}
+                          <Users className="h-3.5 w-3.5" />
+                          {/* Unit activities (per-unit hourly + daily rooms) show each
+                              unit's capacity; per-person (shared) shows total seats. */}
+                          {activity.hasUnits && (activity.bookingType === 'DAILY' || activity.pricingModel === 'PER_UNIT')
+                            ? activity.unitCapacity
+                            : activity.capacity}
                         </span>
                       )}
                     </div>

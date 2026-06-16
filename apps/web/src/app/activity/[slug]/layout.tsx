@@ -165,7 +165,7 @@ export async function generateMetadata({
   const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
 
   const fallback: Metadata = {
-    title: 'Jadwal',
+    title: 'AL Jadwal',
     description:
       lang === 'ar'
         ? 'اكتشف واحجز أفضل الأنشطة والتجارب في الخليج'
@@ -176,7 +176,7 @@ export async function generateMetadata({
   if (!activity) return fallback;
 
   const title =
-    (lang === 'ar' ? activity.titleAr : activity.titleEn) || activity.titleEn || 'Jadwal';
+    (lang === 'ar' ? activity.titleAr : activity.titleEn) || activity.titleEn || 'AL Jadwal';
   const description = safeDescription(
     lang === 'ar' ? activity.descriptionAr : activity.descriptionEn,
   );
@@ -186,7 +186,7 @@ export async function generateMetadata({
     title,
     description: description || undefined,
     type: 'website',
-    siteName: 'Jadwal',
+    siteName: 'AL Jadwal',
     locale: lang === 'ar' ? 'ar_QA' : 'en_US',
   };
   if (image) og.images = [{ url: image, width: 1200, height: 630, alt: title }];
@@ -225,7 +225,7 @@ export default async function ActivityLayout({
   const origin = siteOrigin();
   const activityUrl = `${origin}/activity/${slug}`;
   const title =
-    (lang === 'ar' ? activity.titleAr : activity.titleEn) || activity.titleEn || 'Jadwal';
+    (lang === 'ar' ? activity.titleAr : activity.titleEn) || activity.titleEn || 'AL Jadwal';
   const description = safeDescription(
     lang === 'ar' ? activity.descriptionAr : activity.descriptionEn,
   );

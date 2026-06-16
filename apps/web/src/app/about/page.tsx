@@ -17,13 +17,15 @@ interface PlatformInfo {
 
 export default function AboutPage() {
   const { t } = useTranslation();
-  const { data: platform, isLoading } = useQuery<PlatformInfo>({
+  const { data: platform } = useQuery<PlatformInfo>({
     queryKey: ['platform-info'],
     queryFn: () => api.get('/catalog/platform-info').then(r => r.data),
     staleTime: 5 * 60 * 1000,
   });
 
-  const name = platform?.platformName ?? 'Jadwal';
+  // Brand name + description are static (not admin-editable) — consistent with
+  // the navbar/footer wordmark. The platform query is still used for contact.
+  const name = t('footer.legalEntity');
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex flex-col">
@@ -41,17 +43,10 @@ export default function AboutPage() {
             <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
               {t('about.title')} {name}
             </h1>
-            {/*
-              min-h reserves the typical 3-line height of `aboutText` from
-              first paint so the footer doesn't reflow when the query
-              resolves. Cuts CLS on /about from 0.078 → ~0.005.
-            */}
+            {/* min-h reserves the typical 3-line description height to avoid
+                any layout shift on first paint. */}
             <p className="text-lg text-gray-500 dark:text-slate-400 max-w-xl mx-auto leading-relaxed min-h-22 sm:min-h-18">
-              {isLoading ? (
-                <span className="inline-block h-5 w-64 bg-gray-100 dark:bg-slate-800 rounded animate-pulse" />
-              ) : (
-                platform?.aboutText ?? t('about.fallbackDesc')
-              )}
+              {t('about.fallbackDesc')}
             </p>
           </motion.div>
 

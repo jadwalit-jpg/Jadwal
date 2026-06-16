@@ -71,11 +71,11 @@ const siteUrl = (() => {
 export const metadata: Metadata = {
   metadataBase: siteUrl,
   title: {
-    default: "Jadwal — Discover and book experiences in Qatar",
-    template: "%s · Jadwal",
+    default: "AL Jadwal — Discover and book experiences in Qatar",
+    template: "%s · AL Jadwal",
   },
   description: "Discover and book experiences in your city.",
-  applicationName: "Jadwal",
+  applicationName: "AL Jadwal",
   manifest: "/site.webmanifest",
   // Per-page canonical = the page's own URL (resolved against metadataBase).
   // Each page can override `metadata.alternates.canonical` explicitly when
@@ -106,8 +106,8 @@ export const metadata: Metadata = {
   },
   openGraph: {
     type: "website",
-    siteName: "Jadwal",
-    title: "Jadwal — Discover and book experiences in Qatar",
+    siteName: "AL Jadwal",
+    title: "AL Jadwal — Discover and book experiences in Qatar",
     description: "Discover and book experiences in your city.",
     locale: "en_US",
     alternateLocale: ["ar_QA"],
@@ -117,13 +117,13 @@ export const metadata: Metadata = {
         url: "/android-chrome-512x512.png",
         width: 512,
         height: 512,
-        alt: "Jadwal",
+        alt: "AL Jadwal",
       },
     ],
   },
   twitter: {
     card: "summary",
-    title: "Jadwal — Discover and book experiences in Qatar",
+    title: "AL Jadwal — Discover and book experiences in Qatar",
     description: "Discover and book experiences in your city.",
     images: ["/android-chrome-512x512.png"],
   },
@@ -168,7 +168,7 @@ export default async function RootLayout({
   const orgJsonLd = {
     "@context": "https://schema.org",
     "@type": "Organization",
-    name: "Jadwal",
+    name: "AL Jadwal",
     url: siteUrl.toString(),
     logo: new URL("/android-chrome-512x512.png", siteUrl).toString(),
     sameAs: ["https://www.instagram.com/jadwal.qtr/"],
@@ -176,7 +176,7 @@ export default async function RootLayout({
   const webSiteJsonLd = {
     "@context": "https://schema.org",
     "@type": "WebSite",
-    name: "Jadwal",
+    name: "AL Jadwal",
     url: siteUrl.toString(),
     potentialAction: {
       "@type": "SearchAction",

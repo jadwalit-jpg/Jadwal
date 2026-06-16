@@ -24,12 +24,12 @@
  */
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTheme } from 'next-themes';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/auth-context';
+import { useLangSwitch } from '@/context/i18n-provider';
 import api from '@/lib/api';
 import { CountryPicker } from '@/components/country-picker';
 import {
@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 
 export default function Navbar({ variant = 'transparent' }: { variant?: 'transparent' | 'solid' } = {}) {
-  const router = useRouter();
+  const { switchLanguage } = useLangSwitch();
   const { user, logout, loading: authLoading } = useAuth();
   // `resolvedTheme` (not `theme`) is the effective light/dark — `theme` can be
   // the literal `'system'`, so `theme === 'dark'` is false even when the page
@@ -122,12 +122,10 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
   }, [open]);
 
   const toggleLanguage = useCallback(() => {
-    // Same pattern as `<Navbar/>` — flip the i18n singleton (re-translates all
-    // useTranslation consumers), then `router.refresh()` so server-rendered
-    // strings (the hero islands) re-render with the new lang cookie.
-    i18n.changeLanguage(isAr ? 'en' : 'ar');
-    router.refresh();
-  }, [i18n, isAr, router]);
+    // Delegate to the shared switcher (i18n-provider): flips the language and
+    // shows the blur + spinner mask while the RSC refresh settles.
+    switchLanguage(isAr ? 'en' : 'ar');
+  }, [switchLanguage, isAr]);
 
   // Unread-count for the Notifications row inside the mobile menu (customer
   // only). *Same `queryKey` as `<NotificationBell/>` uses on the production
@@ -170,14 +168,14 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
         }`}
       >
         <nav className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4 gap-3">
-        {/* Wordmark — switches `Al Jadwal` ↔ `الجدول` with the lang. Gated on
+        {/* Wordmark — switches `AL Jadwal` ↔ `الجدول` with the lang. Gated on
             `mounted` to avoid an SSR mismatch (the cookie may not match the
             client-side i18n state on first paint). */}
         <Link
           href="/"
           className="text-lg sm:text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent shrink-0"
         >
-          {!mounted ? 'Al Jadwal' : isAr ? 'الجدول' : 'Al Jadwal'}
+          {!mounted ? 'AL Jadwal' : isAr ? 'الجدول' : 'AL Jadwal'}
         </Link>
 
         {/* Desktop links — Home / Explore / Offers (+ Become a Vendor for

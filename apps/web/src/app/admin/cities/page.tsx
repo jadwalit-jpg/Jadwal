@@ -262,7 +262,7 @@ function CountriesTab() {
                   className={inputCls}
                 />
                 <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">
-                  Added on top of the activity price at checkout. Jadwal&apos;s revenue; invisible to the vendor.
+                  Added on top of the activity price at checkout. AL Jadwal&apos;s revenue; invisible to the vendor.
                 </p>
               </div>
               <div>

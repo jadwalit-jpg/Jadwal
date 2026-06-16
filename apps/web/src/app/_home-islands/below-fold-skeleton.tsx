@@ -9,7 +9,7 @@
  *   - `home-below-fold-loader.tsx` — the `dynamic({ loading })` state shown
  *     while the below-fold JS chunk downloads → renders `<BelowFoldSkeleton/>`.
  *   - `home-below-fold.tsx` — each section's own `isLoading` branch reuses
- *     the matching piece (`CategoriesRowSkeleton`, `TrendingRowSkeleton`),
+ *     the matching piece (`TrendingRowSkeleton`),
  *     and the Featured / Near-You grids reuse the same `ActivityCardSkeleton`
  *     grid (`CardGridSkeleton`). So when the chunk's loading skeleton is
  *     replaced by the real component, the skeleton it shows is identical —
@@ -24,20 +24,6 @@ import { ActivityCardSkeleton } from '@/components/ui/activity-card-skeleton';
 function HeaderBar({ wide = false }: { wide?: boolean }) {
   return (
     <div className={`jadwal-skeleton rounded-lg h-7 mb-6 md:mb-8 ${wide ? 'w-64 max-w-[80%]' : 'w-48 max-w-[70%]'}`} />
-  );
-}
-
-/** Mirrors the `<CategoryPill>` row in home-below-fold's "Browse by category". */
-export function CategoriesRowSkeleton() {
-  return (
-    <div className="flex gap-4 md:gap-6 overflow-hidden pb-2">
-      {Array.from({ length: 8 }).map((_, i) => (
-        <div key={i} className="shrink-0 w-[88px] flex flex-col items-center gap-2">
-          <div className="h-20 w-20 jadwal-skeleton rounded-full" />
-          <div className="h-3 w-16 jadwal-skeleton rounded" />
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -77,13 +63,6 @@ export function CardGridSkeleton() {
 export function BelowFoldSkeleton() {
   return (
     <>
-      {/* Browse by category */}
-      <section className="bg-jadwal-bg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 md:py-16">
-          <HeaderBar />
-          <CategoriesRowSkeleton />
-        </div>
-      </section>
       {/* Trending */}
       <section className="bg-jadwal-bg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
@@ -105,7 +84,7 @@ export function BelowFoldSkeleton() {
           <CardGridSkeleton />
         </div>
       </section>
-      {/* Why Jadwal + CTA are static (no queries) — just reserve their height
+      {/* Why AL Jadwal + CTA are static (no queries) — just reserve their height
           with the right backgrounds so the footer doesn't jump when the real
           component mounts and renders them. */}
       <div className="bg-jadwal-surface-muted border-y border-jadwal-border-subtle h-[260px] md:h-[280px]" />

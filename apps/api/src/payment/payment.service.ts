@@ -169,7 +169,7 @@ export class PaymentService {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/x-www-form-urlencoded',
-                  'User-Agent': 'Jadwal-API/1.0',
+                  'User-Agent': 'AL Jadwal-API/1.0',
                 },
                 body: body.toString(),
                 signal,
@@ -324,7 +324,7 @@ export class PaymentService {
       // crypto.randomUUID() satisfies the "random string" requirement
       // without exposing any internal state.
       SIGNATURE: crypto.randomUUID(),
-      VERSION: 'Jadwal-1.0',
+      VERSION: 'AL Jadwal-1.0',
       TXNDESC: params.description,
       SUCCESS_URL: this.returnUrl,
       FAILURE_URL: this.returnUrl,

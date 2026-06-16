@@ -589,7 +589,7 @@ export class CatalogController {
         aboutText: true,
       },
     });
-    const data = settings ?? { platformName: 'Jadwal', supportEmail: null, supportPhone: null, aboutText: null };
+    const data = settings ?? { platformName: "AL Jadwal", supportEmail: null, supportPhone: null, aboutText: null };
     await this.refCache.set('platform-info', 'default', data);
     return data;
   }

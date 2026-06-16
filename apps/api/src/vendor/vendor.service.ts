@@ -3,6 +3,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateActivityDto } from './dto/create-activity.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
+import { CreateActivityBlockDto } from './dto/create-activity-block.dto';
 import { VendorPaginationDto } from './dto/vendor-query.dto';
 import { Prisma } from '@prisma/client';
 import { NotificationService } from '../common/services/notification.service';
@@ -10,6 +11,7 @@ import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { refundCouponUsage } from '../bookings/bookings.service';
+import { createActivityBlockCore } from './activity-blocks.logic';
 
 @Injectable()
 export class VendorService {
@@ -900,6 +902,83 @@ export class VendorService {
     }
 
     return updated;
+  }
+
+  // ─── Activity Blocks (vendor availability locks) ──────────
+  async getActivityBlocks(userId: string, activityId: string) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    // Ownership in the where — same 404 for "not yours" and "doesn't exist".
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    return db.activityBlock.findMany({
+      where: { activityId, deletedAt: null },
+      orderBy: { blockStart: 'asc' },
+      select: { id: true, blockStart: true, blockEnd: true, createdAt: true },
+    });
+  }
+
+  async createActivityBlock(userId: string, activityId: string, dto: CreateActivityBlockDto) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true, vendorId: true, bookingType: true, checkInTime: true, checkOutTime: true, durationValue: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // All validation + the slot/whole-day/recurring branches live in the shared
+    // core so the vendor and admin flows can never validate differently.
+    const result = await createActivityBlockCore(db, activity, dto);
+
+    // Bust the availability cache so customers see the lock immediately.
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async deleteActivityBlock(userId: string, activityId: string, blockId: string) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // Soft-delete, scoped by activity + vendor; updateMany so a double-delete
+    // (or a foreign blockId) is a clean no-op → 404, never another vendor's row.
+    const res = await db.activityBlock.updateMany({
+      where: { id: blockId, activityId, vendorId: vendor.id, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count === 0) throw new NotFoundException('Block not found');
+
+    void this.availabilityCache.invalidate(activityId);
+    return { id: blockId, removed: true };
+  }
+
+  async deleteActivityBlocksBulk(userId: string, activityId: string, ids: string[]) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // Soft-delete the given ids, scoped to this activity + vendor (foreign or
+    // already-deleted ids are simply not matched). One query → no rate-limit
+    // issues even for a long recurring series.
+    const res = await db.activityBlock.updateMany({
+      where: { id: { in: ids }, activityId, vendorId: vendor.id, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count > 0) void this.availabilityCache.invalidate(activityId);
+    return { removed: res.count };
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {

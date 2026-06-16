@@ -16,6 +16,7 @@ import { VendorSidebar } from '../../../_components/vendor-sidebar';
 import { Check, Loader2, X, BookmarkIcon, AlertCircle, ImagePlus, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import CustomSelect from '@/components/custom-select';
+import ActivityBlocksManager from '@/components/activity-blocks-manager';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
 
 // Heavy widgets — leaflet, canvas, custom time UI — only mount when their
@@ -814,6 +815,18 @@ export default function EditActivityPage() {
                   {activeDays.length === 0 ? t('vendor.activities.wizard.ui.anyDay') : activeDays.join(', ')}
                 </p>
               </div>
+
+              {/* Blocked dates & times — vendor availability locks (edit-only) */}
+              {activity?.id && (
+                <ActivityBlocksManager
+                  activityId={activity.id}
+                  bookingType={form.bookingType as 'HOURLY' | 'DAILY'}
+                  checkInTime={activity.checkInTime}
+                  checkOutTime={activity.checkOutTime}
+                  durationValue={activity.durationValue}
+                  collapsible
+                />
+              )}
 
               {/* Units */}
               <div className="mt-8 pt-6 border-t border-gray-200 dark:border-slate-800">

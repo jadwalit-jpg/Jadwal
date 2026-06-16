@@ -34,6 +34,7 @@ export function makePrismaMock() {
     user:              makeModel(),
     vendor:            makeModel(),
     activity:          makeModel(),
+    activityBlock:     makeModel(),
     booking:           makeModel(),
     payment:           makeModel(),
     review:            makeModel(),

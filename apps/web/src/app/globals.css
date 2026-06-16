@@ -386,3 +386,19 @@ body {
   animation: cloud-drift-mid 30s linear infinite;
   will-change: transform;
 }
+
+/* ──────────────────────────────────────────────────────────────
+   Sidebar scroll region (admin + vendor nav): NO visible scrollbar.
+   The bar is fully hidden — scrolling still works via wheel, touch,
+   trackpad, and keyboard. Removes the right-edge bar that felt out of
+   place on the menu, with zero layout shift (no reserved gutter).
+   ────────────────────────────────────────────────────────────── */
+.scrollbar-slim {
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* legacy Edge / IE */
+}
+.scrollbar-slim::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;                /* Chromium / WebKit / Safari */
+}

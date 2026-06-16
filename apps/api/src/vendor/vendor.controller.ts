@@ -23,6 +23,8 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/interfaces/request-user.interface';
 import { CreateActivityDto } from './dto/create-activity.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
+import { CreateActivityBlockDto } from './dto/create-activity-block.dto';
+import { BulkDeleteBlocksDto } from './dto/bulk-delete-blocks.dto';
 import { VendorPaginationDto } from './dto/vendor-query.dto';
 import { UpdateVendorSettingsDto } from './dto/update-settings.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -93,6 +95,45 @@ export class VendorController {
   @Throttle(RATE_LIMIT_CALLBACK)
   toggleActivityStatus(@CurrentUser() user: RequestUser, @Param('id') id: string) {
     return this.vendorService.toggleActivityStatus(user.id, id);
+  }
+
+  // ─── Activity Blocks (availability locks) ─────────────────
+  // List inherits the class RATE_LIMIT_VENDOR (60/min); mutations use
+  // RATE_LIMIT_WRITE (10/min) like the other vendor writes. Ownership is
+  // enforced in the service (activity scoped by vendorId).
+  @Get('activities/:id/blocks')
+  getActivityBlocks(@CurrentUser() user: RequestUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.vendorService.getActivityBlocks(user.id, id);
+  }
+
+  @Post('activities/:id/blocks')
+  @Throttle(RATE_LIMIT_WRITE)
+  createActivityBlock(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateActivityBlockDto,
+  ) {
+    return this.vendorService.createActivityBlock(user.id, id, dto);
+  }
+
+  @Delete('activities/:id/blocks/:blockId')
+  @Throttle(RATE_LIMIT_WRITE)
+  deleteActivityBlock(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('blockId', ParseUUIDPipe) blockId: string,
+  ) {
+    return this.vendorService.deleteActivityBlock(user.id, id, blockId);
+  }
+
+  @Post('activities/:id/blocks/bulk-delete')
+  @Throttle(RATE_LIMIT_WRITE)
+  deleteActivityBlocksBulk(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: BulkDeleteBlocksDto,
+  ) {
+    return this.vendorService.deleteActivityBlocksBulk(user.id, id, dto.ids);
   }
 
   // ─── Bookings ─────────────────────────────────────────────

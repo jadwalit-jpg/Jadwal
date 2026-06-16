@@ -1,4 +1,5 @@
 import type { MetadataRoute } from 'next';
+import { launchedLandings } from '@/lib/seo-landings';
 
 /**
  * sitemap.xml — static routes + dynamic per-activity / per-category URLs.
@@ -85,6 +86,17 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     changeFrequency: r.changeFrequency,
     priority: r.priority,
   }));
+
+  // Keyword SEO landing pages — only the LAUNCHED ones (real inventory). Dormant
+  // (noindex) landings are intentionally excluded so nothing thin gets indexed.
+  for (const l of launchedLandings()) {
+    entries.push({
+      url: `${BASE_URL}/${l.slug}`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: l.priority,
+    });
+  }
 
   const dynamic = await fetchSitemapUrls();
   if (dynamic) {

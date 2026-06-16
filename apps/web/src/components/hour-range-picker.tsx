@@ -1,12 +1,14 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
+import { Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export interface HourRangePickerSlot {
   slotStart: string;
   slotEnd: string;
   isPast?: boolean;
+  isBlocked?: boolean;
   capacity?: number | null;
   booked?: number;
   available?: number;
@@ -29,6 +31,8 @@ export interface HourRangePickerProps {
     selectEnd?: string;
     clear?: string;
     hint?: string;
+    blocked?: string;
+    blockedLegend?: string;
   };
 }
 
@@ -91,6 +95,18 @@ export function HourRangePicker({
     return set;
   }, [slots]);
 
+  // Ticks whose slot is unavailable specifically because the vendor LOCKED it
+  // (not capacity, not past, not too-close-to-closing). Shown with a distinct
+  // lock treatment so customers can tell a vendor block apart from a slot that
+  // simply doesn't fit before closing time.
+  const blockedByStart = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of slots) if (s.isBlocked) set.add(s.slotStart);
+    return set;
+  }, [slots]);
+
+  const anyBlocked = blockedByStart.size > 0;
+
   // A tick is a valid START if the activity fits before close, the slot
   // starting here isn't in the past, and it has capacity for the guest count.
   const isValidStart = useCallback(
@@ -98,11 +114,15 @@ export function HourRangePicker({
       const m = toMinutes(hh);
       if (m + unitMins > checkOutMins) return false;
       if (pastByStart.has(hh)) return false;
+      // Vendor-locked start slot — can't begin a booking here. (Capacity is
+      // intact, so isValidEnd still lets a booking starting earlier span across
+      // it; the lock only forbids STARTING at this slot.)
+      if (blockedByStart.has(hh)) return false;
       const a = availByStart.get(hh);
       if (a !== null && a !== undefined && a < guests) return false;
       return true;
     },
-    [unitMins, checkOutMins, pastByStart, availByStart, guests],
+    [unitMins, checkOutMins, pastByStart, blockedByStart, availByStart, guests],
   );
 
   // A tick is a valid END from a given start iff the resulting window is
@@ -248,11 +268,20 @@ export function HourRangePicker({
             enabled = isValidEnd(hh, start);
           }
 
+          // Vendor-locked: the slot STARTING at this hour overlaps a block the
+          // vendor set, so it can't be a start. Given its own rose+lock
+          // treatment so it reads as "blocked" rather than "doesn't fit".
+          // Only when the cell is genuinely unusable — a locked hour can still
+          // be a valid END of an earlier booking (e.g. 9→11 when only 12–13 is
+          // locked), and then it stays a normal, clickable cell.
+          const isLocked =
+            blockedByStart.has(hh) && !enabled && !isStart && !isEnd && !inSelectedRange;
           // "Unavailable" means the cell would never be bookable (past, over
           // capacity, beyond close). Shown as a greyed-out chip. Distinct
-          // from "inside range, not clickable" which uses the range color.
+          // from "inside range, not clickable" which uses the range color, and
+          // from "locked" which gets the rose treatment below.
           const isUnreachable =
-            !enabled && !inSelectedRange && !inPreviewRange && !isPreviewEnd && !isStart && !isEnd;
+            !enabled && !isLocked && !inSelectedRange && !inPreviewRange && !isPreviewEnd && !isStart && !isEnd;
 
           return (
             <button
@@ -263,7 +292,7 @@ export function HourRangePicker({
               onClick={() => handleClick(hh)}
               onMouseEnter={() => setHoverHour(hh)}
               onFocus={() => setHoverHour(hh)}
-              aria-label={formatTime(hh)}
+              aria-label={isLocked ? `${formatTime(hh)} — ${labels?.blocked ?? 'blocked by host'}` : formatTime(hh)}
               aria-pressed={isStart || isEnd}
               className={cn(
                 'min-w-[62px] px-3 py-2.5 rounded-lg border-2 text-sm font-semibold tabular-nums transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400',
@@ -277,6 +306,9 @@ export function HourRangePicker({
                 (inPreviewRange || isPreviewEnd) &&
                   !(isStart || isEnd || inSelectedRange) &&
                   'border-sky-200 bg-sky-50 text-sky-600 dark:bg-sky-900/20 dark:border-sky-800 dark:text-sky-300',
+                // Vendor-locked — rose tint with a lock glyph
+                isLocked &&
+                  'cursor-not-allowed bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/60 text-rose-400 dark:text-rose-300/70',
                 // Truly unavailable (past, no capacity, beyond close) — muted
                 isUnreachable &&
                   'opacity-40 cursor-not-allowed bg-gray-50 dark:bg-slate-900/30 border-gray-100 dark:border-slate-800 text-gray-400',
@@ -290,11 +322,25 @@ export function HourRangePicker({
                   'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 hover:border-sky-400 text-gray-900 dark:text-white',
               )}
             >
-              {formatTime(hh)}
+              {isLocked ? (
+                <span className="inline-flex items-center justify-center gap-1">
+                  <Lock className="h-3 w-3 shrink-0" />
+                  {formatTime(hh)}
+                </span>
+              ) : (
+                formatTime(hh)
+              )}
             </button>
           );
         })}
       </div>
+
+      {anyBlocked && (
+        <p className="mt-3 inline-flex items-center gap-1.5 text-[11px] text-rose-500 dark:text-rose-300/80">
+          <Lock className="h-3 w-3 shrink-0" />
+          {labels?.blockedLegend ?? 'Times marked with a lock are blocked by the host.'}
+        </p>
+      )}
 
       <p className="mt-3 text-[11px] text-gray-400 dark:text-slate-500">
         {labels?.hint ??

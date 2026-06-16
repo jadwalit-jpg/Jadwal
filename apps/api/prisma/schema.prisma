@@ -179,6 +179,7 @@ model Vendor {
   bookings        Booking[]
   coupons         Coupon[]
   payoutRequests  PayoutRequest[]
+  activityBlocks  ActivityBlock[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   /// §B9 — soft-delete marker. Same contract as User.deletedAt: keeps
@@ -310,6 +311,7 @@ model Activity {
   bookings          Booking[]
   reviews           Review[]
   likes             Like[]
+  blocks            ActivityBlock[]
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   /// §B9 — soft-delete marker. Cascade-set when the parent Vendor is
@@ -348,6 +350,30 @@ enum ActivityStatus {
   ACTIVE
   INACTIVE
   BLOCKED
+}
+
+/// Vendor-managed availability lock. A block makes the UTC interval
+/// [blockStart, blockEnd) unbookable on an activity — maintenance, a
+/// private event, or a midday break on an hourly activity. The
+/// availability endpoints + createBooking treat any slot/day overlapping
+/// an active (deletedAt IS NULL) block as unavailable. NOTE: recurring
+/// weekday closures are Activity.activeDays, not this. Soft-deleted so the
+/// audit trail (who blocked what, when) survives a vendor un-blocking.
+model ActivityBlock {
+  id           String    @id @default(uuid())
+  activityId   String
+  activity     Activity  @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  vendorId     String
+  vendor       Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  blockStart   DateTime  // inclusive (UTC)
+  blockEnd     DateTime  // exclusive (UTC)
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  @@index([activityId])
+  @@index([vendorId])
+  @@index([activityId, blockStart])
+  @@map("activity_blocks")
 }
 
 model Booking {
@@ -621,7 +647,7 @@ enum CouponStatus {
 model PlatformSettings {
   id                    String   @id @default("default")
   defaultCommissionPct  Decimal  @default(10) @db.Decimal(5, 2)
-  platformName          String   @default("Jadwal")
+  platformName          String   @default("AL Jadwal")
   supportEmail          String?
   supportPhone          String?
   aboutText             String?
