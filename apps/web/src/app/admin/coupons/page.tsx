@@ -249,7 +249,7 @@ export default function AdminCouponsPage() {
                   </tr>
                 )}
                 {filteredCoupons?.map((coupon) => {
-                  const badge = statusConfig[coupon.status];
+                  const badge = statusConfig[coupon.status] ?? statusConfig.PENDING;
                   const BadgeIcon = badge.icon;
                   return (
                     <tr key={coupon.id} className="hover:bg-gray-50/50 dark:hover:bg-slate-800/30 transition-colors">
