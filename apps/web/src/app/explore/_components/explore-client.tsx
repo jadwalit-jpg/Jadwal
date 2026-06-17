@@ -238,12 +238,15 @@ function ExploreContent({
     staleTime: 2 * 60 * 1000,
   });
 
-  // Client-side rating filter (Prisma doesn't support aggregation in WHERE)
+  // Client-side rating filter (Prisma doesn't support aggregation in WHERE).
+  // The UI offers star thresholds (3+/4+/4.5+) → filter by avgRating, not by
+  // review count. Unrated activities (avgRating null → 0) never match a min
+  // threshold, which is correct. (Pre-existing bug surfaced by CodeRabbit.)
   const rawActivities = activitiesData?.data ?? [];
   const activities = useMemo(() => {
     if (!ratingFilter) return rawActivities;
-    const minReviews = parseFloat(ratingFilter);
-    return rawActivities.filter(a => a._count.reviews >= minReviews);
+    const minRating = parseFloat(ratingFilter);
+    return rawActivities.filter((a) => (a.avgRating ?? 0) >= minRating);
   }, [rawActivities, ratingFilter]);
   const totalPages = activitiesData?.totalPages ?? 0;
 

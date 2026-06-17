@@ -16,9 +16,7 @@ import {
   Sparkles,
   Star,
   User,
-  Users,
   X,
-  XCircle,
 } from 'lucide-react';
 import { useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
