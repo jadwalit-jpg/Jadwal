@@ -1,23 +1,25 @@
+'use client';
+
 /**
- * Hero h1 + subtitle — server component (no `'use client'`): renders the
- * translated copy from the lang cookie at request time, ships zero JS, paints
- * with the initial HTML. It used to be a client island so the title
- * re-translated synchronously on a language toggle — but `navbar.tsx`'s
- * `toggleLanguage` already calls `router.refresh()`, which re-renders this with
- * the new language; and since `/home` is edge-cached, that RSC refresh request
- * carries the updated `jadwal_lang` cookie so it bypasses the cache and gets a
- * fresh render. Moving it server-side removes a client component from `/home`'s
- * hydration — part of cutting mobile INP.
+ * Hero h1 + subtitle. CLIENT component (useTranslation) so it re-translates
+ * INSTANTLY when the language is toggled.
  *
- * LCP: the boat (`priority` Image) stays the preloaded LCP candidate; the h1
- * text is in the SSR'd HTML either way.
+ * It was briefly a server component (read the `jadwal_lang` cookie + getServerT)
+ * to shave hydration JS — but that has a language-toggle bug: `/` is cached
+ * (`private, max-age=300`, see middleware.ts) and that cache does NOT vary on the
+ * cookie, so the `router.refresh()` a toggle fires gets served the STALE
+ * old-language RSC. The server-rendered hero therefore stayed in the previous
+ * language after a switch, while the rest of the site (client-translated) updated
+ * fine. Rendering client-side re-renders from i18n state on `languageChanged`,
+ * with no cache/refresh dependency. The text is still in the SSR HTML (client
+ * components are server-rendered), so SEO/LCP are unaffected — the boat Image
+ * stays the LCP candidate. DO NOT move this back to a server component.
  */
 
-import { readLangCookieServer } from '@/lib/lang-cookie.server';
-import { getServerT } from '@/lib/i18n.server';
+import { useTranslation } from 'react-i18next';
 
-export async function HeroTitle() {
-  const t = getServerT(await readLangCookieServer());
+export function HeroTitle() {
+  const { t } = useTranslation();
   return (
     <>
       <h1 className="font-display text-4xl sm:text-5xl md:text-6xl font-semibold ltr:tracking-[-1.2px] text-white leading-[1.05] max-w-4xl mx-auto drop-shadow-lg ltr:text-balance">

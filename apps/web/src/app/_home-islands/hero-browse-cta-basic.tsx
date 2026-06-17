@@ -1,17 +1,18 @@
+'use client';
+
 /**
- * Solid-pill "All Activities" CTA — for `/home-test`. Lighter than the glass
- * `<HeroBrowseCta/>` used on `/home`: solid white bg, no `backdrop-blur`, no
- * `animate-bounce`. Matches the same "clean basic look" as `<NavbarBasic/>`'s
- * mobile menu rows (solid bg, dark text, no glass). Server-rendered (reads the
- * lang cookie, translates the label via `getServerT`); ships zero JS.
+ * Solid-pill "All Activities" CTA. CLIENT component (useTranslation) so the label
+ * re-translates INSTANTLY on a language toggle. (Was server-rendered from the
+ * lang cookie, but `/`'s `private, max-age=300` cache serves a stale RSC on
+ * router.refresh, so it stayed in the old language after a switch — see
+ * hero-title.tsx for the full explanation. DO NOT move back to server.)
  */
 
 import Link from 'next/link';
-import { readLangCookieServer } from '@/lib/lang-cookie.server';
-import { getServerT } from '@/lib/i18n.server';
+import { useTranslation } from 'react-i18next';
 
-export async function HeroBrowseCtaBasic() {
-  const t = getServerT(await readLangCookieServer());
+export function HeroBrowseCtaBasic() {
+  const { t } = useTranslation();
   return (
     <Link
       href="/explore"
