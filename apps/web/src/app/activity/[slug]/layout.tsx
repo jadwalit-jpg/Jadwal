@@ -23,9 +23,10 @@
 
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
+import { notFound } from 'next/navigation';
 import { JsonLd } from '@/components/json-ld';
+import { fetchActivityDetail } from '@/lib/activity-detail-fetch';
 
-const META_FETCH_TIMEOUT_MS = 3000;
 const DESCRIPTION_MAX = 160;
 
 interface PublicActivity {
@@ -129,32 +130,6 @@ function siteOrigin(): string {
   }
 }
 
-/**
- * Fetch the public activity record. Shared by generateMetadata and the
- * layout body — Next.js dedupes the two identical fetches into one request.
- */
-async function fetchActivity(slug: string): Promise<PublicActivity | null> {
-  // Server-side fetch needs an ABSOLUTE base. NEXT_PUBLIC_API_URL is the
-  // relative "/api" proxy path in prod (no origin on the server → fetch throws →
-  // OG/JSON-LD silently degrade). API_PROXY_TARGET is the absolute internal API
-  // URL set in prod (see next.config.ts); prefer it for this server-side call.
-  const internalUrl = process.env.INTERNAL_API_URL || process.env.API_PROXY_TARGET || process.env.NEXT_PUBLIC_API_URL;
-  if (!internalUrl) return null;
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), META_FETCH_TIMEOUT_MS);
-    const res = await fetch(
-      `${internalUrl}/catalog/activities/${encodeURIComponent(slug)}`,
-      { signal: controller.signal, next: { revalidate: 60 }, headers: { Accept: 'application/json' } },
-    );
-    clearTimeout(timer);
-    if (res.ok) return (await res.json()) as PublicActivity;
-  } catch {
-    /* network / timeout / non-2xx — caller falls back */
-  }
-  return null;
-}
-
 export async function generateMetadata({
   params,
 }: {
@@ -172,8 +147,15 @@ export async function generateMetadata({
         : 'Discover and book the best activities and experiences in the Gulf',
   };
 
-  const activity = await fetchActivity(slug);
-  if (!activity) return fallback;
+  const result = await fetchActivityDetail(slug);
+  // Genuine 404 → real notFound() (called in generateMetadata, BEFORE the page
+  // streams, so the 404 status sticks where Next allows it; the root
+  // not-found.tsx is noindex so even a soft-404 on this dynamic route can't be
+  // indexed). A transient API blip falls back to brand metadata — never 404 a
+  // valid activity.
+  if (result.status === 'notfound') notFound();
+  if (result.status === 'error') return fallback;
+  const activity = result.activity as unknown as PublicActivity;
 
   const title =
     (lang === 'ar' ? activity.titleAr : activity.titleEn) || activity.titleEn || 'AL Jadwal';
@@ -217,10 +199,13 @@ export default async function ActivityLayout({
   const { slug } = await params;
   const cookieStore = await cookies();
   const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
-  const activity = await fetchActivity(slug);
+  const result = await fetchActivityDetail(slug);
 
-  // No activity (404 / API down) → render the page without schema.
-  if (!activity) return <>{children}</>;
+  // Genuine 404 → real notFound() (the slug doesn't resolve to an ACTIVE
+  // listing). A transient API blip → render the page without schema (graceful).
+  if (result.status === 'notfound') notFound();
+  if (result.status === 'error') return <>{children}</>;
+  const activity = result.activity as unknown as PublicActivity;
 
   const origin = siteOrigin();
   const activityUrl = `${origin}/activity/${slug}`;
