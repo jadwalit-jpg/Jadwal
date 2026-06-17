@@ -233,7 +233,19 @@ export class UploadService {
           cb(null, `${unique}${safeExt}`);
         },
       }),
-      limits: { fileSize: maxSize },
+      // Defense-in-depth against the Multer DoS advisories (GHSA-72gw-mp4g-v24j
+      // "deeply nested field names" + GHSA-3p4h-7m6x-2hcm) while the version bump
+      // to multer 2.2.0 is blocked upstream (NestJS pins 2.1.1; see deploy notes).
+      // These endpoints upload ONE image with a few metadata fields, so finite
+      // caps neutralise the abuse vector without affecting legitimate uploads.
+      limits: {
+        fileSize: maxSize,
+        files: 1,            // FileInterceptor('file') — exactly one file
+        fields: 20,          // cap non-file fields (forms here send only a handful)
+        parts: 25,           // cap total multipart parts (fields + files)
+        fieldNameSize: 200,  // cap field-NAME length — blunts deeply-nested names
+        headerPairs: 100,    // cap multipart header pairs
+      },
       fileFilter: (_req: any, file: any, cb: any) => {
         if (!ALLOWED_MIME.includes(file.mimetype)) {
           return cb(new BadRequestException('Only JPEG, PNG, WebP, or GIF images are allowed'), false);
