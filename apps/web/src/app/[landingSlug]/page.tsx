@@ -13,6 +13,7 @@
 
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
+import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import Navbar from '@/components/navbar';
@@ -20,15 +21,16 @@ import Footer from '@/components/footer';
 import { ActivityCard, type ActivityCardActivity } from '@/components/ui';
 import { JsonLd } from '@/components/json-ld';
 import { fetchActivities } from '@/lib/seo-fetch';
-import {
-  SEO_LANDINGS,
-  getLanding,
-  landingCopy,
-  type LandingLang,
-} from '@/lib/seo-landings';
+import { getLanding, landingCopy, type LandingLang } from '@/lib/seo-landings';
 
-export const dynamicParams = false; // only configured slugs render; everything else 404s
-export const revalidate = 3600; // ISR — regenerate hourly
+// Fully dynamic: the page reads the `jadwal_lang` cookie to render EN/AR
+// server-side, so it MUST render per request. We deliberately do NOT use
+// generateStaticParams + dynamicParams=false — that prerenders each slug ONCE at
+// build (empty cookie → English) and serves that frozen EN HTML to every visitor
+// incl. Arabic users (and lets Cloudflare edge-cache one language). The slug
+// allow-list is enforced at runtime via notFound() instead. The activity fetch
+// keeps its own `next: { revalidate: 3600 }`, so the data is still cached hourly.
+export const dynamic = 'force-dynamic';
 
 const GRID_LIMIT = 12;
 
@@ -45,10 +47,6 @@ async function readLang(): Promise<LandingLang> {
   return c.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
 }
 
-export function generateStaticParams(): { landingSlug: string }[] {
-  return SEO_LANDINGS.map((l) => ({ landingSlug: l.slug }));
-}
-
 export async function generateMetadata({
   params,
 }: {
@@ -56,7 +54,10 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { landingSlug } = await params;
   const landing = getLanding(landingSlug);
-  if (!landing) return { title: 'AL Jadwal' };
+  // Unknown slug → hard 404. Called in generateMetadata (runs BEFORE the page
+  // streams) so the 404 status sticks; calling notFound() only in the streamed
+  // page body yields a soft-404 (200 + not-found UI).
+  if (!landing) notFound();
   const lang = await readLang();
   const copy = landingCopy(landing, lang);
   return {
@@ -73,8 +74,9 @@ export async function generateMetadata({
       siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
       alternateLocale: lang === 'ar' ? ['en_US'] : ['ar_QA'],
+      images: [{ url: '/images/login-bg.webp', width: 1200, height: 630, alt: copy.metaTitle }],
     },
-    twitter: { card: 'summary_large_image', title: copy.metaTitle, description: copy.metaDescription },
+    twitter: { card: 'summary_large_image', title: copy.metaTitle, description: copy.metaDescription, images: ['/images/login-bg.webp'] },
   };
 }
 
@@ -102,7 +104,8 @@ export default async function LandingPage({
   params: Promise<{ landingSlug: string }>;
 }) {
   const { landingSlug } = await params;
-  const landing = getLanding(landingSlug)!; // dynamicParams=false guarantees a match
+  const landing = getLanding(landingSlug);
+  if (!landing) notFound(); // unknown slug → 404 (replaces the old dynamicParams=false gate)
   const lang = await readLang();
   const isAr = lang === 'ar';
   const copy = landingCopy(landing, lang);

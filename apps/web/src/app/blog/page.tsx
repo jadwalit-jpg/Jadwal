@@ -36,8 +36,9 @@ export async function generateMetadata(): Promise<Metadata> {
       type: 'website',
       siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
+      images: [{ url: '/images/login-bg.webp', width: 1200, height: 630, alt: title }],
     },
-    twitter: { card: 'summary_large_image', title, description },
+    twitter: { card: 'summary_large_image', title, description, images: ['/images/login-bg.webp'] },
   };
 }
 

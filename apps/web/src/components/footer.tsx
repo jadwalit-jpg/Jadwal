@@ -99,6 +99,7 @@ export default function Footer() {
                   {t('footer.trending')}
                 </button>
               </li>
+              <li><Link href="/blog" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.guides')}</Link></li>
             </ul>
           </div>
 

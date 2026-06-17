@@ -8,16 +8,20 @@
 
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
+import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 import { JsonLd } from '@/components/json-ld';
-import { SEO_GUIDES, getGuide, tr } from '@/lib/seo-guides';
+import { getGuide, tr } from '@/lib/seo-guides';
 import { getLanding, landingCopy, type LandingLang } from '@/lib/seo-landings';
 
-export const dynamicParams = false;
-export const revalidate = 3600;
+// Fully dynamic: reads the `jadwal_lang` cookie to render EN/AR server-side, so it
+// must render per request. We avoid generateStaticParams + dynamicParams=false
+// (that prerenders one frozen language at build and serves it to everyone); the
+// slug allow-list is enforced at runtime via notFound() instead.
+export const dynamic = 'force-dynamic';
 
 function siteOrigin(): string {
   try {
@@ -32,10 +36,6 @@ async function readLang(): Promise<LandingLang> {
   return c.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
 }
 
-export function generateStaticParams(): { slug: string }[] {
-  return SEO_GUIDES.map((g) => ({ slug: g.slug }));
-}
-
 export async function generateMetadata({
   params,
 }: {
@@ -43,7 +43,8 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params;
   const guide = getGuide(slug);
-  if (!guide) return { title: 'AL Jadwal' };
+  // Unknown slug → hard 404, set in generateMetadata (pre-stream) so the status sticks.
+  if (!guide) notFound();
   const lang = await readLang();
   const title = tr(guide.title, lang);
   const description = tr(guide.description, lang);
@@ -61,8 +62,9 @@ export async function generateMetadata({
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
       publishedTime: guide.updated,
       modifiedTime: guide.updated,
+      images: [{ url: '/images/login-bg.webp', width: 1200, height: 630, alt: title }],
     },
-    twitter: { card: 'summary_large_image', title, description },
+    twitter: { card: 'summary_large_image', title, description, images: ['/images/login-bg.webp'] },
   };
 }
 
@@ -72,7 +74,8 @@ export default async function GuidePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const guide = getGuide(slug)!; // dynamicParams=false guarantees a match
+  const guide = getGuide(slug);
+  if (!guide) notFound(); // unknown slug → 404 (replaces the old dynamicParams=false gate)
   const lang = await readLang();
   const isAr = lang === 'ar';
   const origin = siteOrigin();
