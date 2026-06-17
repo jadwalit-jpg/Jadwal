@@ -92,6 +92,12 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# Patch the base image's OpenSSL (libcrypto3/libssl3): node:22-alpine pins an
+# older Alpine whose openssl carries CVE-2026-45447 (HIGH, fixed in 3.5.7-r0),
+# which the deploy's Trivy CRITICAL,HIGH gate blocks on. Upgrade just these two
+# packages (runner stage only — this is the image that ships + gets scanned).
+RUN apk upgrade --no-cache libcrypto3 libssl3
+
 # Security: run as non-root user
 RUN addgroup --system --gid 1001 jadwal && \
     adduser --system --uid 1001 jadwal
