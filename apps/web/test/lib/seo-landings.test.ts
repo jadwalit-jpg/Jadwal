@@ -52,6 +52,7 @@ describe('seo-landings config integrity', () => {
       expect(l.copy?.en?.metaTitle).toBeTruthy();
       expect(l.copy?.en?.metaDescription).toBeTruthy();
       expect(l.copy?.ar?.h1).toBeTruthy();
+      expect(l.copy?.ar?.metaTitle).toBeTruthy();
       expect(l.copy?.ar?.metaDescription).toBeTruthy();
     }
   });

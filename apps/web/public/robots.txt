@@ -19,10 +19,12 @@ Disallow: /reset-password
 Disallow: /verify-email
 # Authenticated / per-user / non-content paths (also noindex per-page).
 Disallow: /profile
+Disallow: /account
 Disallow: /account/
 Disallow: /bookings
 Disallow: /likes
 Disallow: /notifications
+Disallow: /payment
 Disallow: /payment/
 Disallow: /maintenance
 

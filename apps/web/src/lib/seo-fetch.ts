@@ -65,15 +65,14 @@ export async function fetchActivities(
     if (v !== undefined && v !== '') qs.set(k, String(v));
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     const res = await fetch(`${base}/catalog/activities?${qs.toString()}`, {
       signal: controller.signal,
       next: { revalidate: REVALIDATE_SECONDS },
       headers: { Accept: 'application/json' },
     });
-    clearTimeout(timer);
     if (res.ok) {
       const json = await res.json();
       return {
@@ -83,6 +82,8 @@ export async function fetchActivities(
     }
   } catch {
     /* timeout / network / non-2xx → graceful empty */
+  } finally {
+    clearTimeout(timer); // always clear the abort timer, even when fetch throws
   }
   return { data: [], total: 0 };
 }

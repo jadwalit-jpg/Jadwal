@@ -44,17 +44,19 @@ export function I18nProvider({
   const router = useRouter();
   const [isSwitching, startTransition] = useTransition();
 
-  // SSR: sync the singleton to the request's language DURING render so the
-  // server HTML matches what the client renders on hydration. Effects don't run
-  // on the server, so without this the server would render the default language
-  // and the client the cookie language → hydration mismatch (text auto-patches,
-  // but translated *attributes* like WhatsAppFloat's href/aria-label do NOT).
-  // Safe here: the server renders once per request (no StrictMode double-pass,
-  // no router.refresh), so it can't trigger the re-entrant cascade that the
-  // CLIENT render could — that's why the client path stays in the effect below.
-  if (typeof window === 'undefined' && i18n.language !== desired) {
-    void i18n.changeLanguage(desired);
-  }
+  // SSR: render this request's language WITHOUT mutating the shared module
+  // singleton. The server is ONE Node process serving concurrent requests off a
+  // single i18n instance; calling i18n.changeLanguage() during render lets one
+  // request's language leak into another rendering at the same instant (an EN
+  // request could flip the singleton mid-render of a concurrent AR request, and
+  // vice-versa). Instead, each SSR render gets its own short-lived clone fixed to
+  // `desired` (resources are shared, so it's cheap). The CLIENT keeps using the
+  // singleton (synced by the layout effect below), so hydration still matches:
+  // server HTML and first client render both resolve `desired`.
+  const renderI18n =
+    typeof window === 'undefined' && i18n.language !== desired
+      ? i18n.cloneInstance({ lng: desired })
+      : i18n;
 
   // Sync the i18n singleton to the server-resolved language, then mirror the
   // result onto <html lang dir>. This runs in a *layout* effect (before paint)
@@ -95,7 +97,7 @@ export function I18nProvider({
   );
 
   return (
-    <I18nextProvider i18n={i18n}>
+    <I18nextProvider i18n={renderI18n}>
       <LangSwitchContext.Provider value={{ switchLanguage, isSwitching }}>
         {children}
         {/* Language-switch mask: blurs the page + shows a spinner while the RSC

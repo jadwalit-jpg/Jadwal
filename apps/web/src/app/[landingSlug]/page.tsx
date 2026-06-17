@@ -87,7 +87,7 @@ function toCard(a: Awaited<ReturnType<typeof fetchActivities>>['data'][number]):
     slug: a.slug,
     titleEn: a.titleEn,
     titleAr: a.titleAr,
-    pricePerPerson: Number(a.pricePerPerson ?? 0),
+    pricePerPerson: Number.isFinite(Number(a.pricePerPerson)) ? Number(a.pricePerPerson) : 0,
     country: a.country?.currencyCode ? { currencyCode: a.country.currencyCode } : null,
     city: a.city ?? null,
     vendor: a.vendor ?? null,

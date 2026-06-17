@@ -55,7 +55,7 @@ async function buildBookingsSut() {
   const prisma = makePrismaMock();
   const cache = makeAvailabilityCacheMock();
   const config = makeConfigMock({
-    RESERVATION_WINDOW_MINUTES: '15', BOOKING_MAX_ADVANCE_YEARS: '2', REDIS_LOCK_TTL_MS: '30000',
+    RESERVATION_WINDOW_MINUTES: '15', BOOKING_MAX_ADVANCE_MONTHS: '6', REDIS_LOCK_TTL_MS: '30000',
   });
   const mod = await Test.createTestingModule({
     providers: [
