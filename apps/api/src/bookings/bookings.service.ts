@@ -1273,6 +1273,8 @@ export class BookingsService {
                   discountType: true,
                   discountValue: true,
                   maxDiscount: true,
+                  usageLimit: true,
+                  usedCount: true,
                 },
               },
             },
@@ -1303,6 +1305,18 @@ export class BookingsService {
           // Mark voucher as used + increment coupon usage count
           await tx.claimedCoupon.update({ where: { id: dto.voucherId }, data: { used: true } });
           await tx.coupon.update({ where: { id: claimed.coupon.id }, data: { usedCount: { increment: 1 } } });
+          // Auto-expire the coupon once its usage limit is reached so no further
+          // bookings can slip through even if usedCount is later decremented by a
+          // cancellation. Once the cap is hit the coupon is permanently closed.
+          if (
+            claimed.coupon.usageLimit != null &&
+            claimed.coupon.usedCount + 1 >= claimed.coupon.usageLimit
+          ) {
+            await tx.coupon.update({
+              where: { id: claimed.coupon.id },
+              data: { status: 'EXPIRED' },
+            });
+          }
         }
 
         // 6d-ii. Vendor coupon code (typed manually by customer)
@@ -1318,6 +1332,20 @@ export class BookingsService {
           if (now > coupon.validTo) throw new BadRequestException('This coupon has expired');
           if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
             throw new BadRequestException('This coupon has reached its usage limit');
+          }
+
+          // Per-user uniqueness: a customer may only use the same coupon code once
+          // across all their non-cancelled bookings.
+          const priorUse = await tx.booking.findFirst({
+            where: {
+              customerId: userId,
+              couponCode: codeUpper,
+              status: { not: 'CANCELLED' },
+            },
+            select: { id: true },
+          });
+          if (priorUse) {
+            throw new BadRequestException('You have already used this coupon');
           }
 
           // Vendor-specific coupon must match activity's vendor
@@ -1352,6 +1380,14 @@ export class BookingsService {
             });
             if (claimed.count === 0) {
               throw new BadRequestException('This coupon has reached its usage limit');
+            }
+            // Auto-expire once the cap is hit so no further uses can slip through,
+            // even if a cancellation later decrements usedCount.
+            if (coupon.usedCount + 1 >= coupon.usageLimit) {
+              await tx.coupon.update({
+                where: { id: coupon.id },
+                data: { status: 'EXPIRED' },
+              });
             }
           } else {
             await tx.coupon.update({
