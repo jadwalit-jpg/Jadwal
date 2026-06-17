@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Lock } from 'lucide-react';
 import api from '@/lib/api';
-import { type Block, buildDisplay, formatBlock } from '@/lib/activity-blocks';
+import { type Block, buildDisplay, formatBlock, weekdayLabel } from '@/lib/activity-blocks';
 
 /**
  * Read-only summary of an activity's availability blocks, shown in the expanded
@@ -14,7 +14,7 @@ import { type Block, buildDisplay, formatBlock } from '@/lib/activity-blocks';
  * row; manage them on the activity's edit page.
  */
 export default function ActivityBlocksSummary({ activityId }: { activityId: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const { data: blocks = [], isLoading } = useQuery<Block[]>({
     queryKey: ['vendor-activity-blocks', activityId],
@@ -43,7 +43,7 @@ export default function ActivityBlocksSummary({ activityId }: { activityId: stri
           <span className="text-start">
             {it.kind === 'single'
               ? formatBlock(it.block)
-              : `${t('vendor.activities.wizard.blocked.every', 'Every')} ${it.weekday} · ${it.first} → ${it.last} (${it.count})`}
+              : `${t('vendor.activities.wizard.blocked.every', 'Every')} ${weekdayLabel(it.weekdayIndex, i18n.language)} · ${it.first} → ${it.last} (${it.count})`}
           </span>
         </div>
       ))}

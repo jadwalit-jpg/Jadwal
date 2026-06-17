@@ -10,9 +10,17 @@ export interface Block {
 
 export type DisplayItem =
   | { kind: 'single'; block: Block }
-  | { kind: 'series'; key: string; weekday: string; first: string; last: string; count: number; ids: string[] };
+  | { kind: 'series'; key: string; weekdayIndex: number; first: string; last: string; count: number; ids: string[] };
 
-const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// Localized weekday name for a 0–6 index (0 = Sunday, matching Date.getUTCDay()).
+// 2023-01-01 was a Sunday, so Date.UTC(2023,0,1+index) lands on the target weekday;
+// Intl renders it in the caller's locale (Arabic UI → Arabic weekday names) instead
+// of the previous hardcoded English, which produced mixed-language output in AR.
+export function weekdayLabel(index: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone: 'UTC' }).format(
+    new Date(Date.UTC(2023, 0, 1 + index)),
+  );
+}
 
 // Render a stored UTC interval back as the date(s)/time the vendor picked.
 // Blocks are stored in UTC (built from the picked Y-M-D + H:M), so we read the
@@ -70,7 +78,7 @@ export function buildDisplay(blocks: Block[]): DisplayItem[] {
     if (list.length === 1) { items.push({ kind: 'single', block: list[0] }); continue; }
     list.sort((a, b) => (a.blockStart < b.blockStart ? -1 : 1));
     items.push({
-      kind: 'series', key: `wd-${wd}`, weekday: WEEKDAY_NAMES[wd],
+      kind: 'series', key: `wd-${wd}`, weekdayIndex: wd,
       first: ymdUTC(list[0].blockStart), last: ymdUTC(list[list.length - 1].blockStart),
       count: list.length, ids: list.map((x) => x.id),
     });

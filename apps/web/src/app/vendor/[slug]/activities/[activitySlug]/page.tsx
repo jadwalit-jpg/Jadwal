@@ -820,7 +820,9 @@ export default function EditActivityPage() {
               {activity?.id && (
                 <ActivityBlocksManager
                   activityId={activity.id}
-                  bookingType={form.bookingType as 'HOURLY' | 'DAILY'}
+                  /* Use the persisted activity config (not the unsaved `form`) so the
+                     manager matches what the block API validates against. */
+                  bookingType={activity.bookingType as 'HOURLY' | 'DAILY'}
                   checkInTime={activity.checkInTime}
                   checkOutTime={activity.checkOutTime}
                   durationValue={activity.durationValue}

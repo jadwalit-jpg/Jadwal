@@ -148,7 +148,7 @@ export function AdminSidebar({
         {/* Navigation.
             When collapsed on desktop we drop the clip (md:overflow-visible) so
             the hover pop-out labels can extend past the narrow rail. */}
-        <nav className={`flex-1 px-3 space-y-1 overflow-y-auto scrollbar-slim ${collapsed ? 'md:overflow-visible' : ''}`}>
+        <nav className={`flex-1 px-3 space-y-1 overflow-y-auto scrollbar-slim ${collapsed ? 'md:overflow-x-clip md:overflow-y-auto' : ''}`}>
           {navItems.map(({ href, label, icon: Icon, comingSoon }) => {
             if (comingSoon) {
               return (

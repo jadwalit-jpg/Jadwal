@@ -10,7 +10,7 @@ import { useToast } from '@/components/toast';
 import BlockDateCalendar from '@/components/block-date-calendar';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Lock, Trash2, Loader2, ChevronDown } from 'lucide-react';
-import { type Block, buildDisplay } from '@/lib/activity-blocks';
+import { type Block, buildDisplay, weekdayLabel } from '@/lib/activity-blocks';
 
 interface Props {
   activityId: string;
@@ -76,7 +76,7 @@ function prettyDate(dateStr: string): string {
 }
 
 export default function ActivityBlocksManager({ activityId, bookingType, checkInTime, checkOutTime, durationValue, apiBase = '/vendor', collapsible = false }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
   const isHourly = bookingType === 'HOURLY';
@@ -217,8 +217,13 @@ export default function ActivityBlocksManager({ activityId, bookingType, checkIn
       qc.invalidateQueries({ queryKey });
       clearSelection();
     },
-    onError: (err) =>
-      toast(getApiError(err, t('vendor.activities.wizard.blocked.addFailed', 'Could not add block')), 'error'),
+    onError: (err) => {
+      // A later create can fail after earlier ones already persisted — refetch so
+      // the UI re-syncs with server state instead of showing a stale list (and
+      // retries don't conflict with the blocks that did get created).
+      qc.invalidateQueries({ queryKey });
+      toast(getApiError(err, t('vendor.activities.wizard.blocked.addFailed', 'Could not add block')), 'error');
+    },
   });
 
   // Lock the selected time slots on the active date.
@@ -437,7 +442,7 @@ export default function ActivityBlocksManager({ activityId, bookingType, checkIn
               className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2">
               <div className="min-w-0">
                 <p className="text-sm font-medium text-gray-900 dark:text-white text-start">
-                  {t('vendor.activities.wizard.blocked.every', 'Every')} {it.weekday} · {it.first} → {it.last}
+                  {t('vendor.activities.wizard.blocked.every', 'Every')} {weekdayLabel(it.weekdayIndex, i18n.language)} · {it.first} → {it.last}
                 </p>
                 <p className="text-xs text-gray-400 dark:text-slate-500 truncate text-start">
                   {it.count} {t('vendor.activities.wizard.blocked.daysWord', 'days')}

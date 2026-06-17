@@ -986,7 +986,10 @@ export default function ActivityDetailPage() {
                             <div>
                               <div className="text-[13px] font-semibold text-jadwal-text">
                                 {review.customer?.displayName ?? (
-                                  <User className="h-4 w-4 inline" />
+                                  <span className="inline-flex items-center gap-1">
+                                    <User className="h-4 w-4" aria-hidden="true" />
+                                    {isRtl ? 'زائر' : 'Guest'}
+                                  </span>
                                 )}
                               </div>
                               <div className="flex items-center gap-1.5">

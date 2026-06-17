@@ -482,7 +482,10 @@ export default function AdminEditActivityPage() {
             {activity?.id && (
               <ActivityBlocksManager
                 activityId={activity.id}
-                bookingType={form.bookingType}
+                /* One source of truth: the block API validates against the SAVED
+                   activity, so the manager must use the persisted activity config
+                   (not the unsaved `form`) to avoid create-validation drift. */
+                bookingType={activity.bookingType}
                 checkInTime={activity.checkInTime}
                 checkOutTime={activity.checkOutTime}
                 durationValue={activity.durationValue}

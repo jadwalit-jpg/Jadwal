@@ -523,7 +523,9 @@ function ExploreContent() {
                             : t('explore.multiDay')
                           : `${activity.durationValue} ${t(activity.durationValue! > 1 ? 'explore.hours' : 'explore.hour')}`}
                       </span>
-                      {activity.capacity != null && activity.capacity > 0 && (
+                      {(activity.hasUnits && (activity.bookingType === 'DAILY' || activity.pricingModel === 'PER_UNIT')
+                        ? (activity.unitCapacity ?? 0)
+                        : (activity.capacity ?? 0)) > 0 && (
                         <span className="flex items-center gap-1">
                           <Users className="h-3.5 w-3.5" />
                           {/* Unit activities (per-unit hourly + daily rooms) show each
