@@ -17,6 +17,24 @@ export interface BlockActivity {
 }
 
 /**
+ * The `activity_blocks_no_overlap` GIST exclusion constraint (migration
+ * 20260617000000_activity_block_no_overlap) raises Postgres error 23P01
+ * (exclusion_violation) when an insert would overlap an existing ACTIVE block.
+ * It is the DB backstop for the check-then-insert race the in-JS overlap checks
+ * below cannot fully close under concurrency. We map it to the SAME 409 the JS
+ * fast-path returns, so the race-loser gets a clean conflict instead of a 500.
+ * (If the constraint isn't deployed yet, this simply never matches — the JS
+ * checks still apply, so the code is safe with or without the migration.)
+ */
+function isBlockOverlapViolation(e: unknown): boolean {
+  if (e && typeof e === 'object' && 'code' in e && (e as { code?: unknown }).code === '23P01') {
+    return true;
+  }
+  const msg = e instanceof Error ? e.message : '';
+  return /23P01|activity_blocks_no_overlap/.test(msg);
+}
+
+/**
  * Core "create availability block(s)" logic, shared by the vendor and admin
  * flows so validation can never drift between them.
  *
@@ -84,7 +102,13 @@ export async function createActivityBlockCore(
     if (rows.length === 0) {
       throw new ConflictException('Those weekdays are already blocked for this period');
     }
-    const result = await db.activityBlock.createMany({ data: rows });
+    let result: { count: number };
+    try {
+      result = await db.activityBlock.createMany({ data: rows });
+    } catch (e) {
+      if (isBlockOverlapViolation(e)) throw new ConflictException('Those weekdays overlap an existing block');
+      throw e;
+    }
     const lastRowEnd = rows[rows.length - 1].blockEnd;
     const nowDate = new Date(now);
     const candidates = await db.booking.findMany({
@@ -139,7 +163,13 @@ export async function createActivityBlockCore(
     if (rows.length === 0) {
       throw new ConflictException('Those times are already locked (or in the past)');
     }
-    const result = await db.activityBlock.createMany({ data: rows });
+    let result: { count: number };
+    try {
+      result = await db.activityBlock.createMany({ data: rows });
+    } catch (e) {
+      if (isBlockOverlapViolation(e)) throw new ConflictException('Those times overlap an existing block');
+      throw e;
+    }
     const nowDate = new Date(now);
     const earliest = rows.reduce((m, r) => (r.blockStart < m ? r.blockStart : m), rows[0].blockStart);
     const latestEnd = rows.reduce((m, r) => (r.blockEnd > m ? r.blockEnd : m), rows[0].blockEnd);
@@ -173,10 +203,16 @@ export async function createActivityBlockCore(
   });
   if (overlap) throw new ConflictException('This date overlaps an existing block');
 
-  const created = await db.activityBlock.create({
-    data: { activityId: activity.id, vendorId: activity.vendorId, blockStart, blockEnd },
-    select: { id: true, blockStart: true, blockEnd: true, createdAt: true },
-  });
+  let created;
+  try {
+    created = await db.activityBlock.create({
+      data: { activityId: activity.id, vendorId: activity.vendorId, blockStart, blockEnd },
+      select: { id: true, blockStart: true, blockEnd: true, createdAt: true },
+    });
+  } catch (e) {
+    if (isBlockOverlapViolation(e)) throw new ConflictException('This date overlaps an existing block');
+    throw e;
+  }
 
   const nowDate = new Date();
   const affectedBookings = await db.booking.count({
