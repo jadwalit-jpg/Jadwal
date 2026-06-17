@@ -258,7 +258,7 @@ export default function AdminBookingsPage() {
                   <tr><td colSpan={7} className="px-6 py-12 text-center text-gray-400 dark:text-slate-500">No bookings found.</td></tr>
                 )}
                 {data?.data.map((booking) => {
-                  const badge = statusConfig[booking.status];
+                  const badge = statusConfig[booking.status] ?? statusConfig.PENDING;
                   const BadgeIcon = badge.icon;
                   const isExpanded = expandedId === booking.id;
                   const currency = booking.currencyCode || booking.activity.country?.currencyCode || 'QAR';
