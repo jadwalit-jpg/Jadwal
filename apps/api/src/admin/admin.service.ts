@@ -12,6 +12,8 @@ import { CreateTrendingEventDto, UpdateTrendingEventDto } from './dto/trending-e
 import { CreateCouponDto } from './dto/create-coupon.dto';
 import { UpdatePlatformSettingsDto } from './dto/platform-settings.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
+import { CreateActivityBlockDto } from '../vendor/dto/create-activity-block.dto';
+import { createActivityBlockCore } from '../vendor/activity-blocks.logic';
 import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
@@ -533,7 +535,9 @@ export class AdminService {
     const { page = 1, limit = 20, search, status } = query;
     const skip = (page - 1) * limit;
 
-    const where: Prisma.VendorWhereInput = {};
+    // Exclude soft-deleted vendors — once an admin deletes a vendor it must
+    // disappear from the list (the row is kept only for booking/payment audit).
+    const where: Prisma.VendorWhereInput = { deletedAt: null };
     if (search) {
       where.OR = [
         { businessNameEn: { contains: search, mode: 'insensitive' } },
@@ -882,6 +886,58 @@ export class AdminService {
     };
   }
 
+  // ─── Activity availability blocks (admin can manage ANY activity's locks) ──
+  // Reuses the same shared core as the vendor flow, so validation can't drift.
+  // No vendor-ownership scoping (admin is platform-wide); blocks are stamped
+  // with the activity's owning vendorId.
+  async getActivityBlocks(activityId: string) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    return db.activityBlock.findMany({
+      where: { activityId, deletedAt: null },
+      orderBy: { blockStart: 'asc' },
+      select: { id: true, blockStart: true, blockEnd: true, createdAt: true },
+    });
+  }
+
+  async createActivityBlock(activityId: string, dto: CreateActivityBlockDto) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({
+      where: { id: activityId },
+      select: { id: true, vendorId: true, bookingType: true, checkInTime: true, checkOutTime: true, durationValue: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const result = await createActivityBlockCore(db, activity, dto);
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async deleteActivityBlock(activityId: string, blockId: string) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const res = await db.activityBlock.updateMany({
+      where: { id: blockId, activityId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count === 0) throw new NotFoundException('Block not found');
+    void this.availabilityCache.invalidate(activityId);
+    return { id: blockId, removed: true };
+  }
+
+  async deleteActivityBlocksBulk(activityId: string, ids: string[]) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const res = await db.activityBlock.updateMany({
+      where: { id: { in: ids }, activityId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count > 0) void this.availabilityCache.invalidate(activityId);
+    return { removed: res.count };
+  }
+
   /**
    * Cascade-cancel every future PENDING/CONFIRMED booking for an activity
    * that was just deactivated or blocked. Each booking runs in its own
@@ -1022,7 +1078,7 @@ export class AdminService {
           userId: bk.customerId,
           type: 'BOOKING_CANCELLED',
           title: 'Your booking was cancelled',
-          message: `"${activityTitle}" was ${reasonText} by Jadwal support, and your booking ${bk.ref} has been cancelled.${refundLine}`,
+          message: `"${activityTitle}" was ${reasonText} by AL Jadwal support, and your booking ${bk.ref} has been cancelled.${refundLine}`,
           link: `/bookings/${bk.id}`,
         });
       } catch (err: unknown) {
@@ -1441,7 +1497,7 @@ export class AdminService {
         userId: booking.customerId,
         type: 'BOOKING_CANCELLED',
         title: 'Your booking was cancelled',
-        message: `Booking ${booking.ref} for "${booking.activity.titleEn}" was cancelled by Jadwal support.${refundLine}`,
+        message: `Booking ${booking.ref} for "${booking.activity.titleEn}" was cancelled by AL Jadwal support.${refundLine}`,
         link: `/bookings/${bookingId}`,
       });
 
@@ -1586,7 +1642,7 @@ export class AdminService {
     });
     if (!country) throw new NotFoundException('Country not found');
     if (country._count.vendors > 0 || country._count.activities > 0) {
-      throw new ForbiddenException('Cannot delete a country that has vendors or activities. Remove them first.');
+      throw new ForbiddenException('Cannot delete this country while vendors or activities are linked to it — including ones that were deleted but kept for booking/payment records.');
     }
     // Delete associated cities first, then the country
     await this.prisma.client.city.deleteMany({ where: { countryId: id } });

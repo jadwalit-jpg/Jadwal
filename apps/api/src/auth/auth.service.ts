@@ -832,7 +832,7 @@ export class AuthService {
     // G6 — Per-recipient cooldown. Without this, an attacker rotating
     // source IPs (defeating per-IP 3/min throttle) can demand reset
     // emails for a victim every few seconds — flooding their inbox and
-    // damaging Jadwal's sender reputation. SET NX is atomic: returns
+    // damaging AL Jadwal's sender reputation. SET NX is atomic: returns
     // 'OK' on first set, null when key already exists. Email is
     // sha256-hashed (no plaintext PII in cache keys).
     //
@@ -1139,7 +1139,7 @@ export class AuthService {
   // ─── W.127 Self-service account management (PDPL §14 / GDPR Art.17 + 20) ──
 
   /**
-   * Export every piece of data Jadwal stores about the calling user.
+   * Export every piece of data AL Jadwal stores about the calling user.
    *
    * Returns a single JSON bundle that includes the user's profile,
    * bookings (with payment summaries), reviews, likes, claimed coupons,

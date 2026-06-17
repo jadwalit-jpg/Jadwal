@@ -1,4 +1,13 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
+
+// 404s must never be indexed. This also covers the "soft 404" case: a streamed
+// dynamic route (/[landingSlug], /blog/[slug]) that calls notFound() can only
+// return HTTP 200 + this UI (the response has already started), so noindex
+// guarantees that even a crawled unknown slug can't be indexed.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
 
 export default function NotFound() {
   return (

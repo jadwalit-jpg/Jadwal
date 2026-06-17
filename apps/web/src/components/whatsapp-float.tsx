@@ -55,7 +55,7 @@ export function WhatsAppFloat() {
 
   const greeting = isRtl
     ? 'مرحبًا، لدي سؤال بخصوص الجدول'
-    : 'Hi, I have a question about Jadwal';
+    : 'Hi, I have a question about AL Jadwal';
 
   const href = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(greeting)}`;
   const label = isRtl ? 'تواصل معنا على واتساب' : 'Chat with us on WhatsApp';

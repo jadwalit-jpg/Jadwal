@@ -469,3 +469,50 @@ describe('AdminService.getLoyaltyUsers — sort param', () => {
     expect(findCall.where).toEqual(expect.objectContaining({ role: 'CUSTOMER' }));
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// getVendors — soft-deleted vendors must be hidden from the admin list.
+// Regression (test-team bug 2026-06-15): a "deleted" vendor kept showing as
+// SUSPENDED, so the success toast didn't match the visible state.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('AdminService.getVendors — excludes soft-deleted', () => {
+  test('findMany AND count are scoped to deletedAt: null', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.vendor.findMany.mockResolvedValueOnce([]);
+    ctx.prisma._client.vendor.count.mockResolvedValueOnce(0);
+
+    await ctx.sut.getVendors({} as any);
+
+    const findWhere = ctx.prisma._client.vendor.findMany.mock.calls[0]?.[0]?.where;
+    const countWhere = ctx.prisma._client.vendor.count.mock.calls[0]?.[0]?.where;
+    expect(findWhere).toEqual(expect.objectContaining({ deletedAt: null }));
+    expect(countWhere).toEqual(expect.objectContaining({ deletedAt: null }));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// deleteCountry — stays protected while any vendor/activity references it
+// (deleted-but-retained rows still hold a Restrict FK, so deletion must block
+//  with a clear message rather than 500 on a FK violation).
+// ═══════════════════════════════════════════════════════════════════════════
+describe('AdminService.deleteCountry', () => {
+  test('blocks when vendors or activities are still linked', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.country.findUnique.mockResolvedValueOnce({
+      id: 'c1', _count: { vendors: 1, activities: 0, cities: 2 },
+    });
+    await expect(ctx.sut.deleteCountry('c1')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(ctx.prisma._client.country.delete).not.toHaveBeenCalled();
+  });
+
+  test('deletes (with its cities) when nothing references it', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.country.findUnique.mockResolvedValueOnce({
+      id: 'c1', _count: { vendors: 0, activities: 0, cities: 1 },
+    });
+    ctx.prisma._client.city.deleteMany.mockResolvedValueOnce({ count: 1 });
+    ctx.prisma._client.country.delete.mockResolvedValueOnce({ id: 'c1' });
+    await expect(ctx.sut.deleteCountry('c1')).resolves.toEqual(expect.objectContaining({ id: 'c1' }));
+    expect(ctx.prisma._client.city.deleteMany).toHaveBeenCalled();
+  });
+});

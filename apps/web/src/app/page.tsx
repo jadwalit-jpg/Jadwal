@@ -40,13 +40,13 @@ import HomeBelowFoldLoader from './_home-islands/home-below-fold-loader';
  *    instead of the heavier `<HeroBrowseCta/>`.
  */
 export const metadata: Metadata = {
-  title: 'Jadwal — Book Activities & Experiences in Qatar & the GCC',
+  title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
   description:
     'Book activities, tours & experiences across Qatar and the GCC — desert safaris, water sports, caravans, resorts & more, from trusted local vendors.',
   openGraph: {
     type: 'website',
-    siteName: 'Jadwal',
-    title: 'Jadwal — Book Activities & Experiences in Qatar & the GCC',
+    siteName: 'AL Jadwal',
+    title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
     description:
       'Book activities, tours and experiences across Qatar and the GCC — desert safaris, water activities, caravans, resorts and more, from trusted local vendors.',
     images: [
@@ -54,13 +54,13 @@ export const metadata: Metadata = {
         url: '/android-chrome-512x512.png',
         width: 512,
         height: 512,
-        alt: 'Jadwal',
+        alt: 'AL Jadwal',
       },
     ],
   },
   twitter: {
     card: 'summary',
-    title: 'Jadwal — Book Activities & Experiences in Qatar & the GCC',
+    title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
     description:
       'Book activities, tours and experiences across Qatar and the GCC, from trusted local vendors.',
     images: ['/android-chrome-512x512.png'],

@@ -1,4 +1,6 @@
 import type { MetadataRoute } from 'next';
+import { launchedLandings } from '@/lib/seo-landings';
+import { publishedGuides } from '@/lib/seo-guides';
 
 /**
  * sitemap.xml — static routes + dynamic per-activity / per-category URLs.
@@ -47,6 +49,7 @@ const STATIC_ROUTES: Array<{
   { path: '', changeFrequency: 'daily', priority: 1.0 },
   { path: '/explore', changeFrequency: 'daily', priority: 0.9 },
   { path: '/offers', changeFrequency: 'weekly', priority: 0.8 },
+  { path: '/blog', changeFrequency: 'weekly', priority: 0.7 },
   { path: '/about', changeFrequency: 'monthly', priority: 0.7 },
   { path: '/privacy', changeFrequency: 'yearly', priority: 0.5 },
   { path: '/terms', changeFrequency: 'yearly', priority: 0.5 },
@@ -85,6 +88,27 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     changeFrequency: r.changeFrequency,
     priority: r.priority,
   }));
+
+  // Keyword SEO landing pages — only the LAUNCHED ones (real inventory). Dormant
+  // (noindex) landings are intentionally excluded so nothing thin gets indexed.
+  for (const l of launchedLandings()) {
+    entries.push({
+      url: `${BASE_URL}/${l.slug}`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: l.priority,
+    });
+  }
+
+  // Published Tier-2 guides (dormant/unpublished excluded).
+  for (const g of publishedGuides()) {
+    entries.push({
+      url: `${BASE_URL}/blog/${g.slug}`,
+      lastModified: g.updated ? new Date(g.updated) : now,
+      changeFrequency: 'monthly',
+      priority: g.priority,
+    });
+  }
 
   const dynamic = await fetchSitemapUrls();
   if (dynamic) {

@@ -34,14 +34,17 @@ function smoothScrollTo(targetY: number, duration = 1200) {
 }
 
 export default function Footer() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isAr = (i18n.language || '').toLowerCase().startsWith('ar');
   const { data: platform } = useQuery<PlatformInfo>({
     queryKey: ['platform-info'],
     queryFn: () => api.get('/catalog/platform-info').then(r => r.data),
     staleTime: 5 * 60 * 1000,
   });
 
-  const name = platform?.platformName ?? t('footer.legalEntity');
+  // Brand wordmark + copyright use the fixed brand name (not the editable
+  // platform setting), so the logo is consistent with the navbar everywhere.
+  const name = t('footer.legalEntity');
 
   return (
     <footer className="border-t border-gray-100 dark:border-slate-800/60 bg-white dark:bg-slate-950">
@@ -51,10 +54,11 @@ export default function Footer() {
           <div className="col-span-2 md:col-span-1">
             <Link href="/" className="flex items-center gap-1">
               <span className="text-xl font-bold text-gray-900 dark:text-white">{name}</span>
-              <span className="text-xl font-bold text-blue-600">{t('brandAr')}</span>
+              {/* Arabic accent only in non-Arabic locales — avoids "الجدول جدول". */}
+              {!isAr && <span className="text-xl font-bold text-blue-600">{t('brandAr')}</span>}
             </Link>
             <p className="mt-3 text-sm text-gray-500 dark:text-slate-400 leading-relaxed">
-              {platform?.aboutText ?? 'Your premier platform for discovering and booking unforgettable experiences across the GCC.'}
+              {t('footer.tagline')}
             </p>
           </div>
 
@@ -95,6 +99,7 @@ export default function Footer() {
                   {t('footer.trending')}
                 </button>
               </li>
+              <li><Link href="/blog" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.guides')}</Link></li>
             </ul>
           </div>
 

@@ -78,6 +78,7 @@ interface HourlySlot {
   slotStart: string;
   slotEnd: string;
   isPast?: boolean;
+  isBlocked?: boolean;
   capacity?: number | null;
   booked?: number;
   available?: number;
@@ -877,6 +878,10 @@ export default function BookActivityPage() {
                                 hours: activity.durationValue,
                                 closing: formatTime12h(activity.checkOutTime),
                                 defaultValue: 'Minimum {{hours}}h. Tap a later hour to extend. Closing: {{closing}}.',
+                              }),
+                              blocked: t('booking.slotBlocked', { defaultValue: 'blocked by host' }),
+                              blockedLegend: t('booking.slotBlockedLegend', {
+                                defaultValue: 'Times marked with a lock are blocked by the host.',
                               }),
                             }}
                           />

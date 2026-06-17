@@ -220,7 +220,7 @@ const MAX_SLOT_UNITS = Number(process.env.BOOKING_MAX_SLOT_UNITS || 24);
  *
  * The LAST slot's END never exceeds checkOutTime.
  */
-function computeSlots(checkInTime: string, checkOutTime: string, durationValue: number): string[] {
+export function computeSlots(checkInTime: string, checkOutTime: string, durationValue: number): string[] {
   const startMins = toMinutes(checkInTime);
   const endMins = toMinutes(checkOutTime);
   const slotDuration = durationValue * 60; // hours → minutes
@@ -281,10 +281,22 @@ function maxConcurrentInWindow(
 }
 
 /**
+ * Whole-unit rental? When true, ONE booking reserves an ENTIRE unit — no seat-
+ * sharing, regardless of how many guests it has. This is true for:
+ *   • any DAILY activity with units (rooms — DAILY is always per-unit priced), and
+ *   • HOURLY activities priced PER_UNIT.
+ * HOURLY + PER_PERSON activities with units still sell individual seats and so
+ * pack/share a unit up to its capacity. Activities without units are unaffected.
+ */
+function rentsWholeUnit(a: { hasUnits: boolean; bookingType: string; pricingModel: string }): boolean {
+  return a.hasUnits && (a.bookingType === 'DAILY' || a.pricingModel === 'PER_UNIT');
+}
+
+/**
  * Build a Date from a date string (YYYY-MM-DD) + time string (HH:MM).
  * Always interprets as UTC to avoid timezone drift in conflict queries.
  */
-function buildDatetime(dateStr: string, timeStr: string): Date {
+export function buildDatetime(dateStr: string, timeStr: string): Date {
   return new Date(`${dateStr}T${timeStr}:00.000Z`);
 }
 
@@ -298,7 +310,7 @@ function weekdayOf(dateStr: string): string {
  * Validate a YYYY-MM-DD string is a real calendar date.
  * FIX #10: Reject invalid dates like "2026-13-45"
  */
-function isValidDate(dateStr: string): boolean {
+export function isValidDate(dateStr: string): boolean {
   const [y, m, d] = dateStr.split('-').map(Number);
   const date = new Date(Date.UTC(y, m - 1, d));
   return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
@@ -346,7 +358,7 @@ function activeBookingFilter(now: Date) {
 export class BookingsService {
   private readonly logger = new Logger(BookingsService.name);
   private readonly reservationWindowMinutes: number;
-  private readonly bookingMaxAdvanceYears: number;
+  private readonly bookingMaxAdvanceMonths: number;
   private readonly redisLockTtlMs: number;
 
   constructor(
@@ -364,12 +376,30 @@ export class BookingsService {
     this.reservationWindowMinutes = Number(
       this.configService.get('RESERVATION_WINDOW_MINUTES', '15'),
     );
-    this.bookingMaxAdvanceYears = Number(
-      this.configService.get('BOOKING_MAX_ADVANCE_YEARS', '2'),
+    this.bookingMaxAdvanceMonths = Number(
+      this.configService.get('BOOKING_MAX_ADVANCE_MONTHS', '6'),
     );
     this.redisLockTtlMs = Number(
       this.configService.get('REDIS_LOCK_TTL_MS', '30000'),
     );
+  }
+
+  /**
+   * Active (non-deleted) vendor availability blocks overlapping
+   * [windowStart, windowEnd). Used by the availability endpoints + booking
+   * creation to treat blocked dates / time-windows as unbookable. Half-open
+   * interval overlap: blockStart < windowEnd && blockEnd > windowStart.
+   */
+  private async getBlocksInWindow(activityId: string, windowStart: Date, windowEnd: Date) {
+    return this.prisma.client.activityBlock.findMany({
+      where: {
+        activityId,
+        deletedAt: null,
+        blockStart: { lt: windowEnd },
+        blockEnd: { gt: windowStart },
+      },
+      select: { blockStart: true, blockEnd: true },
+    });
   }
 
   /**
@@ -436,6 +466,9 @@ export class BookingsService {
       take: DAY_BOOKINGS_CAP,
     });
 
+    // Vendor availability locks overlapping the day's operating window.
+    const dayBlocks = await this.getBlocksInWindow(activityId, dayStart, dayEnd);
+
     const result = slots.map((slotStart) => {
       const slotEnd = fromMinutes(toMinutes(slotStart) + activity.durationValue! * 60);
       const startDatetime = buildDatetime(date, slotStart);
@@ -443,25 +476,40 @@ export class BookingsService {
 
       // Past-slot marker — uses activity's local timezone
       const isSlotPast = isPastDate || (isToday && slotStart <= nowTimeLocal);
+      // Vendor lock — START-MATCH: a slot is locked only if its START time falls
+      // inside a block window. The slot can't be a booking START (the picker greys
+      // it), but capacity is NOT zeroed — a booking starting earlier may still run
+      // across it. A whole-day block [00:00,next) contains every slot start → the
+      // whole day is locked.
+      const isBlocked = dayBlocks.some((b) => startDatetime >= b.blockStart && startDatetime < b.blockEnd);
 
       if (activity.hasUnits && activity.unitCount > 0) {
+        const wholeUnit = rentsWholeUnit(activity);
         const unitSlots = Array.from({ length: activity.unitCount }, (_, i) => i + 1).map((unitNum) => {
           const unitBookings = dayBookings.filter((b) => b.unitNumber === unitNum);
           const peak = maxConcurrentInWindow(unitBookings, startDatetime, endDatetime);
+          // Whole-unit rentals are all-or-nothing: any overlap takes the entire
+          // unit out (no seat-sharing). Per-person units count remaining seats.
+          // Capacity is independent of the start-lock (isBlocked) so a booking
+          // starting earlier can still span across a locked start slot.
+          const available = wholeUnit
+            ? (peak > 0 ? 0 : activity.unitCapacity)
+            : Math.max(0, activity.unitCapacity - peak);
           return {
             unitNumber: unitNum,
             capacity: activity.unitCapacity,
             booked: peak,
-            available: Math.max(0, activity.unitCapacity - peak),
+            available,
           };
         });
         const totalAvailable = unitSlots.reduce((s, u) => s + u.available, 0);
-        return { slotStart, slotEnd, units: unitSlots, totalAvailable, isPast: isSlotPast };
+        return { slotStart, slotEnd, units: unitSlots, totalAvailable, isPast: isSlotPast, isBlocked };
       } else {
         const peak = maxConcurrentInWindow(dayBookings, startDatetime, endDatetime);
         const cap = activity.capacity ?? Infinity;
+        // Capacity is independent of the start-lock (isBlocked) — see note above.
         const available = cap === Infinity ? Infinity : Math.max(0, cap - peak);
-        return { slotStart, slotEnd, capacity: activity.capacity, booked: peak, available, isPast: isSlotPast };
+        return { slotStart, slotEnd, capacity: activity.capacity, booked: peak, available, isPast: isSlotPast, isBlocked };
       }
     });
 
@@ -494,6 +542,10 @@ export class BookingsService {
     const startDatetime = buildDatetime(checkInDate, activity.checkInTime ?? '14:00');
     const endDatetime = buildDatetime(checkOutDate, activity.checkOutTime ?? '11:00');
     const now = new Date();
+
+    // Vendor availability lock — if any block overlaps the requested stay,
+    // the whole range is unbookable (can't stay across a blocked night).
+    const blocked = (await this.getBlocksInWindow(activityId, startDatetime, endDatetime)).length > 0;
 
     // Overlap condition — excludes CANCELLED and expired PENDING reservations
     const overlapCondition = {
@@ -530,18 +582,25 @@ export class BookingsService {
           if (g.unitNumber == null) continue;
           bookedByUnit.set(g.unitNumber, g._sum.guests ?? 0);
         }
+        const wholeUnit = rentsWholeUnit(activity);
         const unitAvailability = Array.from({ length: activity.unitCount }, (_, i) => i + 1).map(
           (unitNum) => {
             const booked = bookedByUnit.get(unitNum) ?? 0;
+            // Whole-unit rentals (rooms): any guest in the unit takes it entirely.
+            const available = blocked
+              ? 0
+              : wholeUnit
+                ? (booked > 0 ? 0 : activity.unitCapacity)
+                : Math.max(0, activity.unitCapacity - booked);
             return {
               unitNumber: unitNum,
               capacity: activity.unitCapacity,
               booked,
-              available: Math.max(0, activity.unitCapacity - booked),
+              available,
             };
           },
         );
-        return { bookingType: 'DAILY', checkInDate, checkOutDate, units: unitAvailability };
+        return { bookingType: 'DAILY', checkInDate, checkOutDate, units: unitAvailability, isBlocked: blocked };
       } else {
         if (unitNumber < 1 || unitNumber > activity.unitCount) {
           throw new NotFoundException('Unit not found');
@@ -551,10 +610,16 @@ export class BookingsService {
           _sum: { guests: true },
         });
         const booked = agg._sum.guests ?? 0;
+        const available = blocked
+          ? 0
+          : rentsWholeUnit(activity)
+            ? (booked > 0 ? 0 : activity.unitCapacity)
+            : Math.max(0, activity.unitCapacity - booked);
         return {
           bookingType: 'DAILY', checkInDate, checkOutDate, unitNumber,
           capacity: activity.unitCapacity, booked,
-          available: Math.max(0, activity.unitCapacity - booked),
+          available,
+          isBlocked: blocked,
         };
       }
     } else {
@@ -566,7 +631,8 @@ export class BookingsService {
       return {
         bookingType: 'DAILY', checkInDate, checkOutDate,
         capacity: activity.capacity, booked,
-        available: activity.capacity != null ? Math.max(0, activity.capacity - booked) : Infinity,
+        available: blocked ? 0 : (activity.capacity != null ? Math.max(0, activity.capacity - booked) : Infinity),
+        isBlocked: blocked,
       };
     }
   }
@@ -628,6 +694,9 @@ export class BookingsService {
       take: MONTH_BOOKINGS_CAP,
     });
 
+    // Vendor availability locks anywhere in this month (one query for the month).
+    const monthBlocks = await this.getBlocksInWindow(activityId, monthStart, monthEnd);
+
     // FIX #4 & #20: Use activity's country timezone for "today" calculation
     const tz = activity.country?.defaultTimezone ?? 'UTC';
     const todayStr = todayInTimezone(tz);
@@ -635,7 +704,7 @@ export class BookingsService {
     const days: {
       date: string; dayOfWeek: string; price: number; isActiveDay: boolean;
       isPast: boolean; capacity: number | null; booked: number;
-      available: number | null; isFullyBooked: boolean;
+      available: number | null; isFullyBooked: boolean; isBlocked: boolean;
     }[] = [];
 
     const pricePerPerson = Number(activity.pricePerPerson);
@@ -685,33 +754,63 @@ export class BookingsService {
       const nextDateStr = `${nextDay.getUTCFullYear()}-${String(nextDay.getUTCMonth() + 1).padStart(2, '0')}-${String(nextDay.getUTCDate()).padStart(2, '0')}`;
       const dayCheckOut = buildDatetime(nextDateStr, checkOutTime);
 
+      // Whole-unit rentals (rooms / per-unit) → a day's availability is counted
+      // in UNITS: a unit with ANY overlapping booking is fully taken (no seat-
+      // sharing). Seat-based activities (per-person, or no units) count guests
+      // against total capacity as before.
+      const wholeUnit = rentsWholeUnit(activity);
       let booked = 0;
-      if (activity.bookingType === 'HOURLY') {
-        const dayBookings = bookings.filter(
-          (b) => b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn,
-        );
-        booked = maxConcurrentInWindow(dayBookings, dayCheckIn, dayCheckOut);
-      } else {
+      let capacity: number | null = null;
+      let available: number | null = null;
+
+      if (wholeUnit && unitNumber) {
+        const occ = bookings.some((b) => b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn);
+        capacity = 1; booked = occ ? 1 : 0; available = occ ? 0 : 1;
+      } else if (wholeUnit) {
+        const occupiedUnits = new Set<number>();
         for (const b of bookings) {
-          if (b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn) {
-            booked += b.guests;
+          if (b.unitNumber != null && b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn) {
+            occupiedUnits.add(b.unitNumber);
           }
         }
-      }
-
-      let capacity: number | null = null;
-      if (unitNumber) {
-        capacity = activity.unitCapacity;
-      } else if (activity.hasUnits) {
-        capacity = activity.unitCount * activity.unitCapacity;
+        capacity = activity.unitCount;
+        booked = occupiedUnits.size;
+        available = Math.max(0, activity.unitCount - occupiedUnits.size);
       } else {
-        capacity = activity.capacity;
+        if (activity.bookingType === 'HOURLY') {
+          const dayBookings = bookings.filter(
+            (b) => b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn,
+          );
+          booked = maxConcurrentInWindow(dayBookings, dayCheckIn, dayCheckOut);
+        } else {
+          for (const b of bookings) {
+            if (b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn) {
+              booked += b.guests;
+            }
+          }
+        }
+        if (unitNumber) {
+          capacity = activity.unitCapacity;
+        } else if (activity.hasUnits) {
+          capacity = activity.unitCount * activity.unitCapacity;
+        } else {
+          capacity = activity.capacity;
+        }
+        available = capacity != null ? Math.max(0, capacity - booked) : null;
       }
 
-      const available = capacity != null ? Math.max(0, capacity - booked) : null;
-      const isFullyBooked = capacity != null ? available === 0 : false;
+      let isFullyBooked = capacity != null ? available === 0 : false;
 
-      days.push({ date: dateStr, dayOfWeek: dow, price: pricePerPerson, isActiveDay, isPast, capacity, booked, available, isFullyBooked });
+      // Vendor availability lock. A block fully covering the calendar day
+      // disables it (available → 0); a partial (time-window) block only flags
+      // it — those slots are removed in getHourlyAvailability and rejected at
+      // booking time, so the day itself stays selectable.
+      const dayEndUtc = new Date(dayDate.getTime() + 24 * 60 * 60 * 1000);
+      const isBlocked = monthBlocks.some((b) => b.blockStart < dayEndUtc && b.blockEnd > dayDate);
+      const fullyBlocked = monthBlocks.some((b) => b.blockStart <= dayDate && b.blockEnd >= dayEndUtc);
+      if (fullyBlocked) { available = 0; isFullyBooked = true; }
+
+      days.push({ date: dateStr, dayOfWeek: dow, price: pricePerPerson, isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked });
     }
 
     const response = {
@@ -790,10 +889,10 @@ export class BookingsService {
 
     // Prevent bookings too far in the future (avoids indefinite seat locks)
     const maxFutureDate = new Date();
-    maxFutureDate.setFullYear(maxFutureDate.getFullYear() + this.bookingMaxAdvanceYears);
+    maxFutureDate.setMonth(maxFutureDate.getMonth() + this.bookingMaxAdvanceMonths);
     const maxFutureDateStr = maxFutureDate.toISOString().slice(0, 10);
     if (dto.checkInDate > maxFutureDateStr) {
-      throw new BadRequestException(`Cannot book more than ${this.bookingMaxAdvanceYears} year(s) in advance`);
+      throw new BadRequestException(`Cannot book more than ${this.bookingMaxAdvanceMonths} month(s) in advance`);
     }
 
     // 2. Validate activeDays (check-in day must be allowed)
@@ -916,6 +1015,24 @@ export class BookingsService {
       endDatetime = buildDatetime(dto.checkOutDate, activity.checkOutTime ?? '11:00');
     }
 
+    // Vendor availability lock. Checked here, before the Redis lock + capacity
+    // transaction, so a locked slot fails fast with a clear message rather than
+    // appearing as "no capacity".
+    //   HOURLY → START-MATCH: reject only if the booking STARTS inside a block
+    //            window (a booking starting earlier may run across a locked slot).
+    //   DAILY  → OVERLAP: reject any stay overlapping a blocked day.
+    const blockWhere =
+      activity.bookingType === 'HOURLY'
+        ? { blockStart: { lte: startDatetime }, blockEnd: { gt: startDatetime } }
+        : { blockStart: { lt: endDatetime }, blockEnd: { gt: startDatetime } };
+    const overlappingBlock = await db.activityBlock.findFirst({
+      where: { activityId: dto.activityId, deletedAt: null, ...blockWhere },
+      select: { id: true },
+    });
+    if (overlappingBlock) {
+      throw new BadRequestException('This date/time is not available for booking');
+    }
+
     // FIX #12: Prevent duplicate bookings (same user, same activity, same time)
     const existingBooking = await db.booking.findFirst({
       where: {
@@ -989,13 +1106,26 @@ export class BookingsService {
         });
 
         if (activity.hasUnits && activity.unitCount > 0) {
+          const wholeUnit = rentsWholeUnit(activity);
           for (let unitNum = 1; unitNum <= activity.unitCount; unitNum++) {
             const unitBookings = windowBookings.filter((b) => b.unitNumber === unitNum);
-            const peak = maxConcurrentInWindow(unitBookings, startDatetime, endDatetime);
-            if (activity.unitCapacity - peak >= dto.guests) {
-              resolvedUnitNumber = unitNum;
-              capacityLimit = activity.unitCapacity;
-              break;
+            if (wholeUnit) {
+              // Whole-unit rental (rooms / per-unit): a unit is available ONLY if
+              // nothing overlaps it — one booking owns the entire unit, no seat-
+              // sharing, regardless of guest count.
+              if (unitBookings.length === 0) {
+                resolvedUnitNumber = unitNum;
+                capacityLimit = activity.unitCapacity;
+                break;
+              }
+            } else {
+              // Per-person units: pack into the first unit with enough free seats.
+              const peak = maxConcurrentInWindow(unitBookings, startDatetime, endDatetime);
+              if (activity.unitCapacity - peak >= dto.guests) {
+                resolvedUnitNumber = unitNum;
+                capacityLimit = activity.unitCapacity;
+                break;
+              }
             }
           }
           if (!resolvedUnitNumber) {

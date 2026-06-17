@@ -42,6 +42,8 @@ import { UpdateCommissionDto, UpdateVendorCommissionDto } from './dto/commission
 import { CreateTrendingEventDto, UpdateTrendingEventDto } from './dto/trending-event.dto';
 import { UpdatePlatformSettingsDto } from './dto/platform-settings.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
+import { CreateActivityBlockDto } from '../vendor/dto/create-activity-block.dto';
+import { BulkDeleteBlocksDto } from '../vendor/dto/bulk-delete-blocks.dto';
 import { MarkPayoutPaidDto, MarkPayoutUnpaidDto } from './dto/payout.dto';
 import { ProcessPayoutRequestDto } from './dto/process-payout-request.dto';
 import { RevertPayoutRequestDto } from './dto/revert-payout-request.dto';
@@ -247,6 +249,34 @@ export class AdminController {
   @Throttle(RATE_LIMIT_WRITE)
   toggleFeatured(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.toggleFeatured(id);
+  }
+
+  // ─── Activity availability blocks (admin can manage any activity) ──
+  // List inherits the class RATE_LIMIT_ADMIN; mutations use RATE_LIMIT_WRITE.
+  @Get('activities/:id/blocks')
+  getActivityBlocks(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.getActivityBlocks(id);
+  }
+
+  @Post('activities/:id/blocks')
+  @Throttle(RATE_LIMIT_WRITE)
+  createActivityBlock(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateActivityBlockDto) {
+    return this.adminService.createActivityBlock(id, dto);
+  }
+
+  @Delete('activities/:id/blocks/:blockId')
+  @Throttle(RATE_LIMIT_WRITE)
+  deleteActivityBlock(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('blockId', ParseUUIDPipe) blockId: string,
+  ) {
+    return this.adminService.deleteActivityBlock(id, blockId);
+  }
+
+  @Post('activities/:id/blocks/bulk-delete')
+  @Throttle(RATE_LIMIT_WRITE)
+  deleteActivityBlocksBulk(@Param('id', ParseUUIDPipe) id: string, @Body() dto: BulkDeleteBlocksDto) {
+    return this.adminService.deleteActivityBlocksBulk(id, dto.ids);
   }
 
   // ─── Bookings ───────────────────────────────────────────────

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useMemo } from 'react';
+import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { useToast } from '@/components/toast';
@@ -594,7 +595,7 @@ export default function PaymentsTab() {
                                   where to go to resolve this payment without
                                   making them discover it by trial-and-error. */}
                               {payment.inflightRequest ? (
-                                <a
+                                <Link
                                   href="/admin/payout-requests"
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors"
                                   title={
@@ -605,7 +606,7 @@ export default function PaymentsTab() {
                                 >
                                   <Clock className="h-3 w-3" aria-hidden="true" />
                                   {payment.inflightRequest.status === 'PENDING' ? 'Pending request' : 'Approved request'}
-                                </a>
+                                </Link>
                               ) : null}
                             </div>
                           )}

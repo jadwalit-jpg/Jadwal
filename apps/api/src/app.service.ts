@@ -3,6 +3,6 @@ import { Injectable } from '@nestjs/common';
 @Injectable()
 export class AppService {
   getHealth(): string {
-    return 'Jadwal API is healthy 🚀';
+    return 'AL Jadwal API is healthy 🚀';
   }
 }

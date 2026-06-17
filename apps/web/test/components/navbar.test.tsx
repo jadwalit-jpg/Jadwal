@@ -10,6 +10,14 @@ jest.mock('react-i18next', () => ({
   }),
 }));
 
+// Navbar now delegates language switching to the shared i18n-provider. Mock it so
+// the test doesn't import the real provider, which runs the i18n init at module
+// load (calling `i18next.use(...)` with a plugin that's undefined in the unit-test
+// runtime → "passing an undefined module" crash). Navbar only uses `switchLanguage`.
+jest.mock('@/context/i18n-provider', () => ({
+  useLangSwitch: () => ({ switchLanguage: jest.fn(), isSwitching: false }),
+}));
+
 // Mock the auth hook so we can flip user shape per test.
 const useAuthMock = jest.fn();
 jest.mock('@/context/auth-context', () => ({

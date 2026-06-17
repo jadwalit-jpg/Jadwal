@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Admin Dashboard — Jadwal platform overview.
+ * Admin Dashboard — AL Jadwal platform overview.
  *
  * Data sources (server-paced, all cached via TanStack):
  *   GET /admin/dashboard/stats   — top-level KPIs + financial liability
@@ -28,6 +28,7 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/auth-context';
 import api from '@/lib/api';
+import Link from 'next/link';
 import AdminLayout from '../_components/admin-layout';
 import {
   Users,
@@ -630,12 +631,12 @@ export default function AdminDashboardPage() {
           title="Financial health"
           sub="Platform revenue decomposition + liability exposure"
           action={
-            <a
+            <Link
               href="/admin/payouts"
               className="inline-flex items-center gap-1 text-sm font-semibold text-sky-600 dark:text-sky-400 hover:underline"
             >
               Full ledger <ChevronRight className="h-4 w-4" aria-hidden="true" />
-            </a>
+            </Link>
           }
         />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">

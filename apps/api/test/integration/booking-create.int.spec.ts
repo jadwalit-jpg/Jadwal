@@ -242,12 +242,12 @@ describe('BookingsService.createBooking — guards', () => {
     await expect(
       svc.createBooking(seed.customer.id, {
         activityId: seed.activity.id,
-        checkInDate: futureDate(365 * 3), // 3 years out (max is 2)
+        checkInDate: futureDate(365 * 3), // 3 years out (max is 6 months)
         slotTime: '10:00',
         guests: 1,
       bookingPhone: '+97455123456',
       }),
-    ).rejects.toThrow(/more than.*year/i);
+    ).rejects.toThrow(/more than.*month/i);
   });
 });
 

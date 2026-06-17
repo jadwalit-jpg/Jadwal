@@ -171,8 +171,8 @@ export default function RegisterForm() {
     <>
       <div className="flex justify-center mb-8">
         <Link href="/" className="flex items-center gap-1 font-bold">
-          <span className="text-2xl text-white">Jadwal</span>
-          <span className="text-2xl text-blue-400">جدول</span>
+          <span className="text-2xl text-white">AL Jadwal</span>
+          <span className="text-2xl text-blue-400">الجدول</span>
         </Link>
       </div>
 

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 /**
  * Debounce a frequently-changing value (e.g. a search input) so it only
  * propagates to downstream queries / computations after the user stops
- * changing it for `delay` ms. Default 300ms matches the Jadwal UX baseline.
+ * changing it for `delay` ms. Default 300ms matches the AL Jadwal UX baseline.
  *
  * Usage:
  *   const [input, setInput] = useState('');

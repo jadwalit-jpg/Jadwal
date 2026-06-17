@@ -12,7 +12,7 @@ import { HeroBrowseCta } from '../_home-islands/hero-browse-cta';
 import HomeBelowFoldLoader from '../_home-islands/home-below-fold-loader';
 
 export const metadata: Metadata = {
-  title: 'Jadwal — Discover & Book Experiences in Qatar',
+  title: 'AL Jadwal — Discover & Book Experiences in Qatar',
   description:
     'Find and book the best activities, tours, and experiences across Qatar. 50+ verified partners, instant confirmation, and 24/7 support.',
   keywords: [
@@ -21,14 +21,14 @@ export const metadata: Metadata = {
     'tours Qatar',
     'things to do in Qatar',
     'Doha activities',
-    'Jadwal',
+    'AL Jadwal',
   ],
   openGraph: {
-    title: 'Jadwal — Discover & Book Experiences in Qatar',
+    title: 'AL Jadwal — Discover & Book Experiences in Qatar',
     description:
       'Discover activities, tours, and experiences across Qatar. Instant confirmation. 50+ verified partners.',
     type: 'website',
-    siteName: 'Jadwal',
+    siteName: 'AL Jadwal',
     url: '/',
     locale: 'en_US',
     alternateLocale: ['ar_QA'],
@@ -37,13 +37,13 @@ export const metadata: Metadata = {
         url: '/android-chrome-512x512.png',
         width: 512,
         height: 512,
-        alt: 'Jadwal',
+        alt: 'AL Jadwal',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Jadwal — Discover & Book Experiences in Qatar',
+    title: 'AL Jadwal — Discover & Book Experiences in Qatar',
     description:
       'Discover activities, tours, and experiences across Qatar. Instant confirmation. 50+ verified partners.',
     images: ['/android-chrome-512x512.png'],

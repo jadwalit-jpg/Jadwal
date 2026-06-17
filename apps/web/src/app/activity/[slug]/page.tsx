@@ -153,8 +153,6 @@ export default function ActivityDetailPage() {
   const [guests, setGuests] = useState(1);
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewHover, setReviewHover] = useState(0);
-  const [reviewPage, setReviewPage] = useState(1);
-  const REVIEWS_PER_PAGE = 5;
 
   const { data: activity, isLoading, isError } = useQuery<ActivityDetail>({
     queryKey: ['public-activity', slug],
@@ -969,100 +967,67 @@ export default function ActivityDetailPage() {
             ) : null}
 
             {activity.reviews.length > 0
-              ? (() => {
-                  const totalPages = Math.ceil(
-                    activity.reviews.length / REVIEWS_PER_PAGE,
-                  );
-                  const paged = activity.reviews.slice(
-                    (reviewPage - 1) * REVIEWS_PER_PAGE,
-                    reviewPage * REVIEWS_PER_PAGE,
-                  );
-                  return (
-                    <>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {paged.map((review) => (
-                          <article
-                            key={review.id}
-                            className="p-4 rounded-xl border border-jadwal-border-subtle bg-jadwal-surface"
-                          >
-                            <div className="flex items-center gap-2.5 mb-2.5">
-                              <div className="grid h-9 w-9 place-items-center rounded-full text-white font-bold text-sm bg-[linear-gradient(135deg,var(--jadwal-accent),var(--jadwal-primary))]">
-                                {(
-                                  review.customer?.displayName ?? 'A'
-                                )
-                                  .charAt(0)
-                                  .toUpperCase()}
-                              </div>
-                              <div>
-                                <div className="text-[13px] font-semibold text-jadwal-text">
-                                  {review.customer?.displayName ?? (
-                                    <User className="h-4 w-4 inline" />
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <div className="flex gap-0.5">
-                                    {[1, 2, 3, 4, 5].map((i) => (
-                                      <Star
-                                        key={i}
-                                        className={cn(
-                                          'h-[10px] w-[10px]',
-                                          i <= review.rating
-                                            ? 'fill-jadwal-accent text-jadwal-accent'
-                                            : 'text-jadwal-text-faint',
-                                        )}
-                                        aria-hidden="true"
-                                      />
-                                    ))}
-                                  </div>
-                                  <span
-                                    className="text-[11px] text-jadwal-text-muted"
-                                    suppressHydrationWarning
-                                  >
-                                    {new Date(review.createdAt).toLocaleDateString(
-                                      isRtl ? 'ar-EG' : 'en-US',
-                                      {
-                                        month: 'short',
-                                        day: 'numeric',
-                                        year: 'numeric',
-                                      },
-                                    )}
+              ? (
+                  // The 3 most recent reviews, side-by-side (stacks on mobile).
+                  // Text is clamped to keep the three cards a uniform height.
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {[...activity.reviews]
+                      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+                      .slice(0, 3)
+                      .map((review) => (
+                        <article
+                          key={review.id}
+                          className="p-3 rounded-xl border border-jadwal-border-subtle bg-jadwal-surface"
+                        >
+                          <div className="flex items-center gap-2.5 mb-1.5">
+                            <div className="grid h-8 w-8 place-items-center rounded-full text-white font-bold text-xs bg-[linear-gradient(135deg,var(--jadwal-accent),var(--jadwal-primary))]">
+                              {(review.customer?.displayName ?? 'A').charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="text-[13px] font-semibold text-jadwal-text">
+                                {review.customer?.displayName ?? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <User className="h-4 w-4" aria-hidden="true" />
+                                    {isRtl ? 'زائر' : 'Guest'}
                                   </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <div className="flex gap-0.5">
+                                  {[1, 2, 3, 4, 5].map((i) => (
+                                    <Star
+                                      key={i}
+                                      className={cn(
+                                        'h-[10px] w-[10px]',
+                                        i <= review.rating
+                                          ? 'fill-jadwal-accent text-jadwal-accent'
+                                          : 'text-jadwal-text-faint',
+                                      )}
+                                      aria-hidden="true"
+                                    />
+                                  ))}
                                 </div>
+                                <span
+                                  className="text-[11px] text-jadwal-text-muted"
+                                  suppressHydrationWarning
+                                >
+                                  {new Date(review.createdAt).toLocaleDateString(
+                                    isRtl ? 'ar-EG' : 'en-US',
+                                    { month: 'short', day: 'numeric', year: 'numeric' },
+                                  )}
+                                </span>
                               </div>
                             </div>
-                            {review.text ? (
-                              <p className="text-[13px] text-jadwal-text leading-relaxed">
-                                {review.text}
-                              </p>
-                            ) : null}
-                          </article>
-                        ))}
-                      </div>
-                      {totalPages > 1 ? (
-                        <div className="flex items-center justify-center gap-1.5 mt-5 pt-4 border-t border-jadwal-border-subtle">
-                          {Array.from({ length: totalPages }, (_, i) => i + 1).map(
-                            (p) => (
-                              <button
-                                key={p}
-                                type="button"
-                                onClick={() => setReviewPage(p)}
-                                aria-current={p === reviewPage ? 'page' : undefined}
-                                className={cn(
-                                  'w-8 h-8 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-primary/40',
-                                  p === reviewPage
-                                    ? 'bg-jadwal-primary text-jadwal-on-primary'
-                                    : 'text-jadwal-text-muted hover:bg-jadwal-surface-muted',
-                                )}
-                              >
-                                {p}
-                              </button>
-                            ),
-                          )}
-                        </div>
-                      ) : null}
-                    </>
-                  );
-                })()
+                          </div>
+                          {review.text ? (
+                            <p className="text-[13px] text-jadwal-text leading-relaxed line-clamp-3">
+                              {review.text}
+                            </p>
+                          ) : null}
+                        </article>
+                      ))}
+                  </div>
+                )
               : (
                 <p className="text-sm text-jadwal-text-muted text-center py-6">
                   {t('activity.noReviewsYet', {

@@ -188,7 +188,11 @@ describe('BookingsService.getDailyAvailability', () => {
     expect(Array.isArray(res.units)).toBe(true);
     expect(res.units).toHaveLength(3);
     const byUnit = new Map(res.units.map((u: any) => [u.unitNumber, u]));
-    expect(byUnit.get(1)).toMatchObject({ unitNumber: 1, capacity: 2, booked: 1, available: 1 });
+    // DAILY units are WHOLE-UNIT rentals (rooms/chalets/caravans — see rentsWholeUnit()):
+    // any overlapping booking takes the entire unit, so unit 1 with 1 of 2 capacity
+    // booked is still unavailable (available: 0), NOT capacity-shared. `booked` still
+    // reports the summed guest count; `available` is 0 once the unit is taken.
+    expect(byUnit.get(1)).toMatchObject({ unitNumber: 1, capacity: 2, booked: 1, available: 0 });
     expect(byUnit.get(2)).toMatchObject({ unitNumber: 2, capacity: 2, booked: 0, available: 2 });
     expect(byUnit.get(3)).toMatchObject({ unitNumber: 3, capacity: 2, booked: 2, available: 0 });
   });

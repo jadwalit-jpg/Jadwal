@@ -12,6 +12,7 @@ import AdminLayout from '../../_components/admin-layout';
 import { Check, Loader2, X, BookmarkIcon, AlertTriangle, ImagePlus } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import CustomSelect from '@/components/custom-select';
+import ActivityBlocksManager from '@/components/activity-blocks-manager';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
 
 // Heavy widgets — only mount when their respective wizard step opens.
@@ -475,6 +476,23 @@ export default function AdminEditActivityPage() {
                 </div>
               )}
             </div>
+
+            {/* Availability blocks — admin can lock any activity's dates/times
+                (same calendar as vendor). Edit-only, independent of the wizard save. */}
+            {activity?.id && (
+              <ActivityBlocksManager
+                activityId={activity.id}
+                /* One source of truth: the block API validates against the SAVED
+                   activity, so the manager must use the persisted activity config
+                   (not the unsaved `form`) to avoid create-validation drift. */
+                bookingType={activity.bookingType}
+                checkInTime={activity.checkInTime}
+                checkOutTime={activity.checkOutTime}
+                durationValue={activity.durationValue}
+                apiBase="/admin"
+                collapsible
+              />
+            )}
           </div>
         )}
 

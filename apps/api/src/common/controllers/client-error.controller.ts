@@ -54,7 +54,7 @@ export class ClientErrorController {
     // Single structured log line — CloudWatch Insights can query top-level
     // fields. Pino emits this object with `event` at top-level, so the
     // CloudWatch metric filter `"event":"CLIENT_ERROR"` (on /ecs/jadwal-api,
-    // feeding Jadwal/Web ClientErrorCount) keeps matching. DO NOT
+    // feeding AL Jadwal/Web ClientErrorCount) keeps matching. DO NOT
     // re-introduce JSON.stringify here — that would escape the JSON inside
     // pino's `msg` field and silently break the metric filter.
     // Truncation happens via the DTO's @MaxLength; no further trim needed.

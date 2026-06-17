@@ -41,8 +41,8 @@ interface BookingCalendarProps {
   fixedNights?: number | null;
   /** Loading state */
   isLoading?: boolean;
-  /** Max years in advance (limits forward navigation) */
-  maxAdvanceYears?: number;
+  /** Max months in advance the customer may navigate/book (default 6) */
+  maxAdvanceMonths?: number;
 }
 
 /* ─── Helpers ─────────────────────────────────────────────── */
@@ -211,7 +211,7 @@ export default function BookingCalendar({
   currency,
   showPrices = true,
   isLoading = false,
-  maxAdvanceYears = 1,
+  maxAdvanceMonths = 6,
 }: BookingCalendarProps) {
   const { t } = useTranslation();
   const rightMonth = nextMonth(month);
@@ -221,9 +221,9 @@ export default function BookingCalendar({
   const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
   const canGoBack = month > currentMonth;
 
-  // Can't go beyond max advance years
+  // Can't go beyond the max advance window (customer-facing: 6 months)
   const maxDate = new Date();
-  maxDate.setFullYear(maxDate.getFullYear() + maxAdvanceYears);
+  maxDate.setMonth(maxDate.getMonth() + maxAdvanceMonths);
   const maxMonth = `${maxDate.getFullYear()}-${String(maxDate.getMonth() + 1).padStart(2, '0')}`;
   const canGoForward = rightMonth < maxMonth;
 

@@ -198,8 +198,8 @@ function VendorAuthContent() {
         <div className="flex flex-col gap-4 p-6 md:p-10 bg-white dark:bg-slate-950">
           <div className="flex justify-center gap-2 md:justify-start">
             <Link href="/" className="flex items-center gap-1 font-bold">
-              <span className="text-xl text-gray-900 dark:text-white">Jadwal</span>
-              <span className="text-xl text-blue-600">جدول</span>
+              <span className="text-xl text-gray-900 dark:text-white">AL Jadwal</span>
+              <span className="text-xl text-blue-600">الجدول</span>
             </Link>
           </div>
           <div className="flex flex-1 items-center justify-center">
@@ -232,8 +232,8 @@ function VendorAuthContent() {
       <div className="flex flex-col gap-4 p-6 md:p-10 bg-white dark:bg-slate-950">
         <div className="flex justify-center gap-2 md:justify-start">
           <Link href="/" className="flex items-center gap-1 font-bold">
-            <span className="text-xl text-gray-900 dark:text-white">Jadwal</span>
-            <span className="text-xl text-blue-600">جدول</span>
+            <span className="text-xl text-gray-900 dark:text-white">AL Jadwal</span>
+            <span className="text-xl text-blue-600">الجدول</span>
           </Link>
         </div>
 

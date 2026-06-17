@@ -8,7 +8,7 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Profile — Jadwal',
+  title: 'Profile — AL Jadwal',
   robots: { index: false, follow: false },
 };
 

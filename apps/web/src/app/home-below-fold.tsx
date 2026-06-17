@@ -22,10 +22,18 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Calendar, Gift, MapPin, ShieldCheck, Zap } from 'lucide-react';
+import {
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Gift,
+  MapPin,
+  ShieldCheck,
+  Zap,
+} from 'lucide-react';
 
 import api from '@/lib/api';
 import { localized } from '@/lib/localize';
@@ -74,6 +82,21 @@ export default function HomeBelowFold() {
   // Keeping the state at this level (rather than per-card) means only one
   // modal is mounted at a time and we don't have N <dialog>s in the DOM.
   const [openTrendingEvent, setOpenTrendingEvent] = useState<TrendingEvent | null>(null);
+
+  // Desktop prev/next arrows for the horizontally-scrolling trending row.
+  // The row scrolls fine via swipe/trackpad, but its scrollbar is hidden
+  // (matches the design), so on a desktop mouse there's no affordance that
+  // cards continue off-screen — they read as "cropped". These arrows give
+  // that affordance. `scrollBy` honors the element's content direction, so a
+  // positive `left` advances in reading order in both LTR and RTL.
+  const trendingScrollRef = useRef<HTMLDivElement>(null);
+  const scrollTrendingByCard = (direction: 'prev' | 'next') => {
+    const el = trendingScrollRef.current;
+    if (!el) return;
+    // ~one card + gap; clamps itself at the ends, so no bounds math needed.
+    const amount = Math.round(el.clientWidth * 0.85);
+    el.scrollBy({ left: direction === 'next' ? amount : -amount, behavior: 'smooth' });
+  };
 
   // Same queryKeys as home-client → shared TanStack cache, no duplicate request.
 
@@ -134,11 +157,15 @@ export default function HomeBelowFold() {
           {isDetecting || trendingLoading ? (
             <TrendingRowSkeleton />
           ) : trendingEvents.length > 0 ? (
-            <div className="flex gap-4 md:gap-5 overflow-x-auto pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+            <div className="relative">
+              <div
+                ref={trendingScrollRef}
+                className="flex gap-4 md:gap-5 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 pe-4 sm:pe-6 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+              >
               {trendingEvents.map((event) => (
                 <article
                   key={event.id}
-                  className="group w-[280px] sm:w-[320px] shrink-0 flex flex-col overflow-hidden rounded-[20px] border border-jadwal-border-subtle bg-jadwal-surface shadow-jadwal transition-shadow hover:shadow-jadwal-lg"
+                  className="group w-[280px] sm:w-[320px] shrink-0 snap-start flex flex-col overflow-hidden rounded-[20px] border border-jadwal-border-subtle bg-jadwal-surface shadow-jadwal transition-shadow hover:shadow-jadwal-lg"
                 >
                   {event.image ? (
                     <div className="relative h-[200px] overflow-hidden">
@@ -209,6 +236,39 @@ export default function HomeBelowFold() {
                   </div>
                 </article>
               ))}
+              </div>
+
+              {/* Desktop scroll affordance. Hidden on mobile (touch swipe is
+                  natural there). Positioned with logical start/end so they
+                  flip in RTL; the chevron icon flips with reading direction.
+                  No Framer Motion: this homepage chunk deliberately excludes
+                  it (see docstring) — plain Tailwind transitions instead. */}
+              {/* aria-labels use common.{prev,next} (translated EN + AR);
+                  defaultValue kept as a belt-and-braces fallback. */}
+              <button
+                type="button"
+                onClick={() => scrollTrendingByCard('prev')}
+                aria-label={t('common.prev', { defaultValue: 'Previous' })}
+                className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-s-0 -ms-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
+              >
+                {isRtl ? (
+                  <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                ) : (
+                  <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollTrendingByCard('next')}
+                aria-label={t('common.next', { defaultValue: 'Next' })}
+                className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-e-0 -me-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
+              >
+                {isRtl ? (
+                  <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                ) : (
+                  <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                )}
+              </button>
             </div>
           ) : (
             <div className="text-center py-12 text-jadwal-text-faint text-sm">
@@ -348,7 +408,7 @@ export default function HomeBelowFold() {
         </div>
       </section>
 
-      {/* ─── Why Jadwal (Trust strip) ─────────────────────────── */}
+      {/* ─── Why AL Jadwal (Trust strip) ─────────────────────────── */}
       <section className="bg-jadwal-surface-muted border-y border-jadwal-border-subtle">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 md:py-14">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-10">

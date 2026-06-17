@@ -221,7 +221,7 @@ export class AuthController {
   // ─── W.127 PDPL / GDPR self-service account management ──────────────────
 
   /**
-   * Export every piece of data Jadwal stores about the calling user.
+   * Export every piece of data AL Jadwal stores about the calling user.
    * Returns inline JSON (Content-Disposition: attachment) so the browser
    * triggers a download. Rate-limited per-IP at STRICT (3/min) plus a
    * per-user 24h cooldown inside the service. Excludes auth secrets

@@ -45,6 +45,7 @@ const TRUNCATE_TABLES_ORDER = [
   'bookings',
   'coupons',
   'trending_events',
+  'activity_blocks',   // FK → activities + vendors; truncate before them
   'activities',
   'vendors',     // Vendor has userId FK → truncate vendors before users
   'users',

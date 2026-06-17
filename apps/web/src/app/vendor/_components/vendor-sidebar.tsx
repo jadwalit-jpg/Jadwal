@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useParams, useRouter } from 'next/navigation';
+import { usePathname, useParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { useCallback } from 'react';
 
 import { useAuth } from '@/context/auth-context';
+import { useLangSwitch } from '@/context/i18n-provider';
 import api from '@/lib/api';
 import NotificationBell from '@/components/notification-bell';
 import {
@@ -51,16 +52,14 @@ export function VendorSidebar() {
   const [mounted, setMounted] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const { logout } = useAuth();
-  const router = useRouter();
+  const { switchLanguage } = useLangSwitch();
   const { t, i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
-  // router.refresh() re-fetches the RSC payload so any server-rendered
-  // translated strings update with the new cookie value. Client-side
-  // i18n consumers update synchronously from the i18n singleton.
+  // Delegate to the shared switcher (i18n-provider): flips the language and
+  // shows the blur + spinner mask while the RSC refresh settles.
   const toggleLanguage = useCallback(() => {
-    i18n.changeLanguage(isAr ? 'en' : 'ar');
-    router.refresh();
-  }, [i18n, isAr, router]);
+    switchLanguage(isAr ? 'en' : 'ar');
+  }, [switchLanguage, isAr]);
 
   useEffect(() => setMounted(true), []);
 
@@ -140,7 +139,7 @@ export function VendorSidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
+      <nav className="flex-1 px-3 space-y-1 overflow-y-auto scrollbar-slim">
         {navItems.map(({ path, labelKey, icon: Icon }) => {
           const href = `${base}/${path}`;
           const isActive = pathname === href || (path !== 'dashboard' && pathname?.startsWith(href));

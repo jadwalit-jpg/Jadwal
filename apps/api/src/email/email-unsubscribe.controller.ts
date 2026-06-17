@@ -199,7 +199,7 @@ export class EmailUnsubscribeController {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Unsubscribe — Jadwal</title>
+  <title>Unsubscribe — AL Jadwal</title>
   <style>
     body { margin:0; padding:32px 16px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background:#f3f4f6; color:#111827; }
     .card { max-width:480px; margin:0 auto; background:#ffffff; border-radius:12px; padding:32px; box-shadow:0 1px 3px rgba(0,0,0,0.08); text-align:center; }
@@ -212,7 +212,7 @@ export class EmailUnsubscribeController {
 </head>
 <body>
   <div class="card">
-    <h1>Unsubscribe from Jadwal emails?</h1>
+    <h1>Unsubscribe from AL Jadwal emails?</h1>
     <p>Click the button below to confirm. We will stop sending all transactional emails to your address.</p>
     <form method="POST" action="/api/email/unsubscribe">
       <input type="hidden" name="t" value="${safeToken}">
@@ -233,7 +233,7 @@ export class EmailUnsubscribeController {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Unsubscribe — Jadwal</title>
+  <title>Unsubscribe — AL Jadwal</title>
   <style>
     body { margin:0; padding:32px 16px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background:#f3f4f6; color:#111827; }
     .card { max-width:480px; margin:0 auto; background:#ffffff; border-radius:12px; padding:32px; box-shadow:0 1px 3px rgba(0,0,0,0.08); text-align:center; }

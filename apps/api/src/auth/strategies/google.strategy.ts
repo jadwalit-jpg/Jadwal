@@ -45,7 +45,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
 
     // Only trust the address if Google itself says it's verified. Without this,
     // a Google account whose email is unverified could be used to claim or
-    // auto-link a Jadwal account at that address (the OAuth-link path trusts
+    // auto-link a AL Jadwal account at that address (the OAuth-link path trusts
     // this email). Google's raw userinfo carries `email_verified`; passport also
     // surfaces a per-address `verified` flag — accept either.
     const json = profile._json as { email_verified?: boolean } | undefined;

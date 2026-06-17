@@ -11,6 +11,8 @@ interface DatePickerProps {
   hasError?: boolean;
   direction?: 'up' | 'down';
   disablePast?: boolean;
+  minDate?: string; // earliest selectable date (YYYY-MM-DD); combined with disablePast
+  maxDate?: string; // latest selectable date (YYYY-MM-DD)
 }
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -27,7 +29,7 @@ function formatDisplay(dateStr: string): string {
   return `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
-export default function DatePicker({ value, onChange, placeholder = 'Select date', hasError, direction = 'down', disablePast = false }: DatePickerProps) {
+export default function DatePicker({ value, onChange, placeholder = 'Select date', hasError, direction = 'down', disablePast = false, minDate, maxDate }: DatePickerProps) {
   const [open, setOpen] = useState(false);
   const [viewYear, setViewYear] = useState(() => {
     const d = value ? new Date(value + 'T00:00:00') : new Date();
@@ -45,8 +47,15 @@ export default function DatePicker({ value, onChange, placeholder = 'Select date
       const d = new Date(value + 'T00:00:00');
       setViewYear(d.getFullYear());
       setViewMonth(d.getMonth());
+    } else if (minDate) {
+      // No value yet but a minimum is set (e.g. an end-date picker bounded by
+      // the start date) — open on the minimum's month so the user isn't
+      // staring at a month full of disabled days.
+      const d = new Date(minDate + 'T00:00:00');
+      setViewYear(d.getFullYear());
+      setViewMonth(d.getMonth());
     }
-  }, [value]);
+  }, [value, minDate]);
 
   // Close on click outside
   useEffect(() => {
@@ -62,33 +71,42 @@ export default function DatePicker({ value, onChange, placeholder = 'Select date
     return toYMD(now.getFullYear(), now.getMonth(), now.getDate());
   }, []);
 
-  const currentMonth = useMemo(() => new Date().getMonth(), []);
-  const currentYear = useMemo(() => new Date().getFullYear(), []);
-  const isAtMinMonth = disablePast && viewYear === currentYear && viewMonth === currentMonth;
+  // The earliest selectable day = the later of "today" (when disablePast) and
+  // an explicit minDate. Empty string means no lower bound.
+  const minBoundary = useMemo(() => {
+    const t = disablePast ? today : '';
+    return minDate && minDate > t ? minDate : t;
+  }, [disablePast, today, minDate]);
+  const minBoundaryDate = useMemo(
+    () => (minBoundary ? new Date(minBoundary + 'T00:00:00') : null),
+    [minBoundary],
+  );
+  const isAtMinMonth = !!minBoundaryDate && viewYear === minBoundaryDate.getFullYear() && viewMonth === minBoundaryDate.getMonth();
+  const maxBoundaryDate = useMemo(() => (maxDate ? new Date(maxDate + 'T00:00:00') : null), [maxDate]);
+  const isAtMaxMonth = !!maxBoundaryDate && viewYear === maxBoundaryDate.getFullYear() && viewMonth === maxBoundaryDate.getMonth();
 
   const prevMonth = useCallback(() => {
-    if (disablePast) {
-      const now = new Date();
-      if (viewYear === now.getFullYear() && viewMonth === now.getMonth()) return;
-    }
+    if (minBoundaryDate && viewYear === minBoundaryDate.getFullYear() && viewMonth === minBoundaryDate.getMonth()) return;
     setViewMonth(m => {
       if (m === 0) { setViewYear(y => y - 1); return 11; }
       return m - 1;
     });
-  }, [disablePast, viewYear, viewMonth]);
+  }, [minBoundaryDate, viewYear, viewMonth]);
 
   const nextMonth = useCallback(() => {
+    if (maxBoundaryDate && viewYear === maxBoundaryDate.getFullYear() && viewMonth === maxBoundaryDate.getMonth()) return;
     setViewMonth(m => {
       if (m === 11) { setViewYear(y => y + 1); return 0; }
       return m + 1;
     });
-  }, []);
+  }, [maxBoundaryDate, viewYear, viewMonth]);
 
   const handleDayClick = useCallback((dateStr: string) => {
-    if (disablePast && dateStr < today) return;
+    if (minBoundary && dateStr < minBoundary) return;
+    if (maxDate && dateStr > maxDate) return;
     onChange(dateStr);
     setOpen(false);
-  }, [onChange, disablePast, today]);
+  }, [onChange, minBoundary, maxDate]);
 
   const calendarDays = useMemo(() => {
     const firstDay = new Date(viewYear, viewMonth, 1).getDay();
@@ -115,7 +133,8 @@ export default function DatePicker({ value, onChange, placeholder = 'Select date
       { label: 'Next Week', dateStr: toYMD(nextWeek.getFullYear(), nextWeek.getMonth(), nextWeek.getDate()) },
       { label: 'Next Month', dateStr: toYMD(nextMonth.getFullYear(), nextMonth.getMonth(), nextMonth.getDate()) },
     ];
-    return disablePast ? all.filter(p => p.dateStr >= today) : all;
+    const lowered = minBoundary ? all.filter(p => p.dateStr >= minBoundary) : all;
+    return maxDate ? lowered.filter(p => p.dateStr <= maxDate) : lowered;
   };
 
   return (
@@ -175,7 +194,8 @@ export default function DatePicker({ value, onChange, placeholder = 'Select date
               <button
                 type="button"
                 onClick={nextMonth}
-                className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                disabled={isAtMaxMonth}
+                className={`p-1.5 rounded-lg transition-colors ${isAtMaxMonth ? 'opacity-30 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-slate-800'}`}
               >
                 <ChevronRight className="h-4 w-4 text-gray-500 dark:text-slate-400" />
               </button>
@@ -196,15 +216,15 @@ export default function DatePicker({ value, onChange, placeholder = 'Select date
                 if (item.day === 0) return <div key={`empty-${i}`} />;
                 const isSelected = item.dateStr === value;
                 const isToday = item.dateStr === today;
-                const isPast = disablePast && item.dateStr < today;
+                const isDisabled = (!!minBoundary && item.dateStr < minBoundary) || (!!maxDate && item.dateStr > maxDate);
                 return (
                   <button
                     key={item.dateStr}
                     type="button"
                     onClick={() => handleDayClick(item.dateStr)}
-                    disabled={isPast}
+                    disabled={isDisabled}
                     className={`h-8 w-full text-xs font-medium rounded-lg transition-all ${
-                      isPast
+                      isDisabled
                         ? 'text-gray-300 dark:text-slate-700 cursor-not-allowed'
                         : isSelected
                           ? 'bg-blue-600 text-white shadow-sm'
