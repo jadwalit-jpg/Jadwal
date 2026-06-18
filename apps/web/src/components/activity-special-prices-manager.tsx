@@ -78,11 +78,6 @@ export default function ActivitySpecialPricesManager({
     return map;
   }, [prices]);
 
-  const sortedList = useMemo(
-    () => [...prices].map((p) => ({ id: p.id, date: String(p.date).slice(0, 10), price: Number(p.price) })).sort((a, b) => a.date.localeCompare(b.date)),
-    [prices],
-  );
-
   const saveMut = useMutation({
     mutationFn: (body: { date: string; price: number }) =>
       api.post(`${apiBase}/activities/${activityId}/special-prices`, body).then((r) => r.data),
@@ -276,30 +271,6 @@ export default function ActivitySpecialPricesManager({
                     {priceInput.trim() !== '' && !priceValid && (
                       <p className="text-xs text-red-500 mt-1.5 text-start">{t('vendor.activities.wizard.specialPrice.invalid', 'Enter a price greater than 0.')}</p>
                     )}
-                  </div>
-                )}
-
-                {/* List of all overrides */}
-                {sortedList.length > 0 && (
-                  <div className="mt-4 space-y-2">
-                    <p className="text-xs font-medium text-gray-500 dark:text-slate-400 text-start">
-                      {t('vendor.activities.wizard.specialPrice.listHeading', 'Special prices set')} ({sortedList.length})
-                    </p>
-                    {sortedList.map((p) => (
-                      <div key={p.id}
-                        className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2">
-                        <button type="button" onClick={() => { setCursor({ y: Number(p.date.slice(0, 4)), m: Number(p.date.slice(5, 7)) - 1 }); selectDay(p.date); }}
-                          className="min-w-0 text-start flex-1">
-                          <p className="text-sm font-medium text-gray-900 dark:text-white">{prettyDate(p.date)}</p>
-                          <p className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">{p.price} {currency}</p>
-                        </button>
-                        <button type="button" onClick={() => deleteMut.mutate(p.id)} disabled={deleteMut.isPending}
-                          className="shrink-0 p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
-                          aria-label={t('vendor.activities.wizard.specialPrice.remove', 'Remove')}>
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
                   </div>
                 )}
               </div>
