@@ -697,6 +697,14 @@ export class BookingsService {
     // Vendor availability locks anywhere in this month (one query for the month).
     const monthBlocks = await this.getBlocksInWindow(activityId, monthStart, monthEnd);
 
+    // Per-date special prices for the month → override the day's displayed price.
+    const monthSpecials = await this.prisma.client.activitySpecialPrice.findMany({
+      where: { activityId, deletedAt: null, date: { gte: monthStart, lte: monthEnd } },
+      select: { date: true, price: true },
+    });
+    const specialPriceByDate = new Map<string, number>();
+    for (const sp of monthSpecials) specialPriceByDate.set(sp.date.toISOString().slice(0, 10), Number(sp.price));
+
     // FIX #4 & #20: Use activity's country timezone for "today" calculation
     const tz = activity.country?.defaultTimezone ?? 'UTC';
     const todayStr = todayInTimezone(tz);
@@ -846,7 +854,7 @@ export class BookingsService {
       const fullyBlocked = monthBlocks.some((b) => b.blockStart <= dayDate && b.blockEnd >= dayEndUtc);
       if (fullyBlocked) { available = 0; isFullyBooked = true; }
 
-      days.push({ date: dateStr, dayOfWeek: dow, price: pricePerPerson, isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked });
+      days.push({ date: dateStr, dayOfWeek: dow, price: specialPriceByDate.get(dateStr) ?? pricePerPerson, isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked });
     }
 
     const response = {
@@ -1211,8 +1219,22 @@ export class BookingsService {
           // Daily is always per-unit pricing: price × nights (guests don't affect price)
           const checkInD = new Date(`${dto.checkInDate}T00:00:00Z`);
           const checkOutD = new Date(`${dto.checkOutDate!}T00:00:00Z`);
-          const nights = Math.max(1, Math.round((checkOutD.getTime() - checkInD.getTime()) / (1000 * 60 * 60 * 24)));
-          totalPriceCents = priceCents * nights;
+          const DAY_MS = 1000 * 60 * 60 * 24;
+          const nights = Math.max(1, Math.round((checkOutD.getTime() - checkInD.getTime()) / DAY_MS));
+          // Per-date special prices: each night's date may override the base
+          // price. The summed total is frozen on the booking, so editing or
+          // removing an override later never changes this booking.
+          const nightDates = Array.from({ length: nights }, (_, i) => new Date(checkInD.getTime() + i * DAY_MS));
+          const specials = await tx.activitySpecialPrice.findMany({
+            where: { activityId: activity.id, deletedAt: null, date: { in: nightDates } },
+            select: { date: true, price: true },
+          });
+          const centsByDate = new Map<string, number>();
+          for (const s of specials) centsByDate.set(s.date.toISOString().slice(0, 10), Math.round(Number(s.price) * 100));
+          totalPriceCents = nightDates.reduce(
+            (sum, d) => sum + (centsByDate.get(d.toISOString().slice(0, 10)) ?? priceCents),
+            0,
+          );
         } else {
           // Hourly: the stored `pricePerPerson` is the price for a baseline
           // of `durationValue` hours. Bookings longer than that are priced
@@ -1224,6 +1246,13 @@ export class BookingsService {
           // needs Math.round to snap to a whole cent. Derived from the SERVER-
           // validated start/end datetimes (never the raw DTO), so a tampered
           // slotEndTime can't bypass the span bounds computed above.
+          // Per-date special price: the booking DATE's override (if any) replaces
+          // the base, then scales pro-rata by hours. Frozen on the booking.
+          const special = await tx.activitySpecialPrice.findFirst({
+            where: { activityId: activity.id, deletedAt: null, date: new Date(`${dto.checkInDate}T00:00:00.000Z`) },
+            select: { price: true },
+          });
+          const effectiveCents = special ? Math.round(Number(special.price) * 100) : priceCents;
           const bookedMs = endDatetime.getTime() - startDatetime.getTime();
           const hoursBooked = Math.max(
             activity.durationValue!,
@@ -1232,7 +1261,7 @@ export class BookingsService {
           const durHours = activity.durationValue!;
           const perPersonCount = activity.pricingModel === 'PER_UNIT' ? 1 : dto.guests;
           totalPriceCents = Math.round(
-            (priceCents * hoursBooked * perPersonCount) / durHours,
+            (effectiveCents * hoursBooked * perPersonCount) / durHours,
           );
         }
 

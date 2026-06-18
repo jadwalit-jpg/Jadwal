@@ -13,7 +13,9 @@ import { CreateCouponDto } from './dto/create-coupon.dto';
 import { UpdatePlatformSettingsDto } from './dto/platform-settings.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
 import { CreateActivityBlockDto } from '../vendor/dto/create-activity-block.dto';
+import { CreateSpecialPriceDto } from '../vendor/dto/create-special-price.dto';
 import { createActivityBlockCore } from '../vendor/activity-blocks.logic';
+import { createSpecialPriceCore } from '../vendor/activity-special-prices.logic';
 import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
@@ -936,6 +938,47 @@ export class AdminService {
     });
     if (res.count > 0) void this.availabilityCache.invalidate(activityId);
     return { removed: res.count };
+  }
+
+  // ─── Special prices (per-date price overrides; admin = any activity) ──
+  async getActivitySpecialPrices(activityId: string) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    // Only current/future overrides — past dates can't be booked and the
+    // calendar shows [today, +6mo]. Also bounds the result: old overrides are
+    // never hard-deleted, so without a floor this query would grow over time.
+    const todayUtc = new Date(new Date().toISOString().slice(0, 10));
+    return db.activitySpecialPrice.findMany({
+      where: { activityId, deletedAt: null, date: { gte: todayUtc } },
+      orderBy: { date: 'asc' },
+      select: { id: true, date: true, price: true, createdAt: true },
+    });
+  }
+
+  async createActivitySpecialPrice(activityId: string, dto: CreateSpecialPriceDto) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({
+      where: { id: activityId },
+      select: { id: true, vendorId: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const result = await createSpecialPriceCore(db, activity, dto);
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async deleteActivitySpecialPrice(activityId: string, priceId: string) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const res = await db.activitySpecialPrice.updateMany({
+      where: { id: priceId, activityId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count === 0) throw new NotFoundException('Special price not found');
+    void this.availabilityCache.invalidate(activityId);
+    return { id: priceId, removed: true };
   }
 
   /**

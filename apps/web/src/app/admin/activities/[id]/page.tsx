@@ -13,6 +13,7 @@ import { Check, Loader2, X, BookmarkIcon, AlertTriangle, ImagePlus } from 'lucid
 import { useToast } from '@/components/toast';
 import CustomSelect from '@/components/custom-select';
 import ActivityBlocksManager from '@/components/activity-blocks-manager';
+import ActivitySpecialPricesManager from '@/components/activity-special-prices-manager';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
 
 // Heavy widgets — only mount when their respective wizard step opens.
@@ -543,6 +544,15 @@ export default function AdminEditActivityPage() {
                 </div>
               </div>
             </div>
+
+            {activity?.id && (
+              <ActivitySpecialPricesManager
+                activityId={activity.id}
+                currency={activity.country?.currencyCode || 'QAR'}
+                apiBase="/admin"
+                collapsible
+              />
+            )}
           </div>
         )}
 
