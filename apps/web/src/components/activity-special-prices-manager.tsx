@@ -18,7 +18,6 @@ import { cn } from '@/lib/utils';
 import { getApiError } from '@/lib/api-error';
 import { useToast } from '@/components/toast';
 
-const BRAND = '#1d4f35';
 const MAX_PRICE = 1_000_000;
 // Match the booking advance window + the block (lock) calendar — 6 months ahead.
 const MAX_MONTHS_AHEAD = 6;
@@ -140,7 +139,7 @@ export default function ActivitySpecialPricesManager({
   return (
     <div className="mt-8 pt-6 border-t border-gray-200 dark:border-slate-800">
       <div className="flex items-center gap-2 mb-1">
-        <Tag className="h-4 w-4 shrink-0" style={{ color: BRAND }} />
+        <Tag className="h-4 w-4 shrink-0 text-[#1d4f35]" />
         <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate text-start">
           {t('vendor.activities.wizard.specialPrice.title', 'Special prices by date')}
         </h3>
@@ -211,12 +210,11 @@ export default function ActivitySpecialPricesManager({
                           isPast
                             ? 'text-gray-300 dark:text-slate-700 cursor-not-allowed'
                             : isSel
-                              ? 'border-2 text-white'
+                              ? 'border-2 border-[#1d4f35] bg-[#1d4f35] text-white'
                               : ov
                                 ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
                                 : 'text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-slate-800',
                         )}
-                        style={isSel && !isPast ? { backgroundColor: BRAND, borderColor: BRAND } : undefined}
                       >
                         <span className="font-semibold tabular-nums leading-none">{day}</span>
                         {ov && (
@@ -252,8 +250,7 @@ export default function ActivitySpecialPricesManager({
                         <span className="absolute inset-y-0 end-3 flex items-center text-xs text-gray-400 dark:text-slate-500">{currency}</span>
                       </div>
                       <button type="button" disabled={!priceValid || saveMut.isPending} onClick={save}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                        style={{ backgroundColor: BRAND }}>
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1d4f35] text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
                         {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Tag className="h-4 w-4" />}
                         {selectedExisting ? t('vendor.activities.wizard.specialPrice.update', 'Update') : t('vendor.activities.wizard.specialPrice.save', 'Save')}
                       </button>

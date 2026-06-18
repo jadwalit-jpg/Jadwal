@@ -945,8 +945,12 @@ export class AdminService {
     const db = this.prisma.client;
     const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
     if (!activity) throw new NotFoundException('Activity not found');
+    // Only current/future overrides — past dates can't be booked and the
+    // calendar shows [today, +6mo]. Also bounds the result: old overrides are
+    // never hard-deleted, so without a floor this query would grow over time.
+    const todayUtc = new Date(new Date().toISOString().slice(0, 10));
     return db.activitySpecialPrice.findMany({
-      where: { activityId, deletedAt: null },
+      where: { activityId, deletedAt: null, date: { gte: todayUtc } },
       orderBy: { date: 'asc' },
       select: { id: true, date: true, price: true, createdAt: true },
     });
