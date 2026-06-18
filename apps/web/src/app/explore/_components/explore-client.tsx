@@ -198,25 +198,29 @@ function ExploreContent({
   const activeCategorySlug = selectedCategory ? '' : categorySlugFromUrl;
 
   // The server-seeded `initialActivities` is the DEFAULT page-1 unfiltered list,
-  // so it may only seed the query when the visitor landed with no filters (a
-  // crawler / the canonical /explore). With any ?filter in the URL the first
-  // query key differs from the default → fetch fresh, don't show stale defaults.
-  // Geo (location / geo-country) is applied in a later effect, so it's absent on
-  // this first render and doesn't affect the initial key.
-  const isDefaultInitialView = useMemo(
-    () =>
-      (Number(searchParams.get('page')) || 1) === 1 &&
-      !searchParams.get('search') &&
-      !searchParams.get('countryId') &&
-      !searchParams.get('category') &&
-      !searchParams.get('cityId'),
-    [searchParams],
-  );
+  // so it may seed the query ONLY when the CURRENT state is exactly that default
+  // view — page 1, no filters, no geo. This MUST track live state, not the URL:
+  // pagination/filter changes update component state (not the URL), so a
+  // URL-based check stayed true on page 2+ and react-query kept serving the
+  // seeded page-1 data for every page (it's fresh within staleTime), which broke
+  // pagination and filtering. Keying off state means any page>1 / filter / geo
+  // disables the seed → react-query fetches that page normally.
+  const isDefaultQuery =
+    page === 1 &&
+    !searchDebounced &&
+    !selectedCountry &&
+    !selectedCategory &&
+    !activeCategorySlug &&
+    !selectedCity &&
+    !minPriceDebounced &&
+    !maxPriceDebounced &&
+    !bookingType &&
+    !location;
 
   // Fetch activities
   const { data: activitiesData, isLoading } = useQuery<ActivitiesResponse>({
     queryKey: ['public-activities', page, searchDebounced, selectedCountry, selectedCategory, activeCategorySlug, selectedCity, minPriceDebounced, maxPriceDebounced, bookingType, location?.lat, location?.lng],
-    initialData: isDefaultInitialView ? (initialActivities ?? undefined) : undefined,
+    initialData: isDefaultQuery ? (initialActivities ?? undefined) : undefined,
     queryFn: () => {
       const params = new URLSearchParams();
       params.set('page', String(page));
