@@ -29,7 +29,7 @@ function makeBookingsService() {
     { acquire: jest.fn().mockResolvedValue('tok'), release: jest.fn().mockResolvedValue(undefined) } as any,
     { get: (_: string, f?: string) => f } as any,
     loyalty,
-    { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any,
+    { get: jest.fn().mockResolvedValue(null), set: jest.fn().mockResolvedValue(undefined), invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any,
     { sendBookingOtp: jest.fn().mockResolvedValue(undefined) } as any, { tryConsume: jest.fn().mockResolvedValue(true) } as any, { log: jest.fn() } as any,
   );
 }
@@ -122,6 +122,57 @@ describe('BookingsService.getHourlyAvailability', () => {
     if (tenSlot && 'availableSeats' in tenSlot) {
       expect(tenSlot.availableSeats).toBeLessThan(10);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Calendar availability — HOURLY "fully booked" must be PER-SLOT (bug fix)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('BookingsService.getCalendarAvailability — HOURLY fullness', () => {
+  test('a single booking does NOT mark the whole day fully booked (capacity 1)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    // capacity-1 HOURLY, 09:00–21:00, 2h slots → many slots in the day.
+    await ctx.prisma.activity.update({
+      where: { id: seed.activity.id },
+      data: {
+        bookingType: 'HOURLY', capacity: 1, hasUnits: false,
+        checkInTime: '09:00', checkOutTime: '21:00', durationValue: 2,
+      },
+    });
+    const date = futureDate(10);
+    const start = new Date(`${date}T12:00:00Z`); // occupies only 12:00–14:00
+    await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-CAL-${crypto.randomUUID().slice(0, 6)}`, currencyCode: 'QAR', guests: 1,
+        bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        status: 'CONFIRMED', startDatetime: start, endDatetime: new Date(start.getTime() + 2 * 3600_000),
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+      },
+    });
+    const svc = makeBookingsService();
+    const res: any = await svc.getCalendarAvailability(seed.activity.id, date.slice(0, 7));
+    const day = res.days.find((d: any) => d.date === date);
+    expect(day).toBeTruthy();
+    // Only 12:00–14:00 is taken; 09:00, 10:00, … remain free → day must be bookable.
+    // (Before the fix, whole-day peak concurrency = 1 = capacity → isFullyBooked=true.)
+    expect(day.isFullyBooked).toBe(false);
+  });
+
+  test('a day with no bookings is not fully booked', async () => {
+    const seed = await seedReference(ctx.prisma);
+    await ctx.prisma.activity.update({
+      where: { id: seed.activity.id },
+      data: {
+        bookingType: 'HOURLY', capacity: 1, hasUnits: false,
+        checkInTime: '09:00', checkOutTime: '21:00', durationValue: 2,
+      },
+    });
+    const date = futureDate(11);
+    const svc = makeBookingsService();
+    const res: any = await svc.getCalendarAvailability(seed.activity.id, date.slice(0, 7));
+    const day = res.days.find((d: any) => d.date === date);
+    expect(day?.isFullyBooked).toBe(false);
   });
 });
 

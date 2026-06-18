@@ -801,6 +801,42 @@ export class BookingsService {
 
       let isFullyBooked = capacity != null ? available === 0 : false;
 
+      // BUG FIX — HOURLY "fully booked" must be PER-SLOT, not whole-day peak.
+      // The block above derives `booked`/`available` from the peak concurrency
+      // (or peak unit-occupancy) ANYWHERE in the day, so a single booking on a
+      // capacity-limited hourly activity (e.g. capacity 1, or 1 unit) made
+      // available=0 → the WHOLE date showed fully-booked even though only a few
+      // hours were taken. A date is full only when EVERY bookable slot is at
+      // capacity — the same notion getHourlyAvailability uses per slot.
+      if (
+        activity.bookingType === 'HOURLY' &&
+        activity.checkInTime && activity.checkOutTime && activity.durationValue
+      ) {
+        const slots = computeSlots(activity.checkInTime, activity.checkOutTime, activity.durationValue);
+        const dayBks = bookings.filter(
+          (b) => b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn,
+        );
+        const durMs = activity.durationValue * 60 * 60 * 1000;
+        isFullyBooked = slots.length > 0 && slots.every((slotStart) => {
+          const sStart = buildDatetime(dateStr, slotStart);
+          const sEnd = new Date(sStart.getTime() + durMs);
+          if (wholeUnit) {
+            // Whole-unit (per-unit hourly): slot full only if every unit is
+            // occupied during it.
+            const occ = new Set<number>();
+            for (const b of dayBks) {
+              if (b.unitNumber != null && b.startDatetime < sEnd && b.endDatetime > sStart) {
+                occ.add(b.unitNumber);
+              }
+            }
+            return occ.size >= (unitNumber ? 1 : activity.unitCount);
+          }
+          // Seat-based (per-person units / no units): slot full when peak
+          // concurrency in it reaches total capacity. Uncapped → never full.
+          return capacity != null && maxConcurrentInWindow(dayBks, sStart, sEnd) >= capacity;
+        });
+      }
+
       // Vendor availability lock. A block fully covering the calendar day
       // disables it (available → 0); a partial (time-window) block only flags
       // it — those slots are removed in getHourlyAvailability and rejected at
