@@ -174,9 +174,9 @@ export default function ActivitySpecialPricesManager({
             className="overflow-hidden"
           >
             {isLoading ? (
-              <div className="h-72 jadwal-skeleton rounded-xl" />
+              <div className="h-72 jadwal-skeleton rounded-xl max-w-sm" />
             ) : (
-              <div className="rounded-2xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+              <div className="max-w-sm rounded-2xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
                 {/* Month nav */}
                 <div className="flex items-center justify-between mb-3">
                   <button type="button" onClick={() => shift(-1)} disabled={!canPrev} aria-label={t('vendor.activities.wizard.specialPrice.previous', 'Previous')}

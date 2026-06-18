@@ -831,16 +831,6 @@ export default function EditActivityPage() {
                 />
               )}
 
-              {/* Special prices by date — per-date price overrides (edit-only) */}
-              {activity?.id && (
-                <ActivitySpecialPricesManager
-                  activityId={activity.id}
-                  currency={activity.country?.currencyCode || 'QAR'}
-                  apiBase="/vendor"
-                  collapsible
-                />
-              )}
-
               {/* Units */}
               <div className="mt-8 pt-6 border-t border-gray-200 dark:border-slate-800">
                 <div className="flex items-center justify-between mb-1">
@@ -1009,6 +999,16 @@ export default function EditActivityPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Special prices by date — per-date price overrides (edit-only) */}
+              {activity?.id && (
+                <ActivitySpecialPricesManager
+                  activityId={activity.id}
+                  currency={activity.country?.currencyCode || 'QAR'}
+                  apiBase="/vendor"
+                  collapsible
+                />
+              )}
             </div>
           )}
 

@@ -494,14 +494,6 @@ export default function AdminEditActivityPage() {
                 collapsible
               />
             )}
-            {activity?.id && (
-              <ActivitySpecialPricesManager
-                activityId={activity.id}
-                currency={activity.country?.currencyCode || 'QAR'}
-                apiBase="/admin"
-                collapsible
-              />
-            )}
           </div>
         )}
 
@@ -552,6 +544,15 @@ export default function AdminEditActivityPage() {
                 </div>
               </div>
             </div>
+
+            {activity?.id && (
+              <ActivitySpecialPricesManager
+                activityId={activity.id}
+                currency={activity.country?.currencyCode || 'QAR'}
+                apiBase="/admin"
+                collapsible
+              />
+            )}
           </div>
         )}
 
