@@ -25,6 +25,7 @@ import { CreateActivityDto } from './dto/create-activity.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
 import { CreateActivityBlockDto } from './dto/create-activity-block.dto';
 import { BulkDeleteBlocksDto } from './dto/bulk-delete-blocks.dto';
+import { CreateSpecialPriceDto } from './dto/create-special-price.dto';
 import { VendorPaginationDto } from './dto/vendor-query.dto';
 import { UpdateVendorSettingsDto } from './dto/update-settings.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -134,6 +135,34 @@ export class VendorController {
     @Body() dto: BulkDeleteBlocksDto,
   ) {
     return this.vendorService.deleteActivityBlocksBulk(user.id, id, dto.ids);
+  }
+
+  // ─── Special prices (per-date price overrides) ────────────
+  // Same tiers as blocks: list inherits class RATE_LIMIT_VENDOR; mutations use
+  // RATE_LIMIT_WRITE. Ownership enforced in the service (activity scoped by vendor).
+  @Get('activities/:id/special-prices')
+  getActivitySpecialPrices(@CurrentUser() user: RequestUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.vendorService.getActivitySpecialPrices(user.id, id);
+  }
+
+  @Post('activities/:id/special-prices')
+  @Throttle(RATE_LIMIT_WRITE)
+  createActivitySpecialPrice(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateSpecialPriceDto,
+  ) {
+    return this.vendorService.createActivitySpecialPrice(user.id, id, dto);
+  }
+
+  @Delete('activities/:id/special-prices/:priceId')
+  @Throttle(RATE_LIMIT_WRITE)
+  deleteActivitySpecialPrice(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('priceId', ParseUUIDPipe) priceId: string,
+  ) {
+    return this.vendorService.deleteActivitySpecialPrice(user.id, id, priceId);
   }
 
   // ─── Bookings ─────────────────────────────────────────────

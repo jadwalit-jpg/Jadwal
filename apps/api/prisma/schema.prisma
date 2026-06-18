@@ -180,6 +180,7 @@ model Vendor {
   coupons         Coupon[]
   payoutRequests  PayoutRequest[]
   activityBlocks  ActivityBlock[]
+  specialPrices   ActivitySpecialPrice[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   /// §B9 — soft-delete marker. Same contract as User.deletedAt: keeps
@@ -312,6 +313,7 @@ model Activity {
   reviews           Review[]
   likes             Like[]
   blocks            ActivityBlock[]
+  specialPrices     ActivitySpecialPrice[]
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   /// §B9 — soft-delete marker. Cascade-set when the parent Vendor is
@@ -374,6 +376,31 @@ model ActivityBlock {
   @@index([vendorId])
   @@index([activityId, blockStart])
   @@map("activity_blocks")
+}
+
+/// Vendor/admin-managed per-date price override. On `date` the activity's
+/// effective price becomes `price` instead of `pricePerPerson` (DAILY: that
+/// night; HOURLY: that day's slots). One ACTIVE override per (activity, date),
+/// enforced by a PARTIAL unique index (WHERE deletedAt IS NULL) added in the
+/// migration SQL — Prisma can't express a filtered unique, so the @@index here
+/// is non-unique. Soft-deleted so history survives a removal. The applied price
+/// is FROZEN onto each Booking at booking time, so editing/removing an override
+/// never changes an existing booking's total.
+model ActivitySpecialPrice {
+  id           String    @id @default(uuid())
+  activityId   String
+  activity     Activity  @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  vendorId     String
+  vendor       Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  date         DateTime  @db.Date
+  price        Decimal   @db.Decimal(10, 2)
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  @@index([activityId])
+  @@index([vendorId])
+  @@index([activityId, date])
+  @@map("activity_special_prices")
 }
 
 model Booking {

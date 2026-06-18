@@ -17,6 +17,7 @@ import { Check, Loader2, X, BookmarkIcon, AlertCircle, ImagePlus, AlertTriangle 
 import { useToast } from '@/components/toast';
 import CustomSelect from '@/components/custom-select';
 import ActivityBlocksManager from '@/components/activity-blocks-manager';
+import ActivitySpecialPricesManager from '@/components/activity-special-prices-manager';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
 
 // Heavy widgets — leaflet, canvas, custom time UI — only mount when their
@@ -826,6 +827,16 @@ export default function EditActivityPage() {
                   checkInTime={activity.checkInTime}
                   checkOutTime={activity.checkOutTime}
                   durationValue={activity.durationValue}
+                  collapsible
+                />
+              )}
+
+              {/* Special prices by date — per-date price overrides (edit-only) */}
+              {activity?.id && (
+                <ActivitySpecialPricesManager
+                  activityId={activity.id}
+                  currency={activity.country?.currencyCode || 'QAR'}
+                  apiBase="/vendor"
                   collapsible
                 />
               )}

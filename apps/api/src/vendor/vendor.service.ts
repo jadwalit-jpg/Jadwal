@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateActivityDto } from './dto/create-activity.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
 import { CreateActivityBlockDto } from './dto/create-activity-block.dto';
+import { CreateSpecialPriceDto } from './dto/create-special-price.dto';
 import { VendorPaginationDto } from './dto/vendor-query.dto';
 import { Prisma } from '@prisma/client';
 import { NotificationService } from '../common/services/notification.service';
@@ -12,6 +13,7 @@ import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { refundCouponUsage } from '../bookings/bookings.service';
 import { createActivityBlockCore } from './activity-blocks.logic';
+import { createSpecialPriceCore } from './activity-special-prices.logic';
 
 @Injectable()
 export class VendorService {
@@ -979,6 +981,60 @@ export class VendorService {
     });
     if (res.count > 0) void this.availabilityCache.invalidate(activityId);
     return { removed: res.count };
+  }
+
+  // ─── Special prices (per-date price overrides) ───────────────
+  // Same ownership + cache-bust pattern as activity blocks. Shared validation
+  // lives in createSpecialPriceCore so vendor + admin can never diverge.
+  async getActivitySpecialPrices(userId: string, activityId: string) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    return db.activitySpecialPrice.findMany({
+      where: { activityId, deletedAt: null },
+      orderBy: { date: 'asc' },
+      select: { id: true, date: true, price: true, createdAt: true },
+    });
+  }
+
+  async createActivitySpecialPrice(userId: string, activityId: string, dto: CreateSpecialPriceDto) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true, vendorId: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    const result = await createSpecialPriceCore(db, activity, dto);
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async deleteActivitySpecialPrice(userId: string, activityId: string, priceId: string) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // Soft-delete, scoped by activity + vendor; updateMany so a double-delete or
+    // a foreign id is a clean no-op → 404, never another vendor's row.
+    const res = await db.activitySpecialPrice.updateMany({
+      where: { id: priceId, activityId, vendorId: vendor.id, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count === 0) throw new NotFoundException('Special price not found');
+
+    void this.availabilityCache.invalidate(activityId);
+    return { id: priceId, removed: true };
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {

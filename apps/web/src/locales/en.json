@@ -1019,6 +1019,26 @@
           "open": "Open",
           "close": "Close"
         },
+        "specialPrice": {
+          "title": "Special prices by date",
+          "hint": "Override the price on specific dates (e.g. weekends or holidays). Customers booking those dates pay the special price; all other dates use the base price.",
+          "open": "Open",
+          "close": "Close",
+          "help": "Tap a date to set its special price. Green dates already have one.",
+          "priceForDate": "Special price for",
+          "saved": "Special price saved",
+          "saveFailed": "Could not save special price",
+          "removed": "Special price removed",
+          "removeFailed": "Could not remove special price",
+          "listHeading": "Special prices set",
+          "previous": "Previous",
+          "next": "Next",
+          "save": "Save",
+          "update": "Update",
+          "remove": "Remove",
+          "cancel": "Cancel",
+          "invalid": "Enter a price greater than 0."
+        },
         "steps": {
           "basicInfo": "Basic Info",
           "details": "Details",

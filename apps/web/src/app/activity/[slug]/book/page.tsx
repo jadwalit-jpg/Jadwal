@@ -360,7 +360,24 @@ export default function BookActivityPage() {
   // ─── Pricing ─────────────────────────────────────────────
   const currency = activity?.country?.currencyCode ?? 'QAR';
   const price = Number(activity?.pricePerPerson ?? 0);
-  const effectivePrice = price;
+
+  // Per-date prices from the loaded calendar months — these already include any
+  // special-price overrides (the calendar endpoint applies them). Lets the
+  // preview match the server's per-date charge instead of always using the base.
+  const priceByDate = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const cal of [calLeft, calRight, hourlyCalLeft, hourlyCalRight]) {
+      for (const d of cal?.days ?? []) {
+        if (typeof d.price === 'number') m.set(d.date, d.price);
+      }
+    }
+    return m;
+  }, [calLeft, calRight, hourlyCalLeft, hourlyCalRight]);
+
+  // Selected check-in date's effective price (special override or base). For
+  // DAILY this drives the per-night "from" display; the total sums each night
+  // below. For HOURLY it's the booking date's price.
+  const effectivePrice = (checkIn ? priceByDate.get(checkIn) : undefined) ?? price;
 
   const nights = checkIn && checkOut ? countNights(checkIn, checkOut) : 0;
   const isPerUnit = activity?.pricingModel === 'PER_UNIT';
@@ -408,10 +425,21 @@ export default function BookActivityPage() {
       const pricePerHour = durHours > 0 ? effectivePrice / durHours : effectivePrice;
       base = isPerUnit ? pricePerHour * hours : pricePerHour * guests * hours;
     } else {
-      base = effectivePrice * Math.max(1, nights);
+      // DAILY: sum each night's price (special override or base) so the preview
+      // matches the server, which prices each night by its own date.
+      if (checkIn && checkOut && nights > 0) {
+        const start = new Date(`${checkIn}T00:00:00Z`).getTime();
+        base = 0;
+        for (let i = 0; i < nights; i++) {
+          const ds = new Date(start + i * 86400000).toISOString().slice(0, 10);
+          base += priceByDate.get(ds) ?? price;
+        }
+      } else {
+        base = effectivePrice * Math.max(1, nights);
+      }
     }
     return base + extrasTotal;
-  }, [isHourly, isPerUnit, effectivePrice, guests, nights, slotHours, extrasTotal, activity?.durationValue]);
+  }, [isHourly, isPerUnit, effectivePrice, guests, nights, slotHours, extrasTotal, activity?.durationValue, checkIn, checkOut, price, priceByDate]);
 
   // ─── Loyalty points calculations ────────────────────────
   // Service fee is platform revenue, normally added on top of bookingCost.
