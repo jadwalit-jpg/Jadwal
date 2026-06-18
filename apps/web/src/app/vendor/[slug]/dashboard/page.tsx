@@ -1,5 +1,7 @@
 'use client';
 
+import { pickBadge, type ActivityStatus, type BookingStatus } from '@/lib/status-config';
+
 import React, { useMemo } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useRouter, useParams } from 'next/navigation';
@@ -89,7 +91,7 @@ export default function VendorDashboardPage() {
     [chartData],
   );
 
-  const BOOKING_STATUS_CLASSES: Record<string, string> = {
+  const BOOKING_STATUS_CLASSES: Record<BookingStatus, string> = {
     PENDING:   'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
     CONFIRMED: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
     COMPLETED: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
@@ -275,7 +277,7 @@ export default function VendorDashboardPage() {
                   </thead>
                   <tbody>
                     {recentBookings.map((b: any) => {
-                      const statusClass = BOOKING_STATUS_CLASSES[b.status] ?? BOOKING_STATUS_CLASSES.PENDING;
+                      const statusClass = pickBadge(BOOKING_STATUS_CLASSES, b.status, BOOKING_STATUS_CLASSES.PENDING);
                       // Nominal = totalPrice + couponDiscount. Under the
                       // new accounting, totalPrice already carries the full
                       // vendor value for every payment method (cash, Wanasa,
@@ -353,13 +355,13 @@ export default function VendorDashboardPage() {
             ) : (
               <div className="divide-y divide-gray-50 dark:divide-slate-800/50">
                 {activities.map((activity: any) => {
-                  const ACTIVITY_STATUS_CLASSES: Record<string, string> = {
+                  const ACTIVITY_STATUS_CLASSES: Record<ActivityStatus, string> = {
                     PENDING:  'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
                     ACTIVE:   'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
                     INACTIVE: 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400',
                     BLOCKED:  'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
                   };
-                  const statusClass = ACTIVITY_STATUS_CLASSES[activity.status] ?? ACTIVITY_STATUS_CLASSES.PENDING;
+                  const statusClass = pickBadge(ACTIVITY_STATUS_CLASSES, activity.status, ACTIVITY_STATUS_CLASSES.PENDING);
                   const statusLabel = t(`vendor.dashboard.activityStatus.${activity.status}`, { defaultValue: activity.status });
                   return (
                     <div

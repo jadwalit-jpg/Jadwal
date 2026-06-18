@@ -1,5 +1,7 @@
 'use client';
 
+import { pickBadge, type BookingStatus } from '@/lib/status-config';
+
 import React, { useState } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useParams } from 'next/navigation';
@@ -30,7 +32,7 @@ import DatePicker from '@/components/date-picker';
 
 // Visual config only — labels come from t('status.booking.*') via
 // bookingStatusLabel() so they flip with the language toggle.
-const STATUS_CONFIG: Record<string, { classes: string; icon: React.ElementType }> = {
+const STATUS_CONFIG: Record<BookingStatus, { classes: string; icon: React.ElementType }> = {
   PENDING:   { classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',        icon: Clock },
   CONFIRMED: { classes: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',            icon: CheckCircle2 },
   COMPLETED: { classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400', icon: Flag },
@@ -242,7 +244,7 @@ export default function VendorBookingsPage() {
               </thead>
               <tbody>
                 {bookings.map((b: any) => {
-                  const cfg = STATUS_CONFIG[b.status] ?? STATUS_CONFIG.PENDING;
+                  const cfg = pickBadge(STATUS_CONFIG, b.status, STATUS_CONFIG.PENDING);
                   const StatusIcon = cfg.icon;
                   const transitions = ALLOWED_TRANSITIONS[b.status] ?? [];
                   return (
@@ -590,7 +592,7 @@ export default function VendorBookingsPage() {
               <div className="flex items-center justify-between py-2">
                 <span className="text-sm text-gray-500 dark:text-slate-400">{t('vendor.bookings.details.status')}</span>
                 {(() => {
-                  const cfg = STATUS_CONFIG[viewBooking.status] ?? STATUS_CONFIG.PENDING;
+                  const cfg = pickBadge(STATUS_CONFIG, viewBooking.status, STATUS_CONFIG.PENDING);
                   const StatusIcon = cfg.icon;
                   return (
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${cfg.classes}`}>
