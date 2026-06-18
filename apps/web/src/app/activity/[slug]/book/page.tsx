@@ -308,30 +308,49 @@ export default function BookActivityPage() {
   });
 
   // ─── Daily: date selection ───────────────────────────────
-  const fixedNights = activity?.durationValue ?? null;
+  // DAILY durationValue = MINIMUM nights (null/0 = flexible day-by-day booking).
+  const minNights = activity?.durationValue ?? null;
+
+  // Checkout date for check-in + minNights — the minimum stay, pre-selected on pick.
+  const minCheckout = useCallback(
+    (cinStr: string): string => {
+      const cin = new Date(cinStr + 'T00:00:00Z');
+      cin.setUTCDate(cin.getUTCDate() + (minNights ?? 1));
+      return cin.toISOString().split('T')[0];
+    },
+    [minNights],
+  );
 
   const handleDailyDateSelect = useCallback(
     (date: string) => {
-      if (fixedNights) {
-        setCheckIn(date);
-        const cin = new Date(date + 'T00:00:00Z');
-        cin.setUTCDate(cin.getUTCDate() + fixedNights);
-        setCheckOut(cin.toISOString().split('T')[0]);
+      if (minNights && minNights > 0) {
+        // Minimum-stay model: the first pick (or a pick on/before the current
+        // check-in) sets check-in and INSTANTLY pre-selects the minimum stay;
+        // a pick AFTER check-in extends the stay; a too-short pick snaps back to
+        // the minimum. The customer can extend but never drop below the minimum.
+        if (!checkIn || date <= checkIn) {
+          setCheckIn(date);
+          setCheckOut(minCheckout(date));
+          return;
+        }
+        const cin = new Date(checkIn + 'T00:00:00Z');
+        const clicked = new Date(date + 'T00:00:00Z');
+        const nights = Math.round((clicked.getTime() - cin.getTime()) / 86400000);
+        setCheckOut(nights < minNights ? minCheckout(checkIn) : date);
         return;
       }
+      // Flexible (no minimum) — standard range picker.
       if (!checkIn || checkOut) {
         setCheckIn(date);
         setCheckOut(null);
+      } else if (date <= checkIn) {
+        setCheckIn(date);
+        setCheckOut(null);
       } else {
-        if (date <= checkIn) {
-          setCheckIn(date);
-          setCheckOut(null);
-        } else {
-          setCheckOut(date);
-        }
+        setCheckOut(date);
       }
     },
-    [checkIn, checkOut, fixedNights],
+    [checkIn, checkOut, minNights, minCheckout],
   );
 
   // ─── Hourly: date selection ──────────────────────────────
@@ -812,8 +831,8 @@ export default function BookActivityPage() {
                 ) : (
                   <>
                     <Calendar className="h-3.5 w-3.5 text-jadwal-primary" aria-hidden="true" />
-                    {fixedNights
-                      ? `${fixedNights} ${fixedNights > 1 ? t('activity.nights') : t('activity.night')}`
+                    {minNights
+                      ? `${t('activity.minStay', 'Min')} ${minNights} ${minNights > 1 ? t('activity.nights') : t('activity.night')}`
                       : t('activity.dailyBooking')}
                     <span className="text-jadwal-text-faint">·</span>
                     <span className="tabular-nums">
@@ -943,7 +962,7 @@ export default function BookActivityPage() {
                   onDateSelect={handleDailyDateSelect}
                   currency={currency}
                   showPrices
-                  fixedNights={fixedNights}
+                  minNights={minNights}
                   isLoading={calendarLoading}
                 />
                 {(checkIn || checkOut) && (

@@ -409,6 +409,9 @@ export default function EditActivityPage() {
       } else {
         if (!form.checkInTime) errs.checkInTime = t(ACTIVITY_WIZARD_ERR.checkInRequired);
         if (!form.checkOutTime) errs.checkOutTime = t(ACTIVITY_WIZARD_ERR.checkOutRequired);
+        // Minimum nights is OPTIONAL for DAILY (empty = flexible day-by-day). If set, bound 1–90.
+        if (form.durationValue && (Number(form.durationValue) < 1 || Number(form.durationValue) > 90))
+          errs.durationValue = t('vendor.activities.wizard.errors.minNightsRange', 'Minimum nights must be between 1 and 90');
       }
     }
     if (step === 3) {
@@ -481,9 +484,9 @@ export default function EditActivityPage() {
       categoryId: form.categoryId,
       subCategoryId: form.subCategoryId || undefined,
       pricePerPerson: Number(form.pricePerPerson),
-      durationValue: form.bookingType === 'HOURLY'
-        ? (Number(form.durationValue) || undefined)
-        : undefined,
+      // HOURLY: duration in hours (required). DAILY: minimum nights (optional;
+      // empty → undefined → null = flexible day-by-day booking).
+      durationValue: Number(form.durationValue) || undefined,
       pricingModel: form.bookingType === 'DAILY' ? 'PER_UNIT' : form.pricingModel,
       capacity: totalCapacity,
       locationLat: Number(form.locationLat),
@@ -791,6 +794,17 @@ export default function EditActivityPage() {
                       />
                     </FieldGroup>
                   </div>
+
+                  {/* Minimum stay — optional. Empty = flexible day-by-day; set = customer
+                      must book at least this many nights (can extend, pays per night). */}
+                  <FieldGroup label={t('vendor.activities.wizard.ui.fieldMinNights', 'Minimum nights')}
+                    hint={t('vendor.activities.wizard.ui.hintMinNights', 'Leave empty for flexible day-by-day booking. Set a number to require at least that many nights (guests can still book more).')}
+                    error={errors.durationValue}>
+                    <input type="number" min="1" max="90" inputMode="numeric" value={form.durationValue}
+                      onChange={e => updateField('durationValue', e.target.value)}
+                      className={inputCls(!!errors.durationValue)}
+                      placeholder={t('vendor.activities.wizard.ui.phMinNights', 'e.g. 3 (or leave empty)')} />
+                  </FieldGroup>
                 </div>
               )}
 

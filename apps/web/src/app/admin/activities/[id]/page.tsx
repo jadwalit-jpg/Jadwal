@@ -247,6 +247,8 @@ export default function AdminEditActivityPage() {
       } else {
         if (!form.checkInTime) errs.checkInTime = 'Check-in time is required';
         if (!form.checkOutTime) errs.checkOutTime = 'Check-out time is required';
+        // Minimum nights optional for DAILY (empty = flexible). If set, bound 1–90.
+        if (form.durationValue && (Number(form.durationValue) < 1 || Number(form.durationValue) > 90)) errs.durationValue = 'Minimum nights must be between 1 and 90';
       }
     }
     if (step === 3) {
@@ -284,7 +286,7 @@ export default function AdminEditActivityPage() {
       descriptionEn: sanitize(form.descriptionEn), descriptionAr: sanitize(form.descriptionAr),
       categoryId: form.categoryId, subCategoryId: form.subCategoryId || undefined,
       pricePerPerson: Number(form.pricePerPerson),
-      durationValue: form.bookingType === 'HOURLY' ? (Number(form.durationValue) || undefined) : undefined,
+      durationValue: Number(form.durationValue) || undefined,  // HOURLY = hours (required); DAILY = minimum nights (optional, empty = flexible)
       pricingModel: form.bookingType === 'DAILY' ? 'PER_UNIT' : form.pricingModel,
       capacity: totalCapacity,
       locationLat: Number(form.locationLat), locationLng: Number(form.locationLng),
@@ -444,6 +446,10 @@ export default function AdminEditActivityPage() {
                     <TimePicker value={form.checkOutTime} onChange={val => updateField('checkOutTime', val)} hasError={!!errors.checkOutTime} placeholder="Select check-out time" />
                   </FieldGroup>
                 </div>
+                {/* Minimum stay — optional. Empty = flexible day-by-day; set = at least N nights (extendable, pays per night). */}
+                <FieldGroup label="Minimum nights" error={errors.durationValue}>
+                  <input type="number" min="1" max="90" inputMode="numeric" value={form.durationValue} onChange={e => updateField('durationValue', e.target.value)} className={inputCls(!!errors.durationValue)} placeholder="e.g. 3 (or leave empty for flexible)" />
+                </FieldGroup>
               </div>
             )}
             <div>

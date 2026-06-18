@@ -37,8 +37,8 @@ interface BookingCalendarProps {
   currency: string;
   /** Whether to show prices on each day */
   showPrices?: boolean;
-  /** Fixed duration — if set, auto-selects check-out N days after check-in */
-  fixedNights?: number | null;
+  /** Minimum stay (nights) — selection logic lives in the parent; informational here */
+  minNights?: number | null;
   /** Loading state */
   isLoading?: boolean;
   /** Max months in advance the customer may navigate/book (default 6) */
