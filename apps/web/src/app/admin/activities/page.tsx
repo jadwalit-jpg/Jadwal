@@ -12,6 +12,7 @@ import {
   Pencil, Download, X, ChevronDown, MapPin, Calendar, Users, Tag, Image as ImageIcon,
   Clock3, Home, Globe, ZoomIn, PauseCircle,
 } from 'lucide-react';
+import type { ActivityStatus } from '@/lib/status-config';
 import CustomSelect from '@/components/custom-select';
 
 /* ─── Types ───────────────────────────────────────────────── */
@@ -62,7 +63,9 @@ interface ActivitiesResponse {
 
 /* ─── Constants ───────────────────────────────────────────── */
 
-const statusConfig: Record<string, { bg: string; text: string; icon: React.ElementType }> = {
+// Exhaustive: keyed by ActivityStatus, so the build FAILS if an enum value is
+// missing a badge (this is what would have caught the INACTIVE crash).
+const statusConfig: Record<ActivityStatus, { bg: string; text: string; icon: React.ElementType }> = {
   ACTIVE: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', icon: CheckCircle },
   PENDING: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', icon: Clock },
   // INACTIVE is a real ActivityStatus enum value (a deactivated listing). It was

@@ -1,5 +1,7 @@
 'use client';
 
+import { pickBadge } from '@/lib/status-config';
+
 import React, { useState } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -36,6 +38,9 @@ interface Coupon {
   usageCount: number;
 }
 
+// Kept Record<string> (not exhaustive): the vendor coupon UI models a REJECTED
+// status that the Prisma CouponStatus enum doesn't have (FE/backend drift), so
+// pickBadge runtime-guards it instead of an exhaustive compile check.
 const STATUS_VIS: Record<string, { classes: string; icon: React.ElementType }> = {
   PENDING: {
     classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
@@ -239,7 +244,7 @@ export default function VendorCouponsPage() {
               </thead>
               <tbody>
                 {coupons.map((c) => {
-                  const cfg = STATUS_VIS[c.status] ?? STATUS_VIS.PENDING;
+                  const cfg = pickBadge(STATUS_VIS, c.status, STATUS_VIS.PENDING);
                   const StatusIcon = cfg.icon;
                   return (
                     <tr key={c.id} className="border-b border-gray-50 dark:border-slate-800/50 hover:bg-gray-50/50 dark:hover:bg-slate-800/30 transition-colors">

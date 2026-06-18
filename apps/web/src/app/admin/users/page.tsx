@@ -1,5 +1,7 @@
 'use client';
 
+import { pickBadge, type UserRole } from '@/lib/status-config';
+
 import { useState, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -28,7 +30,7 @@ interface UsersResponse {
   totalPages: number;
 }
 
-const roleBadge: Record<string, { bg: string; text: string; icon: React.ElementType }> = {
+const roleBadge: Record<UserRole, { bg: string; text: string; icon: React.ElementType }> = {
   ADMIN: { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', icon: ShieldCheck },
   VENDOR: { bg: 'bg-violet-500/10', text: 'text-violet-600 dark:text-violet-400', icon: Shield },
   CUSTOMER: { bg: 'bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', icon: UserCircle },
@@ -285,7 +287,7 @@ export default function AdminUsersPage() {
                   </tr>
                 )}
                 {data?.data.map((user) => {
-                  const badge = roleBadge[user.role];
+                  const badge = pickBadge(roleBadge, user.role, roleBadge.CUSTOMER);
                   const BadgeIcon = badge.icon;
                   return (
                     <tr key={user.id} className="hover:bg-gray-50/50 dark:hover:bg-slate-800/30 transition-colors">

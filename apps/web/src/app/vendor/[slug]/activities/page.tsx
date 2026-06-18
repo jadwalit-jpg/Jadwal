@@ -1,5 +1,7 @@
 'use client';
 
+import { pickBadge, type ActivityStatus } from '@/lib/status-config';
+
 import React, { useState } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useRouter, useParams } from 'next/navigation';
@@ -36,7 +38,7 @@ import {
 import CustomSelect from '@/components/custom-select';
 import ActivityBlocksSummary from '@/components/activity-blocks-summary';
 
-const STATUS_VIS: Record<string, { classes: string; icon: React.ElementType }> = {
+const STATUS_VIS: Record<ActivityStatus, { classes: string; icon: React.ElementType }> = {
   PENDING: { classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400', icon: Clock },
   ACTIVE: { classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400', icon: CheckCircle2 },
   INACTIVE: { classes: 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400', icon: EyeOff },
@@ -192,7 +194,7 @@ export default function VendorActivitiesPage() {
               </thead>
               <tbody>
                 {activities.map((activity: any) => {
-                  const statusCfg = STATUS_VIS[activity.status] ?? STATUS_VIS.PENDING;
+                  const statusCfg = pickBadge(STATUS_VIS, activity.status, STATUS_VIS.PENDING);
                   const StatusIcon = statusCfg.icon;
                   const isExpanded = expandedId === activity.id;
                   const currency = activity.country?.currencyCode ?? 'QAR';

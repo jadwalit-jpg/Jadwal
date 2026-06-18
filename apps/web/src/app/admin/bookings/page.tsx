@@ -1,5 +1,7 @@
 'use client';
 
+import type { BookingStatus } from '@/lib/status-config';
+
 import React, { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -49,7 +51,7 @@ interface BookingsResponse {
   totalPages: number;
 }
 
-const statusConfig: Record<string, { bg: string; text: string; icon: React.ElementType }> = {
+const statusConfig: Record<BookingStatus, { bg: string; text: string; icon: React.ElementType }> = {
   PENDING: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', icon: Clock },
   CONFIRMED: { bg: 'bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', icon: CheckCircle },
   COMPLETED: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', icon: CheckCheck },

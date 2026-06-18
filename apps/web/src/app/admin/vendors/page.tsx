@@ -1,5 +1,7 @@
 'use client';
 
+import type { VendorStatus } from '@/lib/status-config';
+
 import React, { useState, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -33,7 +35,7 @@ interface VendorsResponse {
   totalPages: number;
 }
 
-const statusConfig: Record<string, { bg: string; text: string; icon: React.ElementType }> = {
+const statusConfig: Record<VendorStatus, { bg: string; text: string; icon: React.ElementType }> = {
   ACTIVE: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', icon: CheckCircle },
   PENDING: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', icon: Clock },
   SUSPENDED: { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', icon: XCircle },
