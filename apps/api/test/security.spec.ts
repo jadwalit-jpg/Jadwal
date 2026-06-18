@@ -1206,8 +1206,10 @@ describe('REGRESSION: Hourly pro-rata pricing — flex hours × guests / duratio
     expect(svc).toMatch(/endDatetime\.getTime\(\)\s*-\s*startDatetime\.getTime\(\)/);
   });
 
-  test('total cents formula: round(priceCents × hours × perPersonCount / durHours)', () => {
-    expect(svc).toMatch(/Math\.round\(\s*\(\s*priceCents\s*\*\s*hoursBooked\s*\*\s*perPersonCount\s*\)\s*\/\s*durHours/);
+  test('total cents formula: round(effectiveCents × hours × perPersonCount / durHours)', () => {
+    // effectiveCents = the per-date special price (if set) else priceCents; the
+    // pro-rata structure is unchanged and still server-derived (not tamperable).
+    expect(svc).toMatch(/Math\.round\(\s*\(\s*effectiveCents\s*\*\s*hoursBooked\s*\*\s*perPersonCount\s*\)\s*\/\s*durHours/);
   });
 
   test('PER_UNIT pricing uses perPersonCount = 1 (guests do not multiply)', () => {
