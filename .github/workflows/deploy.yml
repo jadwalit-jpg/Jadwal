@@ -231,6 +231,11 @@ jobs:
           ignore-unfixed: true
           vuln-type: os,library
           format: table
+          # Honour the repo-root .trivyignore (documented, time-boxed CVE
+          # risk-acceptances). The action does NOT auto-read it; without this
+          # input TRIVY_IGNOREFILE is unset and every entry is ignored. See
+          # .trivyignore for the justification + removal conditions.
+          trivyignores: .trivyignore
 
       # Pass 2: SARIF — comprehensive scan, ALL severities, uploads to
       # GitHub Security tab. exit-code 0 because Pass 1 already gated.
