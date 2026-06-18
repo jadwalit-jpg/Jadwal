@@ -20,7 +20,8 @@ import { useToast } from '@/components/toast';
 
 const BRAND = '#1d4f35';
 const MAX_PRICE = 1_000_000;
-const MAX_MONTHS_AHEAD = 12;
+// Match the booking advance window + the block (lock) calendar — 6 months ahead.
+const MAX_MONTHS_AHEAD = 6;
 
 interface SpecialPrice {
   id: string;

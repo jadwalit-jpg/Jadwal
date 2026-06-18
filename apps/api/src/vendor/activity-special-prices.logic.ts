@@ -2,9 +2,10 @@ import { BadRequestException } from '@nestjs/common';
 import { isValidDate } from '../bookings/bookings.service';
 import type { CreateSpecialPriceDto } from './dto/create-special-price.dto';
 
-// How far ahead a special price may be set (matches the booking horizon used by
-// the date pickers). Past dates are rejected — they can't be booked anyway.
-export const SPECIAL_PRICE_MAX_ADVANCE_MONTHS = 12;
+// How far ahead a special price may be set — 6 months, matching BOOKING_MAX_ADVANCE_MONTHS
+// (the booking horizon) and the customer + block (lock) calendars. A price set beyond
+// the bookable window would never apply. Past dates are rejected — they can't be booked.
+export const SPECIAL_PRICE_MAX_ADVANCE_MONTHS = 6;
 const MAX_PRICE = 1_000_000;
 
 export interface SpecialPriceActivity {
