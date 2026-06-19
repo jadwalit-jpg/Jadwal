@@ -22,10 +22,11 @@
  */
 
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { JsonLd } from '@/components/json-ld';
 import { fetchActivityDetail } from '@/lib/activity-detail-fetch';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localeAlternates } from '@/lib/locale-path';
 
 const DESCRIPTION_MAX = 160;
 
@@ -136,8 +137,7 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const cookieStore = await cookies();
-  const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  const lang = await readLangServer();
 
   const fallback: Metadata = {
     title: 'AL Jadwal',
@@ -183,7 +183,7 @@ export async function generateMetadata({
   return {
     title,
     description: description || undefined,
-    alternates: { canonical: `/activity/${slug}` },
+    alternates: localeAlternates(`/activity/${slug}`, lang),
     openGraph: og,
     twitter,
   };
@@ -197,8 +197,7 @@ export default async function ActivityLayout({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const cookieStore = await cookies();
-  const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  const lang = await readLangServer();
   const result = await fetchActivityDetail(slug);
 
   // Genuine 404 → real notFound() (the slug doesn't resolve to an ACTIVE

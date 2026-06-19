@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import Link from 'next/link';
+import { LocaleLink as Link } from '@/components/locale-link';
 import { Clock, Heart, MapPin } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';

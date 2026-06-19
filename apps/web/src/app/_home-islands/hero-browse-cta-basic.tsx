@@ -8,7 +8,7 @@
  * hero-title.tsx for the full explanation. DO NOT move back to server.)
  */
 
-import Link from 'next/link';
+import { LocaleLink as Link } from '@/components/locale-link';
 import { useTranslation } from 'react-i18next';
 
 export function HeroBrowseCtaBasic() {

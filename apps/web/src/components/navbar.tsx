@@ -23,7 +23,7 @@
  * `role="dialog"`, body-scroll lock, and Escape-to-close.
  */
 
-import Link from 'next/link';
+import { LocaleLink as Link } from '@/components/locale-link';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTheme } from 'next-themes';
 import { useTranslation } from 'react-i18next';

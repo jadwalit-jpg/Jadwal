@@ -82,15 +82,17 @@ export const metadata: Metadata = {
   // needed (e.g. when serving paginated lists or filtered queries that
   // should canonicalize to the un-filtered root).
   alternates: {
+    // "./" resolves to the page's OWN URL (against metadataBase), so the home
+    // canonical is self-referential per language: `/` on English, `/ar` on
+    // Arabic. This is the fallback for pages without their own `alternates`
+    // (chiefly the home `/`); every other public page sets `localeAlternates`.
     canonical: "./",
-    // Jadwal serves both languages from the SAME URL set (locale is
-    // cookie-driven, not path-prefixed like /ar/*), so every hreflang
-    // points at the same canonical. This tells search engines the page
-    // exists for en + ar and prevents duplicate-content flags. Revisit
-    // if locale-pathed routes (/ar/...) are ever introduced.
+    // Bilingual /ar URLs (SEO P1#4): English home = `/`, Arabic home = `/ar`,
+    // x-default = English. Per-page metadata overrides this with the page's own
+    // en/ar twins via lib/locale-path `localeAlternates`.
     languages: {
       en: "/",
-      ar: "/",
+      ar: "/ar",
       "x-default": "/",
     },
   },

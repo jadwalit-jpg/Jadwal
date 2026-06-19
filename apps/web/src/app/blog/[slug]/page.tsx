@@ -7,7 +7,6 @@
  */
 
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
@@ -16,6 +15,8 @@ import Footer from '@/components/footer';
 import { JsonLd } from '@/components/json-ld';
 import { getGuide, tr } from '@/lib/seo-guides';
 import { getLanding, landingCopy, type LandingLang } from '@/lib/seo-landings';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localePath, localeAlternates } from '@/lib/locale-path';
 
 // Fully dynamic: reads the `jadwal_lang` cookie to render EN/AR server-side, so it
 // must render per request. We avoid generateStaticParams + dynamicParams=false
@@ -32,8 +33,7 @@ function siteOrigin(): string {
 }
 
 async function readLang(): Promise<LandingLang> {
-  const c = await cookies();
-  return c.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  return readLangServer();
 }
 
 export async function generateMetadata({
@@ -52,11 +52,11 @@ export async function generateMetadata({
     title,
     description,
     robots: { index: guide.published, follow: true },
-    alternates: { canonical: `/blog/${guide.slug}` },
+    alternates: localeAlternates(`/blog/${guide.slug}`, lang),
     openGraph: {
       title,
       description,
-      url: `/blog/${guide.slug}`,
+      url: localePath(`/blog/${guide.slug}`, lang),
       type: 'article',
       siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
@@ -117,7 +117,7 @@ export default async function GuidePage({
       <main className="min-h-[60vh] bg-jadwal-bg">
         <article className="max-w-3xl mx-auto px-4 sm:px-6 py-12 md:py-16">
           <nav className="mb-6 text-sm text-jadwal-text-muted">
-            <Link href="/blog" className="hover:text-jadwal-accent">
+            <Link href={localePath('/blog', lang)} className="hover:text-jadwal-accent">
               {isAr ? 'الدليل' : 'Guides'}
             </Link>
           </nav>
@@ -150,7 +150,7 @@ export default async function GuidePage({
                 {related.map((r) => (
                   <Link
                     key={r.slug}
-                    href={`/${r.slug}`}
+                    href={localePath(`/${r.slug}`, lang)}
                     className="inline-flex items-center gap-2 rounded-full bg-jadwal-accent px-4 py-2 text-sm font-semibold text-white"
                   >
                     {landingCopy(r, lang).h1}

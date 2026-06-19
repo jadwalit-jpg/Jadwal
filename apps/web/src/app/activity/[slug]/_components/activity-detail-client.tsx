@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import { LocaleLink as Link } from '@/components/locale-link';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,

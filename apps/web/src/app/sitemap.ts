@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next';
 import { launchedLandings } from '@/lib/seo-landings';
 import { publishedGuides } from '@/lib/seo-guides';
+import { localePath } from '@/lib/locale-path';
 
 /**
  * sitemap.xml — static routes + dynamic per-activity / per-category URLs.
@@ -35,6 +36,18 @@ const MAX_SITEMAP_URLS = 50000;
 
 // Cache the generated sitemap for 1h (ISR) — not regenerated per crawl.
 export const revalidate = 3600;
+
+/**
+ * hreflang alternates for a public path (bilingual /ar URLs, SEO P1#4). The
+ * entry's `url` stays the English (canonical) URL; Google discovers the Arabic
+ * twin via the `xhtml:link` alternates Next.js emits from this. `path` is the
+ * English app-relative path ('' = home, '/explore', `/activity/x`, …).
+ */
+function langAlternates(path: string): { languages: Record<string, string> } {
+  const en = `${BASE_URL}${path}`;
+  const ar = `${BASE_URL}${localePath(path || '/', 'ar')}`;
+  return { languages: { en, ar, 'x-default': en } };
+}
 
 interface SitemapUrls {
   activities: Array<{ slug: string; updatedAt: string }>;
@@ -87,6 +100,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     lastModified: now,
     changeFrequency: r.changeFrequency,
     priority: r.priority,
+    alternates: langAlternates(r.path),
   }));
 
   // Keyword SEO landing pages — only the LAUNCHED ones (real inventory). Dormant
@@ -97,6 +111,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: now,
       changeFrequency: 'weekly',
       priority: l.priority,
+      alternates: langAlternates(`/${l.slug}`),
     });
   }
 
@@ -107,6 +122,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: g.updated ? new Date(g.updated) : now,
       changeFrequency: 'monthly',
       priority: g.priority,
+      alternates: langAlternates(`/blog/${g.slug}`),
     });
   }
 
@@ -119,6 +135,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         lastModified: a.updatedAt ? new Date(a.updatedAt) : now,
         changeFrequency: 'weekly',
         priority: 0.8,
+        alternates: langAlternates(`/activity/${encodeURIComponent(a.slug)}`),
       });
     }
     for (const c of dynamic.categories ?? []) {

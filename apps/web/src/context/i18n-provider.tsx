@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { I18nextProvider } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import i18n, { type Lang, isLang, readLangClient } from '@/lib/i18n';
+import { isLocalizablePath, localePath, stripLocalePrefix } from '@/lib/locale-path';
 import { cn } from '@/lib/utils';
 
 /**
@@ -80,17 +81,26 @@ export function I18nProvider({
   }, [desired]);
 
   // The user-facing switch. Client text + <html dir/lang> flip synchronously
-  // (instant, responsive), then the RSC refresh runs inside a transition so
-  // `isSwitching` stays true until the new server-rendered islands commit — we
-  // overlay a blur + spinner for that window so the brief lag isn't visible.
+  // (instant, responsive); changeLanguage() also writes the `jadwal_lang` cookie
+  // (listener in lib/i18n.ts). Then we NAVIGATE to the language twin URL so the
+  // language lives in the URL (bilingual /ar migration): `/explore` ⇄
+  // `/ar/explore`. On non-public routes (admin/vendor/account — no /ar twin) we
+  // just refresh, keeping the cookie-driven UI. The navigation runs inside a
+  // transition so `isSwitching` stays true (blur + spinner) until it commits.
   // changeLanguage is called from this event handler (never during render), so
   // the freeze fix above is preserved.
   const switchLanguage = useCallback(
     (lng: Lang) => {
       if (lng === i18n.language) return;
       void i18n.changeLanguage(lng);
+      const { path: underlying } = stripLocalePrefix(window.location.pathname);
+      const suffix = window.location.search + window.location.hash;
       startTransition(() => {
-        router.refresh();
+        if (isLocalizablePath(underlying)) {
+          router.push(localePath(underlying, lng) + suffix);
+        } else {
+          router.refresh();
+        }
       });
     },
     [router],

@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import { LocaleLink as Link } from '@/components/locale-link';
 import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 import { Search, MapPin, Star, Clock, Users, ChevronLeft, ChevronRight, SlidersHorizontal, X } from 'lucide-react';

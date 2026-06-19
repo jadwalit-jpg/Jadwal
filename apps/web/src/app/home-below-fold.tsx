@@ -21,7 +21,7 @@
 'use client';
 
 import Image from 'next/image';
-import Link from 'next/link';
+import { LocaleLink as Link } from '@/components/locale-link';
 import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
