@@ -14,7 +14,7 @@ import { ToastProvider } from "@/components/toast";
 import { CustomerShell } from "@/components/customer-shell";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { JsonLd } from "@/components/json-ld";
-import { readLangCookieServer } from "@/lib/lang-cookie.server";
+import { readLangServer } from "@/lib/lang-cookie.server";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -82,15 +82,17 @@ export const metadata: Metadata = {
   // needed (e.g. when serving paginated lists or filtered queries that
   // should canonicalize to the un-filtered root).
   alternates: {
+    // "./" resolves to the page's OWN URL (against metadataBase), so the home
+    // canonical is self-referential per language: `/` on English, `/ar` on
+    // Arabic. This is the fallback for pages without their own `alternates`
+    // (chiefly the home `/`); every other public page sets `localeAlternates`.
     canonical: "./",
-    // Jadwal serves both languages from the SAME URL set (locale is
-    // cookie-driven, not path-prefixed like /ar/*), so every hreflang
-    // points at the same canonical. This tells search engines the page
-    // exists for en + ar and prevents duplicate-content flags. Revisit
-    // if locale-pathed routes (/ar/...) are ever introduced.
+    // Bilingual /ar URLs (SEO P1#4): English home = `/`, Arabic home = `/ar`,
+    // x-default = English. Per-page metadata overrides this with the page's own
+    // en/ar twins via lib/locale-path `localeAlternates`.
     languages: {
       en: "/",
-      ar: "/",
+      ar: "/ar",
       "x-default": "/",
     },
   },
@@ -144,7 +146,7 @@ export default async function RootLayout({
   // the client hydration pass pick the same value. This is the only reliable
   // way to avoid the "English flash → Arabic" flicker + hydration mismatch
   // that localStorage-based i18n produces.
-  const lang = await readLangCookieServer();
+  const lang = await readLangServer();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
 
   // Preconnect / DNS-prefetch for the API origin. Saves ~100-200ms on the

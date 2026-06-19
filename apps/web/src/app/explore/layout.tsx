@@ -8,11 +8,11 @@
  */
 
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localeAlternates } from '@/lib/locale-path';
 
 export async function generateMetadata(): Promise<Metadata> {
-  const cookieStore = await cookies();
-  const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  const lang = await readLangServer();
 
   const title =
     lang === 'ar' ? 'استكشف الأنشطة — الجدول' : 'Explore Activities — AL Jadwal';
@@ -24,10 +24,10 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title,
     description,
-    // Consolidate every /explore?country=…&category=… filter permutation onto
-    // the canonical /explore so the dozens of query-string variants don't dilute
-    // ranking or get indexed as duplicate content. /explore itself stays indexed.
-    alternates: { canonical: '/explore' },
+    // Self-canonical per language (en → /explore, ar → /ar/explore) + hreflang,
+    // so each language version is indexed on its own URL and the ?country=…
+    // filter permutations still consolidate onto the (per-language) base.
+    alternates: localeAlternates('/explore', lang),
     openGraph: {
       title,
       description,

@@ -12,9 +12,10 @@
  */
 
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localePath, localeAlternates } from '@/lib/locale-path';
 import { ArrowRight } from 'lucide-react';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
@@ -43,8 +44,9 @@ function siteOrigin(): string {
 }
 
 async function readLang(): Promise<LandingLang> {
-  const c = await cookies();
-  return c.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  // URL-driven on /ar (x-lang header), cookie fallback otherwise — same source
+  // of truth as every other public page so /ar/<slug> renders Arabic copy.
+  return readLangServer();
 }
 
 export async function generateMetadata({
@@ -65,11 +67,11 @@ export async function generateMetadata({
     description: copy.metaDescription,
     // Index + sitemap only the launched (real-inventory) pages; dormant ones are noindex.
     robots: { index: landing.launched, follow: true },
-    alternates: { canonical: `/${landing.slug}` },
+    alternates: localeAlternates(`/${landing.slug}`, lang),
     openGraph: {
       title: copy.metaTitle,
       description: copy.metaDescription,
-      url: `/${landing.slug}`,
+      url: localePath(`/${landing.slug}`, lang),
       type: 'website',
       siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
@@ -160,7 +162,7 @@ export default async function LandingPage({
                   : 'No listings available right now. Browse all activities available in Qatar.'}
               </p>
               <Link
-                href="/explore"
+                href={localePath('/explore', lang)}
                 className="mt-4 inline-flex items-center gap-2 rounded-xl bg-jadwal-accent px-5 py-2.5 text-sm font-semibold text-white"
               >
                 {isAr ? 'تصفّح الكل' : 'Browse all activities'}
@@ -180,7 +182,7 @@ export default async function LandingPage({
               {related.map((r) => (
                 <Link
                   key={r.slug}
-                  href={`/${r.slug}`}
+                  href={localePath(`/${r.slug}`, lang)}
                   className="inline-flex items-center gap-2 rounded-full border border-jadwal-border-subtle bg-jadwal-surface px-4 py-2 text-sm font-medium text-jadwal-text hover:border-jadwal-accent transition-colors"
                 >
                   {landingCopy(r, lang).h1}

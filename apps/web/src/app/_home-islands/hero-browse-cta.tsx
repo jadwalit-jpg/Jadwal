@@ -8,14 +8,16 @@
  */
 
 import Link from 'next/link';
-import { readLangCookieServer } from '@/lib/lang-cookie.server';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localePath } from '@/lib/locale-path';
 import { getServerT } from '@/lib/i18n.server';
 
 export async function HeroBrowseCta() {
-  const t = getServerT(await readLangCookieServer());
+  const lang = await readLangServer();
+  const t = getServerT(lang);
   return (
     <Link
-      href="/explore"
+      href={localePath('/explore', lang)}
       className="mt-10 inline-flex animate-bounce items-center justify-center rounded-full border border-white/30 bg-white/10 px-6 py-3 text-sm font-semibold text-white shadow-[0_4px_16px_-4px_rgba(15,23,42,0.25)] backdrop-blur-md transition-colors hover:border-white/50 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
     >
       {t('footer.allActivities')}

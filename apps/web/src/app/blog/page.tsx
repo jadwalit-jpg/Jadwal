@@ -3,19 +3,19 @@
  */
 
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 import { publishedGuides, tr } from '@/lib/seo-guides';
 import type { LandingLang } from '@/lib/seo-landings';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localePath, localeAlternates } from '@/lib/locale-path';
 
 export const revalidate = 3600;
 
 async function readLang(): Promise<LandingLang> {
-  const c = await cookies();
-  return c.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  return readLangServer();
 }
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -28,11 +28,11 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title,
     description,
-    alternates: { canonical: '/blog' },
+    alternates: localeAlternates('/blog', lang),
     openGraph: {
       title,
       description,
-      url: '/blog',
+      url: localePath('/blog', lang),
       type: 'website',
       siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
@@ -72,7 +72,7 @@ export default async function BlogIndexPage() {
               {guides.map((g) => (
                 <li key={g.slug}>
                   <Link
-                    href={`/blog/${g.slug}`}
+                    href={localePath(`/blog/${g.slug}`, lang)}
                     className="group block h-full rounded-2xl border border-jadwal-border-subtle bg-jadwal-surface p-6 hover:border-jadwal-accent transition-colors"
                   >
                     <h2 className="text-lg font-bold text-jadwal-text text-start">{tr(g.title, lang)}</h2>

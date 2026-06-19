@@ -7,11 +7,11 @@
  */
 
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localeAlternates } from '@/lib/locale-path';
 
 export async function generateMetadata(): Promise<Metadata> {
-  const cookieStore = await cookies();
-  const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  const lang = await readLangServer();
 
   const title = lang === 'ar' ? 'عن الجدول' : 'About AL Jadwal';
   const description =
@@ -22,6 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title,
     description,
+    alternates: localeAlternates('/about', lang),
     openGraph: {
       title,
       description,

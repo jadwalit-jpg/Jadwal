@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { LANG_COOKIE, LANG_HEADER } from './lib/lang-cookie';
+import { hasArPrefix, isLocalizablePath, localePath, stripLocalePrefix } from './lib/locale-path';
 
 /**
  * Decode JWT payload without verification (Edge runtime can't use the full
@@ -226,6 +228,42 @@ export function middleware(request: NextRequest) {
   if (LAUNCH_DISABLED && !isAllowedDuringKillswitch(pathname)) {
     return applyCspHeaders(NextResponse.redirect(new URL('/maintenance', request.url)));
   }
+
+  // ─── Bilingual /ar locale routing (PUBLIC routes only) ───────
+  // English is unprefixed; Arabic is served under /ar/* via an internal REWRITE
+  // (the browser URL stays /ar/..., the underlying public route renders in
+  // Arabic via the x-lang header). The cookie is a *preference*: a returning
+  // Arabic user landing on an unprefixed public URL is redirected to its /ar
+  // twin. Crawlers send no cookie → they always get English at the root URL,
+  // so English rankings are untouched. Non-public routes (admin/vendor/auth/
+  // per-user) fall through to the auth logic below and stay cookie-driven.
+  const cookieLang = request.cookies.get(LANG_COOKIE)?.value;
+
+  if (hasArPrefix(pathname)) {
+    const { path: underlying } = stripLocalePrefix(pathname);
+    if (!isLocalizablePath(underlying)) {
+      // /ar may only wrap public routes — strip the prefix off a non-public path.
+      const stripped = request.nextUrl.clone();
+      stripped.pathname = underlying;
+      return applyCspHeaders(NextResponse.redirect(stripped));
+    }
+    requestHeaders.set(LANG_HEADER, 'ar');
+    const rewritten = request.nextUrl.clone();
+    rewritten.pathname = underlying; // search params preserved by clone()
+    return applyCspHeaders(NextResponse.rewrite(rewritten, { request: { headers: requestHeaders } }));
+  }
+
+  if (isLocalizablePath(pathname)) {
+    if (cookieLang === 'ar') {
+      const target = request.nextUrl.clone();
+      target.pathname = localePath(pathname, 'ar');
+      return applyCspHeaders(NextResponse.redirect(target));
+    }
+    requestHeaders.set(LANG_HEADER, 'en'); // public unprefixed = English; tell SSR explicitly
+    return applyCspHeaders(NextResponse.next({ request: { headers: requestHeaders } }));
+  }
+  // else: non-localizable (admin/vendor/auth/per-user) → fall through; language
+  // stays cookie-driven (LANG_HEADER intentionally not set).
 
   const authCookie = request.cookies.get('Authentication');
   const isAuthenticated = !!authCookie?.value;
