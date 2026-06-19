@@ -718,7 +718,7 @@ export class BookingsService {
     const todayStr = todayInTimezone(tz);
 
     const days: {
-      date: string; dayOfWeek: string; price: number; isActiveDay: boolean;
+      date: string; dayOfWeek: string; price: number; isSpecialPrice: boolean; isActiveDay: boolean;
       isPast: boolean; capacity: number | null; booked: number;
       available: number | null; isFullyBooked: boolean; isBlocked: boolean;
     }[] = [];
@@ -862,7 +862,7 @@ export class BookingsService {
       const fullyBlocked = monthBlocks.some((b) => b.blockStart <= dayDate && b.blockEnd >= dayEndUtc);
       if (fullyBlocked) { available = 0; isFullyBooked = true; }
 
-      days.push({ date: dateStr, dayOfWeek: dow, price: specialPriceByDate.get(dateStr) ?? pricePerPerson, isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked });
+      days.push({ date: dateStr, dayOfWeek: dow, price: specialPriceByDate.get(dateStr) ?? pricePerPerson, isSpecialPrice: specialPriceByDate.has(dateStr), isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked });
     }
 
     const response = {

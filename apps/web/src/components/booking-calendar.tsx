@@ -10,6 +10,7 @@ export interface CalendarDay {
   date: string;       // YYYY-MM-DD
   dayOfWeek: string;  // MON, TUE, ...
   price: number;
+  isSpecialPrice?: boolean;  // true when a per-date special-price override applies
   isActiveDay: boolean;
   isPast: boolean;
   capacity: number | null;
@@ -47,7 +48,16 @@ interface BookingCalendarProps {
 
 /* ─── Helpers ─────────────────────────────────────────────── */
 
-const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+// Localised month/weekday names. Arabic uses Latin numerals (`-u-nu-latn`) so
+// the header year stays consistent with the Western day numbers in the cells.
+function dateLocale(lang: string | undefined): string {
+  return lang?.toLowerCase().startsWith('ar') ? 'ar-u-nu-latn' : 'en-US';
+}
+const WEEKDAY_REF = Date.UTC(2023, 0, 1); // 2023-01-01 is a Sunday
+function localizedWeekdays(locale: string): string[] {
+  const fmt = new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' });
+  return Array.from({ length: 7 }, (_, i) => fmt.format(new Date(WEEKDAY_REF + i * 86_400_000)));
+}
 
 function parseMonth(month: string): { year: number; mon: number } {
   const [year, mon] = month.split('-').map(Number);
@@ -60,10 +70,10 @@ function nextMonth(month: string): string {
   return next;
 }
 
-function monthLabel(month: string): string {
+function monthLabel(month: string, locale: string): string {
   const { year, mon } = parseMonth(month);
   const date = new Date(year, mon - 1, 1);
-  return date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  return date.toLocaleString(locale, { month: 'long', year: 'numeric' });
 }
 
 function formatPrice(price: number): string {
@@ -90,6 +100,9 @@ function MonthGrid({
   currency: string;
   showPrices?: boolean;
 }) {
+  const { t, i18n } = useTranslation();
+  const locale = dateLocale(i18n.language);
+  const weekdays = useMemo(() => localizedWeekdays(locale), [locale]);
   const { year, mon } = parseMonth(month);
   const firstDayOfWeek = new Date(Date.UTC(year, mon - 1, 1)).getUTCDay(); // 0=Sun
 
@@ -123,13 +136,13 @@ function MonthGrid({
   return (
     <div className="flex-1 min-w-0">
       <h3 className="text-sm font-semibold text-gray-900 dark:text-white text-center mb-3">
-        {monthLabel(month)}
+        {monthLabel(month, locale)}
       </h3>
 
       {/* Weekday headers */}
       <div className="grid grid-cols-7 gap-0 mb-1">
-        {WEEKDAYS.map((wd) => (
-          <div key={wd} className="text-center text-[11px] font-medium text-gray-400 dark:text-slate-500 py-1">
+        {weekdays.map((wd, i) => (
+          <div key={i} className="text-center text-[11px] font-medium text-gray-400 dark:text-slate-500 py-1">
             {wd}
           </div>
         ))}
@@ -176,14 +189,18 @@ function MonthGrid({
               <span className={`font-medium ${isSelected ? 'text-white' : ''}`}>
                 {dateNum}
               </span>
-              {showPrices && !isDisabled && (
-                <span className={`text-[10px] leading-none mt-0.5 ${
-                  isSelected
-                    ? 'text-sky-100'
-                    : day.isFullyBooked
-                      ? 'text-gray-300 dark:text-slate-700'
-                      : 'text-gray-400 dark:text-slate-500'
-                }`}>
+              {!isDisabled && (day.isSpecialPrice || showPrices) && (
+                <span
+                  title={day.isSpecialPrice ? t('booking.specialPriceDay', 'Special price') : undefined}
+                  className={`text-[10px] leading-none mt-0.5 ${
+                    day.isSpecialPrice
+                      ? `font-bold ${isSelected ? 'text-amber-200' : 'text-emerald-600 dark:text-emerald-400'}`
+                      : isSelected
+                        ? 'text-sky-100'
+                        : day.isFullyBooked
+                          ? 'text-gray-300 dark:text-slate-700'
+                          : 'text-gray-400 dark:text-slate-500'
+                  }`}>
                   {formatPrice(day.price)}
                 </span>
               )}

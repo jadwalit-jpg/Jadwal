@@ -131,4 +131,17 @@ describe('DAILY minimum nights', () => {
     const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
     expect(Number(b.totalPrice)).toBe(350);
   });
+
+  test('clearing the minimum (durationValue=null) on update resets to flexible', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { vendor } = makeServices();
+    await makeDaily(seed.activity.id, 3);
+    let a = await ctx.prisma.activity.findUniqueOrThrow({ where: { id: seed.activity.id } });
+    expect(a.durationValue).toBe(3);
+    // Explicit null must clear it back to flexible — regression guard: the frontend
+    // used to send `undefined`, which Prisma ignores (kept the old value).
+    await vendor.updateActivity(seed.vendorUser.id, seed.activity.id, { durationValue: null } as any);
+    a = await ctx.prisma.activity.findUniqueOrThrow({ where: { id: seed.activity.id } });
+    expect(a.durationValue).toBeNull();
+  });
 });

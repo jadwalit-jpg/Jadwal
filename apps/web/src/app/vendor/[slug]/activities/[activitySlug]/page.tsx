@@ -484,9 +484,10 @@ export default function EditActivityPage() {
       categoryId: form.categoryId,
       subCategoryId: form.subCategoryId || undefined,
       pricePerPerson: Number(form.pricePerPerson),
-      // HOURLY: duration in hours (required). DAILY: minimum nights (optional;
-      // empty → undefined → null = flexible day-by-day booking).
-      durationValue: Number(form.durationValue) || undefined,
+      // HOURLY: duration in hours (required). DAILY: minimum nights (optional).
+      // Send explicit null when cleared so an update RESETS it to flexible —
+      // Prisma ignores `undefined` (would keep the old value, so clearing fails).
+      durationValue: form.durationValue ? Number(form.durationValue) : null,
       pricingModel: form.bookingType === 'DAILY' ? 'PER_UNIT' : form.pricingModel,
       capacity: totalCapacity,
       locationLat: Number(form.locationLat),

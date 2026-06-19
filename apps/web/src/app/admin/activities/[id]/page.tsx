@@ -286,7 +286,7 @@ export default function AdminEditActivityPage() {
       descriptionEn: sanitize(form.descriptionEn), descriptionAr: sanitize(form.descriptionAr),
       categoryId: form.categoryId, subCategoryId: form.subCategoryId || undefined,
       pricePerPerson: Number(form.pricePerPerson),
-      durationValue: Number(form.durationValue) || undefined,  // HOURLY = hours (required); DAILY = minimum nights (optional, empty = flexible)
+      durationValue: form.durationValue ? Number(form.durationValue) : null,  // explicit null clears it on update (undefined would keep the old value)
       pricingModel: form.bookingType === 'DAILY' ? 'PER_UNIT' : form.pricingModel,
       capacity: totalCapacity,
       locationLat: Number(form.locationLat), locationLng: Number(form.locationLng),

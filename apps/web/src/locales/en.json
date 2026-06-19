@@ -233,6 +233,7 @@
     "useVoucher": "Use a voucher",
     "noVouchers": "No vouchers available",
     "priceBreakdown": "Price Breakdown",
+    "specialPriceDay": "Special price",
     "basePrice": "Base price",
     "extras": "Extras",
     "loginToBook": "Login to book",
@@ -1025,7 +1026,10 @@
           "hint": "Override the price on specific dates (e.g. weekends or holidays). Customers booking those dates pay the special price; all other dates use the base price.",
           "open": "Open",
           "close": "Close",
-          "help": "Tap a date to set its special price. Green dates already have one.",
+          "help": "Tap a date to set its special price. Green dates already have one; locked (blocked) dates can’t be priced.",
+          "legendPriced": "Has price",
+          "legendLocked": "Locked",
+          "lockedTitle": "This date is locked (blocked) and cannot be booked",
           "priceForDate": "Special price for",
           "saved": "Special price saved",
           "saveFailed": "Could not save special price",
@@ -1517,6 +1521,13 @@
     "reason": "Reason",
     "earnedOnBooking": "Earned from booking",
     "wanasa": "WANASA"
+  },
+  "error": {
+    "title": "Something went wrong",
+    "message": "An unexpected error occurred. You can try again, or head back to the home page.",
+    "reference": "Reference",
+    "tryAgain": "Try again",
+    "goHome": "Go home"
   },
   "common": {
     "loading": "Loading...",

@@ -8,12 +8,13 @@
  * server-side, so editing/removing an override never changes existing bookings.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Tag, Trash2, Loader2, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Tag, Trash2, Loader2, ChevronDown, ChevronLeft, ChevronRight, X, Lock } from 'lucide-react';
 import api from '@/lib/api';
+import { type Block } from '@/lib/activity-blocks';
 import { cn } from '@/lib/utils';
 import { getApiError } from '@/lib/api-error';
 import { useToast } from '@/components/toast';
@@ -40,8 +41,13 @@ interface Props {
 function ymd(y: number, m: number, d: number): string {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
-function prettyDate(s: string): string {
-  return new Date(`${s}T00:00:00.000Z`).toLocaleDateString('en-US', {
+// Arabic uses Latin numerals (`-u-nu-latn`) so dates stay consistent with the
+// Western day numbers rendered in the calendar cells.
+function dateLocale(lang: string | undefined): string {
+  return lang?.toLowerCase().startsWith('ar') ? 'ar-u-nu-latn' : 'en-US';
+}
+function prettyDate(s: string, locale: string): string {
+  return new Date(`${s}T00:00:00.000Z`).toLocaleDateString(locale, {
     weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
   });
 }
@@ -52,7 +58,7 @@ export default function ActivitySpecialPricesManager({
   apiBase = '/vendor',
   collapsible = false,
 }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -77,6 +83,22 @@ export default function ActivitySpecialPricesManager({
     for (const p of prices) map.set(String(p.date).slice(0, 10), { id: p.id, price: Number(p.price) });
     return map;
   }, [prices]);
+
+  // Blocked/locked dates — same endpoint + cache key as ActivityBlocksManager so
+  // the two stay in sync. A date is "locked" when a whole-day block fully covers
+  // it: it can't be booked, so we surface it (and disable pricing it) here.
+  const { data: blocks = [] } = useQuery<Block[]>({
+    queryKey: [apiBase === '/admin' ? 'admin-activity-blocks' : 'vendor-activity-blocks', activityId],
+    queryFn: () => api.get(`${apiBase}/activities/${activityId}/blocks`).then((r) => r.data),
+  });
+  const isLocked = useCallback(
+    (dateStr: string): boolean => {
+      const dStart = Date.parse(`${dateStr}T00:00:00.000Z`);
+      const dEnd = dStart + 86400000;
+      return blocks.some((b) => Date.parse(b.blockStart) <= dStart && Date.parse(b.blockEnd) >= dEnd);
+    },
+    [blocks],
+  );
 
   const saveMut = useMutation({
     mutationFn: (body: { date: string; price: number }) =>
@@ -127,8 +149,10 @@ export default function ActivitySpecialPricesManager({
 
   const canPrev = cursor.y > now.getUTCFullYear() || (cursor.y === now.getUTCFullYear() && cursor.m > now.getUTCMonth());
   const canNext = new Date(Date.UTC(cursor.y, cursor.m, 1)) < maxMonth;
-  const monthLabel = new Date(Date.UTC(cursor.y, cursor.m, 1)).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-  const weekdayShort = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  const locale = dateLocale(i18n.language);
+  const monthLabel = new Date(Date.UTC(cursor.y, cursor.m, 1)).toLocaleDateString(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const weekdayFmt = new Intl.DateTimeFormat(locale, { weekday: 'narrow', timeZone: 'UTC' });
+  const weekdayShort = Array.from({ length: 7 }, (_, i) => weekdayFmt.format(new Date(Date.UTC(2023, 0, 1 + i))));
 
   const shift = (delta: number) =>
     setCursor((c) => {
@@ -196,46 +220,56 @@ export default function ActivitySpecialPricesManager({
                     if (!dateStr) return <div key={`b${i}`} />;
                     const day = Number(dateStr.slice(-2));
                     const isPast = dateStr < todayStr;
+                    const locked = !isPast && isLocked(dateStr);
                     const ov = byDate.get(dateStr);
                     const isSel = selectedDate === dateStr;
                     return (
                       <button
                         key={dateStr}
                         type="button"
-                        disabled={isPast}
+                        disabled={isPast || locked}
                         onClick={() => selectDay(dateStr)}
                         aria-pressed={isSel}
+                        title={locked ? t('vendor.activities.wizard.specialPrice.lockedTitle', 'This date is locked (blocked) and cannot be booked') : undefined}
                         className={cn(
                           'relative aspect-square rounded-lg flex flex-col items-center justify-center text-xs transition-all',
                           isPast
                             ? 'text-gray-300 dark:text-slate-700 cursor-not-allowed'
-                            : isSel
-                              ? 'border-2 border-[#1d4f35] bg-[#1d4f35] text-white'
-                              : ov
-                                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
-                                : 'text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-slate-800',
+                            : locked
+                              ? 'bg-rose-500/10 text-rose-400 dark:text-rose-400/80 cursor-not-allowed'
+                              : isSel
+                                ? 'border-2 border-[#1d4f35] bg-[#1d4f35] text-white'
+                                : ov
+                                  ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
+                                  : 'text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-slate-800',
                         )}
                       >
-                        <span className="font-semibold tabular-nums leading-none">{day}</span>
-                        {ov && (
+                        <span className={cn('font-semibold tabular-nums leading-none', locked && 'line-through')}>{day}</span>
+                        {locked ? (
+                          <Lock className="mt-0.5 h-2.5 w-2.5 shrink-0" />
+                        ) : ov ? (
                           <span className={cn('mt-0.5 text-[8px] font-bold leading-none tabular-nums', isSel ? 'text-white/90' : 'text-emerald-600 dark:text-emerald-400')}>
                             {ov.price}
                           </span>
-                        )}
+                        ) : null}
                       </button>
                     );
                   })}
                 </div>
 
-                <p className="text-xs text-gray-400 dark:text-slate-500 mt-2 text-start">
-                  {t('vendor.activities.wizard.specialPrice.help', 'Tap a date to set its special price. Green dates already have one.')}
+                <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-400 dark:text-slate-500 mt-2">
+                  <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded bg-emerald-500/40" />{t('vendor.activities.wizard.specialPrice.legendPriced', 'Has price')}</span>
+                  <span className="inline-flex items-center gap-1.5"><Lock className="h-2.5 w-2.5 text-rose-400" />{t('vendor.activities.wizard.specialPrice.legendLocked', 'Locked')}</span>
+                </div>
+                <p className="text-xs text-gray-400 dark:text-slate-500 mt-1.5 text-start">
+                  {t('vendor.activities.wizard.specialPrice.help', 'Tap a date to set its special price. Green dates already have one; locked (blocked) dates can’t be priced.')}
                 </p>
 
                 {/* Inline price form for the selected date */}
                 {selectedDate && (
                   <div className="mt-3 rounded-xl bg-stone-50 dark:bg-slate-800/50 p-4 border border-stone-200 dark:border-slate-700">
                     <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5 text-start">
-                      {t('vendor.activities.wizard.specialPrice.priceForDate', 'Special price for')} · {prettyDate(selectedDate)}
+                      {t('vendor.activities.wizard.specialPrice.priceForDate', 'Special price for')} · {prettyDate(selectedDate, locale)}
                     </label>
                     <div className="flex items-center gap-2 flex-wrap">
                       <div className="relative">
