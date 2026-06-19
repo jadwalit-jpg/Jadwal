@@ -8,6 +8,13 @@
 export const LANG_COOKIE = 'jadwal_lang';
 export const LANG_STORAGE_KEY = 'jadwal_lang';
 
+/**
+ * Request header the middleware sets from the URL (`/ar/...` → 'ar', public
+ * unprefixed → 'en'); read by readLangServer() for SSR. Defined here (the pure,
+ * Edge-safe module) so both the Edge middleware and the RSC reader can use it.
+ */
+export const LANG_HEADER = 'x-lang';
+
 export type Lang = 'en' | 'ar';
 export const SUPPORTED_LANGS: Lang[] = ['en', 'ar'];
 

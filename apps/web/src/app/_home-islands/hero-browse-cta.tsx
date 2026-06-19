@@ -8,11 +8,11 @@
  */
 
 import Link from 'next/link';
-import { readLangCookieServer } from '@/lib/lang-cookie.server';
+import { readLangServer } from '@/lib/lang-cookie.server';
 import { getServerT } from '@/lib/i18n.server';
 
 export async function HeroBrowseCta() {
-  const t = getServerT(await readLangCookieServer());
+  const t = getServerT(await readLangServer());
   return (
     <Link
       href="/explore"

@@ -14,7 +14,7 @@ import { ToastProvider } from "@/components/toast";
 import { CustomerShell } from "@/components/customer-shell";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { JsonLd } from "@/components/json-ld";
-import { readLangCookieServer } from "@/lib/lang-cookie.server";
+import { readLangServer } from "@/lib/lang-cookie.server";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -144,7 +144,7 @@ export default async function RootLayout({
   // the client hydration pass pick the same value. This is the only reliable
   // way to avoid the "English flash → Arabic" flicker + hydration mismatch
   // that localStorage-based i18n produces.
-  const lang = await readLangCookieServer();
+  const lang = await readLangServer();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
 
   // Preconnect / DNS-prefetch for the API origin. Saves ~100-200ms on the

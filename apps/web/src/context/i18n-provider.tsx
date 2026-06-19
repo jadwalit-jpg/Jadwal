@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useLayoutEffect, useTransition 
 import { useRouter } from 'next/navigation';
 import { I18nextProvider } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
-import i18n, { type Lang, isLang, readLangCookieClient } from '@/lib/i18n';
+import i18n, { type Lang, isLang, readLangClient } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
 /**
@@ -40,7 +40,7 @@ export function I18nProvider({
   children: React.ReactNode;
   initialLang?: Lang;
 }) {
-  const desired = isLang(initialLang) ? initialLang : readLangCookieClient();
+  const desired = isLang(initialLang) ? initialLang : readLangClient();
   const router = useRouter();
   const [isSwitching, startTransition] = useTransition();
 
