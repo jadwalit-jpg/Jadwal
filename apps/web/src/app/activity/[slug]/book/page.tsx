@@ -121,9 +121,9 @@ function countNights(checkIn: string, checkOut: string): number {
   return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string, locale: string): string {
   const d = new Date(dateStr + 'T00:00:00Z');
-  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 function formatTime12h(time: string): string {
@@ -153,7 +153,10 @@ export default function BookActivityPage() {
   const { user } = useAuth();
   const { country: geoCountry } = useGeo();
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  // Arabic with Latin numerals — date names localise, numbers stay Western to
+  // match the calendar cells. Passed to formatDate (the selected-date summary).
+  const fmtLocale = i18n.language?.toLowerCase().startsWith('ar') ? 'ar-u-nu-latn' : 'en-US';
   const queryClient = useQueryClient();
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   // Per-booking phone the customer enters via the modal. Distinct from
@@ -308,30 +311,49 @@ export default function BookActivityPage() {
   });
 
   // ─── Daily: date selection ───────────────────────────────
-  const fixedNights = activity?.durationValue ?? null;
+  // DAILY durationValue = MINIMUM nights (null/0 = flexible day-by-day booking).
+  const minNights = activity?.durationValue ?? null;
+
+  // Checkout date for check-in + minNights — the minimum stay, pre-selected on pick.
+  const minCheckout = useCallback(
+    (cinStr: string): string => {
+      const cin = new Date(cinStr + 'T00:00:00Z');
+      cin.setUTCDate(cin.getUTCDate() + (minNights ?? 1));
+      return cin.toISOString().split('T')[0];
+    },
+    [minNights],
+  );
 
   const handleDailyDateSelect = useCallback(
     (date: string) => {
-      if (fixedNights) {
-        setCheckIn(date);
-        const cin = new Date(date + 'T00:00:00Z');
-        cin.setUTCDate(cin.getUTCDate() + fixedNights);
-        setCheckOut(cin.toISOString().split('T')[0]);
+      if (minNights && minNights > 0) {
+        // Minimum-stay model: the first pick (or a pick on/before the current
+        // check-in) sets check-in and INSTANTLY pre-selects the minimum stay;
+        // a pick AFTER check-in extends the stay; a too-short pick snaps back to
+        // the minimum. The customer can extend but never drop below the minimum.
+        if (!checkIn || date <= checkIn) {
+          setCheckIn(date);
+          setCheckOut(minCheckout(date));
+          return;
+        }
+        const cin = new Date(checkIn + 'T00:00:00Z');
+        const clicked = new Date(date + 'T00:00:00Z');
+        const nights = Math.round((clicked.getTime() - cin.getTime()) / 86400000);
+        setCheckOut(nights < minNights ? minCheckout(checkIn) : date);
         return;
       }
+      // Flexible (no minimum) — standard range picker.
       if (!checkIn || checkOut) {
         setCheckIn(date);
         setCheckOut(null);
+      } else if (date <= checkIn) {
+        setCheckIn(date);
+        setCheckOut(null);
       } else {
-        if (date <= checkIn) {
-          setCheckIn(date);
-          setCheckOut(null);
-        } else {
-          setCheckOut(date);
-        }
+        setCheckOut(date);
       }
     },
-    [checkIn, checkOut, fixedNights],
+    [checkIn, checkOut, minNights, minCheckout],
   );
 
   // ─── Hourly: date selection ──────────────────────────────
@@ -374,10 +396,12 @@ export default function BookActivityPage() {
     return m;
   }, [calLeft, calRight, hourlyCalLeft, hourlyCalRight]);
 
-  // Selected check-in date's effective price (special override or base). For
-  // DAILY this drives the per-night "from" display; the total sums each night
-  // below. For HOURLY it's the booking date's price.
-  const effectivePrice = (checkIn ? priceByDate.get(checkIn) : undefined) ?? price;
+  // Effective per-unit price for the selected date (special override or base).
+  // HOURLY books a single date via `selectedDate`; DAILY uses `checkIn` (the
+  // total sums each night below). Keying off the wrong one made HOURLY
+  // special-price dates fall back to the base price in the preview.
+  const priceLookupDate = isHourly ? selectedDate : checkIn;
+  const effectivePrice = (priceLookupDate ? priceByDate.get(priceLookupDate) : undefined) ?? price;
 
   const nights = checkIn && checkOut ? countNights(checkIn, checkOut) : 0;
   const isPerUnit = activity?.pricingModel === 'PER_UNIT';
@@ -440,6 +464,19 @@ export default function BookActivityPage() {
     }
     return base + extrasTotal;
   }, [isHourly, isPerUnit, effectivePrice, guests, nights, slotHours, extrasTotal, activity?.durationValue, checkIn, checkOut, price, priceByDate]);
+
+  // Per-night prices for the DAILY breakdown label — so a stay mixing special and
+  // normal nights is shown explicitly (e.g. "2000 + 300") instead of a misleading
+  // flat "rate × N nights". The total above already sums these.
+  const dailyNightPrices = useMemo(() => {
+    if (isHourly || !checkIn || !checkOut || nights <= 0) return [] as number[];
+    const start = new Date(`${checkIn}T00:00:00Z`).getTime();
+    return Array.from({ length: nights }, (_, i) => {
+      const ds = new Date(start + i * 86400000).toISOString().slice(0, 10);
+      return priceByDate.get(ds) ?? price;
+    });
+  }, [isHourly, checkIn, checkOut, nights, priceByDate, price]);
+  const dailyMixedNightly = useMemo(() => new Set(dailyNightPrices).size > 1, [dailyNightPrices]);
 
   // ─── Loyalty points calculations ────────────────────────
   // Service fee is platform revenue, normally added on top of bookingCost.
@@ -812,8 +849,8 @@ export default function BookActivityPage() {
                 ) : (
                   <>
                     <Calendar className="h-3.5 w-3.5 text-jadwal-primary" aria-hidden="true" />
-                    {fixedNights
-                      ? `${fixedNights} ${fixedNights > 1 ? t('activity.nights') : t('activity.night')}`
+                    {minNights
+                      ? `${t('activity.minStay', 'Min')} ${minNights} ${minNights > 1 ? t('activity.nights') : t('activity.night')}`
                       : t('activity.dailyBooking')}
                     <span className="text-jadwal-text-faint">·</span>
                     <span className="tabular-nums">
@@ -849,7 +886,7 @@ export default function BookActivityPage() {
                   {selectedDate && (
                     <p className="mt-3 text-sm text-gray-600 dark:text-slate-300">
                       <span className="text-gray-400 dark:text-slate-500">{t('booking.date')}: </span>
-                      <span className="font-medium">{formatDate(selectedDate)}</span>
+                      <span className="font-medium">{formatDate(selectedDate, fmtLocale)}</span>
                     </p>
                   )}
                 </div>
@@ -942,8 +979,8 @@ export default function BookActivityPage() {
                   checkOut={checkOut}
                   onDateSelect={handleDailyDateSelect}
                   currency={currency}
-                  showPrices
-                  fixedNights={fixedNights}
+                  showPrices={false}
+                  minNights={minNights}
                   isLoading={calendarLoading}
                 />
                 {(checkIn || checkOut) && (
@@ -951,13 +988,13 @@ export default function BookActivityPage() {
                     {checkIn && (
                       <span>
                         <span className="text-gray-400 dark:text-slate-500">{t('booking.checkIn')}: </span>
-                        <span className="font-medium">{formatDate(checkIn)}</span>
+                        <span className="font-medium">{formatDate(checkIn, fmtLocale)}</span>
                       </span>
                     )}
                     {checkOut && (
                       <span>
                         <span className="text-gray-400 dark:text-slate-500">{t('booking.checkOut')}: </span>
-                        <span className="font-medium">{formatDate(checkOut)}</span>
+                        <span className="font-medium">{formatDate(checkOut, fmtLocale)}</span>
                       </span>
                     )}
                     {nights > 0 && (
@@ -1065,7 +1102,7 @@ export default function BookActivityPage() {
                       <>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500 dark:text-slate-400">{t('booking.date')}</span>
-                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(selectedDate!)}</span>
+                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(selectedDate!, fmtLocale)}</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500 dark:text-slate-400">{t('booking.time')}</span>
@@ -1089,11 +1126,11 @@ export default function BookActivityPage() {
                       <>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500 dark:text-slate-400">{t('booking.checkIn')}</span>
-                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(checkIn!)}</span>
+                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(checkIn!, fmtLocale)}</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500 dark:text-slate-400">{t('booking.checkOut')}</span>
-                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(checkOut!)}</span>
+                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(checkOut!, fmtLocale)}</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500 dark:text-slate-400">{t('activity.duration')}</span>
@@ -1222,7 +1259,11 @@ export default function BookActivityPage() {
                         ? isPerUnit
                           ? `${effectivePrice.toFixed(0)} / ${t('activity.unit')}`
                           : `${effectivePrice.toFixed(0)} × ${guests} ${guests > 1 ? t('activity.tickets') : t('activity.tickets')}`
-                        : `${effectivePrice.toFixed(0)} × ${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`
+                        : dailyMixedNightly
+                          ? (dailyNightPrices.length <= 6
+                              ? dailyNightPrices.map((p) => p.toFixed(0)).join(' + ')
+                              : `${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`)
+                          : `${effectivePrice.toFixed(0)} × ${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`
                       }
                     </p>
                   )}

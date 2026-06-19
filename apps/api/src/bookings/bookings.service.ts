@@ -209,6 +209,14 @@ const MAX_HOURLY_SLOTS = Number(process.env.HOURLY_MAX_SLOTS || 48);
 const MAX_SLOT_UNITS = Number(process.env.BOOKING_MAX_SLOT_UNITS || 24);
 
 /**
+ * Hard cap on the number of nights a single DAILY booking can span. Bounds the
+ * per-night price loop and the special-price `date: { in: [...] }` query against
+ * an abusive multi-year range. Applies to BOTH flexible (durationValue=null) and
+ * minimum-nights DAILY activities. Tunable via BOOKING_MAX_NIGHTS env var.
+ */
+const MAX_BOOKING_NIGHTS = Number(process.env.BOOKING_MAX_NIGHTS || 90);
+
+/**
  * Compute HOURLY slot START times from checkIn/checkOut/duration.
  * Each slot runs for `durationValue` hours. Slots overlap each other — they
  * start every `HOURLY_SLOT_GRANULARITY_MINUTES` minutes (on the hour).
@@ -710,7 +718,7 @@ export class BookingsService {
     const todayStr = todayInTimezone(tz);
 
     const days: {
-      date: string; dayOfWeek: string; price: number; isActiveDay: boolean;
+      date: string; dayOfWeek: string; price: number; isSpecialPrice: boolean; isActiveDay: boolean;
       isPast: boolean; capacity: number | null; booked: number;
       available: number | null; isFullyBooked: boolean; isBlocked: boolean;
     }[] = [];
@@ -854,7 +862,7 @@ export class BookingsService {
       const fullyBlocked = monthBlocks.some((b) => b.blockStart <= dayDate && b.blockEnd >= dayEndUtc);
       if (fullyBlocked) { available = 0; isFullyBooked = true; }
 
-      days.push({ date: dateStr, dayOfWeek: dow, price: specialPriceByDate.get(dateStr) ?? pricePerPerson, isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked });
+      days.push({ date: dateStr, dayOfWeek: dow, price: specialPriceByDate.get(dateStr) ?? pricePerPerson, isSpecialPrice: specialPriceByDate.has(dateStr), isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked });
     }
 
     const response = {
@@ -1047,12 +1055,19 @@ export class BookingsService {
       if (checkOut <= checkIn) throw new BadRequestException('Check-out date must be after check-in date');
 
       const nights = Math.round((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
+      // durationValue on a DAILY activity is the MINIMUM nights (mirrors HOURLY's
+      // durationValue minimum): the customer must book at least that many but may
+      // extend freely (and pays per night). null = flexible (any stay ≥ 1 night).
       if (activity.durationValue !== null && activity.durationValue !== undefined) {
-        if (nights !== activity.durationValue) {
+        if (nights < activity.durationValue) {
           throw new BadRequestException(
-            `This activity requires exactly ${activity.durationValue} night(s)`,
+            `This activity requires a minimum stay of ${activity.durationValue} night(s)`,
           );
         }
+      }
+      // DoS bound — caps the per-night price loop + the special-price `in` query.
+      if (nights > MAX_BOOKING_NIGHTS) {
+        throw new BadRequestException(`A stay cannot exceed ${MAX_BOOKING_NIGHTS} nights`);
       }
 
       startDatetime = buildDatetime(dto.checkInDate, activity.checkInTime ?? '14:00');
