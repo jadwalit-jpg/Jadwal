@@ -71,6 +71,30 @@ describe('POST /payment/callback/ipn — multipart/form-data parsing', () => {
     );
   });
 
+  it('tolerates unknown extra fields PAY2M may add (strips them, still forwards)', async () => {
+    // PAY2M's IPN carries fields beyond the redirect's set. A third-party
+    // webhook must NOT be rejected wholesale for an unmodelled field — we strip
+    // unknowns (whitelist) and forward the known ones. handleCallback stays the
+    // secret-gated security gate.
+    const res = await request(app.getHttpServer())
+      .post('/payment/callback/ipn')
+      .field('err_code', '000')
+      .field('basket_id', VALID_BASKET)
+      .field('Response_Key', VALID_RESPONSE_KEY)
+      .field('transaction_id', 'TXN-1')
+      .field('Status_Message', 'Transaction processed') // NOT in the DTO
+      .field('Reserved_1', 'anything'); // NOT in the DTO
+
+    expect(res.status).toBe(201);
+    expect(handleCallback).toHaveBeenCalledTimes(1);
+    const arg = handleCallback.mock.calls[0][0];
+    expect(arg.basket_id).toBe(VALID_BASKET);
+    expect(arg.err_code).toBe('000');
+    // Unknown fields are stripped, never forwarded to the payment logic.
+    expect(arg).not.toHaveProperty('Status_Message');
+    expect(arg).not.toHaveProperty('Reserved_1');
+  });
+
   it('rejects a multipart body that smuggles a file (no uploads on this route)', async () => {
     const res = await request(app.getHttpServer())
       .post('/payment/callback/ipn')
