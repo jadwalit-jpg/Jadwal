@@ -139,11 +139,17 @@ describe('LoyaltyService — double-entry invariant', () => {
       },
     });
 
+    // Two redeems on DIFFERENT bookings. The loyalty_ledger (bookingId, source)
+    // unique index (migration 20260621000000) forbids two BOOKING_REDEEM rows for
+    // the same booking — which matches real code (a booking is redeemed exactly
+    // once at creation). bookingId is a correlation string, not an FK, so a
+    // synthetic second id is valid here; the assertions are per-user balance and
+    // don't depend on which booking.
     await ctx.prisma.$transaction(async (tx) => {
       await loyalty.redeem(tx, { userId, amount: 100, bookingId: booking.id, note: 'one' });
     });
     await ctx.prisma.$transaction(async (tx) => {
-      await loyalty.redeem(tx, { userId, amount: 50, bookingId: booking.id, note: 'two' });
+      await loyalty.redeem(tx, { userId, amount: 50, bookingId: `${booking.id}-2`, note: 'two' });
     });
 
     // Skip genesis seed row; inspect just the two redeems
@@ -219,9 +225,14 @@ describe('LoyaltyService.redeem — TOCTOU-safe under parallel race', () => {
       },
     });
 
+    // Distinct bookingId per redeem: this test isolates the BALANCE TOCTOU guard
+    // (atomic decrement → at most 6 by balance). A shared bookingId would instead
+    // be capped at 1 by the loyalty_ledger (bookingId, source) unique index
+    // (migration 20260621000000), masking the balance race we're testing here.
+    // bookingId is a correlation string (not an FK), so synthetic ids are valid.
     const runs = Array.from({ length: 10 }, (_, i) =>
       ctx.prisma.$transaction(async (tx) => {
-        return loyalty.redeem(tx, { userId, amount: 15, bookingId: booking.id, note: `parallel-${i}` });
+        return loyalty.redeem(tx, { userId, amount: 15, bookingId: `${booking.id}-${i}`, note: `parallel-${i}` });
       }).catch(e => e),
     );
     const results = await Promise.all(runs);
