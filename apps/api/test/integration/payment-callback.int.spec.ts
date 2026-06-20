@@ -72,6 +72,11 @@ function makePaymentService(configOverrides: Record<string, string> = {}) {
   const availabilityCache = {
     invalidate: jest.fn().mockResolvedValue(undefined),
   } as any;
+  const loyalty = {
+    refund: jest.fn().mockResolvedValue(undefined),
+    redeem: jest.fn().mockResolvedValue(undefined),
+    reverseAwarded: jest.fn().mockResolvedValue(undefined),
+  } as any;
 
   return {
     svc: new PaymentService(
@@ -82,7 +87,9 @@ function makePaymentService(configOverrides: Record<string, string> = {}) {
       notificationService,
       emailService,
       availabilityCache,
+      loyalty,
     ),
+    loyalty,
     auditLogger,
     notificationService,
     emailService,

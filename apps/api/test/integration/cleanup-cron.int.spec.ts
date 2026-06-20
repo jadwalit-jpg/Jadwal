@@ -146,7 +146,7 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
     expect(availabilityCache.invalidateMany).toHaveBeenCalledWith([seed.activity.id]);
   });
 
-  test('PENDING + expired reservedUntil + payment without basketId → booking + payment deleted', async () => {
+  test('PENDING + expired reservedUntil + payment without basketId → booking deleted, payment soft-failed', async () => {
     const seed = await seedReference(ctx.prisma);
     const { bookingId, paymentId } = await mkPendingBooking({
       seed,
@@ -159,7 +159,12 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
 
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
     if (paymentId) {
-      expect(await ctx.prisma.payment.findUnique({ where: { id: paymentId } })).toBeNull();
+      // CRIT#2 fix: the cron now SOFT-FAILS the payment (keeps the row) instead
+      // of hard-deleting it, honoring the "payments are never hard-deleted"
+      // invariant and letting a late verified success recover or refund.
+      const pay = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+      expect(pay).not.toBeNull();
+      expect(pay!.status).toBe('FAILED');
     }
   });
 
@@ -239,7 +244,7 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).not.toBeNull();
   });
 
-  test('PENDING + PAY2M session abandoned (> 30 min) → booking + payment deleted', async () => {
+  test('PENDING + PAY2M session abandoned (> 30 min) → booking deleted, payment soft-failed (kept for recovery)', async () => {
     const seed = await seedReference(ctx.prisma);
     const { bookingId, paymentId } = await mkPendingBooking({
       seed,
@@ -253,7 +258,13 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
 
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
     if (paymentId) {
-      expect(await ctx.prisma.payment.findUnique({ where: { id: paymentId } })).toBeNull();
+      // CRIT#2 fix: payment kept as FAILED with its basketId preserved, so a
+      // delayed/retried PAY2M success can recover the booking from snapshot
+      // (or queue a refund) instead of hitting "Payment not found".
+      const pay = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+      expect(pay).not.toBeNull();
+      expect(pay!.status).toBe('FAILED');
+      expect(pay!.gatewayBasketId).toBe('BSK-abandoned');
     }
   });
 
