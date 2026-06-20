@@ -58,6 +58,7 @@
     "geoip-lite": "^2.0.1",
     "helmet": "^8.1.0",
     "ioredis": "^5.10.1",
+    "multer": "^2.2.0",
     "nestjs-pino": "^4.6.1",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
