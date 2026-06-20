@@ -88,6 +88,11 @@ function makePaymentService() {
   const availabilityCache = {
     invalidate: jest.fn().mockResolvedValue(undefined),
   } as any;
+  const loyalty = {
+    refund: jest.fn().mockResolvedValue(undefined),
+    redeem: jest.fn().mockResolvedValue(undefined),
+    reverseAwarded: jest.fn().mockResolvedValue(undefined),
+  } as any;
 
   return {
     svc: new PaymentService(
@@ -98,6 +103,7 @@ function makePaymentService() {
       notificationService,
       emailService,
       availabilityCache,
+      loyalty,
     ),
     auditLogger,
     notificationService,

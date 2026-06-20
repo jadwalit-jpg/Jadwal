@@ -12,6 +12,7 @@ import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { AuditLoggerService } from '../common/services/audit-logger.service';
 import { refundCouponUsage } from '../bookings/bookings.service';
 import { NotificationService } from '../common/services/notification.service';
+import { LoyaltyService } from '../common/services/loyalty.service';
 import { EmailService } from '../email/email.service';
 import { CircuitBreaker, CircuitBreakerOpenError, withTimeout } from '../common/utils/circuit-breaker';
 import * as crypto from 'crypto';
@@ -72,6 +73,7 @@ export class PaymentService {
     private notificationService: NotificationService,
     private emailService: EmailService,
     private availabilityCache: AvailabilityCacheService,
+    private loyalty: LoyaltyService,
   ) {
     this.enabled = this.config.get('PAYMENT_ENABLED', 'false') === 'true';
     this.merchantId = this.config.getOrThrow<string>('PAY2M_MERCHANT_ID');
@@ -663,7 +665,7 @@ export class PaymentService {
     const payment = await db.payment.findUnique({
       where: { gatewayBasketId: params.basket_id },
       select: {
-        id: true, bookingId: true, amount: true, status: true,
+        id: true, bookingId: true, amount: true, currency: true, status: true,
         // §B2 — bookingSnapshot + bookingRecreatedAt feed the orphan-recovery
         // branch when the cleanup cron hard-deleted the booking before the
         // success callback arrived. Snapshot was frozen at booking creation;
@@ -830,7 +832,7 @@ export class PaymentService {
     /// raises a flag; a separate tx below tries the booking recovery and
     /// falls back to REFUND_PENDING + audit + customer notification if
     /// recovery isn't safe.
-    let recoveryMode: 'B2_ORPHAN' | 'M6_SYSTEM_CANCELLED' | null = null;
+    let recoveryMode: 'B2_ORPHAN' | 'M6_SYSTEM_CANCELLED' | 'CANCELLED_REFUND' | null = null;
     const updated = await db.$transaction(async (tx: any) => {
       if (isSuccess) {
         // Accept SUCCESS from PENDING or FAILED (recovery from cron race condition)
@@ -853,21 +855,35 @@ export class PaymentService {
           select: { id: true, status: true, cancelledBy: true },
         });
         if (booking) {
-          if (booking.status === 'CANCELLED' && booking.cancelledBy === 'SYSTEM') {
-            // §M6 — cron flipped the booking to CANCELLED-by-SYSTEM (e.g. the
-            // reservation window expired) but PAY2M's success callback now
-            // arrives. We can't blindly un-cancel: another customer may have
-            // booked the slot in the meantime. Flag for after-commit recovery
-            // (slot-conflict + activity-status + vendor-status checks);
-            // recovery either un-cancels safely or queues a refund.
-            recoveryMode = 'M6_SYSTEM_CANCELLED';
+          if (booking.status === 'CANCELLED') {
+            if (booking.cancelledBy === 'SYSTEM') {
+              // §M6 — the booking was auto-cancelled by SYSTEM (e.g. the
+              // reservation window expired) but PAY2M's success callback now
+              // arrives. The customer didn't choose to cancel, so try to
+              // recover their booking. We can't blindly un-cancel (another
+              // customer may have grabbed the slot): flag for after-commit
+              // recovery (slot-conflict + activity-status checks) which
+              // un-cancels safely or queues a refund.
+              recoveryMode = 'M6_SYSTEM_CANCELLED';
+            } else {
+              // Deliberately cancelled by the customer/vendor/admin BEFORE this
+              // capture: their cancel flipped the still-PENDING payment to
+              // FAILED, and the card success is arriving late. We must NOT
+              // resurrect a deliberately-cancelled booking — the slot may have
+              // been resold, and confirming it would charge the customer for a
+              // booking that was intentionally killed (risking a double-sell).
+              // The captured money is refunded instead.
+              //
+              // (Bug fix: this previously fell into an unconditional
+              // `status: 'CONFIRMED'` because the only CANCELLED branch required
+              // `cancelledBy === 'SYSTEM'`, which is never set anywhere — so
+              // every cancelled booking was silently re-confirmed and charged.)
+              recoveryMode = 'CANCELLED_REFUND';
+            }
           } else {
-            // Booking exists in a recoverable state — confirm it (PENDING is
+            // Booking exists in a confirmable state — confirm it. PENDING is
             // the normal happy path; an already-CONFIRMED booking is a
-            // duplicate-callback edge case we tolerate; CANCELLED-by-anyone-
-            // other-than-SYSTEM means the customer/vendor/admin cancelled
-            // post-payment-init, which the existing flow handles via
-            // refund-decision recording).
+            // duplicate-callback edge case we tolerate idempotently.
             await tx.booking.update({
               where: { id: payment.bookingId },
               data: { status: 'CONFIRMED' },
@@ -895,7 +911,7 @@ export class PaymentService {
           // state so we can refund usage before the booking row disappears.
           const doomed = await tx.booking.findUnique({
             where: { id: payment.bookingId },
-            select: { activityId: true, customerId: true, couponCode: true },
+            select: { activityId: true, customerId: true, couponCode: true, pointsRedeemed: true },
           });
           if (doomed) {
             deletedActivityId = doomed.activityId;
@@ -903,6 +919,25 @@ export class PaymentService {
             // a failed payment means the booking never completed — return
             // that increment so the coupon stays accurate.
             await refundCouponUsage(tx, doomed.couponCode, doomed.customerId);
+            // Return any Wanasa points the customer redeemed on this booking.
+            // They were debited at booking-create time; deleting the booking on
+            // a failed payment without refunding them would silently confiscate
+            // the customer's store credit. Mirrors the cleanup cron's points
+            // refund on stale-booking deletion, and keeps the points accounting
+            // CONSISTENT so the §B2 recovery can safely re-debit if a late,
+            // verified success ever recreates this booking.
+            const redeemed = Number(doomed.pointsRedeemed) || 0;
+            if (redeemed > 0) {
+              await this.loyalty.refund(tx, {
+                userId: doomed.customerId,
+                amount: redeemed,
+                bookingId: payment.bookingId,
+                source: 'CANCEL_REFUND_UNPAID',
+                actorType: 'SYSTEM',
+                actorId: 'pay2m-callback',
+                note: `Payment failed — returned ${redeemed} redeemed points for deleted booking`,
+              });
+            }
           }
           await tx.booking.update({ where: { id: payment.bookingId }, data: { paymentId: null } });
         }
@@ -937,6 +972,16 @@ export class PaymentService {
       await this.attemptB2OrphanRecovery(payment.id, params.basket_id);
     } else if (recoveryMode === 'M6_SYSTEM_CANCELLED') {
       await this.attemptM6UnCancel(payment.id, payment.bookingId!, params.basket_id);
+    } else if (recoveryMode === 'CANCELLED_REFUND') {
+      // Booking was deliberately cancelled before this late capture — queue a
+      // refund of the captured money. The booking stays cancelled.
+      await this.queueB2Refund(
+        payment.id,
+        payment.amount,
+        payment.currency,
+        params.basket_id,
+        'BOOKING_CANCELLED_BEFORE_CAPTURE',
+      );
     }
 
     // 6. Audit log (use saved bookingId since record may be deleted for failures)
@@ -953,6 +998,18 @@ export class PaymentService {
     // For failed payments, booking is deleted — skip notification and return early
     if (!isSuccess) {
       return { bookingId: savedBookingId ?? '', status: 'failed' as const, error: this.mapErrorMessage(params.err_code) };
+    }
+
+    // Deliberately-cancelled booking that received a late capture: a refund was
+    // queued above (CANCELLED_REFUND). Do NOT send "booking confirmed" / "new
+    // booking" notifications — the booking stays cancelled. Tell the customer a
+    // refund is coming instead of falsely confirming the booking.
+    if (recoveryMode === 'CANCELLED_REFUND') {
+      return {
+        bookingId: savedBookingId ?? '',
+        status: 'failed' as const,
+        error: 'This booking was cancelled before payment completed. Your payment will be refunded.',
+      };
     }
 
     // Notify customer about payment success + send booking confirmation email
@@ -1315,9 +1372,8 @@ export class PaymentService {
         // re-inserting the booking, the customer IS using the coupon
         // again, so the counter has to climb back up. Mirrors the bookkeeping
         // that bookings.service.createBooking does at original booking time.
-        // Loyalty points: cleanup does NOT refund redeemed points (existing
-        // behaviour), so the customer's balance is already correct — no
-        // re-debit needed here.
+        // (Loyalty points are re-debited separately below — see the redeem()
+        // call after this coupon roll-forward block.)
         if (snapshot.couponCode) {
           const coupon = await tx.coupon.findUnique({
             where: { code: snapshot.couponCode },
@@ -1348,6 +1404,26 @@ export class PaymentService {
               data: { used: true },
             });
           }
+        }
+
+        // Re-debit the Wanasa points the customer redeemed on this booking.
+        // When the original booking was deleted (cleanup cron, or the callback
+        // failure path), those redeemed points were refunded to the customer's
+        // balance. This recovery re-creates the booking, which USED those points
+        // (pointsDiscount reduced the captured amount), so we must take them
+        // again — otherwise the customer keeps both the points AND the discount
+        // (balance inflation). If the customer already spent the refunded points
+        // meanwhile, redeem() throws Insufficient → this Serializable tx rolls
+        // back → the catch falls through to queueB2Refund (refunding the whole
+        // capture is correct when we can't honor the points-discounted price).
+        const redeemedPts = Number(snapshot.pointsRedeemed) || 0;
+        if (redeemedPts > 0) {
+          await this.loyalty.redeem(tx, {
+            userId: snapshot.customerId,
+            amount: redeemedPts,
+            bookingId: recreated.id,
+            note: `§B2 recovery re-debit of redeemed points, booking ${snapshot.ref}`,
+          });
         }
 
         return { kind: 'recreated' as const, bookingId: recreated.id, activityId: recreated.activityId };

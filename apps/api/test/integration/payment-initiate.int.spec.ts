@@ -55,6 +55,11 @@ function makePaymentService() {
   } as any;
   const emailService = { sendBookingConfirmation: jest.fn().mockResolvedValue(undefined) } as any;
   const availabilityCache = { invalidate: jest.fn().mockResolvedValue(undefined) } as any;
+  const loyalty = {
+    refund: jest.fn().mockResolvedValue(undefined),
+    redeem: jest.fn().mockResolvedValue(undefined),
+    reverseAwarded: jest.fn().mockResolvedValue(undefined),
+  } as any;
 
   const svc = new PaymentService(
     configShim() as any,
@@ -64,6 +69,7 @@ function makePaymentService() {
     notificationService,
     emailService,
     availabilityCache,
+    loyalty,
   );
   // initiatePayment hands off to PAY2M via getAccessToken() — stub the HTTP call.
   jest.spyOn(svc as any, 'getAccessToken').mockResolvedValue('test-access-token');
