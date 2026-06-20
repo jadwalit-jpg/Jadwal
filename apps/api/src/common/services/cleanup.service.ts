@@ -239,22 +239,33 @@ export class CleanupService {
         }
       }
 
-      // Detach payment FKs before deleting
-      await tx.booking.updateMany({
-        where: { id: { in: bookingIds } },
-        data: { paymentId: null },
-      });
-
-      // Delete PENDING payments (mark FAILED ones are handled by PAY2M callback)
+      // Soft-FAIL the abandoned PENDING payments instead of deleting them.
+      // The cron used to hard-delete the payment row, which destroyed the
+      // gatewayBasketId + bookingSnapshot that the PAY2M success-callback
+      // recovery (§B2 in payment.service.ts) depends on — so a genuine,
+      // verified card success arriving AFTER this cron run (a delayed/retried
+      // PAY2M callback past the 30-min cutoff) hit "Payment not found" and the
+      // customer was charged with NO booking and NO refund (invisible even to
+      // reconciliation). Marking the payment FAILED but KEEPING the row (with
+      // its snapshot) lets that late success recover the booking from the
+      // snapshot or queue a refund — and restores this file's stated invariant
+      // that payments are never hard-deleted. Only flip rows still PENDING: a
+      // payment a concurrent success-callback already moved to SUCCESS must be
+      // left intact (its booking, now CONFIRMED, is protected by the guard below).
       if (paymentIds.length > 0) {
-        await tx.payment.deleteMany({
+        await tx.payment.updateMany({
           where: { id: { in: paymentIds }, status: 'PENDING' },
+          data: { status: 'FAILED' },
         });
       }
 
-      // Delete the bookings themselves
+      // Delete the abandoned bookings — but ONLY ones still PENDING. If a
+      // success callback CONFIRMED one in the race window between the findMany
+      // above and this tx, the status guard makes this a no-op for that row, so
+      // a paid, confirmed booking is never destroyed. (Deleting the booking —
+      // the FK-owning side — leaves the soft-failed payment intact for recovery.)
       await tx.booking.deleteMany({
-        where: { id: { in: bookingIds } },
+        where: { id: { in: bookingIds }, status: 'PENDING' },
       });
     });
 

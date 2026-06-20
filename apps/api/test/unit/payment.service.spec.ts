@@ -17,11 +17,12 @@ import { RedisLockService } from '../../src/redis/redis-lock.service';
 import { AvailabilityCacheService } from '../../src/redis/availability-cache.service';
 import { AuditLoggerService } from '../../src/common/services/audit-logger.service';
 import { NotificationService } from '../../src/common/services/notification.service';
+import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { EmailService } from '../../src/email/email.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import { makeConfigMock, makeEmailMock } from '../mocks/auth-deps.mock';
 import {
-  makeAuditLoggerMock, makeNotificationMock, makeRedisLockMock, makeAvailabilityCacheMock,
+  makeAuditLoggerMock, makeNotificationMock, makeRedisLockMock, makeAvailabilityCacheMock, makeLoyaltyMock,
 } from '../mocks/bookings-deps.mock';
 
 const PAY2M_CFG = {
@@ -42,6 +43,7 @@ async function buildSut(enabled = true) {
   const audit   = makeAuditLoggerMock();
   const notif   = makeNotificationMock();
   const email   = makeEmailMock();
+  const loyalty = makeLoyaltyMock();
 
   const mod = await Test.createTestingModule({
     providers: [
@@ -53,10 +55,11 @@ async function buildSut(enabled = true) {
       { provide: AuditLoggerService,       useValue: audit },
       { provide: NotificationService,      useValue: notif },
       { provide: EmailService,             useValue: email },
+      { provide: LoyaltyService,           useValue: loyalty },
     ],
   }).compile();
 
-  return { sut: mod.get(PaymentService), prisma, config, lock, cache, audit, notif, email };
+  return { sut: mod.get(PaymentService), prisma, config, lock, cache, audit, notif, email, loyalty };
 }
 
 /**

@@ -590,6 +590,38 @@ export class VendorService {
           });
         }
 
+        // Reverse points AWARDED on a COMPLETED booking the vendor is now
+        // cancelling. Without this the customer keeps the earned points PLUS the
+        // cash-refund-as-points above — a vendor↔customer collusion double-dip
+        // (let it complete → customer earns points → cancel → keep points + get
+        // refunded). Mirrors the admin cancel path (admin.service.ts). Uses the
+        // same floor(totalPrice × pointsPerQar) formula as the award so the
+        // reversal matches exactly; pointsAwarded is flipped false alongside the
+        // debit so it can't double-reverse. reverseAwarded clamps to the current
+        // balance so it never drives the balance negative.
+        if (result.pointsAwarded === true) {
+          let cfg = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
+          if (!cfg) cfg = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
+          const pointsPerQar = cfg.pointsPerQar.toNumber();
+          const awardedPoints = pointsPerQar > 0
+            ? Math.floor(Number(result.totalPrice) * pointsPerQar)
+            : 0;
+          if (awardedPoints > 0) {
+            await this.loyalty.reverseAwarded(tx, {
+              userId: result.customerId,
+              amount: awardedPoints,
+              bookingId,
+              actorType: 'VENDOR',
+              actorId: userId,
+              note: `Vendor cancel of COMPLETED booking ${result.ref} — debiting ${awardedPoints} previously-awarded points`,
+            });
+            await tx.booking.update({
+              where: { id: bookingId },
+              data: { pointsAwarded: false },
+            });
+          }
+        }
+
         // Refund the coupon usage so usage counters stay accurate and
         // platform vouchers become re-applicable on future bookings.
         await refundCouponUsage(tx, result.couponCode, result.customerId);
