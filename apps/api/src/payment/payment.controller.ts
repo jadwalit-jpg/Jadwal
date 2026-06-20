@@ -11,6 +11,7 @@ import {
   UseInterceptors,
   ParseUUIDPipe,
   Logger,
+  ValidationPipe,
 } from '@nestjs/common';
 import { NoFilesInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
@@ -29,6 +30,19 @@ import { buildIpnDiagnostics } from './ipn-diagnostics';
 @Controller('payment')
 export class PaymentController {
   private readonly logger = new Logger(PaymentController.name);
+
+  // Lenient validator for PAY2M's IPN webhook. Unlike our own clients (where an
+  // unexpected field signals a bug/attack and `forbidNonWhitelisted` rightly
+  // rejects), a third-party gateway may add fields to its IPN at any time —
+  // rejecting the whole money-critical notification over an unmodelled field is
+  // brittle. So we STRIP unknown fields (`whitelist`) instead of REJECTING the
+  // request, while still enforcing the type/format/length bounds on the fields
+  // we actually use. handleCallback remains the secret-gated security check.
+  private readonly ipnValidator = new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: false,
+    transform: true,
+  });
 
   constructor(
     private paymentService: PaymentService,
@@ -138,21 +152,32 @@ export class PaymentController {
       limits: { fields: 30, fieldSize: 8 * 1024, fieldNameSize: 100, parts: 30 },
     }),
   )
-  async handleIpn(@Body() body: Pay2mCallbackDto, @Req() req: Request) {
-    // Phase 1 diagnostic — capture PAY2M's server source IP + the IPN's field
-    // structure so we can plan a source-IP allow-list (Phase 2: trust the IPN
-    // on the NAPS rail, where the hash is unverifiable). buildIpnDiagnostics is
-    // whitelist-only and NEVER logs the Response_Key or any secret. We read the
-    // RAW multer-parsed body so the logged field NAMES reflect exactly what
-    // PAY2M sent, independent of DTO whitelisting.
+  async handleIpn(@Req() req: Request) {
+    // Read the RAW multer-parsed body (not via @Body) so the global strict
+    // ValidationPipe (forbidNonWhitelisted) can't reject PAY2M's payload before
+    // we even see it. We validate it ourselves below, leniently.
+    const raw = (req.body ?? {}) as Record<string, unknown>;
+
+    // Diagnostic FIRST — capture PAY2M's server source IP + the IPN's field
+    // structure (needed to plan the Phase 2 source-IP allow-list) even when the
+    // payload would fail validation. buildIpnDiagnostics is whitelist-only and
+    // NEVER logs the Response_Key or any secret.
     const cfIp = req.headers['cf-connecting-ip'];
     const sourceIp = (typeof cfIp === 'string' && cfIp) || req.ip || 'unknown';
     const contentType = req.headers['content-type'] ?? 'unknown';
-    this.logger.log(
-      buildIpnDiagnostics((req.body ?? {}) as Record<string, unknown>, sourceIp, contentType),
-    );
+    this.logger.log(buildIpnDiagnostics(raw, sourceIp, contentType));
 
-    await this.paymentService.handleCallback(body);
+    // Validate leniently: strip unknown fields, keep the bounds/format checks on
+    // the fields we use. A genuinely malformed IPN (missing/invalid required
+    // field) still throws 400 here — PAY2M retries — but an unmodelled extra
+    // field no longer kills the whole notification.
+    const dto = (await this.ipnValidator.transform(raw, {
+      type: 'body',
+      metatype: Pay2mCallbackDto,
+      data: '',
+    })) as Pay2mCallbackDto;
+
+    await this.paymentService.handleCallback(dto);
     return { received: true };
   }
 
