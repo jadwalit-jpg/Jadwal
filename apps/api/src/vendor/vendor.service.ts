@@ -1136,17 +1136,30 @@ export class VendorService {
     return months;
   }
 
-  async createCoupon(userId: string, body: { code: string; discountType: 'PERCENTAGE' | 'FIXED'; discountValue: number; validFrom: string; validTo: string; usageLimit?: number; minOrderAmount?: number; maxDiscount?: number }) {
+  async createCoupon(userId: string, body: { code: string; discountType: 'PERCENTAGE' | 'FIXED'; discountValue: number; validFrom: string; validTo: string; usageLimit?: number; minOrderAmount?: number; maxDiscount?: number; activityIds?: string[] }) {
     const vendor = await this.resolveVendor(userId);
     const db = this.prisma.client;
 
     const existing = await db.coupon.findUnique({ where: { code: body.code } });
     if (existing) throw new ConflictException('Coupon code already exists');
 
+    // Activity scoping (Bug A): a non-empty list restricts the coupon to those
+    // activities; empty = applies to all of the vendor's activities. Verify the
+    // ids are all THIS vendor's — a vendor must not scope a coupon to another
+    // vendor's activity (defence; it would never match anyway).
+    const activityIds = body.activityIds ?? [];
+    if (activityIds.length > 0) {
+      const owned = await db.activity.count({ where: { id: { in: activityIds }, vendorId: vendor.id } });
+      if (owned !== activityIds.length) {
+        throw new BadRequestException('Applicable activities must all belong to you.');
+      }
+    }
+
     return db.coupon.create({
       data: {
         code: body.code,
         vendorId: vendor.id,
+        applicableActivityIds: activityIds,
         discountType: body.discountType,
         discountValue: body.discountValue,
         validFrom: new Date(body.validFrom),

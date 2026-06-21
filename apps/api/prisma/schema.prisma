@@ -626,6 +626,11 @@ model Coupon {
   code          String       @unique
   vendorId      String?
   vendor        Vendor?      @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  // Activity scoping: when NON-EMPTY, the coupon is valid ONLY for these
+  // activity ids; EMPTY (default) = applies to all (preserves prior behaviour).
+  // Plain String[] (not an FK relation) — a stale/deleted id is harmless (a
+  // deleted activity can't be booked), so no referential cleanup is needed.
+  applicableActivityIds String[]   @default([])
   discountType  DiscountType
   discountValue Decimal      @db.Decimal(10, 2)
   validFrom     DateTime

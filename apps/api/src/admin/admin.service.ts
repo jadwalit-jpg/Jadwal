@@ -1830,6 +1830,9 @@ export class AdminService {
     return this.prisma.client.coupon.create({
       data: {
         code: dto.code.toUpperCase(),
+        // Activity scoping (Bug A): empty = applies to all. Admin/platform
+        // coupons may scope to any activity (no vendor-ownership restriction).
+        applicableActivityIds: dto.activityIds ?? [],
         discountType: dto.discountType,
         discountValue: dto.discountValue,
         validFrom: new Date(dto.validFrom),

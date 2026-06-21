@@ -174,7 +174,7 @@ describe('BookingsController.validateCoupon', () => {
       id: 'c1', code: 'SAVE10', status: 'PENDING',
       validFrom: new Date(Date.now() - 1000), validTo: new Date(Date.now() + 1000),
       discountType: 'FIXED', discountValue: 10, minOrderAmount: null, maxDiscount: null,
-      usageLimit: null, usedCount: 0, vendorId: null,
+      usageLimit: null, usedCount: 0, vendorId: null, applicableActivityIds: [],
     });
     await expect(ctrl.validateCoupon('SAVE10', 'a1', '100'))
       .rejects.toThrow(/not active/i);
@@ -186,7 +186,7 @@ describe('BookingsController.validateCoupon', () => {
       id: 'c1', code: 'OLD', status: 'APPROVED',
       validFrom: new Date(Date.now() - 10000), validTo: new Date(Date.now() - 1000),
       discountType: 'FIXED', discountValue: 10, minOrderAmount: null, maxDiscount: null,
-      usageLimit: null, usedCount: 0, vendorId: null,
+      usageLimit: null, usedCount: 0, vendorId: null, applicableActivityIds: [],
     });
     await expect(ctrl.validateCoupon('OLD', 'a1', '100'))
       .rejects.toThrow(/expired/i);
@@ -224,7 +224,7 @@ describe('BookingsController.validateCoupon', () => {
       id: 'c1', code: 'MIN50', status: 'APPROVED',
       validFrom: new Date(Date.now() - 10000), validTo: new Date(Date.now() + 10000),
       discountType: 'FIXED', discountValue: 10, minOrderAmount: 50, maxDiscount: null,
-      usageLimit: null, usedCount: 0, vendorId: null,
+      usageLimit: null, usedCount: 0, vendorId: null, applicableActivityIds: [],
     });
     await expect(ctrl.validateCoupon('MIN50', 'a1', '40'))
       .rejects.toThrow(/minimum order amount is 50/i);
@@ -236,7 +236,7 @@ describe('BookingsController.validateCoupon', () => {
       id: 'c1', code: 'P20', status: 'APPROVED',
       validFrom: new Date(Date.now() - 10000), validTo: new Date(Date.now() + 10000),
       discountType: 'PERCENTAGE', discountValue: 20, minOrderAmount: null, maxDiscount: 15,
-      usageLimit: null, usedCount: 0, vendorId: null,
+      usageLimit: null, usedCount: 0, vendorId: null, applicableActivityIds: [],
     });
     const r = await ctrl.validateCoupon('P20', 'a1', '200');
     // 20% of 200 = 40, capped at 15
@@ -249,7 +249,7 @@ describe('BookingsController.validateCoupon', () => {
       id: 'c1', code: 'F50', status: 'APPROVED',
       validFrom: new Date(Date.now() - 10000), validTo: new Date(Date.now() + 10000),
       discountType: 'FIXED', discountValue: 50, minOrderAmount: null, maxDiscount: null,
-      usageLimit: null, usedCount: 0, vendorId: null,
+      usageLimit: null, usedCount: 0, vendorId: null, applicableActivityIds: [],
     });
     const r = await ctrl.validateCoupon('F50', 'a1', '30');
     // Discount value 50 > order 30 → capped at 30
@@ -262,7 +262,7 @@ describe('BookingsController.validateCoupon', () => {
       id: 'c1', code: 'SAVE10', status: 'APPROVED',
       validFrom: new Date(Date.now() - 10000), validTo: new Date(Date.now() + 10000),
       discountType: 'FIXED', discountValue: 10, minOrderAmount: null, maxDiscount: null,
-      usageLimit: null, usedCount: 0, vendorId: null,
+      usageLimit: null, usedCount: 0, vendorId: null, applicableActivityIds: [],
     });
     await ctrl.validateCoupon('  save10  ', 'a1', '100');
     expect(prisma._client.coupon.findUnique).toHaveBeenCalledWith(
