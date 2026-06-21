@@ -1656,6 +1656,7 @@ export class AdminService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     return this.prisma.client.country.findMany({
+      where: { deletedAt: null }, // hide soft-deleted countries (Bug C)
       include: { _count: { select: { cities: true, vendors: true, activities: true } } },
       // Stable pagination: id as secondary key breaks ties on nameEn so
       // a page-1+page-2 fetch can't double-return or skip rows.
@@ -1679,18 +1680,28 @@ export class AdminService {
   }
 
   async deleteCountry(id: string) {
-    const country = await this.prisma.client.country.findUnique({
-      where: { id },
-      include: { _count: { select: { vendors: true, activities: true, cities: true } } },
-    });
+    const db = this.prisma.client;
+    const country = await db.country.findFirst({ where: { id, deletedAt: null }, select: { id: true } });
     if (!country) throw new NotFoundException('Country not found');
-    if (country._count.vendors > 0 || country._count.activities > 0) {
-      throw new ForbiddenException('Cannot delete this country while vendors or activities are linked to it — including ones that were deleted but kept for booking/payment records.');
+
+    // Bug C — count only LIVE (non-soft-deleted) vendors/activities. Vendor &
+    // activity "delete" is itself a soft-delete (the row + its countryId are
+    // kept for the 7-year audit window), so the old check (which counted ALL
+    // rows) meant a country could never be deleted once any vendor/activity had
+    // ever existed there. Only genuinely-active dependencies should block it.
+    const [liveVendors, liveActivities] = await Promise.all([
+      db.vendor.count({ where: { countryId: id, deletedAt: null } }),
+      db.activity.count({ where: { countryId: id, deletedAt: null } }),
+    ]);
+    if (liveVendors > 0 || liveActivities > 0) {
+      throw new ForbiddenException('Cannot delete a country that still has active vendors or activities. Remove them first.');
     }
-    // Delete associated cities first, then the country
-    await this.prisma.client.city.deleteMany({ where: { countryId: id } });
-    const result = await this.prisma.client.country.delete({ where: { id } });
-    // Country delete cascades cities deletion → invalidate both namespaces.
+
+    // Soft-delete (NOT hard-delete): keep the row + its cities so soft-deleted
+    // vendors/activities that still reference countryId retain their audit
+    // linkage and the FK never dangles. A non-null deletedAt removes the country
+    // from every admin/public list (see getCountries + catalog + geo filters).
+    const result = await db.country.update({ where: { id }, data: { deletedAt: new Date() } });
     void this.refCache.invalidate('countries');
     void this.refCache.invalidate('cities');
     return result;

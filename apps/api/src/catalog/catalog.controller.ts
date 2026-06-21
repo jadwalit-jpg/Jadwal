@@ -106,7 +106,7 @@ export class CatalogController {
     const cached = await this.refCache.get<unknown[]>('countries', 'active');
     if (cached) return cached;
     const data = await this.prisma.client.country.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: 'ACTIVE', deletedAt: null },
       select: { id: true, nameEn: true, nameAr: true, isoCode: true, currencyCode: true, defaultTimezone: true },
       orderBy: { nameEn: 'asc' },
     });
