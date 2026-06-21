@@ -1,0 +1,15 @@
+-- Bug C — country soft-delete.
+--
+-- Adds a deletedAt marker to countries. Vendor/activity "delete" is already a
+-- SOFT delete (the row is kept for the 7-year audit window), and those rows keep
+-- their countryId — so the old country-delete dependency check (which counted ALL
+-- vendors/activities, including soft-deleted ones) could NEVER let a country be
+-- deleted once any vendor/activity had ever existed there. Now: deleteCountry
+-- counts only LIVE (deletedAt IS NULL) vendors/activities and, when none remain,
+-- soft-deletes the country (sets deletedAt) instead of hard-deleting it — keeping
+-- the row so soft-deleted children's FK + audit linkage stay intact. Distinct
+-- from status=HIDDEN (a public-hide toggle that keeps the country manageable).
+--
+-- Purely additive: one nullable column, no backfill (existing countries get NULL
+-- = not deleted). Cannot fail on existing rows.
+ALTER TABLE "countries" ADD COLUMN "deletedAt" TIMESTAMP(3);

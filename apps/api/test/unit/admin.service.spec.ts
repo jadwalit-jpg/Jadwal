@@ -491,28 +491,31 @@ describe('AdminService.getVendors — excludes soft-deleted', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// deleteCountry — stays protected while any vendor/activity references it
-// (deleted-but-retained rows still hold a Restrict FK, so deletion must block
-//  with a clear message rather than 500 on a FK violation).
+// deleteCountry — blocks only on LIVE (non-soft-deleted) vendors/activities, then
+// SOFT-deletes (sets deletedAt, keeps the row + cities) so soft-deleted children
+// that still reference countryId keep their audit FK intact (Bug C).
 // ═══════════════════════════════════════════════════════════════════════════
 describe('AdminService.deleteCountry', () => {
-  test('blocks when vendors or activities are still linked', async () => {
+  test('blocks when LIVE vendors or activities are still linked', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.country.findUnique.mockResolvedValueOnce({
-      id: 'c1', _count: { vendors: 1, activities: 0, cities: 2 },
-    });
+    ctx.prisma._client.country.findFirst.mockResolvedValueOnce({ id: 'c1' });
+    ctx.prisma._client.vendor.count.mockResolvedValueOnce(1);   // a live vendor
+    ctx.prisma._client.activity.count.mockResolvedValueOnce(0);
     await expect(ctx.sut.deleteCountry('c1')).rejects.toBeInstanceOf(ForbiddenException);
-    expect(ctx.prisma._client.country.delete).not.toHaveBeenCalled();
+    expect(ctx.prisma._client.country.update).not.toHaveBeenCalled();
   });
 
-  test('deletes (with its cities) when nothing references it', async () => {
+  test('soft-deletes (sets deletedAt, keeps the row) when no LIVE deps remain', async () => {
     const ctx = await buildSut();
-    ctx.prisma._client.country.findUnique.mockResolvedValueOnce({
-      id: 'c1', _count: { vendors: 0, activities: 0, cities: 1 },
-    });
-    ctx.prisma._client.city.deleteMany.mockResolvedValueOnce({ count: 1 });
-    ctx.prisma._client.country.delete.mockResolvedValueOnce({ id: 'c1' });
+    ctx.prisma._client.country.findFirst.mockResolvedValueOnce({ id: 'c1' });
+    ctx.prisma._client.vendor.count.mockResolvedValueOnce(0);
+    ctx.prisma._client.activity.count.mockResolvedValueOnce(0);
+    ctx.prisma._client.country.update.mockResolvedValueOnce({ id: 'c1', deletedAt: new Date() });
     await expect(ctx.sut.deleteCountry('c1')).resolves.toEqual(expect.objectContaining({ id: 'c1' }));
-    expect(ctx.prisma._client.city.deleteMany).toHaveBeenCalled();
+    // soft-delete = update(deletedAt), NOT a hard delete, and cities are kept
+    expect(ctx.prisma._client.country.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ deletedAt: expect.any(Date) }) }),
+    );
+    expect(ctx.prisma._client.country.delete).not.toHaveBeenCalled();
   });
 });

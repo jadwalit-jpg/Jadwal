@@ -225,6 +225,12 @@ model Country {
   users           User[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+  // Soft-delete marker (Bug C). Distinct from `status: HIDDEN` (a public-hide
+  // toggle that keeps the country manageable). A non-null deletedAt means the
+  // country is removed from every admin/public list, but the row is KEPT so
+  // soft-deleted vendors/activities that still reference countryId retain their
+  // 7-year audit linkage (and the FK never dangles). Mirrors Vendor/Activity.
+  deletedAt       DateTime?
 
   @@map("countries")
 }
