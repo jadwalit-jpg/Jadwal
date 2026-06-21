@@ -35,6 +35,7 @@ interface TrendingEvent {
   descriptionAr: string | null;
   image: string | null;
   eventDate: string | null;
+  eventEndDate: string | null;
   countryId: string | null;
 }
 
@@ -151,6 +152,15 @@ export function TrendingEventModal({ event, onClose, isRtl, closeLabel }: Trendi
                   isRtl ? 'ar-EG' : 'en-US',
                   { month: 'short', day: 'numeric', year: 'numeric' },
                 )}
+                {event.eventEndDate ? (
+                  <>
+                    {' – '}
+                    {new Date(event.eventEndDate).toLocaleDateString(
+                      isRtl ? 'ar-EG' : 'en-US',
+                      { month: 'short', day: 'numeric', year: 'numeric' },
+                    )}
+                  </>
+                ) : null}
               </div>
             ) : null}
 

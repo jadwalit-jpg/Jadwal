@@ -179,7 +179,7 @@ export class CatalogController {
       select: {
         id: true, titleEn: true, titleAr: true,
         description: true, descriptionAr: true,
-        image: true, eventDate: true, countryId: true,
+        image: true, eventDate: true, eventEndDate: true, countryId: true,
       },
       orderBy: { createdAt: 'desc' },
       // Defensive cap — trendingEvent is admin-curated (homepage banners,
