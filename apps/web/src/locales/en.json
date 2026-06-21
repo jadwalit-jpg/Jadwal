@@ -198,6 +198,7 @@
     "time": "Time",
     "checkIn": "Check-in",
     "checkOut": "Check-out",
+    "clearDates": "Clear dates",
     "guests": "Guests",
     "statusLabel": "Status",
     "subtotal": "Subtotal",
