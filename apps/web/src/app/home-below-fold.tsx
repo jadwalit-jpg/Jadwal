@@ -151,8 +151,6 @@ export default function HomeBelowFold() {
                 ? `${t('home.trendingIn', { defaultValue: t('home.trending') })} ${localized(country, 'name')}`
                 : t('home.trending')
             }
-            seeAllHref="/explore"
-            seeAllLabel={t('home.viewAll')}
             rtl={isRtl}
           />
           {isDetecting || trendingLoading ? (
