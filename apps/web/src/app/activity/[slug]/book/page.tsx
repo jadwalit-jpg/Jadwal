@@ -14,6 +14,7 @@ import {
   Gift,
   MapPin,
   User,
+  X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import api from '@/lib/api';
@@ -833,7 +834,7 @@ export default function BookActivityPage() {
           <div className="lg:col-span-3 space-y-5">
             {/* Booking Type Badge */}
             <div>
-              <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-jadwal-surface-raised border border-jadwal-border-subtle text-jadwal-text text-sm font-medium shadow-jadwal">
+              <div className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 px-4 py-2.5 rounded-2xl bg-jadwal-surface-raised border border-jadwal-border-subtle text-jadwal-text text-sm font-medium shadow-jadwal">
                 {isHourly ? (
                   <>
                     <Clock className="h-3.5 w-3.5 text-jadwal-primary" aria-hidden="true" />
@@ -846,11 +847,27 @@ export default function BookActivityPage() {
                       {isPerUnit ? t('activity.unit') : t('activity.person')}
                     </span>
                   </>
+                ) : minNights && minNights > 1 ? (
+                  <>
+                    <Calendar className="h-3.5 w-3.5 text-jadwal-primary" aria-hidden="true" />
+                    {`${t('activity.minStay', 'Min')} ${minNights} ${t('activity.nights')}`}
+                    <span className="text-jadwal-text-faint">·</span>
+                    {/* Inclusive minimum total (minNights × price). The headline
+                        used to show ONLY the per-night rate, which reads as the full
+                        price on a min-stay activity (reported bug — e.g. "QAR 2600 /
+                        night" when 3 nights are required = QAR 7800 minimum). */}
+                    <span className="tabular-nums font-semibold">
+                      {currency} {(effectivePrice * minNights).toFixed(0)}
+                    </span>
+                    <span className="text-jadwal-text-faint tabular-nums text-xs">
+                      ({currency} {effectivePrice.toFixed(0)}/{t('activity.night')})
+                    </span>
+                  </>
                 ) : (
                   <>
                     <Calendar className="h-3.5 w-3.5 text-jadwal-primary" aria-hidden="true" />
                     {minNights
-                      ? `${t('activity.minStay', 'Min')} ${minNights} ${minNights > 1 ? t('activity.nights') : t('activity.night')}`
+                      ? `${t('activity.minStay', 'Min')} ${minNights} ${t('activity.night')}`
                       : t('activity.dailyBooking')}
                     <span className="text-jadwal-text-faint">·</span>
                     <span className="tabular-nums">
@@ -1002,6 +1019,16 @@ export default function BookActivityPage() {
                         {nights} {nights > 1 ? t('activity.nights') : t('activity.night')}
                       </span>
                     )}
+                    {/* Clear/reset — lets the customer change the check-in date or
+                        start the range over (no visible reset was the reported bug). */}
+                    <button
+                      type="button"
+                      onClick={() => { setCheckIn(null); setCheckOut(null); }}
+                      className="ms-auto inline-flex items-center gap-1 text-xs font-medium text-gray-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t('booking.clearDates')}
+                    </button>
                   </div>
                 )}
               </div>
