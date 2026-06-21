@@ -703,6 +703,10 @@ model TrendingEvent {
   descriptionAr String?
   image       String?
   eventDate   DateTime?
+  /// Optional END date for multi-day events (Bug B). NULL = single-day event
+  /// (shows just `eventDate`, unchanged). When set, the UI shows a range
+  /// (e.g. "20 – 23 Jun"). Must be >= eventDate (validated in the DTO).
+  eventEndDate DateTime?
   countryId   String?
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())

@@ -20,6 +20,7 @@ interface TrendingEvent {
   descriptionAr: string | null;
   image: string | null;
   eventDate: string | null;
+  eventEndDate: string | null;
   countryId: string | null;
   isActive: boolean;
   createdAt: string;
@@ -49,6 +50,7 @@ const emptyForm = {
   image: '',
   eventDate: '',
   eventTime: '',
+  eventEndDate: '',
   countryId: '',
   isActive: true,
 };
@@ -153,6 +155,7 @@ export default function AdminTrendingPage() {
       image: event.image || '',
       eventDate: dateStr,
       eventTime: timeStr,
+      eventEndDate: event.eventEndDate ? new Date(event.eventEndDate).toISOString().slice(0, 10) : '',
       countryId: event.countryId || '',
       isActive: event.isActive,
     });
@@ -205,6 +208,11 @@ export default function AdminTrendingPage() {
         return;
       }
     }
+    // End date (optional) must be on or after the start date.
+    if (form.eventEndDate && form.eventDate && form.eventEndDate < form.eventDate) {
+      toast('End date must be on or after the start date', 'error');
+      return;
+    }
 
     const payload: any = {
       titleEn: sanitize(form.titleEn),
@@ -218,6 +226,11 @@ export default function AdminTrendingPage() {
     if (form.eventDate) {
       const dateTime = form.eventTime ? `${form.eventDate}T${form.eventTime}:00` : `${form.eventDate}T00:00:00`;
       payload.eventDate = new Date(dateTime).toISOString();
+    }
+    // Optional multi-day end date — end-of-day so the event runs through that
+    // whole day and a same-day end still satisfies the >= start validation.
+    if (form.eventEndDate) {
+      payload.eventEndDate = new Date(`${form.eventEndDate}T23:59:59`).toISOString();
     }
     if (editingId) {
       updateMutation.mutate({ id: editingId, payload });
@@ -322,6 +335,9 @@ export default function AdminTrendingPage() {
                       <div className="flex items-center gap-1 text-xs text-gray-400 dark:text-slate-500">
                         <Calendar className="h-3.5 w-3.5" />
                         {new Date(event.eventDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {event.eventEndDate && (
+                          <> – {new Date(event.eventEndDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</>
+                        )}
                       </div>
                     )}
                     {event.eventDate && (
@@ -458,6 +474,14 @@ export default function AdminTrendingPage() {
                       <label className={labelCls}>Event Time</label>
                       <TimePicker value={form.eventTime} onChange={(val) => setForm((f) => ({ ...f, eventTime: val }))} placeholder="Pick a time" direction="up" />
                     </div>
+                  </div>
+
+                  {/* Optional end date — for multi-day events. Empty = single-day. */}
+                  <div>
+                    <label className={labelCls}>
+                      End Date <span className="font-normal text-gray-400 dark:text-slate-500">(optional — for multi-day events)</span>
+                    </label>
+                    <DatePicker value={form.eventEndDate} onChange={(val) => setForm((f) => ({ ...f, eventEndDate: val }))} placeholder="Pick an end date" direction="up" disablePast />
                   </div>
 
                   {/* Active + Buttons */}
