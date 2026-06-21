@@ -305,22 +305,27 @@ export default function HomeBelowFold() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
           <SectionHeader
             title={t('home.featured')}
-            seeAllHref="/explore"
-            seeAllLabel={t('home.viewAll')}
             rtl={isRtl}
           />
+          {/* Mobile: horizontal snap-scroll row (like Trending). sm+: grid.
+              No "View all" — the whole set scrolls instead. */}
           {featuredActivities.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
+            <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-2 -mx-4 px-4 [&::-webkit-scrollbar]:hidden [scrollbar-width:none] sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:mx-0 sm:px-0 lg:grid-cols-3 md:gap-5">
               {featuredActivities.map((activity) => (
-                <ActivityCard key={activity.id} activity={activity} size="fill" />
+                <div key={activity.id} className="shrink-0 w-[78vw] max-w-[300px] snap-start sm:w-auto sm:max-w-none">
+                  <ActivityCard activity={activity} size="fill" />
+                </div>
               ))}
             </div>
           ) : isDetecting || featuredLoading ? (
-            // Skeleton grid (not a short text placeholder) so the section height
+            // Skeleton row (not a short text placeholder) so the section height
             // stays ~constant when the real cards arrive — avoids the CLS jump.
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
+            // Same mobile-scroll / desktop-grid shape as the live cards above.
+            <div className="flex gap-4 overflow-x-auto pb-2 -mx-4 px-4 [&::-webkit-scrollbar]:hidden [scrollbar-width:none] sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:mx-0 sm:px-0 lg:grid-cols-3 md:gap-5">
               {Array.from({ length: 6 }).map((_, i) => (
-                <ActivityCardSkeleton key={i} />
+                <div key={i} className="shrink-0 w-[78vw] max-w-[300px] sm:w-auto sm:max-w-none">
+                  <ActivityCardSkeleton />
+                </div>
               ))}
             </div>
           ) : (
