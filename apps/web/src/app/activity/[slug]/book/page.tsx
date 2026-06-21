@@ -460,14 +460,7 @@ export default function BookActivityPage() {
           base += priceByDate.get(ds) ?? price;
         }
       } else {
-        // No valid date range picked yet → NO cost. The Total then shows "—" and
-        // the breakdown stays hidden until dates are chosen. This previously used
-        // Math.max(1, nights), which fabricated a 1-night total (e.g. QAR 2600)
-        // BEFORE any date was selected — misleading for a min-stay activity whose
-        // real minimum is minNights × price (already shown in the headline). Once
-        // a check-in is picked the min-stay range auto-fills (nights >= minNights),
-        // so the if-branch above computes the correct per-night sum.
-        base = 0;
+        base = effectivePrice * Math.max(1, nights);
       }
     }
     return base + extrasTotal;
