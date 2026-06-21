@@ -1355,6 +1355,7 @@ export class BookingsService {
                   maxDiscount: true,
                   usageLimit: true,
                   usedCount: true,
+                  applicableActivityIds: true,
                 },
               },
             },
@@ -1367,6 +1368,15 @@ export class BookingsService {
 
           const now = new Date();
           if (now > claimed.coupon.validTo) throw new BadRequestException('This voucher has expired');
+
+          // Activity scoping (Bug A): a non-empty list restricts the voucher's
+          // coupon to those activities only (empty = applies to all).
+          if (
+            claimed.coupon.applicableActivityIds.length > 0 &&
+            !claimed.coupon.applicableActivityIds.includes(activity.id)
+          ) {
+            throw new BadRequestException('This voucher is not valid for this activity');
+          }
 
           if (claimed.coupon.minOrderAmount && totalPrice < Number(claimed.coupon.minOrderAmount)) {
             throw new BadRequestException(`Minimum order amount for this voucher is ${Number(claimed.coupon.minOrderAmount)}`);
@@ -1430,6 +1440,16 @@ export class BookingsService {
 
           // Vendor-specific coupon must match activity's vendor
           if (coupon.vendorId && coupon.vendorId !== activity.vendor.id) {
+            throw new BadRequestException('This coupon is not valid for this activity');
+          }
+
+          // Activity scoping (Bug A): a non-empty list restricts the coupon to
+          // those activities only (empty = applies to all). Authoritative guard —
+          // the UI selector + validateCoupon preview can be bypassed, this can't.
+          if (
+            coupon.applicableActivityIds.length > 0 &&
+            !coupon.applicableActivityIds.includes(activity.id)
+          ) {
             throw new BadRequestException('This coupon is not valid for this activity');
           }
 

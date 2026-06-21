@@ -306,6 +306,52 @@ describe('Coupon lifecycle — apply at booking time', () => {
     ).rejects.toThrow();
   });
 
+  test('coupon scoped to specific activities (Bug A) → rejected on others, applied on the listed one', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { bookings } = makeServices();
+
+    // Scoped to a DIFFERENT activity id → must NOT apply to seed.activity.
+    await ctx.prisma.coupon.create({
+      data: {
+        code: 'SCOPED50', vendorId: seed.vendor.id,
+        applicableActivityIds: [crypto.randomUUID()], // not seed.activity.id
+        discountType: 'PERCENTAGE', discountValue: 50,
+        validFrom: new Date(isoFuture(-1)), validTo: new Date(isoFuture(30)),
+        usageLimit: 100, usedCount: 0, status: 'APPROVED',
+      },
+    });
+    await expect(
+      bookings.createBooking(seed.customer.id, {
+        activityId: seed.activity.id,
+        checkInDate: futureDate(7), slotTime: '10:00', guests: 2,
+        bookingPhone: '+97455123456',
+        couponCode: 'SCOPED50',
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    ).rejects.toThrow(/not valid for this activity/i);
+
+    // Scoped to THIS activity → applies normally.
+    await ctx.prisma.coupon.create({
+      data: {
+        code: 'SCOPEDOK', vendorId: seed.vendor.id,
+        applicableActivityIds: [seed.activity.id],
+        discountType: 'PERCENTAGE', discountValue: 10,
+        validFrom: new Date(isoFuture(-1)), validTo: new Date(isoFuture(30)),
+        usageLimit: 100, usedCount: 0, status: 'APPROVED',
+      },
+    });
+    const res = await bookings.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7), slotTime: '10:00', guests: 2,
+      bookingPhone: '+97455123456',
+      couponCode: 'SCOPEDOK',
+      idempotencyKey: crypto.randomUUID(),
+    });
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    expect(b.couponCode).toBe('SCOPEDOK');
+    expect(Number(b.couponDiscount)).toBe(20); // 10% of 200
+  });
+
   test('coupon beyond usageLimit → rejected, no booking', async () => {
     const seed = await seedReference(ctx.prisma);
     const { bookings } = makeServices();

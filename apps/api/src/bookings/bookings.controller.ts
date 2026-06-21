@@ -181,6 +181,7 @@ export class BookingsController {
         maxDiscount: true,
         status: true,
         vendorId: true,
+        applicableActivityIds: true,
       },
     });
 
@@ -204,6 +205,13 @@ export class BookingsController {
       if (activity.vendorId !== coupon.vendorId) {
         throw new BusinessBadRequestException('COUPON.NOT_FOR_ACTIVITY', 'This coupon is not valid for this activity');
       }
+    }
+
+    // Activity scoping (Bug A): a non-empty list restricts the coupon to those
+    // activities only (empty = applies to all). Preview check — createBooking
+    // re-enforces this authoritatively at redemption.
+    if (coupon.applicableActivityIds.length > 0 && !coupon.applicableActivityIds.includes(activityId)) {
+      throw new BusinessBadRequestException('COUPON.NOT_FOR_ACTIVITY', 'This coupon is not valid for this activity');
     }
 
     // Check minimum order amount
