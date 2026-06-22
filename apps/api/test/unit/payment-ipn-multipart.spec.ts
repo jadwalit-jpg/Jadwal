@@ -25,12 +25,15 @@ const VALID_BASKET = 'JDWL-549e0f09-233';
 describe('POST /payment/callback/ipn — multipart/form-data parsing', () => {
   let app: INestApplication;
   const handleCallback = jest.fn().mockResolvedValue({ bookingId: '', status: 'pending' });
+  // The IPN endpoint asks the service whether the source IP is trusted; mock it
+  // to true so we can assert the controller forwards the verdict via opts.
+  const isTrustedIpnSource = jest.fn().mockReturnValue(true);
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [PaymentController],
       providers: [
-        { provide: PaymentService, useValue: { handleCallback } },
+        { provide: PaymentService, useValue: { handleCallback, isTrustedIpnSource } },
         { provide: ConfigService, useValue: { getOrThrow: () => 'https://app.example.com' } },
       ],
     }).compile();
@@ -49,25 +52,31 @@ describe('POST /payment/callback/ipn — multipart/form-data parsing', () => {
 
   beforeEach(() => handleCallback.mockClear());
 
-  it('parses a multipart IPN and forwards the fields to the service (200)', async () => {
+  it('parses a multipart IPN and forwards the mapped fields + trust verdict (200)', async () => {
+    // The real IPN names its hash `responseKey` (lowercase) and carries no
+    // amount (confirmed from production logs) — distinct from the redirect.
     const res = await request(app.getHttpServer())
       .post('/payment/callback/ipn')
-      .field('err_code', '000')
+      .field('err_code', '0000')
       .field('basket_id', VALID_BASKET)
       .field('transaction_id', 'TXN-9873474567')
       .field('order_date', '2026-06-19 23:35:00')
-      .field('Response_Key', VALID_RESPONSE_KEY)
-      .field('PaymentName', 'NAPS');
+      .field('responseKey', VALID_RESPONSE_KEY)
+      .field('rdv_message_key', 'mk-1');
 
     expect(res.status).toBe(201); // Nest @Post default success status
     expect(res.body).toEqual({ received: true });
     expect(handleCallback).toHaveBeenCalledTimes(1);
+    // Controller maps responseKey → Response_Key and tags the call as an IPN
+    // with the source-IP trust verdict (mocked true here).
     expect(handleCallback).toHaveBeenCalledWith(
       expect.objectContaining({
-        err_code: '000',
+        err_code: '0000',
         basket_id: VALID_BASKET,
+        transaction_id: 'TXN-9873474567',
         Response_Key: VALID_RESPONSE_KEY,
       }),
+      expect.objectContaining({ via: 'ipn', trustedCapture: true }),
     );
   });
 
@@ -78,9 +87,9 @@ describe('POST /payment/callback/ipn — multipart/form-data parsing', () => {
     // secret-gated security gate.
     const res = await request(app.getHttpServer())
       .post('/payment/callback/ipn')
-      .field('err_code', '000')
+      .field('err_code', '0000')
       .field('basket_id', VALID_BASKET)
-      .field('Response_Key', VALID_RESPONSE_KEY)
+      .field('responseKey', VALID_RESPONSE_KEY)
       .field('transaction_id', 'TXN-1')
       .field('Status_Message', 'Transaction processed') // NOT in the DTO
       .field('Reserved_1', 'anything'); // NOT in the DTO
@@ -89,7 +98,7 @@ describe('POST /payment/callback/ipn — multipart/form-data parsing', () => {
     expect(handleCallback).toHaveBeenCalledTimes(1);
     const arg = handleCallback.mock.calls[0][0];
     expect(arg.basket_id).toBe(VALID_BASKET);
-    expect(arg.err_code).toBe('000');
+    expect(arg.err_code).toBe('0000');
     // Unknown fields are stripped, never forwarded to the payment logic.
     expect(arg).not.toHaveProperty('Status_Message');
     expect(arg).not.toHaveProperty('Reserved_1');
