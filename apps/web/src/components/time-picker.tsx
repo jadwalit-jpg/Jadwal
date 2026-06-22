@@ -9,9 +9,13 @@ interface TimePickerProps {
   hasError?: boolean;
   placeholder?: string;
   direction?: 'up' | 'down';
+  /** Focus / selected accent. Defaults to the brand green (vendor flows); admin
+   *  forms on a blue palette pass "blue" so the picker matches its sibling
+   *  DatePicker + inputs instead of clashing beside them. */
+  accent?: 'green' | 'blue';
 }
 
-export default function TimePicker({ value, onChange, hasError, placeholder = 'Select time', direction = 'down' }: TimePickerProps) {
+export default function TimePicker({ value, onChange, hasError, placeholder = 'Select time', direction = 'down', accent = 'green' }: TimePickerProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -88,6 +92,21 @@ export default function TimePicker({ value, onChange, hasError, placeholder = 'S
     return `${h}:${m} ${period}`;
   };
 
+  // Accent palette — green is the brand default (vendor); "blue" matches the
+  // admin forms (DatePicker + inputs) so the picker doesn't clash beside them.
+  const isBlue = accent === 'blue';
+  const accentTriggerOpen = isBlue
+    ? 'border-blue-500/50 ring-2 ring-blue-500/20'
+    : 'border-[#1d4f35]/50 ring-2 ring-[#1d4f35]/20';
+  const accentTriggerIdle = isBlue
+    ? 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 focus:ring-blue-500/20 focus:border-blue-500/50'
+    : 'border-gray-200 dark:border-slate-700 focus:ring-[#1d4f35]/20 focus:border-[#1d4f35]/50';
+  const accentAmPmBox = isBlue
+    ? 'bg-blue-500/10 dark:bg-blue-500/20 border-blue-500/30'
+    : 'bg-[#1d4f35]/10 dark:bg-[#1d4f35]/20 border-[#1d4f35]/30';
+  const accentAmPmText = isBlue ? 'text-blue-600 dark:text-blue-400' : 'text-[#1d4f35] dark:text-emerald-400';
+  const accentPresetActive = isBlue ? 'bg-blue-600 text-white' : 'bg-[#1d4f35] text-white';
+
   return (
     <div ref={ref} className="relative">
       {/* Trigger */}
@@ -98,8 +117,8 @@ export default function TimePicker({ value, onChange, hasError, placeholder = 'S
           hasError
             ? 'border-red-400 focus:ring-red-400/20'
             : open
-              ? 'border-[#1d4f35]/50 ring-2 ring-[#1d4f35]/20'
-              : 'border-gray-200 dark:border-slate-700 focus:ring-[#1d4f35]/20 focus:border-[#1d4f35]/50'
+              ? accentTriggerOpen
+              : accentTriggerIdle
         }`}
       >
         <span className={value ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-slate-500'}>
@@ -172,8 +191,8 @@ export default function TimePicker({ value, onChange, hasError, placeholder = 'S
               >
                 <ChevronUp className="h-4 w-4" />
               </button>
-              <div className="w-14 h-14 flex items-center justify-center rounded-xl bg-[#1d4f35]/10 dark:bg-[#1d4f35]/20 border border-[#1d4f35]/30">
-                <span className="text-lg font-bold text-[#1d4f35] dark:text-emerald-400">
+              <div className={`w-14 h-14 flex items-center justify-center rounded-xl border ${accentAmPmBox}`}>
+                <span className={`text-lg font-bold ${accentAmPmText}`}>
                   {hour !== null ? (isPM ? 'PM' : 'AM') : '--'}
                 </span>
               </div>
@@ -203,7 +222,7 @@ export default function TimePicker({ value, onChange, hasError, placeholder = 'S
                     onClick={() => { onChange(t); setOpen(false); }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
                       isActive
-                        ? 'bg-[#1d4f35] text-white'
+                        ? accentPresetActive
                         : 'bg-gray-50 dark:bg-slate-900 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700'
                     }`}
                   >

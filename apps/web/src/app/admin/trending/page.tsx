@@ -472,7 +472,7 @@ export default function AdminTrendingPage() {
                     </div>
                     <div>
                       <label className={labelCls}>Event Time</label>
-                      <TimePicker value={form.eventTime} onChange={(val) => setForm((f) => ({ ...f, eventTime: val }))} placeholder="Pick a time" direction="up" />
+                      <TimePicker value={form.eventTime} onChange={(val) => setForm((f) => ({ ...f, eventTime: val }))} placeholder="Pick a time" direction="up" accent="blue" />
                     </div>
                   </div>
 
