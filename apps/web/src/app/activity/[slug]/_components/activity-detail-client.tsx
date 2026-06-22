@@ -190,13 +190,36 @@ export default function ActivityDetailClient({
   const likeCount = likeData?.count ?? activity?._count.likes ?? 0;
   const isLiked = likeData?.liked ?? false;
 
+  // Optimistic like toggle — flip the heart + count instantly, roll back if the
+  // server rejects, then reconcile with server truth on settle. The server stays
+  // authoritative (auth + the real persisted state come back via onSettled
+  // invalidation); this only changes PERCEIVED latency, no security surface.
   const likeMutation = useMutation({
     mutationFn: () => api.post('/customer/likes/toggle', { activityId: activity!.id }),
-    onSuccess: () => {
+    onMutate: async () => {
+      const key = ['like-status', activity?.id] as const;
+      // Stop any in-flight refetch so it can't clobber our optimistic value.
+      await queryClient.cancelQueries({ queryKey: key });
+      const prev = queryClient.getQueryData<{ count: number; liked: boolean }>(key);
+      // Fall back to the derived values when the query hasn't populated yet.
+      const base = prev ?? { count: likeCount, liked: isLiked };
+      queryClient.setQueryData(key, {
+        liked: !base.liked,
+        count: Math.max(0, base.count + (base.liked ? -1 : 1)),
+      });
+      return { prev, key };
+    },
+    onError: (err, _vars, ctx) => {
+      // Roll back to the snapshot; if there was none, drop the key so it refetches.
+      if (ctx?.prev !== undefined) queryClient.setQueryData(ctx.key, ctx.prev);
+      else if (ctx?.key) queryClient.removeQueries({ queryKey: ctx.key });
+      toast(getApiError(err, 'Failed to like'), 'error');
+    },
+    onSettled: () => {
+      // Reconcile with the server's real state (success or after a rollback).
       queryClient.invalidateQueries({ queryKey: ['like-status', activity?.id] });
       queryClient.invalidateQueries({ queryKey: ['public-activity', slug] });
     },
-    onError: (err) => toast(getApiError(err, 'Failed to like'), 'error'),
   });
 
   const redirectToLogin = useCallback(() => {
