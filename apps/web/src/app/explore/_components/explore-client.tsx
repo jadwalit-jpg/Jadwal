@@ -552,14 +552,26 @@ function ExploreContent({
                     )}
 
                     <div className="mt-2 flex items-center gap-3 text-xs text-gray-500 dark:text-slate-400">
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3.5 w-3.5" />
-                        {activity.bookingType === 'DAILY'
-                          ? activity.durationValue
-                            ? `${activity.durationValue} ${t(activity.durationValue > 1 ? 'explore.nights' : 'explore.night')}`
-                            : t('explore.multiDay')
-                          : `${activity.durationValue} ${t(activity.durationValue! > 1 ? 'explore.hours' : 'explore.hour')}`}
-                      </span>
+                      {(() => {
+                        // DAILY durationValue = the minimum-nights default; null/0
+                        // means "no minimum" → show NO label (not a generic
+                        // "Multi-day"), matching the shared ActivityCard. When set
+                        // (>=1) we show the actual minimum ("N nights").
+                        const durLabel =
+                          activity.bookingType === 'DAILY'
+                            ? activity.durationValue
+                              ? `${activity.durationValue} ${t(activity.durationValue > 1 ? 'explore.nights' : 'explore.night')}`
+                              : null
+                            : activity.durationValue
+                              ? `${activity.durationValue} ${t(activity.durationValue > 1 ? 'explore.hours' : 'explore.hour')}`
+                              : null;
+                        return durLabel ? (
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3.5 w-3.5" />
+                            {durLabel}
+                          </span>
+                        ) : null;
+                      })()}
                       {(activity.hasUnits && (activity.bookingType === 'DAILY' || activity.pricingModel === 'PER_UNIT')
                         ? (activity.unitCapacity ?? 0)
                         : (activity.capacity ?? 0)) > 0 && (
