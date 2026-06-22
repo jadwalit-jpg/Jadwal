@@ -110,6 +110,23 @@ export class PaymentController {
         }),
       );
     } catch {
+      // The browser callback's hash didn't verify. For a NAPS payment this is
+      // EXPECTED (its callback hash is unverifiable) and the server-to-server
+      // IPN confirms the booking moments later — so if the payment is still
+      // PENDING, show the "processing — confirming your payment" screen instead
+      // of a false "failed". This NEVER confirms anything (handleCallback already
+      // ran and refused to confirm the unverified callback); only the message
+      // shown to the customer changes. A genuine decline/forgery (no PENDING
+      // payment) still shows failed.
+      try {
+        const p = query.basket_id ? await this.paymentService.paymentStatusByBasket(query.basket_id) : null;
+        if (p?.status === 'PENDING') {
+          const bid = p.bookingId && UUID_RE.test(p.bookingId) ? p.bookingId : '';
+          return res.redirect(buildRedirect({ status: 'pending', bookingId: bid }));
+        }
+      } catch {
+        // Lookup failed — fall through to the failed screen.
+      }
       return res.redirect(buildRedirect({ status: 'failed', error: 'Payment could not be verified' }));
     }
   }
