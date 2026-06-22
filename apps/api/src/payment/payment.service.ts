@@ -65,6 +65,17 @@ export class PaymentService {
   //     PAY2M when it's recovering.
   private readonly breaker: CircuitBreaker;
 
+  // ── IPN capture-confirmation gate (server-to-server) ──────────────────────
+  // PAY2M's IPN is the authoritative "captured" signal for NAPS, where the
+  // browser callback is hash-unverifiable (no amount) and capture-ambiguous.
+  // The IPN carries no amount either, so its hash can't be verified our way —
+  // the trust anchor is the SOURCE IP (Cloudflare-set cf-connecting-ip, which a
+  // client cannot forge while the ALB security group is locked to Cloudflare's
+  // ranges). Ships behind a flag (default OFF) so merging is a no-op until the
+  // allow-list + a live test are confirmed. Empty allow-list ⇒ fail-closed.
+  private readonly ipnConfirmEnabled: boolean;
+  private readonly ipnAllowedIps: ReadonlySet<string>;
+
   constructor(
     private config: ConfigService,
     private prisma: PrismaService,
@@ -85,6 +96,18 @@ export class PaymentService {
     this.returnUrl = this.config.getOrThrow<string>('PAY2M_RETURN_URL');
     this.apiUrl = this.config.getOrThrow<string>('PAY2M_API_URL');
     this.merchantName = this.config.getOrThrow<string>('PAY2M_MERCHANT_NAME');
+
+    // IPN capture-confirmation gate. OFF by default — when off, an IPN is
+    // logged but never confirms a booking. The allow-list defaults to the
+    // observed PAY2M IPN source (34.18.115.33); override via SSM with a
+    // comma-separated list. An empty list ⇒ NO IPN is ever trusted (fail-closed).
+    this.ipnConfirmEnabled = this.config.get('PAY2M_IPN_CONFIRM_ENABLED', 'false') === 'true';
+    this.ipnAllowedIps = new Set(
+      (this.config.get<string>('PAY2M_IPN_ALLOWED_IPS', '34.18.115.33') ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
 
     // Resilience config — explicit per-attempt timeout + circuit breaker.
     // Mirrors `EmailService` / `SmsService`: defaults are paranoid (10
@@ -641,6 +664,19 @@ export class PaymentService {
     });
   }
 
+  /**
+   * Whether an inbound IPN's REAL source IP is an allow-listed PAY2M server.
+   * FAIL-CLOSED: false when the feature is off, the IP is missing, or the
+   * allow-list is empty. The caller passes the Cloudflare-set `cf-connecting-ip`
+   * (a client cannot forge it while the ALB security group is locked to
+   * Cloudflare ranges) — this is the trust anchor for the hash-less IPN.
+   */
+  isTrustedIpnSource(sourceIp: string | undefined | null): boolean {
+    if (!this.ipnConfirmEnabled) return false;
+    if (!sourceIp) return false;
+    return this.ipnAllowedIps.has(sourceIp);
+  }
+
   // ─── Handle Callback from PAY2M ────────────────────────────────────────
 
   async handleCallback(params: {
@@ -652,6 +688,13 @@ export class PaymentService {
     order_date?: string;
     // 'pending' = a verified NAPS-rail success held awaiting capture
     // confirmation — neither confirmed nor failed yet.
+  }, opts?: {
+    // 'ipn' = a server-to-server IPN (trust by source IP, no hash verify);
+    // 'callback' (default) = the browser redirect (hash-verified).
+    via?: 'callback' | 'ipn';
+    // Set by the controller when an IPN's real source IP is allow-listed AND
+    // the feature flag is on. Only a trusted IPN may confirm/fail a booking.
+    trustedCapture?: boolean;
   }): Promise<{ bookingId: string; status: 'success' | 'failed' | 'pending'; error?: string }> {
     // 0. Reject callbacks when payment is disabled (maintenance, misconfiguration)
     if (!this.enabled) {
@@ -714,18 +757,59 @@ export class PaymentService {
     // confirm an unpaid booking. main.ts fails-fast in production if
     // PAY2M_SECRET_WORD is empty, so a deploy cannot ship that configuration.
     const amount = Number(payment.amount).toFixed(2);
-    const resolved = this.resolveSignedErrCode(
-      params.basket_id,
-      amount,
-      params.err_code,
-      params.Response_Key,
-    );
-    const hashValid = resolved !== null;
-    const signedSuccess = resolved !== null && (resolved.errCode === '00' || resolved.errCode === '000');
-    const isNapsHeldSuccess = signedSuccess && resolved!.rail === 'naps';
-    // Only a CARD-rail success may confirm a booking in this handler; a
-    // NAPS-rail success is authentic but capture-ambiguous and is held.
-    const isSuccess = signedSuccess && resolved!.rail === 'card';
+    let hashValid: boolean;
+    let isSuccess: boolean;
+    let isNapsHeldSuccess: boolean;
+
+    if (opts?.via === 'ipn') {
+      // ── IPN path — trust by SOURCE IP, not hash ──────────────────────────
+      // The IPN carries no `amount`, so resolveSignedErrCode (which hashes the
+      // amount) cannot verify it. The trust anchor is `opts.trustedCapture`,
+      // set by the controller ONLY when the IPN's real source IP is allow-listed
+      // AND the feature flag is on. An untrusted IPN confirms/fails NOTHING.
+      // PAY2M's IPN success code is "0000"; the browser callback uses "000"/"00".
+      const successCode = ['00', '000', '0000'].includes((params.err_code ?? '').trim());
+      if (!opts.trustedCapture) {
+        this.logger.warn({ event: 'PAY2M_IPN_UNTRUSTED', paymentId: payment.id, basketId: params.basket_id });
+        // Take NO action — never fail or confirm a legit pending payment on an
+        // unverified, possibly-forged notification. Leave it for the cron.
+        return { bookingId: payment.bookingId ?? '', status: 'pending' };
+      }
+      if (!successCode) {
+        // NON-success IPN. We do NOT know PAY2M's full code taxonomy (a final
+        // decline vs a still-processing/authorized status), so we take NO
+        // destructive action — leave the payment PENDING. A genuine decline is
+        // already surfaced + FAILED by the browser callback, and an unpaid
+        // PENDING is reaped by the cleanup cron once its reservation lapses.
+        // This guarantees we can never prematurely FAIL a payment that PAY2M may
+        // still capture (which would also wrongly free the slot). Only an
+        // explicit success confirms; nothing else mutates state from an IPN.
+        this.logger.warn({ event: 'PAY2M_IPN_NONSUCCESS_NOOP', paymentId: payment.id, basketId: params.basket_id, errCode: params.err_code });
+        return { bookingId: payment.bookingId ?? '', status: 'pending' };
+      }
+      // Trusted SUCCESS IPN = authoritative capture confirmation → confirm the
+      // booking via the shared transaction below (no hash, no NAPS hold). The
+      // charged amount is the server-frozen `payment.amount`, never anything in
+      // the IPN, so amount integrity is unchanged.
+      this.logger.log({ event: 'PAY2M_IPN_CAPTURE_CONFIRMED', paymentId: payment.id, basketId: params.basket_id, errCode: params.err_code });
+      hashValid = true;
+      isNapsHeldSuccess = false;
+      isSuccess = true;
+    } else {
+      // ── Browser-callback path — hash-verified (unchanged) ────────────────
+      const resolved = this.resolveSignedErrCode(
+        params.basket_id,
+        amount,
+        params.err_code,
+        params.Response_Key,
+      );
+      hashValid = resolved !== null;
+      const signedSuccess = resolved !== null && (resolved.errCode === '00' || resolved.errCode === '000');
+      isNapsHeldSuccess = signedSuccess && resolved!.rail === 'naps';
+      // Only a CARD-rail success may confirm a booking in this handler; a
+      // NAPS-rail success is authentic but capture-ambiguous and is held.
+      isSuccess = signedSuccess && resolved!.rail === 'card';
+    }
 
     // 2b. CRITICAL: If payment was marked FAILED by the cleanup cron but PAY2M
     // now sends a VERIFIED success, the customer WAS charged — recover the
