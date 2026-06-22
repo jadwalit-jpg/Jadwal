@@ -1368,6 +1368,11 @@ export class BookingsService {
 
           const now = new Date();
           if (now > claimed.coupon.validTo) throw new BadRequestException('This voucher has expired');
+          // Usage-limit pre-check (read-then-act, fail fast). The authoritative
+          // race-safe guard is the conditional updateMany at increment time below.
+          if (claimed.coupon.usageLimit != null && claimed.coupon.usedCount >= claimed.coupon.usageLimit) {
+            throw new BadRequestException('This voucher has reached its usage limit');
+          }
 
           // Activity scoping (Bug A): a non-empty list restricts the voucher's
           // coupon to those activities only (empty = applies to all).
@@ -1392,20 +1397,32 @@ export class BookingsService {
           couponDiscount = Math.round(couponDiscount * 100) / 100;
           couponCode = claimed.coupon.code; // stored on booking for accounting, never shown to customer
 
-          // Mark voucher as used + increment coupon usage count
+          // Mark voucher as used + increment coupon usage count. The increment
+          // re-asserts the usage limit in the WHERE (conditional updateMany, not
+          // a plain update) so two users redeeming the coupon's LAST use at the
+          // same time can't both pass the read-then-act pre-check above — the same
+          // race fix the typed-code path got in #306. Without this guard the
+          // voucher path could push usedCount past usageLimit under concurrency.
           await tx.claimedCoupon.update({ where: { id: dto.voucherId }, data: { used: true } });
-          await tx.coupon.update({ where: { id: claimed.coupon.id }, data: { usedCount: { increment: 1 } } });
-          // Auto-expire the coupon once its usage limit is reached so no further
-          // bookings can slip through even if usedCount is later decremented by a
-          // cancellation. Once the cap is hit the coupon is permanently closed.
-          if (
-            claimed.coupon.usageLimit != null &&
-            claimed.coupon.usedCount + 1 >= claimed.coupon.usageLimit
-          ) {
-            await tx.coupon.update({
-              where: { id: claimed.coupon.id },
-              data: { status: 'EXPIRED' },
+          if (claimed.coupon.usageLimit != null) {
+            const inc = await tx.coupon.updateMany({
+              where: { id: claimed.coupon.id, usedCount: { lt: claimed.coupon.usageLimit } },
+              data: { usedCount: { increment: 1 } },
             });
+            if (inc.count === 0) {
+              throw new BadRequestException('This voucher has reached its usage limit');
+            }
+            // Auto-expire once the cap is hit so no further uses can slip through,
+            // even if a cancellation later decrements usedCount. Once the cap is
+            // hit the coupon is permanently closed.
+            if (claimed.coupon.usedCount + 1 >= claimed.coupon.usageLimit) {
+              await tx.coupon.update({
+                where: { id: claimed.coupon.id },
+                data: { status: 'EXPIRED' },
+              });
+            }
+          } else {
+            await tx.coupon.update({ where: { id: claimed.coupon.id }, data: { usedCount: { increment: 1 } } });
           }
         }
 
