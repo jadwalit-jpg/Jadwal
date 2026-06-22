@@ -491,10 +491,11 @@ export default function BookActivityPage() {
   // is the ceiling we cap Wanasa redemption against — anything beyond
   // this would land on the (soon-to-be-waived) fee anyway.
   const activityPayable = Math.max(0, bookingCost - couponPart);
-  // Wanasa is now all-or-nothing: either the customer has enough points to
-  // fully cover the activity (→ book with points, fee waived) or they
-  // don't (→ the option is disabled with a clear "not enough" message).
-  // No slider, no partial redemption from the UI.
+  // Wanasa redemption: enough points to cover the whole activity → full
+  // coverage (fee waived, nothing left to pay); fewer than that but at least
+  // the minimum → PARTIAL (redeem the whole balance, pay the rest in cash, fee
+  // kept); below the minimum → the option is locked. One toggle drives all
+  // three — it redeems as much as helps (capped at full coverage).
   const qarPerPoint = loyaltyData?.qarPerPoint ?? 0.01;
   const requiredPoints = activityPayable > 0 && qarPerPoint > 0
     ? Math.ceil(activityPayable / qarPerPoint)
@@ -508,6 +509,17 @@ export default function BookActivityPage() {
     requiredPoints > 0 && requiredPoints >= minRedemption
   );
   const hasEnoughPoints = !!(loyaltyData && loyaltyData.loyaltyPoints >= requiredPoints);
+  // Partial redemption: the toggle redeems as many points as help — the full
+  // requirement when the customer has it, otherwise their ENTIRE balance (they
+  // then pay the remaining cash). Capped at requiredPoints so nothing is burned
+  // past full coverage.
+  const pointsBalance = loyaltyData?.loyaltyPoints ?? 0;
+  const redeemablePoints = Math.min(pointsBalance, requiredPoints);
+  // Usable when the amount actually redeemed clears the configured minimum —
+  // no longer requires covering the FULL price (the old all-or-nothing limit).
+  const canUsePoints = !!(loyaltyData && qarPerPoint > 0 && redeemablePoints >= minRedemption);
+  // Full coverage (fee waived, nothing left to pay) vs partial (pay difference).
+  const isFullCoverage = hasEnoughPoints;
 
   const pointsDiscount = useMemo(() => {
     if (!usePoints || !loyaltyData || redeemPoints <= 0) return 0;
@@ -531,26 +543,26 @@ export default function BookActivityPage() {
   }, [grossPayable, couponPart, pointsDiscount]);
   const isPointsOnly = usePoints && cashDue === 0 && pointsDiscount > 0;
 
-  // Binary Wanasa mode: toggle ON → redeem exactly the points needed to
-  // cover the activity price; toggle OFF → clear. No slider, no partial.
-  // Also defensively clears the selection if the user toggles ON without
-  // enough balance (the button guards against this, but if requiredPoints
-  // shifts afterwards — e.g. guest count bumps the price — we bail out
-  // cleanly rather than submit an insufficient amount).
+  // Wanasa mode: toggle ON → redeem `redeemablePoints` (full requirement if the
+  // customer has it, otherwise their whole balance → partial, pay the rest);
+  // toggle OFF → clear. Defensively clears if the toggle is on but redemption
+  // is no longer usable (e.g. requiredPoints shifts after a guest-count change
+  // and the balance now falls below the minimum) so we never submit an
+  // insufficient amount.
   useEffect(() => {
     if (!usePoints) {
       if (redeemPoints !== 0) setRedeemPoints(0);
       return;
     }
-    if (!hasEnoughPoints) {
+    if (!canUsePoints) {
       if (usePoints) setUsePoints(false);
       if (redeemPoints !== 0) setRedeemPoints(0);
       return;
     }
-    if (redeemPoints !== requiredPoints) {
-      setRedeemPoints(requiredPoints);
+    if (redeemPoints !== redeemablePoints) {
+      setRedeemPoints(redeemablePoints);
     }
-  }, [usePoints, hasEnoughPoints, requiredPoints, redeemPoints]);
+  }, [usePoints, canUsePoints, redeemablePoints, redeemPoints]);
 
   // ─── Max guests ──────────────────────────────────────────
   // When the activity has units, cap at unitCapacity (one booking = one unit)
@@ -1413,11 +1425,11 @@ export default function BookActivityPage() {
                   </div>
                 )}
 
-                {/* Loyalty Points Redemption — binary (toggle only, no
-                    slider). Enough points → toggle enabled, flip to ON uses
-                    exactly requiredPoints to cover the activity and waives
-                    the fee. Not enough → toggle locked with a clear
-                    "you have X, need Y" message. */}
+                {/* Loyalty Points Redemption — one toggle, three outcomes:
+                    full coverage (fee waived), PARTIAL (redeem the whole
+                    balance, pay the difference, fee kept), or locked when the
+                    balance is below the minimum. ON redeems min(balance,
+                    requiredPoints) — as much as helps, capped at full. */}
                 {user && canRedeemPoints && bookingCost > 0 && canSubmit && (
                   <div className="mt-4 pt-4 border-t border-gray-100 dark:border-slate-800/60">
                     <div className="flex items-center justify-between gap-3">
@@ -1428,16 +1440,23 @@ export default function BookActivityPage() {
                             {t('loyalty.usePoints', { defaultValue: 'Pay with Wanasa points' })}
                           </p>
                           <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-                            {hasEnoughPoints
+                            {isFullCoverage
                               ? t('loyalty.needsPoints', {
                                   defaultValue: 'Needs {{n}} points · service fee waived',
                                   n: requiredPoints.toLocaleString(),
                                 })
-                              : t('loyalty.notEnoughPoints', {
-                                  defaultValue: 'You have {{have}} · need {{need}}',
-                                  have: (loyaltyData?.loyaltyPoints ?? 0).toLocaleString(),
-                                  need: requiredPoints.toLocaleString(),
-                                })}
+                              : canUsePoints
+                                ? t('loyalty.partialPoints', {
+                                    defaultValue: 'Use your {{have}} points · save {{currency}} {{save}}, pay the rest',
+                                    have: pointsBalance.toLocaleString(),
+                                    currency,
+                                    save: (redeemablePoints * qarPerPoint).toFixed(0),
+                                  })
+                                : t('loyalty.belowMinPoints', {
+                                    defaultValue: 'You have {{have}} · minimum {{min}} points to redeem',
+                                    have: pointsBalance.toLocaleString(),
+                                    min: minRedemption.toLocaleString(),
+                                  })}
                           </p>
                         </div>
                       </div>
@@ -1445,11 +1464,11 @@ export default function BookActivityPage() {
                         type="button"
                         role="switch"
                         aria-checked={usePoints}
-                        aria-disabled={!hasEnoughPoints}
-                        disabled={!hasEnoughPoints}
-                        onClick={() => hasEnoughPoints && setUsePoints(!usePoints)}
+                        aria-disabled={!canUsePoints}
+                        disabled={!canUsePoints}
+                        onClick={() => canUsePoints && setUsePoints(!usePoints)}
                         className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${
-                          !hasEnoughPoints
+                          !canUsePoints
                             ? 'bg-gray-200 dark:bg-slate-700 cursor-not-allowed opacity-60'
                             : usePoints
                               ? 'bg-amber-500 cursor-pointer'
@@ -1515,12 +1534,12 @@ export default function BookActivityPage() {
                   </span>
                 </div>
 
-                {/* Earn-on-complete preview. Hidden when paying with points:
-                    the points-redeemed portion earns nothing (no infinite loop),
-                    and Wanasa redemption is all-or-nothing, so a points booking
-                    earns 0 — showing an "earn" line there would be wrong. */}
+                {/* Earn-on-complete preview. You earn only on the CASH you pay:
+                    the points-redeemed portion earns nothing (no infinite loop).
+                    A FULL points booking (isPointsOnly) earns 0 → hidden; a
+                    PARTIAL booking still earns on the remaining cash share. */}
                 {user &&
-                !usePoints &&
+                !isPointsOnly &&
                 loyaltyData &&
                 loyaltyData.pointsPerQar > 0 &&
                 bookingCost > 0 ? (
@@ -1534,17 +1553,17 @@ export default function BookActivityPage() {
                         defaultValue:
                           "You'll earn {{n}} points when this completes",
                         n: Math.floor(
-                          // Mirror the backend earn basis EXACTLY (bookings.service):
-                          // points = floor(afterCouponPrice * pointsPerQar), where
-                          // afterCouponPrice = gross - coupon/voucher. The points/cash
-                          // split does NOT reduce what's earned — the customer earns on
-                          // the full service value either way. Rate is pointsPerQar; the
-                          // old code divided by qarPerPoint (a ~100x over-count).
+                          // Mirror the backend earn basis EXACTLY (LoyaltyService
+                          // .computeEarnedPoints): earn on the CASH paid only —
+                          // price minus coupon/voucher AND the points-redeemed
+                          // portion. A partial-points booking earns on what's left
+                          // to pay; a full one earns 0 (hidden by isPointsOnly above).
                           Math.max(
                             0,
                             bookingCost -
                               (appliedCoupon?.discount ?? 0) -
-                              (selectedVoucher?.discount ?? 0),
+                              (selectedVoucher?.discount ?? 0) -
+                              pointsDiscount,
                           ) * loyaltyData.pointsPerQar,
                         ),
                       })}
