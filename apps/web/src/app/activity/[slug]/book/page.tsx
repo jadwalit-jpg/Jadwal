@@ -622,6 +622,17 @@ export default function BookActivityPage() {
     return !!checkIn && !!checkOut;
   }, [activity, guests, isHourly, selectedDate, selectedSlot, checkIn, checkOut]);
 
+  // Points can only apply to a SUBMITTABLE booking. The price card shows a
+  // total before any date/slot is picked (the pre-selection estimate), so
+  // without this guard a user could toggle points to "cover" that estimate →
+  // the summary shows "Paid with points" while Confirm stays (correctly)
+  // disabled for lack of a selection — the "full-points button stuck disabled"
+  // bug. If the selection becomes invalid, drop any applied points so the two
+  // states can never disagree.
+  useEffect(() => {
+    if (!canSubmit && usePoints) setUsePoints(false);
+  }, [canSubmit, usePoints]);
+
   // ─── Coupon validation ──────────────────────────────────
   const handleApplyCoupon = async () => {
     if (!couponInput.trim() || !activity) return;
@@ -1407,7 +1418,7 @@ export default function BookActivityPage() {
                     exactly requiredPoints to cover the activity and waives
                     the fee. Not enough → toggle locked with a clear
                     "you have X, need Y" message. */}
-                {user && canRedeemPoints && bookingCost > 0 && (
+                {user && canRedeemPoints && bookingCost > 0 && canSubmit && (
                   <div className="mt-4 pt-4 border-t border-gray-100 dark:border-slate-800/60">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0">
