@@ -409,3 +409,97 @@ describe('Coupon lifecycle — apply at booking time', () => {
     ).rejects.toThrow();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Platform voucher usage limit — the global usedCount cap must hold ACROSS
+// users on the CLAIMED-voucher path (not just the typed-code path). Regression
+// for the voucher-path race fix that mirrors the typed-code fix (#306). The
+// literal two-concurrent-redemptions race can't be reproduced without a
+// concurrency harness, but these cover (a) the cross-user cap and (b) the
+// at-limit guard that the conditional updateMany re-asserts.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('Coupon lifecycle — platform voucher usage limit', () => {
+  test('usageLimit=1 voucher: first user redeems, second user is rejected (cap holds across users)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { bookings } = makeServices();
+
+    // A second customer — the "second user" in the bug report.
+    const customer2 = await ctx.prisma.user.create({
+      data: {
+        fullName: 'Customer Two', email: `c2-${crypto.randomUUID().slice(0, 6)}@t.com`,
+        password: '$2b$10$dummy', role: 'CUSTOMER', emailVerified: true,
+      },
+    });
+
+    // Platform voucher (vendorId=null) with a single global use.
+    const voucher = await ctx.prisma.coupon.create({
+      data: {
+        code: `PLAT1-${crypto.randomUUID().slice(0, 6)}`, vendorId: null,
+        discountType: 'PERCENTAGE', discountValue: 10,
+        validFrom: new Date(isoFuture(-1)), validTo: new Date(isoFuture(30)),
+        usageLimit: 1, usedCount: 0, status: 'APPROVED',
+      },
+    });
+
+    // Each user claims it → their own ClaimedCoupon row.
+    const claim1 = await ctx.prisma.claimedCoupon.create({ data: { userId: seed.customer.id, couponId: voucher.id } });
+    const claim2 = await ctx.prisma.claimedCoupon.create({ data: { userId: customer2.id, couponId: voucher.id } });
+
+    // User 1 redeems → succeeds, usedCount→1.
+    const res1 = await bookings.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7), slotTime: '10:00', guests: 2,
+      bookingPhone: '+97455123456',
+      voucherId: claim1.id,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    expect(res1.booking.id).toBeTruthy();
+    expect((await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } })).usedCount).toBe(1);
+
+    // User 2 redeems the SAME coupon → rejected (cap already reached).
+    await expect(
+      bookings.createBooking(customer2.id, {
+        activityId: seed.activity.id,
+        checkInDate: futureDate(8), slotTime: '10:00', guests: 2,
+        bookingPhone: '+97455123457',
+        voucherId: claim2.id,
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    ).rejects.toThrow();
+
+    // usedCount never exceeded the limit and only the first booking exists.
+    expect((await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } })).usedCount).toBe(1);
+    expect(await ctx.prisma.booking.count()).toBe(1);
+  });
+
+  test('voucher redemption rejected when usedCount already at usageLimit', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { bookings } = makeServices();
+
+    // Already at the cap but still APPROVED — the conditional updateMany guard
+    // (and the read-then-act pre-check) must reject without incrementing.
+    const voucher = await ctx.prisma.coupon.create({
+      data: {
+        code: `PLATMAX-${crypto.randomUUID().slice(0, 6)}`, vendorId: null,
+        discountType: 'PERCENTAGE', discountValue: 10,
+        validFrom: new Date(isoFuture(-1)), validTo: new Date(isoFuture(30)),
+        usageLimit: 1, usedCount: 1, status: 'APPROVED',
+      },
+    });
+    const claim = await ctx.prisma.claimedCoupon.create({ data: { userId: seed.customer.id, couponId: voucher.id } });
+
+    await expect(
+      bookings.createBooking(seed.customer.id, {
+        activityId: seed.activity.id,
+        checkInDate: futureDate(7), slotTime: '10:00', guests: 2,
+        bookingPhone: '+97455123456',
+        voucherId: claim.id,
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    ).rejects.toThrow(/usage limit/i);
+
+    expect(await ctx.prisma.booking.count()).toBe(0);
+    expect((await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } })).usedCount).toBe(1);
+  });
+});
