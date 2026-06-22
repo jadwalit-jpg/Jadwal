@@ -776,19 +776,16 @@ export class PaymentService {
         return { bookingId: payment.bookingId ?? '', status: 'pending' };
       }
       if (!successCode) {
-        // Trusted FAILURE IPN → mark the payment FAILED (only from PENDING); the
-        // booking is then reaped by the cleanup cron. Never touches a SUCCESS row.
-        await db.payment.updateMany({
-          where: { id: payment.id, status: 'PENDING' },
-          data: { status: 'FAILED', gatewayErrCode: params.err_code, gatewayTxnId: params.transaction_id || null },
-        });
-        await this.auditLogger.log({
-          actorType: 'SYSTEM', actorId: 'pay2m-ipn', actorName: 'PAY2M Gateway',
-          action: 'PAYMENT_IPN_FAILED', entity: 'Payment', entityId: payment.id,
-          details: `basket: ${params.basket_id}, err_code: ${params.err_code}, txn: ${params.transaction_id || 'N/A'} — trusted IPN reported failure`,
-          actionCategory: 'FINANCIAL',
-        });
-        return { bookingId: payment.bookingId ?? '', status: 'failed', error: 'Payment failed' };
+        // NON-success IPN. We do NOT know PAY2M's full code taxonomy (a final
+        // decline vs a still-processing/authorized status), so we take NO
+        // destructive action — leave the payment PENDING. A genuine decline is
+        // already surfaced + FAILED by the browser callback, and an unpaid
+        // PENDING is reaped by the cleanup cron once its reservation lapses.
+        // This guarantees we can never prematurely FAIL a payment that PAY2M may
+        // still capture (which would also wrongly free the slot). Only an
+        // explicit success confirms; nothing else mutates state from an IPN.
+        this.logger.warn({ event: 'PAY2M_IPN_NONSUCCESS_NOOP', paymentId: payment.id, basketId: params.basket_id, errCode: params.err_code });
+        return { bookingId: payment.bookingId ?? '', status: 'pending' };
       }
       // Trusted SUCCESS IPN = authoritative capture confirmation → confirm the
       // booking via the shared transaction below (no hash, no NAPS hold). The

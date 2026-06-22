@@ -764,16 +764,18 @@ describe('PaymentService — IPN capture confirmation', () => {
     expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
   });
 
-  test('trusted FAILURE IPN (err_code 90) → payment FAILED, booking NOT confirmed', async () => {
+  test('trusted NON-success IPN (err_code 90) → NO destructive action (stays PENDING; callback+cron handle declines)', async () => {
     const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
     const { svc } = makePaymentService(IPN_CFG);
     const res = await svc.handleCallback(
       { err_code: '90', basket_id: basketId, transaction_id: 'TXN-FAIL', Response_Key: '' },
       { via: 'ipn', trustedCapture: true },
     );
-    expect(res.status).toBe('failed');
-    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('FAILED');
-    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).not.toBe('CONFIRMED');
+    // We never FAIL from an IPN (unknown code taxonomy) — leave it PENDING so a
+    // payment PAY2M may still capture is never prematurely failed.
+    expect(res.status).toBe('pending');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('PENDING');
   });
 
   test('duplicate trusted success IPN → idempotent (stays SUCCESS, no error)', async () => {
