@@ -677,6 +677,21 @@ export class PaymentService {
     return this.ipnAllowedIps.has(sourceIp);
   }
 
+  /**
+   * Read-only lookup of a payment's status + booking by basket id. Used ONLY by
+   * the browser-callback handler to decide whether an UNVERIFIABLE callback (the
+   * NAPS rail, whose hash we can't verify) should show the "processing" screen —
+   * because the server-to-server IPN confirms it shortly — instead of a false
+   * "failed". Confirms NOTHING; never mutates state.
+   */
+  async paymentStatusByBasket(basketId: string): Promise<{ status: string; bookingId: string | null } | null> {
+    const p = await this.prisma.client.payment.findUnique({
+      where: { gatewayBasketId: basketId },
+      select: { status: true, bookingId: true },
+    });
+    return p ? { status: p.status, bookingId: p.bookingId } : null;
+  }
+
   // ─── Handle Callback from PAY2M ────────────────────────────────────────
 
   async handleCallback(params: {

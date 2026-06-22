@@ -28,12 +28,15 @@ describe('POST /payment/callback/ipn — multipart/form-data parsing', () => {
   // The IPN endpoint asks the service whether the source IP is trusted; mock it
   // to true so we can assert the controller forwards the verdict via opts.
   const isTrustedIpnSource = jest.fn().mockReturnValue(true);
+  // Used by the browser-callback handler to decide pending-vs-failed when a
+  // callback can't be verified (NAPS rail). Read-only status lookup.
+  const paymentStatusByBasket = jest.fn();
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [PaymentController],
       providers: [
-        { provide: PaymentService, useValue: { handleCallback, isTrustedIpnSource } },
+        { provide: PaymentService, useValue: { handleCallback, isTrustedIpnSource, paymentStatusByBasket } },
         { provide: ConfigService, useValue: { getOrThrow: () => 'https://app.example.com' } },
       ],
     }).compile();
@@ -115,4 +118,43 @@ describe('POST /payment/callback/ipn — multipart/form-data parsing', () => {
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(handleCallback).not.toHaveBeenCalled();
   });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Browser callback (GET) — an UNVERIFIABLE NAPS redirect must show the
+// "processing" screen (not a false "failed") while the payment is still
+// PENDING, because the server-to-server IPN confirms it moments later. A
+// genuine failure / forgery (no PENDING payment) still shows "failed". The
+// SUCCESS path is unaffected (it returns before the catch).
+// ─────────────────────────────────────────────────────────────────────────
+describe('GET /payment/callback — unverifiable NAPS redirect → pending, not failed', () => {
+  const BOOKING_UUID = '11111111-2222-4333-8444-555555555555';
+  const q = `basket_id=${VALID_BASKET}&err_code=000&Response_Key=${VALID_RESPONSE_KEY}`;
+
+  beforeEach(() => {
+    handleCallback.mockReset();
+    paymentStatusByBasket.mockReset();
+  });
+
+  it('hash unverifiable + payment still PENDING → redirects to status=pending', async () => {
+    handleCallback.mockRejectedValueOnce(new Error('Payment verification failed'));
+    paymentStatusByBasket.mockResolvedValueOnce({ status: 'PENDING', bookingId: BOOKING_UUID });
+
+    const res = await request(app.getHttpServer()).get(`/payment/callback?${q}`);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('status=pending');
+    expect(res.headers.location).toContain(BOOKING_UUID);
+    expect(res.headers.location).not.toContain('status=failed');
+  });
+
+  it('hash unverifiable + no PENDING payment (genuine fail/forgery) → status=failed', async () => {
+    handleCallback.mockRejectedValueOnce(new Error('Payment verification failed'));
+    paymentStatusByBasket.mockResolvedValueOnce(null);
+
+    const res = await request(app.getHttpServer()).get(`/payment/callback?${q}`);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('status=failed');
+  });
+});
 });
