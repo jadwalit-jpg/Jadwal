@@ -2599,6 +2599,7 @@ export class BookingsService {
         ref: true,
         pointsAwarded: true,
         totalPrice: true,
+        pointsDiscount: true,
         customerId: true,
       },
     });
@@ -2611,7 +2612,13 @@ export class BookingsService {
       config = await db.loyaltyConfig.create({ data: { id: 'singleton' } });
     }
 
-    const points = Math.floor(Number(booking.totalPrice) * config.pointsPerQar.toNumber());
+    // Earn on the CASH paid only — the points-redeemed portion earns 0 (no
+    // infinite-points loop). Points-paid booking → pointsDiscount == totalPrice → 0.
+    const points = this.loyalty.computeEarnedPoints(
+      Number(booking.totalPrice),
+      Number(booking.pointsDiscount),
+      config.pointsPerQar.toNumber(),
+    );
     if (points <= 0) return null;
 
     await db.$transaction(async (tx) => {

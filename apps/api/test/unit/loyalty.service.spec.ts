@@ -238,3 +238,41 @@ describe('LoyaltyService.adjust', () => {
     );
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// computeEarnedPoints — earn on CASH paid only; points-redeemed portion earns
+// 0 (closes the infinite-points loop). Single source of truth for the earn
+// amount across every award + reverse site.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('LoyaltyService.computeEarnedPoints', () => {
+  test('cash booking (no points) earns on the full price', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(300, 0, 1)).toBe(300);
+  });
+
+  test('points-paid booking (pointsDiscount == totalPrice) earns 0 — no loop', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(300, 300, 1)).toBe(0);
+  });
+
+  test('earns only on the non-points portion (cash basis)', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(300, 100, 1)).toBe(200);
+  });
+
+  test('pointsDiscount above totalPrice clamps to 0 (never negative earn)', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(300, 400, 1)).toBe(0);
+  });
+
+  test('rate of 0 earns nothing', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(300, 0, 0)).toBe(0);
+  });
+
+  test('fractional rate is floored', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(255, 0, 0.1)).toBe(25); // floor(25.5)
+  });
+});

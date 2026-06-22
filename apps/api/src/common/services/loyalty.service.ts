@@ -179,6 +179,25 @@ export class LoyaltyService {
   }
 
   /**
+   * Points earned on a completed booking. SINGLE SOURCE OF TRUTH for the earn
+   * amount — every award AND reverse site computes through here so the
+   * cancel-debit always equals the earn-credit.
+   *
+   * The earn rate applies ONLY to the cash value the customer actually paid:
+   * the Wanasa-points-redeemed portion earns NOTHING. Otherwise paying fully
+   * with points would mint the same points straight back — an infinite-points
+   * loop (book free → earn enough to book again). Redemption is binary (cover
+   * the whole activity or none), so a points-paid booking has
+   * `pointsDiscount == totalPrice` → 0 earned, and a cash booking has
+   * `pointsDiscount == 0` → earns on the full price (unchanged behaviour).
+   */
+  computeEarnedPoints(totalPrice: number, pointsDiscount: number, pointsPerQar: number): number {
+    if (pointsPerQar <= 0) return 0;
+    const cashBasis = Math.max(0, totalPrice - pointsDiscount);
+    return Math.floor(cashBasis * pointsPerQar);
+  }
+
+  /**
    * Debit points that were previously earned (BOOKING_EARN) when the
    * booking is later cancelled. Used by admin/vendor cancel paths in
    * bookings.service.ts when `booking.pointsAwarded === true`. Closes

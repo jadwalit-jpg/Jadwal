@@ -441,6 +441,42 @@ describe('CleanupService.autoCompletePastBookings', () => {
     expect(u.loyaltyPoints).toBe(100);
   });
 
+  test('points-paid booking (pointsDiscount == totalPrice) earns 0 on completion — no infinite loop', async () => {
+    const seed = await seedReference(ctx.prisma);
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' }, create: { id: 'singleton' }, update: {},
+    });
+    await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 0 } });
+
+    // Past CONFIRMED booking fully paid with Wanasa points → pointsDiscount
+    // equals totalPrice (binary redemption covered the whole activity).
+    await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-PTS-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR',
+        guests: 2, bookingPhone: '+97455123456',
+        totalPrice: 100, pointsDiscount: 100, pointsRedeemed: 10000,
+        serviceFee: 0, commissionAmount: 10,
+        status: 'CONFIRMED',
+        startDatetime: new Date('2020-01-01T10:00:00Z'),
+        endDatetime:   new Date('2020-01-01T12:00:00Z'),
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+      },
+    });
+
+    const { svc } = makeCleanup();
+    await svc.autoCompletePastBookings();
+
+    // Earning on a points-paid booking would mint the spent points back — the
+    // loop. So: no BOOKING_EARN row, balance stays 0.
+    const earnRows = await ctx.prisma.loyaltyLedger.findMany({
+      where: { userId: seed.customer.id, source: 'BOOKING_EARN' },
+    });
+    expect(earnRows).toHaveLength(0);
+    const u2 = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
+    expect(u2.loyaltyPoints).toBe(0);
+  });
+
   test('CANCELLED past booking → NOT completed (skipped by status filter)', async () => {
     const seed = await seedReference(ctx.prisma);
     const cancelled = await ctx.prisma.booking.create({

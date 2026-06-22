@@ -595,17 +595,20 @@ export class VendorService {
         // cash-refund-as-points above — a vendor↔customer collusion double-dip
         // (let it complete → customer earns points → cancel → keep points + get
         // refunded). Mirrors the admin cancel path (admin.service.ts). Uses the
-        // same floor(totalPrice × pointsPerQar) formula as the award so the
-        // reversal matches exactly; pointsAwarded is flipped false alongside the
+        // same cash-only earn basis (LoyaltyService.computeEarnedPoints) as the
+        // award so the reversal matches exactly — a points-paid booking earned 0
+        // and reverses 0; pointsAwarded is flipped false alongside the
         // debit so it can't double-reverse. reverseAwarded clamps to the current
         // balance so it never drives the balance negative.
         if (result.pointsAwarded === true) {
           let cfg = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
           if (!cfg) cfg = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
           const pointsPerQar = cfg.pointsPerQar.toNumber();
-          const awardedPoints = pointsPerQar > 0
-            ? Math.floor(Number(result.totalPrice) * pointsPerQar)
-            : 0;
+          const awardedPoints = this.loyalty.computeEarnedPoints(
+            Number(result.totalPrice),
+            Number(result.pointsDiscount),
+            pointsPerQar,
+          );
           if (awardedPoints > 0) {
             await this.loyalty.reverseAwarded(tx, {
               userId: result.customerId,
