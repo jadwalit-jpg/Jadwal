@@ -13,7 +13,7 @@
  * position + z-index against the menu panel).
  */
 
-import { useInfiniteQuery, useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueryClient, useQuery, type InfiniteData } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Bell, CheckCheck, Trash2, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -140,36 +140,86 @@ export default function NotificationsPage() {
     staleTime: 10_000,
   });
 
+  // ── Optimistic notification mutations (infinite list) ──────────────
+  // Read state + unread badge update INSTANTLY, roll back on error, reconcile
+  // with the server on settle. Server stays authoritative (onSettled refetch);
+  // client-only perceived state → no security surface. The unread-count key is
+  // shared with <NotificationBell/>, so both surfaces stay in sync.
+  const COUNT_KEY = ['notifications', 'unread-count'];
+  const LIST_KEY = ['notifications', 'list', { pageSize: PAGE_SIZE }];
+  const snapshotNotifs = async () => {
+    // Cancel in-flight refetches so they can't clobber the optimistic value.
+    await queryClient.cancelQueries({ queryKey: ['notifications'] });
+    return {
+      count: queryClient.getQueryData<{ unreadCount: number }>(COUNT_KEY),
+      list: queryClient.getQueryData<InfiniteData<NotificationsResponse>>(LIST_KEY),
+    };
+  };
+  const rollbackNotifs = (ctx?: { count?: { unreadCount: number }; list?: InfiniteData<NotificationsResponse> }) => {
+    if (ctx?.count !== undefined) queryClient.setQueryData(COUNT_KEY, ctx.count);
+    if (ctx?.list !== undefined) queryClient.setQueryData(LIST_KEY, ctx.list);
+  };
+  const reconcileNotifs = () => queryClient.invalidateQueries({ queryKey: ['notifications'] });
+  const wasUnread = (list: InfiniteData<NotificationsResponse> | undefined, id: string) =>
+    !!list?.pages.some((p) => p.data.some((n) => n.id === id && !n.read));
+  const bumpCount = (ctx: { count?: { unreadCount: number } }, delta: number) => {
+    if (ctx.count) queryClient.setQueryData(COUNT_KEY, { unreadCount: Math.max(0, ctx.count.unreadCount + delta) });
+  };
+  const patchPages = (mapData: (data: Notification[]) => Notification[]) =>
+    queryClient.setQueryData<InfiniteData<NotificationsResponse>>(LIST_KEY, (old) =>
+      old ? { ...old, pages: old.pages.map((p) => ({ ...p, data: mapData(p.data) })) } : old,
+    );
+
   const markReadMutation = useMutation({
     mutationFn: (id: string) => api.patch(`/notifications/${id}/read`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    onMutate: async (id: string) => {
+      const ctx = await snapshotNotifs();
+      if (wasUnread(ctx.list, id)) bumpCount(ctx, -1);
+      patchPages((data) => data.map((n) => (n.id === id ? { ...n, read: true } : n)));
+      return ctx;
     },
+    onError: (_e, _id, ctx) => rollbackNotifs(ctx),
+    onSettled: reconcileNotifs,
   });
 
   const markAllReadMutation = useMutation({
     mutationFn: () => api.patch('/notifications/read-all'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    onMutate: async () => {
+      const ctx = await snapshotNotifs();
+      if (ctx.count) queryClient.setQueryData(COUNT_KEY, { unreadCount: 0 });
+      patchPages((data) => data.map((n) => ({ ...n, read: true })));
+      return ctx;
     },
+    onError: (_e, _v, ctx) => rollbackNotifs(ctx),
+    onSettled: reconcileNotifs,
   });
 
   const clearAllMutation = useMutation({
     mutationFn: () => api.delete('/notifications/clear-all'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    onMutate: async () => {
+      const ctx = await snapshotNotifs();
+      if (ctx.count) queryClient.setQueryData(COUNT_KEY, { unreadCount: 0 });
+      patchPages(() => []);
+      return ctx;
     },
+    onError: (_e, _v, ctx) => rollbackNotifs(ctx),
+    onSettled: reconcileNotifs,
   });
 
-  // Per-notification delete. Backend endpoint: `DELETE /notifications/:id`
-  // (added in this PR). RATE_LIMIT_WRITE on the server; ownership enforced
-  // via WHERE clause (`{id, userId}` in `deleteMany`) so a tampered id
-  // belonging to another user is a no-op, not an error.
+  // Per-notification delete. Backend `DELETE /notifications/:id`: RATE_LIMIT_WRITE,
+  // ownership enforced via WHERE (`{id, userId}` in deleteMany) so a tampered id
+  // for another user is a no-op. Optimistically drop the row (+ decrement the
+  // badge if it was unread); rollback on error.
   const deleteOneMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/notifications/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    onMutate: async (id: string) => {
+      const ctx = await snapshotNotifs();
+      if (wasUnread(ctx.list, id)) bumpCount(ctx, -1);
+      patchPages((data) => data.filter((n) => n.id !== id));
+      return ctx;
     },
+    onError: (_e, _id, ctx) => rollbackNotifs(ctx),
+    onSettled: reconcileNotifs,
   });
 
   const handleClick = useCallback((notif: Notification) => {
