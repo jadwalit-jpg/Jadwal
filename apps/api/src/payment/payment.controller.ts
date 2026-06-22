@@ -111,16 +111,23 @@ export class PaymentController {
       );
     } catch {
       // The browser callback's hash didn't verify. For a NAPS payment this is
-      // EXPECTED (its callback hash is unverifiable) and the server-to-server
-      // IPN confirms the booking moments later — so if the payment is still
-      // PENDING, show the "processing — confirming your payment" screen instead
-      // of a false "failed". This NEVER confirms anything (handleCallback already
-      // ran and refused to confirm the unverified callback); only the message
-      // shown to the customer changes. A genuine decline/forgery (no PENDING
-      // payment) still shows failed.
+      // EXPECTED (its callback hash is unverifiable) for BOTH success and failure
+      // callbacks — so we must NOT blanket-show "processing", or a genuine NAPS
+      // DECLINE would also read as "processing". We show "processing" ONLY when:
+      //   (a) the payment is still PENDING (the IPN may still confirm it), AND
+      //   (b) the callback's err_code looks like success/pending — NOT a failure.
+      // The err_code here is DISPLAY-ONLY and untrusted (a client could forge it),
+      // but that's safe: it only changes the message shown to the requester; the
+      // actual booking is NEVER confirmed/failed from this unverified callback
+      // (handleCallback already refused) — only the trusted server-to-server IPN
+      // does that. A failure code, a non-PENDING payment, or a missing payment all
+      // show "failed". PAY2M codes: 00/000/0000 = paid, 001 = pending; anything
+      // else (002 timeout, 90/104/901… declines) is treated as a failure here.
+      const PENDING_OR_PAID = new Set(['00', '000', '0000', '001']);
       try {
+        const code = (query.err_code ?? '').trim();
         const p = query.basket_id ? await this.paymentService.paymentStatusByBasket(query.basket_id) : null;
-        if (p?.status === 'PENDING') {
+        if (p?.status === 'PENDING' && PENDING_OR_PAID.has(code)) {
           const bid = p.bookingId && UUID_RE.test(p.bookingId) ? p.bookingId : '';
           return res.redirect(buildRedirect({ status: 'pending', bookingId: bid }));
         }

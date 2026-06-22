@@ -156,5 +156,20 @@ describe('GET /payment/callback — unverifiable NAPS redirect → pending, not 
     expect(res.status).toBe(302);
     expect(res.headers.location).toContain('status=failed');
   });
+
+  it('hash unverifiable + PENDING but a FAILURE err_code → status=failed, NOT processing', async () => {
+    // A NAPS DECLINE callback is also hash-unverifiable + the payment is still
+    // PENDING — but its err_code is a failure code, so we must show "failed",
+    // never "processing". This is the exact gap the err_code gate closes.
+    handleCallback.mockRejectedValueOnce(new Error('Payment verification failed'));
+    paymentStatusByBasket.mockResolvedValueOnce({ status: 'PENDING', bookingId: BOOKING_UUID });
+
+    const failQ = `basket_id=${VALID_BASKET}&err_code=901&Response_Key=${VALID_RESPONSE_KEY}`;
+    const res = await request(app.getHttpServer()).get(`/payment/callback?${failQ}`);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('status=failed');
+    expect(res.headers.location).not.toContain('status=pending');
+  });
 });
 });
