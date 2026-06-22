@@ -315,6 +315,7 @@ export class CleanupService {
         ref: true,
         customerId: true,
         totalPrice: true,
+        pointsDiscount: true,
         pointsAwarded: true,
       },
     });
@@ -338,7 +339,12 @@ export class CleanupService {
       let totalPointsAwarded = 0;
       const pointsPerQar = config.pointsPerQar.toNumber();
       for (const booking of eligibleBookings) {
-        const points = Math.floor(Number(booking.totalPrice) * pointsPerQar);
+        // Cash-only earn basis — a points-paid booking earns 0 (no loop).
+        const points = this.loyalty.computeEarnedPoints(
+          Number(booking.totalPrice),
+          Number(booking.pointsDiscount),
+          pointsPerQar,
+        );
         if (points <= 0) continue;
 
         try {

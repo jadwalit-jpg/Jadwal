@@ -1515,8 +1515,12 @@ export default function BookActivityPage() {
                   </span>
                 </div>
 
-                {/* Earn-on-complete preview */}
+                {/* Earn-on-complete preview. Hidden when paying with points:
+                    the points-redeemed portion earns nothing (no infinite loop),
+                    and Wanasa redemption is all-or-nothing, so a points booking
+                    earns 0 — showing an "earn" line there would be wrong. */}
                 {user &&
+                !usePoints &&
                 loyaltyData &&
                 loyaltyData.pointsPerQar > 0 &&
                 bookingCost > 0 ? (

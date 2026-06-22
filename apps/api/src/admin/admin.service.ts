@@ -1303,7 +1303,7 @@ export class AdminService {
       where: { id: bookingId },
       select: {
         id: true, ref: true, activityId: true, customerId: true, status: true, totalPrice: true,
-        pointsRedeemed: true, pointsAwarded: true, couponCode: true,
+        pointsRedeemed: true, pointsDiscount: true, pointsAwarded: true, couponCode: true,
         activity: { select: { titleEn: true } },
         payment: { select: { id: true, status: true, amount: true } },
       },
@@ -1461,14 +1461,17 @@ export class AdminService {
         if (result.pointsAwarded === true) {
           let loyaltyConfigForReverse = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
           if (!loyaltyConfigForReverse) loyaltyConfigForReverse = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
-          // Mirrors the formula in bookings.service.ts awardLoyaltyPoints —
-          // floor(totalPrice × pointsPerQar). Same config, same totalPrice
-          // (frozen on the booking row at creation), so the reversal
-          // exactly matches what the cron credited.
+          // Mirror the earn basis EXACTLY (LoyaltyService.computeEarnedPoints —
+          // cash paid only; the points-redeemed portion earns 0) so the
+          // reversal debits exactly what was credited. Same config + the frozen
+          // totalPrice/pointsDiscount on the row → a points-paid booking earned
+          // 0 and therefore reverses 0.
           const pointsPerQar = loyaltyConfigForReverse.pointsPerQar.toNumber();
-          const awardedPoints = pointsPerQar > 0
-            ? Math.floor(Number(result.totalPrice) * pointsPerQar)
-            : 0;
+          const awardedPoints = this.loyalty.computeEarnedPoints(
+            Number(result.totalPrice),
+            Number(result.pointsDiscount),
+            pointsPerQar,
+          );
           if (awardedPoints > 0) {
             await this.loyalty.reverseAwarded(tx, {
               userId: result.customerId,
@@ -1498,7 +1501,11 @@ export class AdminService {
         if (!config) {
           config = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
         }
-        const points = Math.floor(Number(booking.totalPrice) * config.pointsPerQar.toNumber());
+        const points = this.loyalty.computeEarnedPoints(
+          Number(booking.totalPrice),
+          Number(booking.pointsDiscount),
+          config.pointsPerQar.toNumber(),
+        );
         if (points > 0) {
           await tx.booking.update({
             where: { id: bookingId },
