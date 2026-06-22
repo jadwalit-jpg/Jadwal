@@ -24,7 +24,7 @@ import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/interfaces/request-user.interface';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
-import { Pay2mCallbackDto } from './dto/pay2m-callback.dto';
+import { Pay2mCallbackDto, Pay2mIpnDto } from './dto/pay2m-callback.dto';
 import { buildIpnDiagnostics } from './ipn-diagnostics';
 
 @Controller('payment')
@@ -167,17 +167,33 @@ export class PaymentController {
     const contentType = req.headers['content-type'] ?? 'unknown';
     this.logger.log(buildIpnDiagnostics(raw, sourceIp, contentType));
 
-    // Validate leniently: strip unknown fields, keep the bounds/format checks on
-    // the fields we use. A genuinely malformed IPN (missing/invalid required
-    // field) still throws 400 here — PAY2M retries — but an unmodelled extra
-    // field no longer kills the whole notification.
+    // Validate against the IPN's OWN shape (responseKey, no amount) — leniently
+    // (strip unknown fields). The browser-callback DTO would reject the IPN.
     const dto = (await this.ipnValidator.transform(raw, {
       type: 'body',
-      metatype: Pay2mCallbackDto,
+      metatype: Pay2mIpnDto,
       data: '',
-    })) as Pay2mCallbackDto;
+    })) as Pay2mIpnDto;
 
-    await this.paymentService.handleCallback(dto);
+    // Only an allow-listed PAY2M source IP (+ the feature flag on) may confirm
+    // or fail a booking from an IPN — fail-closed otherwise. handleCallback
+    // makes the actual decision; we hand it the trust verdict + the 'ipn' tag.
+    const trustedCapture = this.paymentService.isTrustedIpnSource(sourceIp);
+    await this.paymentService.handleCallback(
+      {
+        err_code: dto.err_code,
+        err_msg: dto.err_msg,
+        basket_id: dto.basket_id,
+        transaction_id: dto.transaction_id,
+        // IPN hash is NOT verified (no amount) — passed through for persist /
+        // audit only; empty when absent.
+        Response_Key: dto.responseKey ?? '',
+        order_date: dto.order_date,
+      },
+      { via: 'ipn', trustedCapture },
+    );
+    // 200 so PAY2M stops retrying once handled (confirm / fail / safe no-op all
+    // resolve here). A genuinely unknown basket or disabled service still throws.
     return { received: true };
   }
 

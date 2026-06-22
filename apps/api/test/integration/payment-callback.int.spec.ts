@@ -715,3 +715,93 @@ describe('PaymentService.handleCallback — NAPS rail (err+amount order)', () =>
     expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('CONFIRMED');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IPN capture confirmation — the server-to-server push is the authoritative
+// "captured" signal for NAPS (browser callback is hash-unverifiable: no amount).
+// Trust = allow-listed source IP (NOT the hash). These prove: a trusted success
+// books; an UNTRUSTED IPN can neither confirm nor fail (anti-forgery); a trusted
+// failure marks failed (no booking); retries are idempotent; the charged amount
+// is always the server-frozen payment.amount (the IPN carries none).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const IPN_CFG = { PAY2M_IPN_CONFIRM_ENABLED: 'true', PAY2M_IPN_ALLOWED_IPS: '34.18.115.33' };
+
+describe('PaymentService — IPN capture confirmation', () => {
+  test('trusted SUCCESS IPN (err_code 0000) → booking CONFIRMED, amount = server value', async () => {
+    const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(200);
+    const { svc } = makePaymentService(IPN_CFG);
+    const res = await svc.handleCallback(
+      { err_code: '0000', basket_id: basketId, transaction_id: 'TXN-IPN-1', Response_Key: '' },
+      { via: 'ipn', trustedCapture: true },
+    );
+    expect(res.status).toBe('success');
+    const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(p.status).toBe('SUCCESS');
+    expect(Number(p.amount).toFixed(2)).toBe(amountStr); // unchanged — IPN has no amount
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('CONFIRMED');
+  });
+
+  test('UNTRUSTED IPN success → NO confirm (anti-forgery): payment + booking stay PENDING', async () => {
+    const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
+    const { svc } = makePaymentService(IPN_CFG);
+    const res = await svc.handleCallback(
+      { err_code: '0000', basket_id: basketId, transaction_id: 'TXN-FORGED', Response_Key: '' },
+      { via: 'ipn', trustedCapture: false },
+    );
+    expect(res.status).toBe('pending');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('PENDING');
+  });
+
+  test('UNTRUSTED IPN failure → does NOT fail a legit pending payment (forged-failure guard)', async () => {
+    const { basketId, paymentId } = await seedPendingPayment(200);
+    const { svc } = makePaymentService(IPN_CFG);
+    await svc.handleCallback(
+      { err_code: '90', basket_id: basketId, transaction_id: 'TXN-FORGED-FAIL', Response_Key: '' },
+      { via: 'ipn', trustedCapture: false },
+    );
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+  });
+
+  test('trusted FAILURE IPN (err_code 90) → payment FAILED, booking NOT confirmed', async () => {
+    const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
+    const { svc } = makePaymentService(IPN_CFG);
+    const res = await svc.handleCallback(
+      { err_code: '90', basket_id: basketId, transaction_id: 'TXN-FAIL', Response_Key: '' },
+      { via: 'ipn', trustedCapture: true },
+    );
+    expect(res.status).toBe('failed');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('FAILED');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).not.toBe('CONFIRMED');
+  });
+
+  test('duplicate trusted success IPN → idempotent (stays SUCCESS, no error)', async () => {
+    const { basketId, paymentId } = await seedPendingPayment(200);
+    const { svc } = makePaymentService(IPN_CFG);
+    await svc.handleCallback({ err_code: '0000', basket_id: basketId, transaction_id: 'TXN-A', Response_Key: '' }, { via: 'ipn', trustedCapture: true });
+    const res2 = await svc.handleCallback({ err_code: '0000', basket_id: basketId, transaction_id: 'TXN-A', Response_Key: '' }, { via: 'ipn', trustedCapture: true });
+    expect(res2.status).toBe('success');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('SUCCESS');
+  });
+});
+
+describe('PaymentService.isTrustedIpnSource — fail-closed', () => {
+  test('feature OFF → never trusted, even an allow-listed IP', async () => {
+    const { svc } = makePaymentService({ PAY2M_IPN_CONFIRM_ENABLED: 'false', PAY2M_IPN_ALLOWED_IPS: '34.18.115.33' });
+    expect(svc.isTrustedIpnSource('34.18.115.33')).toBe(false);
+  });
+  test('feature ON + IP in allow-list → trusted', async () => {
+    const { svc } = makePaymentService(IPN_CFG);
+    expect(svc.isTrustedIpnSource('34.18.115.33')).toBe(true);
+  });
+  test('feature ON + IP NOT in allow-list → not trusted', async () => {
+    const { svc } = makePaymentService(IPN_CFG);
+    expect(svc.isTrustedIpnSource('1.2.3.4')).toBe(false);
+    expect(svc.isTrustedIpnSource(undefined)).toBe(false);
+  });
+  test('empty allow-list → trusts nothing (fail-closed)', async () => {
+    const { svc } = makePaymentService({ PAY2M_IPN_CONFIRM_ENABLED: 'true', PAY2M_IPN_ALLOWED_IPS: '' });
+    expect(svc.isTrustedIpnSource('34.18.115.33')).toBe(false);
+  });
+});
