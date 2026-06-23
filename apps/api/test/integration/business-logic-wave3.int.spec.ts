@@ -356,6 +356,57 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
       c.action === 'PAYMENT_RECOVERY_REFUND_QUEUED' && /SLOT_CONFLICT/.test(c.details))).toBe(true);
   });
 
+  test('H2: non-concurrent flex-start overlap → RECOVERED (sweep-line), not spuriously refunded', async () => {
+    const { svc } = makePaymentService();
+    const { basketId, paymentId, amountStr, snapshot, seed, originalBookingId } = await seedOrphanedPayment({
+      activityCapacity: 2,
+      guests: 1,
+    });
+    // Two existing bookings that each OVERLAP the recovery window [+24h,+26h]
+    // but are never concurrent with each other (A ends as B starts). Naive
+    // SUM(guests) = 2, + recovery 1 = 3 > cap 2 → the OLD check refunded. True
+    // peak concurrency in the window is 1, so + recovery 1 = 2 <= cap 2 → the
+    // slot genuinely fits → recovery MUST recreate, not refund.
+    const base = Date.now();
+    for (const [suffix, startMs, endMs] of [
+      ['A', 23 * 3600_000, 25 * 3600_000],
+      ['B', 25 * 3600_000, 27 * 3600_000],
+    ] as const) {
+      await ctx.prisma.booking.create({
+        data: {
+          ref: `JDWL-FLEX-${suffix}-${crypto.randomUUID().slice(0, 4)}`,
+          activityId: seed.activity.id,
+          vendorId: seed.vendor.id,
+          customerId: seed.customer.id,
+          guests: 1,
+          bookingPhone: '+97455123456',
+          guestBreakdown: {},
+          startDatetime: new Date(base + startMs),
+          endDatetime: new Date(base + endMs),
+          totalPrice: 100,
+          currencyCode: 'QAR',
+          commissionPct: 10,
+          commissionAmount: 10,
+          serviceFee: 5,
+          status: 'CONFIRMED',
+        },
+      });
+    }
+
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'T-FLEX',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    // Recovered (NOT refunded): re-inserted under the original id, payment SUCCESS.
+    const recreated = await ctx.prisma.booking.findFirst({ where: { ref: snapshot.ref } });
+    expect(recreated).not.toBeNull();
+    expect(recreated!.id).toBe(originalBookingId);
+    const p = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(p!.status).toBe('SUCCESS');
+    expect(p!.refundAmount).toBeNull();
+  });
+
   test('activity hard-deleted → REFUND_PENDING, audit ACTIVITY_DELETED', async () => {
     const { svc, auditLogger } = makePaymentService();
     const { basketId, paymentId, amountStr, snapshot, seed } = await seedOrphanedPayment();

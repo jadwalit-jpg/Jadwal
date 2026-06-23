@@ -10,7 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { AuditLoggerService } from '../common/services/audit-logger.service';
-import { refundCouponUsage } from '../bookings/bookings.service';
+import { refundCouponUsage, maxConcurrentInWindow, rentsWholeUnit, activeBookingFilter } from '../bookings/bookings.service';
 import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { EmailService } from '../email/email.service';
@@ -690,6 +690,52 @@ export class PaymentService {
       select: { status: true, bookingId: true },
     });
     return p ? { status: p.status, bookingId: p.bookingId } : null;
+  }
+
+  /**
+   * Slot-availability check for the §B2/§M6 recovery paths — re-inserting (or
+   * un-cancelling) a booking into its ORIGINAL fixed unit/window. Mirrors
+   * createBooking's logic EXACTLY (shared helpers): active-reservation filter
+   * (CANCELLED + expired-PENDING don't hold seats), sweep-line peak concurrency
+   * (so flex-start hourly overlaps that are never concurrent don't over-count),
+   * and whole-unit semantics. The old naive `SUM(guests)` over-counted and
+   * spuriously refunded recoverable paid bookings. Returns true if `guests`
+   * still fit. `tx` is the active (Serializable) transaction client.
+   */
+  private async recoverySlotAvailable(
+    tx: any,
+    args: { activityId: string; unitNumber: number | null; startDt: Date; endDt: Date; guests: number; excludeBookingId?: string },
+  ): Promise<boolean> {
+    const { activityId, unitNumber, startDt, endDt, guests, excludeBookingId } = args;
+    const act = await tx.activity.findUnique({
+      where: { id: activityId },
+      select: { capacity: true, hasUnits: true, unitCapacity: true, bookingType: true, pricingModel: true },
+    });
+    if (!act) return false;
+
+    const overlapping = await tx.booking.findMany({
+      where: {
+        activityId,
+        ...(unitNumber != null ? { unitNumber } : {}),
+        ...activeBookingFilter(new Date()),
+        startDatetime: { lt: endDt },
+        endDatetime: { gt: startDt },
+        ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+      },
+      select: { startDatetime: true, endDatetime: true, guests: true },
+    });
+
+    const isUnit = act.hasUnits && unitNumber != null;
+    // Whole-unit rental (rooms / per-unit): the unit is free ONLY if nothing
+    // overlaps it — one booking owns the entire unit, no seat-sharing.
+    if (isUnit && rentsWholeUnit(act)) {
+      return overlapping.length === 0;
+    }
+    // Per-person (unit or open): true peak concurrent guests within the window.
+    const peak = maxConcurrentInWindow(overlapping, startDt, endDt);
+    const cap = isUnit ? act.unitCapacity : act.capacity;
+    if (cap == null) return true; // no capacity limit configured → unbounded
+    return peak + guests <= cap;
   }
 
   // ─── Handle Callback from PAY2M ────────────────────────────────────────
@@ -1409,26 +1455,18 @@ export class PaymentService {
         });
         if (stamp.count === 0) return { kind: 'already-recovered' as const };
 
-        // Slot-conflict detection — same shape as createBooking's
-        // pre-insert aggregate. Counts only non-CANCELLED bookings that
-        // overlap the same activity/unit/window.
-        const overlap = await tx.booking.aggregate({
-          where: {
-            activityId: snapshot.activityId,
-            unitNumber: snapshot.unitNumber ?? undefined,
-            status: { notIn: ['CANCELLED'] },
-            startDatetime: { lt: endDt },
-            endDatetime: { gt: startDt },
-          },
-          _sum: { guests: true },
+        // Slot-conflict detection — uses the SAME helper as createBooking
+        // (sweep-line peak + active-reservation filter + whole-unit) so a
+        // recoverable paid booking isn't spuriously refunded by a naive
+        // SUM(guests) that over-counts non-concurrent overlaps / expired holds.
+        const slotFree = await this.recoverySlotAvailable(tx, {
+          activityId: snapshot.activityId,
+          unitNumber: snapshot.unitNumber ?? null,
+          startDt,
+          endDt,
+          guests: snapshot.guests,
         });
-        const taken = overlap._sum.guests ?? 0;
-        const activityCapacity = await tx.activity.findUnique({
-          where: { id: snapshot.activityId },
-          select: { capacity: true },
-        });
-        const cap = activityCapacity?.capacity ?? 0;
-        if (taken + snapshot.guests > cap) {
+        if (!slotFree) {
           return { kind: 'slot-conflict' as const };
         }
 
@@ -1624,27 +1662,24 @@ export class PaymentService {
         });
         if (flip.count === 0) return { kind: 'already-recovered' as const };
 
-        // Slot-conflict re-check — another customer may have grabbed the
-        // slot while this one was CANCELLED. We use the same overlap
-        // aggregate as createBooking, EXCLUDING this booking itself.
-        const overlap = await tx.booking.aggregate({
-          where: {
-            id: { not: bookingId },
-            activityId: booking.activityId,
-            unitNumber: booking.unitNumber ?? undefined,
-            status: { notIn: ['CANCELLED'] },
-            startDatetime: { lt: booking.endDatetime },
-            endDatetime: { gt: booking.startDatetime },
-          },
-          _sum: { guests: true },
+        // Slot-conflict re-check — another customer may have grabbed the slot
+        // while this one was CANCELLED. Uses the SAME helper as createBooking
+        // (sweep-line + active-reservation filter + whole-unit), EXCLUDING this
+        // booking itself — so a flex-start overlap that's never concurrent no
+        // longer spuriously blocks a legitimate un-cancel.
+        const slotFree = await this.recoverySlotAvailable(tx, {
+          activityId: booking.activityId,
+          unitNumber: booking.unitNumber ?? null,
+          startDt: booking.startDatetime,
+          endDt: booking.endDatetime,
+          guests: booking.guests,
+          excludeBookingId: bookingId,
         });
-        const taken = overlap._sum.guests ?? 0;
-        const activityCapacity = await tx.activity.findUnique({
+        const activityState = await tx.activity.findUnique({
           where: { id: booking.activityId },
-          select: { capacity: true, status: true },
+          select: { status: true },
         });
-        const cap = activityCapacity?.capacity ?? 0;
-        if (taken + booking.guests > cap || activityCapacity?.status === 'INACTIVE') {
+        if (!slotFree || activityState?.status === 'INACTIVE') {
           // Roll back the un-cancel by throwing — Serializable tx rollback
           // restores the CANCELLED row, preserving the slot for whoever
           // owns it now.
