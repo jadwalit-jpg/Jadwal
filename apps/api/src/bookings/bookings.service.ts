@@ -256,7 +256,10 @@ export function computeSlots(checkInTime: string, checkOutTime: string, duration
  *
  * Algorithm: sweep-line over clipped event points, O(n log n) in bookings.
  */
-function maxConcurrentInWindow(
+// Exported so the §B2/§M6 payment-recovery paths (payment.service.ts) reuse the
+// EXACT same slot-conflict semantics instead of a naive SUM(guests) that
+// over-counts non-concurrent overlaps + expired holds. One definition = no drift.
+export function maxConcurrentInWindow(
   bookings: ReadonlyArray<{ startDatetime: Date; endDatetime: Date; guests: number }>,
   windowStart: Date,
   windowEnd: Date,
@@ -296,7 +299,7 @@ function maxConcurrentInWindow(
  * HOURLY + PER_PERSON activities with units still sell individual seats and so
  * pack/share a unit up to its capacity. Activities without units are unaffected.
  */
-function rentsWholeUnit(a: { hasUnits: boolean; bookingType: string; pricingModel: string }): boolean {
+export function rentsWholeUnit(a: { hasUnits: boolean; bookingType: string; pricingModel: string }): boolean {
   return a.hasUnits && (a.bookingType === 'DAILY' || a.pricingModel === 'PER_UNIT');
 }
 
@@ -348,7 +351,7 @@ function todayInTimezone(tz: string): string {
 // PENDING bookings where reservedUntil < now are treated as free seats
 // immediately — no cron wait needed. The cron cleans them up asynchronously.
 //
-function activeBookingFilter(now: Date) {
+export function activeBookingFilter(now: Date) {
   return {
     status: { notIn: ['CANCELLED'] as any },
     NOT: {
