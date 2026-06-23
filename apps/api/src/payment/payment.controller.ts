@@ -187,7 +187,13 @@ export class PaymentController {
     // payload would fail validation. buildIpnDiagnostics is whitelist-only and
     // NEVER logs the Response_Key or any secret.
     const cfIp = req.headers['cf-connecting-ip'];
-    const sourceIp = (typeof cfIp === 'string' && cfIp) || req.ip || 'unknown';
+    // TRUST anchor: ONLY the Cloudflare-set client IP. We never fall back to
+    // req.ip for the trust decision — if the request did not traverse Cloudflare
+    // (header absent), it is untrusted (fail-closed). The whole IPN trust model
+    // rests on this header being CF-set + the ALB SG locked to Cloudflare ranges.
+    const cfSourceIp = typeof cfIp === 'string' && cfIp ? cfIp : null;
+    // For the diagnostic log only, a req.ip fallback is fine (observability).
+    const sourceIp = cfSourceIp ?? req.ip ?? 'unknown';
     const contentType = req.headers['content-type'] ?? 'unknown';
     this.logger.log(buildIpnDiagnostics(raw, sourceIp, contentType));
 
@@ -202,16 +208,19 @@ export class PaymentController {
     // Only an allow-listed PAY2M source IP (+ the feature flag on) may confirm
     // or fail a booking from an IPN — fail-closed otherwise. handleCallback
     // makes the actual decision; we hand it the trust verdict + the 'ipn' tag.
-    const trustedCapture = this.paymentService.isTrustedIpnSource(sourceIp);
+    const trustedCapture = this.paymentService.isTrustedIpnSource(cfSourceIp);
     await this.paymentService.handleCallback(
       {
         err_code: dto.err_code,
         err_msg: dto.err_msg,
         basket_id: dto.basket_id,
         transaction_id: dto.transaction_id,
-        // IPN hash is NOT verified (no amount) — passed through for persist /
-        // audit only; empty when absent.
-        Response_Key: dto.responseKey ?? '',
+        // The IPN hash is NOT verified (no amount to hash) and is deliberately
+        // NOT persisted: storing it would put a SHA-256(secret-word…) brute-force
+        // oracle in the DB and blur it against the VERIFIED card-rail hash kept in
+        // gatewayResponseKey. Trust is the source IP; reconciliation uses
+        // transaction_id. Pass empty so the verified-hash field stays meaningful.
+        Response_Key: '',
         order_date: dto.order_date,
       },
       { via: 'ipn', trustedCapture },

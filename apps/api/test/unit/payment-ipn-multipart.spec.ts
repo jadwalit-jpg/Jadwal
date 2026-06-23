@@ -70,14 +70,16 @@ describe('POST /payment/callback/ipn — multipart/form-data parsing', () => {
     expect(res.status).toBe(201); // Nest @Post default success status
     expect(res.body).toEqual({ received: true });
     expect(handleCallback).toHaveBeenCalledTimes(1);
-    // Controller maps responseKey → Response_Key and tags the call as an IPN
-    // with the source-IP trust verdict (mocked true here).
+    // Controller forwards the IPN fields + tags the call as an IPN with the
+    // source-IP trust verdict. The unverified IPN hash is deliberately NOT
+    // persisted (Response_Key forced to '') — it's a brute-force oracle and
+    // must not masquerade as the verified card-rail hash.
     expect(handleCallback).toHaveBeenCalledWith(
       expect.objectContaining({
         err_code: '0000',
         basket_id: VALID_BASKET,
         transaction_id: 'TXN-9873474567',
-        Response_Key: VALID_RESPONSE_KEY,
+        Response_Key: '',
       }),
       expect.objectContaining({ via: 'ipn', trustedCapture: true }),
     );
