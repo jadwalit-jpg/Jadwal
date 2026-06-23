@@ -1318,7 +1318,7 @@ export class PaymentService {
     // snapshot (and a quick "already recovered" short-circuit) up front.
     const fresh = await db.payment.findUnique({
       where: { id: paymentId },
-      select: { id: true, amount: true, currency: true, bookingSnapshot: true, bookingRecreatedAt: true },
+      select: { id: true, bookingId: true, amount: true, currency: true, bookingSnapshot: true, bookingRecreatedAt: true },
     });
     if (!fresh) return;
     if (fresh.bookingRecreatedAt) {
@@ -1434,6 +1434,15 @@ export class PaymentService {
 
         const recreated = await tx.booking.create({
           data: {
+            // Re-use the ORIGINAL booking id (retained on payment.bookingId — a
+            // non-FK scalar the cron's booking-delete doesn't touch). The id is
+            // free (the row was deleted), and re-using it means every client
+            // reference minted before the cron ran — the redirect bookingId, the
+            // result-page poll, the confirmation-email link, and the post-recovery
+            // notification lookup (which reads payment.bookingId) — all resolve to
+            // this recovered booking instead of dangling. Falls back to a fresh id
+            // only for the (unexpected) case where the original id is missing.
+            ...(fresh.bookingId ? { id: fresh.bookingId } : {}),
             ref: snapshot.ref,
             activityId: snapshot.activityId,
             vendorId: snapshot.vendorId,

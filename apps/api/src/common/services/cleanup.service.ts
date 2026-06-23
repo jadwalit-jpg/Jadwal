@@ -164,6 +164,15 @@ export class CleanupService {
           // paymentInitiatedAt; this OR is the runtime fallback for
           // edge-case rows still in flight during the deploy window.
           {
+            // Never reap a booking whose reservation is still actively held in
+            // the future: a verified NAPS-rail success extends `reservedUntil`
+            // (holdNapsSuccess) to keep the slot while PAY2M's delayed capture
+            // confirmation (IPN) is still expected. Without this AND, Case 3's
+            // 30-min anchor reaped the held booking out from under its own
+            // extension, dropping a paid customer into the §B2 recovery path.
+            // An ordinary abandoned booking has its short original reservedUntil
+            // (already < now by the 30-min mark) so it is still reaped here.
+            reservedUntil: { lt: now },
             payment: {
               gatewayBasketId: { not: null },
               OR: [

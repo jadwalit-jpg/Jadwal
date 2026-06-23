@@ -203,7 +203,7 @@ async function seedOrphanedPayment(opts: OrphanFixtureOpts = {}) {
 describe('§B2 — orphan booking auto-recreates from snapshot', () => {
   test('happy path: booking re-inserted, payment SUCCESS, audit RECREATE, no refund', async () => {
     const { svc, auditLogger, notificationService } = makePaymentService();
-    const { basketId, paymentId, amountStr, snapshot } = await seedOrphanedPayment();
+    const { basketId, paymentId, amountStr, snapshot, originalBookingId } = await seedOrphanedPayment();
 
     const res = await svc.handleCallback({
       err_code: '00',
@@ -223,6 +223,10 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     expect(recreated!.status).toBe('CONFIRMED');
     expect(recreated!.totalPrice.toString()).toBe('200');
     expect(recreated!.paymentId).toBe(paymentId);
+    // H1: re-created under the ORIGINAL booking id (retained on payment.bookingId)
+    // so the redirect/poll/email/notification references all resolve to it
+    // instead of dangling at a now-deleted id.
+    expect(recreated!.id).toBe(originalBookingId);
 
     // Customer's original cancellation window preserved
     expect(recreated!.createdAt.toISOString()).toBe(snapshot.originalCreatedAt);
