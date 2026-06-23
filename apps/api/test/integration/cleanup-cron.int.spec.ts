@@ -244,11 +244,11 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).not.toBeNull();
   });
 
-  test('PENDING + PAY2M session abandoned (> 30 min) → booking deleted, payment soft-failed (kept for recovery)', async () => {
+  test('PENDING + PAY2M session abandoned (> 30 min, reservation expired) → booking deleted, payment soft-failed (kept for recovery)', async () => {
     const seed = await seedReference(ctx.prisma);
     const { bookingId, paymentId } = await mkPendingBooking({
       seed,
-      reservedUntil: new Date(Date.now() + 300_000), // even a fresh reservation
+      reservedUntil: new Date(Date.now() - 10 * 60 * 1000), // reservation already expired (the realistic abandoned shape)
       paymentBasketId: 'BSK-abandoned',
       createdAt: new Date(Date.now() - 45 * 60 * 1000), // 45 min ago
     });
@@ -266,6 +266,27 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
       expect(pay!.status).toBe('FAILED');
       expect(pay!.gatewayBasketId).toBe('BSK-abandoned');
     }
+  });
+
+  test('M2: PAY2M >30 min old BUT reservation still actively held (reservedUntil future) → NOT reaped', async () => {
+    // A verified NAPS hold extends reservedUntil while PAY2M's delayed capture
+    // (IPN) is still expected. Case 3's 30-min payment anchor must NOT reap a
+    // booking whose reservation is still in the future — doing so dropped a paid
+    // customer into §B2 recovery. The 4-hour fallback (Case 4) is still the
+    // backstop against an indefinitely-extended hold.
+    const seed = await seedReference(ctx.prisma);
+    const { bookingId } = await mkPendingBooking({
+      seed,
+      reservedUntil: new Date(Date.now() + 25 * 60 * 1000), // held +25 min
+      paymentBasketId: 'BSK-held',
+      createdAt: new Date(Date.now() - 45 * 60 * 1000), // payment first-initiated 45 min ago
+    });
+
+    const { svc } = makeCleanup();
+    await svc.autoCancelStalePendingBookings();
+
+    // Survives: the active hold protects the slot for the in-flight capture.
+    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).not.toBeNull();
   });
 
   test('PENDING booking older than fallback (4h) with no reservedUntil → reaped (legacy safety net)', async () => {

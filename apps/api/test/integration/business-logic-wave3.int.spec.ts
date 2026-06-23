@@ -203,7 +203,7 @@ async function seedOrphanedPayment(opts: OrphanFixtureOpts = {}) {
 describe('§B2 — orphan booking auto-recreates from snapshot', () => {
   test('happy path: booking re-inserted, payment SUCCESS, audit RECREATE, no refund', async () => {
     const { svc, auditLogger, notificationService } = makePaymentService();
-    const { basketId, paymentId, amountStr, snapshot } = await seedOrphanedPayment();
+    const { basketId, paymentId, amountStr, snapshot, originalBookingId } = await seedOrphanedPayment();
 
     const res = await svc.handleCallback({
       err_code: '00',
@@ -223,6 +223,10 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     expect(recreated!.status).toBe('CONFIRMED');
     expect(recreated!.totalPrice.toString()).toBe('200');
     expect(recreated!.paymentId).toBe(paymentId);
+    // H1: re-created under the ORIGINAL booking id (retained on payment.bookingId)
+    // so the redirect/poll/email/notification references all resolve to it
+    // instead of dangling at a now-deleted id.
+    expect(recreated!.id).toBe(originalBookingId);
 
     // Customer's original cancellation window preserved
     expect(recreated!.createdAt.toISOString()).toBe(snapshot.originalCreatedAt);
@@ -241,8 +245,13 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     expect(recreateAudit).toBeDefined();
     expect(recreateAudit.actionCategory).toBe('FINANCIAL');
 
-    // No admin alert (admin only pinged on refund-fallback paths)
-    expect(notificationService.notifyAdmins).not.toHaveBeenCalled();
+    // M4 fix: the recovered booking is found by its PRESERVED original id, so it
+    // now flows through the full confirmation path — customer (PAYMENT_SUCCESS),
+    // vendor + admin (BOOKING_NEW) — exactly like any newly-confirmed booking.
+    // Previously the stale-id lookup returned null and the recovery was SILENT
+    // (no email, no notifications) even though the booking existed.
+    expect(notificationService.notifyAdmins).toHaveBeenCalled();
+    expect(notificationService.send).toHaveBeenCalled();
   });
 
   test('idempotency: replayed callback does NOT create a second booking', async () => {
