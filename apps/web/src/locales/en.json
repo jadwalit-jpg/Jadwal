@@ -1264,6 +1264,8 @@
     "failedDesc": "Your payment could not be processed. Please try again.",
     "pendingTitle": "Verifying Your Payment",
     "pendingDesc": "We received your payment details and are confirming them with the bank. Your booking will be confirmed automatically once verified — you'll get an email. No need to pay again.",
+    "unconfirmedTitle": "Payment Not Confirmed",
+    "unconfirmedDesc": "We couldn't confirm this payment in time, so no booking was created. If your payment did go through, your booking will appear in My Bookings shortly — otherwise you have not been charged. Please contact support if you were charged.",
     "tryAgain": "Try Again",
     "backToBookings": "Back to My Bookings"
   },

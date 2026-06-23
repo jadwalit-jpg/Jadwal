@@ -56,7 +56,13 @@ function CallbackContent() {
   // Once the trusted IPN has confirmed the booking, the page shows success —
   // exactly as if the redirect had returned success in the first place.
   const isSuccess = initialSuccess || polledConfirmed;
-  const isPending = initialPending && !polledConfirmed;
+  // Still actively confirming (poll in flight).
+  const isPending = initialPending && !polledConfirmed && !pollExhausted;
+  // Poll timed out without a confirmation → give the customer a clear ending
+  // ("not confirmed, no booking created") instead of an endless "confirming".
+  // We never assert "failed" here because PAY2M only gives us a trustworthy
+  // SUCCESS signal; a non-confirmation is genuinely "we couldn't confirm".
+  const isUnconfirmed = initialPending && !polledConfirmed && pollExhausted;
 
   // Invalidate booking caches so detail page shows updated status
   useEffect(() => {
@@ -139,6 +145,22 @@ function CallbackContent() {
                 {t('payment.backToBookings')}
               </Link>
             </div>
+          </>
+        ) : isUnconfirmed ? (
+          <>
+            <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+              <Clock className="h-10 w-10 text-amber-600 dark:text-amber-400" />
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('payment.unconfirmedTitle')}</h1>
+            <p className="text-sm text-gray-500 dark:text-slate-400 mb-6">
+              {t('payment.unconfirmedDesc')}
+            </p>
+            <Link
+              href="/bookings"
+              className="inline-block px-6 py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-xl transition-colors text-sm"
+            >
+              {t('payment.backToBookings')}
+            </Link>
           </>
         ) : (
           <>
