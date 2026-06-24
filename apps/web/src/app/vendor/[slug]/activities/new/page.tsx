@@ -347,6 +347,9 @@ export default function CreateActivityPage() {
       } else {
         if (!form.checkInTime) errs.checkInTime = t(ACTIVITY_WIZARD_ERR.checkInRequired);
         if (!form.checkOutTime) errs.checkOutTime = t(ACTIVITY_WIZARD_ERR.checkOutRequired);
+        // Minimum nights is OPTIONAL for DAILY (empty = flexible). If set, bound 1–90 (same as edit).
+        if (form.durationValue && (Number(form.durationValue) < 1 || Number(form.durationValue) > 90))
+          errs.durationValue = t('vendor.activities.wizard.errors.minNightsRange', 'Minimum nights must be between 1 and 90');
       }
     }
     if (step === 3) {
@@ -420,9 +423,9 @@ export default function CreateActivityPage() {
       categoryId: form.categoryId,
       subCategoryId: form.subCategoryId || undefined,
       pricePerPerson: Number(form.pricePerPerson),
-      durationValue: form.bookingType === 'HOURLY'
-        ? (Number(form.durationValue) || undefined)
-        : undefined,
+      // HOURLY: duration in hours. DAILY: minimum nights (optional). Same field,
+      // same as the edit page — send it whenever set.
+      durationValue: form.durationValue ? Number(form.durationValue) : undefined,
       pricingModel: form.bookingType === 'DAILY' ? 'PER_UNIT' : form.pricingModel,
       capacity: totalCapacity,
       locationLat: Number(form.locationLat),
@@ -710,6 +713,17 @@ export default function CreateActivityPage() {
                       />
                     </FieldGroup>
                   </div>
+
+                  {/* Minimum nights — optional (empty = flexible day-by-day). Reuses
+                      durationValue, exactly like the edit page. */}
+                  <FieldGroup label={t('vendor.activities.wizard.ui.fieldMinNights', 'Minimum nights')}
+                    hint={t('vendor.activities.wizard.ui.hintMinNights', 'Leave empty for flexible day-by-day booking. Set a number to require at least that many nights (guests can still book more).')}
+                    error={errors.durationValue}>
+                    <input type="number" min="1" max="90" inputMode="numeric" value={form.durationValue}
+                      onChange={e => updateField('durationValue', e.target.value)}
+                      className={inputCls(!!errors.durationValue)}
+                      placeholder={t('vendor.activities.wizard.ui.phMinNights', 'e.g. 3 (or leave empty)')} />
+                  </FieldGroup>
                 </div>
               )}
 
@@ -735,6 +749,19 @@ export default function CreateActivityPage() {
                   {activeDays.length === 0 ? t('vendor.activities.wizard.ui.anyDay') : activeDays.join(', ')}
                 </p>
               </div>
+
+              {/* Blocked dates & times — set DURING create (draft mode), same place
+                  + same UI as the edit page (between Active Days and Units). Saved
+                  with the activity. Recurring-weekly locks are added later in edit. */}
+              <ActivityBlocksManager
+                draft
+                value={blocks}
+                onChange={setBlocks}
+                bookingType={form.bookingType as 'HOURLY' | 'DAILY'}
+                checkInTime={form.checkInTime || null}
+                checkOutTime={form.checkOutTime || null}
+                durationValue={form.durationValue ? Number(form.durationValue) : null}
+              />
 
               {/* Units */}
               <div className="mt-8 pt-6 border-t border-gray-200 dark:border-slate-800">
@@ -1124,21 +1151,6 @@ export default function CreateActivityPage() {
                     </button>
                   ))}
                 </div>
-              </div>
-
-              {/* Lockout dates & times — set DURING create (draft mode), saved
-                  with the activity. Same calendar/slot UI as the edit page;
-                  recurring-weekly locks can be added later in edit. */}
-              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-8">
-                <ActivityBlocksManager
-                  draft
-                  value={blocks}
-                  onChange={setBlocks}
-                  bookingType={form.bookingType as 'HOURLY' | 'DAILY'}
-                  checkInTime={form.checkInTime || null}
-                  checkOutTime={form.checkOutTime || null}
-                  durationValue={form.durationValue ? Number(form.durationValue) : null}
-                />
               </div>
             </div>
           )}
