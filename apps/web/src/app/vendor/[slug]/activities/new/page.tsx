@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { ACTIVITY_WIZARD_ERR, wizardSteps, daysOfWeek } from '../../../_lib/vendor-activity-wizard-copy';
 import ActivitySpecialPricesManager from '@/components/activity-special-prices-manager';
+import ActivityBlocksManager from '@/components/activity-blocks-manager';
 import { getApiError } from '@/lib/api-error';
 import { sanitize, sanitizeObject } from '@/lib/validation';
 import { VendorSidebar } from '../../../_components/vendor-sidebar';
@@ -285,6 +286,7 @@ export default function CreateActivityPage() {
   // Lockouts + per-date special prices collected DURING create (draft — no
   // activity exists yet). Sent with the create payload and saved atomically.
   const [specialPrices, setSpecialPrices] = useState<Array<{ date: string; price: number }>>([]);
+  const [blocks, setBlocks] = useState<Array<{ date: string; endDate?: string; slotTimes?: string[]; repeatWeekly?: boolean }>>([]);
 
   const { data: categories } = useQuery({
     queryKey: [user?.id, 'public-categories'],
@@ -442,6 +444,7 @@ export default function CreateActivityPage() {
     // Nested sub-resources — added AFTER sanitizeObject so the date/price values
     // pass through untouched. The create endpoint saves them atomically.
     if (specialPrices.length > 0) (payload as Record<string, unknown>).specialPrices = specialPrices;
+    if (blocks.length > 0) (payload as Record<string, unknown>).blocks = blocks;
     createMutation.mutate(payload);
   };
 
@@ -1121,6 +1124,21 @@ export default function CreateActivityPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Lockout dates & times — set DURING create (draft mode), saved
+                  with the activity. Same calendar/slot UI as the edit page;
+                  recurring-weekly locks can be added later in edit. */}
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-8">
+                <ActivityBlocksManager
+                  draft
+                  value={blocks}
+                  onChange={setBlocks}
+                  bookingType={form.bookingType as 'HOURLY' | 'DAILY'}
+                  checkInTime={form.checkInTime || null}
+                  checkOutTime={form.checkOutTime || null}
+                  durationValue={form.durationValue ? Number(form.durationValue) : null}
+                />
               </div>
             </div>
           )}
