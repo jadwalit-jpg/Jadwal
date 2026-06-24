@@ -76,6 +76,37 @@ describe('VendorService.createActivity', () => {
     expect(created.countryId).toBe(seed.country.id);
   });
 
+  test('with nested blocks + specialPrices → created atomically with the activity (same core logic as edit)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { vendor } = makeServices();
+    const future = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const future2 = new Date(Date.now() + 31 * 86400000).toISOString().slice(0, 10);
+
+    const created = await vendor.createActivity(seed.vendorUser.id, baseActivityDto(seed, {
+      blocks: [{ date: future }],                     // whole-day lock
+      specialPrices: [{ date: future2, price: 150 }], // per-date override
+    }) as any);
+
+    expect(created.status).toBe('PENDING');
+    const blocks = await ctx.prisma.activityBlock.findMany({ where: { activityId: created.id } });
+    expect(blocks.length).toBeGreaterThanOrEqual(1);
+    const prices = await ctx.prisma.activitySpecialPrice.findMany({ where: { activityId: created.id, deletedAt: null } });
+    expect(prices.length).toBe(1);
+    expect(Number(prices[0].price)).toBe(150);
+  });
+
+  test('a bad nested entry rolls back the WHOLE create (atomic — no orphan activity)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { vendor } = makeServices();
+    const slug = 'atomic-rollback-' + crypto.randomUUID().slice(0, 6);
+    const past = new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10); // rejected by the special-price core
+    await expect(vendor.createActivity(seed.vendorUser.id, baseActivityDto(seed, {
+      slug,
+      specialPrices: [{ date: past, price: 150 }],
+    }) as any)).rejects.toThrow();
+    expect(await ctx.prisma.activity.findUnique({ where: { slug } })).toBeNull();
+  });
+
   test('duplicate slug → ConflictException', async () => {
     const seed = await seedReference(ctx.prisma);
     const { vendor } = makeServices();

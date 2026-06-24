@@ -253,27 +253,50 @@ export class VendorService {
       throw new BadRequestException('Total capacity (units × capacity per unit) cannot exceed 10000');
     }
 
-    // Strip DTO-only fields before spreading into Prisma create
-    const { capacity: _cap, extraServices, ...restData } = activityData;
+    // Strip DTO-only fields before spreading into Prisma create. `blocks` and
+    // `specialPrices` are nested sub-resources (not Activity columns) — pull them
+    // out here so they don't leak into activity.create, then create them below.
+    const { capacity: _cap, extraServices, blocks, specialPrices, ...restData } = activityData;
 
-    return db.activity.create({
-      data: {
-        ...restData,
-        extraServices: extraServices ? JSON.parse(JSON.stringify(extraServices)) : undefined,
-        vendorId: vendor.id,
-        countryId: vendor.countryId,
-        status: 'PENDING',
-        gallery: dto.gallery ?? [],
-        capacity: capacity ?? null,
-        hasUnits: hasUnits ?? false,
-        unitCount: hasUnits ? (unitCount ?? 0) : 0,
-        unitCapacity: hasUnits ? (unitCapacity ?? 1) : 1,
-      },
-      include: {
-        category: { select: { nameEn: true } },
-        city: { select: { nameEn: true } },
-      },
-    });
+    // Create the activity AND its initial locks + special prices atomically, so
+    // "set them while creating" behaves exactly like every other field — all or
+    // nothing. The blocks/prices run through the SAME core logic the live
+    // sub-resource endpoints use (createActivityBlockCore / createSpecialPriceCore),
+    // so validation + recurring-expansion can never drift between create and edit.
+    // A longer timeout covers a repeat-weekly block that fans out ~6 months of rows.
+    return db.$transaction(async (tx: any) => {
+      const activity = await tx.activity.create({
+        data: {
+          ...restData,
+          extraServices: extraServices ? JSON.parse(JSON.stringify(extraServices)) : undefined,
+          vendorId: vendor.id,
+          countryId: vendor.countryId,
+          status: 'PENDING',
+          gallery: dto.gallery ?? [],
+          capacity: capacity ?? null,
+          hasUnits: hasUnits ?? false,
+          unitCount: hasUnits ? (unitCount ?? 0) : 0,
+          unitCapacity: hasUnits ? (unitCapacity ?? 1) : 1,
+        },
+        include: {
+          category: { select: { nameEn: true } },
+          city: { select: { nameEn: true } },
+        },
+      });
+
+      if (blocks?.length) {
+        for (const b of blocks) {
+          await createActivityBlockCore(tx, activity, b);
+        }
+      }
+      if (specialPrices?.length) {
+        for (const sp of specialPrices) {
+          await createSpecialPriceCore(tx, activity, sp);
+        }
+      }
+
+      return activity;
+    }, { timeout: 20000 });
   }
 
   async updateActivity(userId: string, activityId: string, dto: UpdateActivityDto) {
