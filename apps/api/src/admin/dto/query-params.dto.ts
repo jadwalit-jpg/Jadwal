@@ -61,4 +61,11 @@ export class PaginationDto {
   @IsOptional()
   @IsIn(['verified', 'unverified'])
   verified?: 'verified' | 'unverified';
+
+  // /admin/users hides soft-deleted (anonymised "Deleted User") rows by
+  // default. 'true' reveals them so an admin can audit the retained
+  // financial/audit trail. String value because the source is a query string.
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  includeDeleted?: 'true' | 'false';
 }

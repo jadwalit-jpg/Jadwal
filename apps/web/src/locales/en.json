@@ -238,6 +238,7 @@
     "basePrice": "Base price",
     "extras": "Extras",
     "loginToBook": "Login to book",
+    "termsRequired": "Please accept our Terms & Privacy to book.",
     "selectStartTime": "Tap an hour to start — the next {{hours}}h are auto-selected",
     "hourRangeHint": "Minimum {{hours}}h. Tap a later hour to extend. Closing: {{closing}}.",
     "slotBlocked": "blocked by host",
@@ -296,9 +297,16 @@
     "termsGate": {
       "title": "One more step",
       "body": "Please review and accept our Terms and Privacy Policy to continue using Jadwal.",
-      "accept": "Accept & continue",
+      "accept": "Accept",
       "signOut": "Sign out",
-      "failed": "Could not record your acceptance. Please try again."
+      "failed": "Could not record your acceptance. Please try again.",
+      "accepted": "Thanks — you can now book.",
+      "dismiss": "Dismiss",
+      "bannerTitle": "Review our Terms",
+      "bannerBody": "Browse freely — to book, please accept our",
+      "modalTitle": "Accept our Terms to book",
+      "modalBody": "Before booking, please accept our",
+      "cancel": "Cancel"
     },
     "checkInbox": "Check your inbox",
     "sentVerificationTo": "We sent a verification link to",
