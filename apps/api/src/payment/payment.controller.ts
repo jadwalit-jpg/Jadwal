@@ -20,6 +20,7 @@ import { RATE_LIMIT_AUTH, RATE_LIMIT_CALLBACK, RATE_LIMIT_READ } from '../common
 import { ConfigService } from '@nestjs/config';
 import { PaymentService } from './payment.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { TermsAcceptedGuard } from '../auth/guards/terms-accepted.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/interfaces/request-user.interface';
@@ -55,7 +56,7 @@ export class PaymentController {
    */
   @Post('initiate')
   @Throttle(RATE_LIMIT_AUTH)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, TermsAcceptedGuard) // consent required to move money (anti-bypass)
   async initiatePayment(
     @CurrentUser() user: RequestUser,
     @Body() dto: InitiatePaymentDto,

@@ -24,6 +24,14 @@ interface CustomSelectProps {
    * sort direction that always has a selected state).
    */
   required?: boolean;
+  /**
+   * Embedded / borderless variant. Drops the box styling (border, rounded
+   * corners, own background) and uses transparent fill with taller padding so
+   * the trigger blends into a surrounding container — e.g. a unified search bar
+   * where the parent already provides the divider + background. Default false
+   * keeps the standalone bordered look every other usage relies on.
+   */
+  seamless?: boolean;
 }
 
 export default function CustomSelect({
@@ -35,6 +43,7 @@ export default function CustomSelect({
   disabledPlaceholder,
   className = '',
   required = false,
+  seamless = false,
 }: CustomSelectProps) {
   const [open, setOpen] = useState(false);
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
@@ -181,12 +190,16 @@ export default function CustomSelect({
         type="button"
         disabled={disabled}
         onClick={handleOpen}
-        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border bg-white dark:bg-slate-800 text-sm outline-none transition-colors
-          ${disabled
-            ? 'border-gray-200 dark:border-slate-700 opacity-50 cursor-not-allowed text-gray-400 dark:text-slate-500'
-            : open
-              ? 'border-sky-400 dark:border-blue-500 text-gray-900 dark:text-white'
-              : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 text-gray-900 dark:text-white'
+        className={`w-full flex items-center justify-between text-sm outline-none transition-colors
+          ${seamless
+            ? `px-5 py-4 bg-transparent ${disabled
+                ? 'opacity-50 cursor-not-allowed text-gray-400 dark:text-slate-500'
+                : 'text-gray-900 dark:text-white hover:bg-black/2.5 dark:hover:bg-white/4'}`
+            : `px-3 py-2.5 rounded-xl border bg-white dark:bg-slate-800 ${disabled
+                ? 'border-gray-200 dark:border-slate-700 opacity-50 cursor-not-allowed text-gray-400 dark:text-slate-500'
+                : open
+                  ? 'border-sky-400 dark:border-blue-500 text-gray-900 dark:text-white'
+                  : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 text-gray-900 dark:text-white'}`
           }`}
       >
         <span className={value && !disabled ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-slate-500'}>

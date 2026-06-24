@@ -19,6 +19,7 @@ import { User } from '@prisma/client';
 import { TokenPayload } from './interfaces/token-payload.interface';
 import { RegisterVendorDto } from './dto/register-vendor.dto';
 import { resolveLanguageFromRequest } from '../common/utils/locale';
+import { TERMS_VERSION } from '../common/terms';
 import { SecurityLoggerService } from '../common/services/security-logger.service';
 import { AuditLoggerService } from '../common/services/audit-logger.service';
 import { EmailService } from '../email/email.service';
@@ -528,7 +529,14 @@ export class AuthService {
     // verification email (and all later transactional mail) renders in the
     // language the user registered in.
     const preferredLanguage = resolveLanguageFromRequest(req);
-    const user = await this.usersService.create({ ...data, preferredLanguage });
+    // The RegisterDto requires termsAccepted === true (enforced by ValidationPipe
+    // before we reach here), so record the acceptance + current version now.
+    const user = await this.usersService.create({
+      ...data,
+      preferredLanguage,
+      termsAcceptedAt: new Date(),
+      termsAcceptedVersion: TERMS_VERSION,
+    });
 
     const { ip: regIp } = this.extractClientInfo(req);
     await this.sendVerificationEmail(db, user.id, user.email, user.fullName, regIp);
@@ -739,6 +747,20 @@ export class AuthService {
 
   // ─── Register vendor ───────────────────────────────────────────────────────
 
+  /**
+   * Record the current user's acceptance of the latest Terms (TERMS_VERSION).
+   * Called by the post-login consent gate (Google-OAuth signups, pre-feature
+   * accounts, and anyone after a version bump). Idempotent — re-accepting just
+   * refreshes the timestamp + version.
+   */
+  async acceptTerms(userId: string) {
+    await this.prisma.client.user.update({
+      where: { id: userId },
+      data: { termsAcceptedAt: new Date(), termsAcceptedVersion: TERMS_VERSION },
+    });
+    return { accepted: true, version: TERMS_VERSION };
+  }
+
   async registerVendor(dto: RegisterVendorDto, req?: Request) {
     const db = this.prisma.client;
 
@@ -791,6 +813,9 @@ export class AuthService {
           phone: dto.phone ?? null,
           role: 'VENDOR',
           preferredLanguage,
+          // RegisterVendorDto requires termsAccepted === true → record consent.
+          termsAcceptedAt: new Date(),
+          termsAcceptedVersion: TERMS_VERSION,
         },
       });
 

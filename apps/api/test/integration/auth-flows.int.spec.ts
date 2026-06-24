@@ -11,6 +11,7 @@
  */
 
 import { getTestContext, seedReference } from './_setup';
+import { TERMS_VERSION } from '../../src/common/terms';
 import { AuthService } from '../../src/auth/auth.service';
 import { UsersService } from '../../src/users/users.service';
 import {
@@ -103,6 +104,52 @@ describe('AuthService.registerAndLogin', () => {
       }),
     ).rejects.toThrow(/different phone number/i);
     // Should NOT leak "phone already registered"
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Terms acceptance — captured at registration; recorded by the consent gate
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('Terms acceptance', () => {
+  test('registerAndLogin stamps termsAcceptedAt + current TERMS_VERSION', async () => {
+    await seedReference(ctx.prisma);
+    const { svc } = makeAuth();
+    await svc.registerAndLogin({ fullName: 'T', email: 'terms@t.com', password: 'S3cure!Pass1' });
+    const u = await ctx.prisma.user.findUniqueOrThrow({ where: { email: 'terms@t.com' } });
+    expect((u as any).termsAcceptedAt).toBeInstanceOf(Date);
+    expect((u as any).termsAcceptedVersion).toBe(TERMS_VERSION);
+  });
+
+  test('registerVendor stamps termsAcceptedAt + current TERMS_VERSION', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeAuth();
+    await svc.registerVendor({
+      fullName: 'Vend', email: 'vend-terms@t.com', password: 'S3cure!Pass1',
+      businessNameEn: 'Biz', businessNameAr: 'بيز', businessId: 'CR-123456',
+      slug: 'biz-terms-test', countryId: seed.country.id, termsAccepted: true,
+    } as any);
+    const u = await ctx.prisma.user.findUniqueOrThrow({ where: { email: 'vend-terms@t.com' } });
+    expect(u.role).toBe('VENDOR');
+    expect((u as any).termsAcceptedAt).toBeInstanceOf(Date);
+    expect((u as any).termsAcceptedVersion).toBe(TERMS_VERSION);
+  });
+
+  test('acceptTerms sets consent for a user that had none (e.g. OAuth / pre-feature account)', async () => {
+    await seedReference(ctx.prisma);
+    const { svc } = makeAuth();
+    // A user with NO consent yet (mirrors a Google-OAuth signup / legacy row).
+    const user = await ctx.prisma.user.create({
+      data: { fullName: 'OAuth U', email: 'oauth-terms@t.com', role: 'CUSTOMER', emailVerified: true },
+    });
+    expect(user.termsAcceptedAt).toBeNull();
+
+    const res = await svc.acceptTerms(user.id);
+    expect(res).toEqual({ accepted: true, version: TERMS_VERSION });
+
+    const u = await ctx.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect((u as any).termsAcceptedAt).toBeInstanceOf(Date);
+    expect((u as any).termsAcceptedVersion).toBe(TERMS_VERSION);
   });
 });
 

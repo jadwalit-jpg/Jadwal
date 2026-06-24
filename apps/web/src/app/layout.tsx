@@ -3,6 +3,7 @@ import { Inter, Tajawal, Outfit } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 import { AuthProvider } from "@/context/auth-context";
+import TermsConsentGate from "@/components/terms-consent-gate";
 import { I18nProvider } from "@/context/i18n-provider";
 import { ThemeProvider } from "next-themes";
 import { QueryProvider } from "@/lib/query-provider";
@@ -217,6 +218,10 @@ export default async function RootLayout({
                 <AuthProvider>
                   <ToastProvider>
                     <CustomerShell>{children}</CustomerShell>
+                    {/* One-time post-login Terms consent gate (OAuth signups,
+                        pre-feature accounts, Terms version bumps). Renders null
+                        unless the logged-in customer/vendor must accept. */}
+                    <TermsConsentGate />
                   </ToastProvider>
                 </AuthProvider>
               </ThemeProvider>

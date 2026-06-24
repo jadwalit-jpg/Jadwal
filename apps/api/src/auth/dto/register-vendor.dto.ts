@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches, IsUUID } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches, IsUUID, IsBoolean, Equals } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { IsStrongPassword } from '../../common/validators/password-strength';
 import { IsNotDisposableEmail } from '../../common/validators/disposable-email';
@@ -71,4 +71,11 @@ export class RegisterVendorDto {
   @IsOptional()
   @Transform(({ value }) => value == null ? undefined : String(value))
   website?: string;
+
+  // Explicit Terms & Privacy consent — required to be `true`. The vendor signup
+  // already shows this checkbox; the service records termsAcceptedAt + the
+  // current TERMS_VERSION on success.
+  @IsBoolean()
+  @Equals(true, { message: 'You must accept the Terms and Privacy Policy' })
+  termsAccepted!: boolean;
 }

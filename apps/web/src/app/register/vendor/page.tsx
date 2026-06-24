@@ -176,6 +176,11 @@ function VendorAuthContent() {
           website: website || undefined, // honeypot
         }),
         password: pw, // Never sanitize passwords — sanitize() strips valid chars like <, >
+        // Explicit Terms + Privacy consent — reflects the actual checkbox state
+        // (the line-155 guard already blocks submit unless it's true; sending the
+        // real value means the server @Equals(true) rejects even if that guard is
+        // ever removed). Also confirms 18+.
+        termsAccepted: agreedTerms,
       });
 
       setSuccess(true);

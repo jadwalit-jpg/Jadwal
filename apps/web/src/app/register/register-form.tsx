@@ -43,6 +43,7 @@ export default function RegisterForm() {
   // any non-empty value as bot signup → silent fake-success (no user row
   // created, same response shape as anti-enumeration login flow).
   const [website, setWebsite] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingEmail, setPendingEmail] = useState('');
@@ -79,6 +80,11 @@ export default function RegisterForm() {
       if (!phoneCheck.valid) { setError(phoneCheck.error); return; }
     }
 
+    if (!termsAccepted) {
+      setError(t('auth.mustAgreeTerms', 'You must accept the Terms and Privacy Policy'));
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await api.post('/auth/register', {
@@ -86,6 +92,8 @@ export default function RegisterForm() {
         email: sanitize(email),
         password,
         phone: phone ? sanitize(phone) : undefined,
+        // Explicit Terms + Privacy consent — gated above; also confirms 18+.
+        termsAccepted: true,
         // Honeypot — empty for humans (input is hidden + aria-hidden so
         // it can't be tabbed into or filled by password managers); naive
         // bots that auto-fill every input will populate it.
@@ -303,10 +311,28 @@ export default function RegisterForm() {
           />
         </div>
 
+        {/* Explicit Terms + Privacy consent — required; gates the submit button.
+            Accepting also confirms the user is 18+ (stated in the Terms). */}
+        <label className="flex items-start gap-2.5 text-xs text-white/40 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={termsAccepted}
+            onChange={(e) => setTermsAccepted(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-white/20 bg-white/5 accent-blue-600"
+          />
+          <span>
+            {t('auth.agreeTermsCheckbox', 'I agree to the')}{' '}
+            <Link href="/terms" className="underline text-blue-400 hover:text-blue-300">{t('terms.title')}</Link>
+            {' '}{t('auth.and')}{' '}
+            <Link href="/privacy" className="underline text-blue-400 hover:text-blue-300">{t('privacy.title')}</Link>
+            {' '}{t('auth.and18Plus', 'and confirm I am 18 or older')}
+          </span>
+        </label>
+
         <button
           type="submit"
-          disabled={isSubmitting}
-          className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 shadow-lg shadow-blue-600/25"
+          disabled={isSubmitting || !termsAccepted}
+          className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-600/25"
         >
           {isSubmitting ? t('auth.creatingAccount') : t('auth.createAccountBtn')}
         </button>

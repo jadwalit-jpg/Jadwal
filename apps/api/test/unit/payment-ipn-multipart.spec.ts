@@ -18,6 +18,7 @@ import { ConfigService } from '@nestjs/config';
 import * as request from 'supertest';
 import { PaymentController } from '../../src/payment/payment.controller';
 import { PaymentService } from '../../src/payment/payment.service';
+import { TermsAcceptedGuard } from '../../src/auth/guards/terms-accepted.guard';
 
 const VALID_RESPONSE_KEY = 'a'.repeat(64);
 const VALID_BASKET = 'JDWL-549e0f09-233';
@@ -39,7 +40,14 @@ describe('POST /payment/callback/ipn — multipart/form-data parsing', () => {
         { provide: PaymentService, useValue: { handleCallback, isTrustedIpnSource, paymentStatusByBasket } },
         { provide: ConfigService, useValue: { getOrThrow: () => 'https://app.example.com' } },
       ],
-    }).compile();
+    })
+      // The controller now references TermsAcceptedGuard (on the initiate route),
+      // which injects PrismaService. This suite only exercises the public IPN +
+      // browser-callback routes, so stub the guard to avoid pulling Prisma into
+      // this lightweight controller test.
+      .overrideGuard(TermsAcceptedGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     app = moduleRef.createNestApplication();
     // Mirror production global validation (main.ts).
