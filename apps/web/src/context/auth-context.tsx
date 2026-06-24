@@ -83,12 +83,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (email: string, password: string) => {
     const { data } = await api.post('/auth/login', { email, password });
     setUser(data);
-    // The login response doesn't carry `needsTermsAcceptance` (it's computed by
-    // GET /auth/me). Refresh from /auth/me so the consent gate appears
-    // immediately for a pre-feature / OAuth-merged password account, not only
-    // after the next navigation. Fire-and-forget — login already succeeded; a
-    // transient failure is retried by the pathname-change checkAuth.
-    void checkAuth();
+    // Note: the login response doesn't carry `needsTermsAcceptance` (computed by
+    // GET /auth/me). It's filled in by the `checkAuth()` that runs on the
+    // post-login route change, so the consent gate appears on the redirect. The
+    // server-side TermsAcceptedGuard blocks any transaction in the interim.
     return data;
   };
 
