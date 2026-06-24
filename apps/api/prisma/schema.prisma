@@ -33,6 +33,15 @@ model User {
   /// First time this user cleared a booking email-OTP. NULL = never; once set,
   /// later bookings skip the OTP step. One-way (set once, never cleared).
   bookingOtpVerifiedAt DateTime?
+  /// Terms & Privacy acceptance. `termsAcceptedAt` = when the user accepted;
+  /// `termsAcceptedVersion` = which TERMS_VERSION they accepted. NULL = never
+  /// accepted (accounts created before this feature, or a Google-OAuth signup
+  /// that hasn't passed the post-login consent gate). Accepting the Terms also
+  /// constitutes the user's confirmation that they are 18+. The contract-forming
+  /// endpoints (booking create, payment initiate, vendor listing create) reject
+  /// when this is NULL, so consent cannot be bypassed.
+  termsAcceptedAt          DateTime?
+  termsAcceptedVersion     String?
   emailVerified            Boolean   @default(false)
   verificationToken        String?   @unique
   verificationTokenExpiry  DateTime?

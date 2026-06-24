@@ -20,6 +20,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { hasAcceptedCurrentTerms } from '../common/terms';
 
 @Controller('auth')
 export class AuthController {
@@ -345,19 +346,34 @@ export class AuthController {
   async getProfile(@CurrentUser() user: RequestUser) {
     const dbUser = await this.prisma.client.user.findUnique({
       where: { id: user.id },
-      select: { id: true, email: true, fullName: true, role: true, phone: true },
+      select: { id: true, email: true, fullName: true, role: true, phone: true, termsAcceptedAt: true, termsAcceptedVersion: true },
     });
     if (!dbUser) throw new UnauthorizedException();
+
+    // Drives the one-time post-login consent gate: true when the user has never
+    // accepted, or accepted an older TERMS_VERSION.
+    const needsTermsAcceptance = !hasAcceptedCurrentTerms(dbUser);
 
     if (dbUser.role === 'VENDOR') {
       const vendor = await this.prisma.client.vendor.findUnique({
         where: { userId: user.id },
         select: { id: true, businessNameEn: true, businessNameAr: true, slug: true, status: true, countryId: true },
       });
-      return { ...dbUser, vendor };
+      return { ...dbUser, vendor, needsTermsAcceptance };
     }
 
-    return dbUser;
+    return { ...dbUser, needsTermsAcceptance };
+  }
+
+  // Records the current user's acceptance of the latest Terms — called by the
+  // post-login consent gate (Google-OAuth signups, pre-feature accounts, and
+  // anyone after a TERMS_VERSION bump). Email/password + vendor signups accept
+  // at registration, so they never need this.
+  @Post('accept-terms')
+  @Throttle(RATE_LIMIT_WRITE)
+  @UseGuards(JwtAuthGuard)
+  async acceptTerms(@CurrentUser() user: RequestUser) {
+    return this.authService.acceptTerms(user.id);
   }
 
   // ─── Password Reset ─────────────────────────────────────────────────────

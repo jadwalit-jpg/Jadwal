@@ -37,6 +37,7 @@ import { cn } from '@/lib/utils';
 import { localized } from '@/lib/localize';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
+import TermsAcceptModal from '@/components/terms-accept-modal';
 import { ActivityDetailPageSkeleton } from '@/components/ui/skeletons';
 import {
   Badge,
@@ -158,6 +159,20 @@ export default function ActivityDetailClient({
   const [selectedImage, setSelectedImage] = useState(0);
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const [guests, setGuests] = useState(1);
+  // Action-time Terms gate: a no-consent user who clicks "Book now" gets a
+  // popup BEFORE reaching the booking page. Accept → proceed to the captured
+  // URL; cancel → stay put. The server guard is still the hard boundary.
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
+  const [pendingBookUrl, setPendingBookUrl] = useState<string | null>(null);
+  const handleBookNow = useCallback(() => {
+    const url = `/activity/${slug}/book${guests > 1 ? `?guests=${guests}` : ''}`;
+    if (user?.needsTermsAcceptance) {
+      setPendingBookUrl(url);
+      setTermsModalOpen(true);
+      return;
+    }
+    router.push(url);
+  }, [slug, guests, user?.needsTermsAcceptance, router]);
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewHover, setReviewHover] = useState(0);
 
@@ -1259,11 +1274,7 @@ export default function ActivityDetailClient({
                       <ChevronRight className="h-4 w-4" aria-hidden="true" />
                     )
                   }
-                  onClick={() =>
-                    router.push(
-                      `/activity/${slug}/book${guests > 1 ? `?guests=${guests}` : ''}`,
-                    )
-                  }
+                  onClick={handleBookNow}
                 >
                   {t('activity.bookNow')}
                 </Button>
@@ -1327,11 +1338,7 @@ export default function ActivityDetailClient({
                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
                 )
               }
-              onClick={() =>
-                router.push(
-                  `/activity/${slug}/book${guests > 1 ? `?guests=${guests}` : ''}`,
-                )
-              }
+              onClick={handleBookNow}
             >
               {t('activity.bookNow')}
             </Button>
@@ -1439,6 +1446,12 @@ export default function ActivityDetailClient({
           ) : null}
         </div>
       ) : null}
+
+      <TermsAcceptModal
+        open={termsModalOpen}
+        onAccepted={() => { setTermsModalOpen(false); if (pendingBookUrl) router.push(pendingBookUrl); }}
+        onCancel={() => setTermsModalOpen(false)}
+      />
     </div>
   );
 }

@@ -63,6 +63,7 @@ export function HeroSearchBar() {
             onChange={setSelectedCategory}
             placeholder={t('home.allCategories')}
             className="w-full"
+            seamless
           />
         </div>
         <div className="flex-1 flex items-center gap-3 px-5">

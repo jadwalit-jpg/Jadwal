@@ -280,10 +280,14 @@ export class AdminService {
   // ─── Users ──────────────────────────────────────────────────
   async getUsers(query: PaginationDto) {
     const db = this.prisma.client;
-    const { page = 1, limit = 20, search, status, role, verified } = query;
+    const { page = 1, limit = 20, search, status, role, verified, includeDeleted } = query;
     const skip = (page - 1) * limit;
 
     const where: Prisma.UserWhereInput = {};
+    // Hide soft-deleted (anonymised) users unless explicitly requested. The
+    // rows are retained for PDPL/GDPR financial-audit, but they shouldn't
+    // clutter the default admin list.
+    if (includeDeleted !== 'true') where.deletedAt = null;
     if (search) {
       where.OR = [
         { fullName: { contains: search, mode: 'insensitive' } },
@@ -305,6 +309,7 @@ export class AdminService {
         select: {
           id: true, fullName: true, email: true, phone: true,
           role: true, isDeactivated: true, emailVerified: true, createdAt: true,
+          termsAcceptedAt: true, termsAcceptedVersion: true, deletedAt: true,
         },
         orderBy: { createdAt: 'desc' },
         skip,

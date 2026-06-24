@@ -19,6 +19,7 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { RefundDecisionDto } from './dto/refund-decision.dto';
 import { VerifyEmailOtpDto } from './dto/verify-email-otp.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { TermsAcceptedGuard } from '../auth/guards/terms-accepted.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -42,6 +43,7 @@ export class BookingsController {
 
   @Post()
   @Throttle(RATE_LIMIT_WRITE)
+  @UseGuards(TermsAcceptedGuard) // consent required to form a booking (anti-bypass)
   create(@CurrentUser() user: RequestUser, @Body() dto: CreateBookingDto) {
     if (user.role === 'ADMIN' || user.role === 'VENDOR') {
       throw new ForbiddenException('Only customers can create bookings');

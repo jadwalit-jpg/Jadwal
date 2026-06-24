@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches, IsBoolean, Equals } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { IsStrongPassword } from '../../common/validators/password-strength';
 import { IsNotDisposableEmail } from '../../common/validators/disposable-email';
@@ -59,4 +59,11 @@ export class RegisterDto {
   @IsOptional()
   @Transform(({ value }) => value == null ? undefined : String(value))
   website?: string;
+
+  // Explicit Terms & Privacy consent — required to be `true`. Accepting also
+  // confirms the user is 18+ (the minimum age is stated in the Terms). The
+  // service records termsAcceptedAt + the current TERMS_VERSION on success.
+  @IsBoolean()
+  @Equals(true, { message: 'You must accept the Terms and Privacy Policy' })
+  termsAccepted!: boolean;
 }

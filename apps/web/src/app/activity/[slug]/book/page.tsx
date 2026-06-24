@@ -24,6 +24,7 @@ import { sanitizeObject } from '@/lib/validation';
 import { localized } from '@/lib/localize';
 import { useAuth } from '@/context/auth-context';
 import { useGeo } from '@/context/geo-context';
+import TermsAcceptModal from '@/components/terms-accept-modal';
 import { useToast } from '@/components/toast';
 import { BookingPhoneModal } from '@/components/booking-phone-modal';
 import Navbar from '@/components/navbar';
@@ -151,7 +152,7 @@ export default function BookActivityPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user } = useAuth();
+  const { user, checkAuth } = useAuth();
   const { country: geoCountry } = useGeo();
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
@@ -703,6 +704,15 @@ export default function BookActivityPage() {
       router.push(`/bookings/${bookingId}`);
     },
     onError: (err) => {
+      // Server-side consent guard (TermsAcceptedGuard) — defense in depth if the
+      // inline accept step below was somehow bypassed. Refresh so the inline
+      // accept prompt surfaces, and show a clear message instead of a generic error.
+      const detail = String((err as { response?: { data?: { message?: unknown } } })?.response?.data?.message ?? '');
+      if (/TERMS_NOT_ACCEPTED/i.test(detail)) {
+        void checkAuth();
+        toast(t('booking.termsRequired', 'Please accept our Terms & Privacy to book.'), 'error');
+        return;
+      }
       toast(getApiError(err, 'Failed to create booking'), 'error');
     },
   });
@@ -835,6 +845,14 @@ export default function BookActivityPage() {
 
   return (
     <div className="min-h-screen bg-jadwal-bg font-outfit text-jadwal-text">
+      {/* Direct-URL defense: a no-consent user who lands here (not via the
+          gated "Book now") still gets the accept popup. Accept → stays & books;
+          cancel → back to the activity page. Server guard remains the boundary. */}
+      <TermsAcceptModal
+        open={!!user?.needsTermsAcceptance}
+        onAccepted={() => { /* needsTermsAcceptance flips false → modal closes */ }}
+        onCancel={() => router.push(`/activity/${slug}`)}
+      />
       <Navbar variant="solid" />
 
       <div className="pt-24 max-w-6xl mx-auto px-4 sm:px-6 pb-16">
@@ -1586,7 +1604,7 @@ export default function BookActivityPage() {
                     size="lg"
                     className="mt-5"
                     onClick={handleSubmit}
-                    disabled={!canSubmit || bookMutation.isPending}
+                    disabled={!canSubmit || bookMutation.isPending || !!user?.needsTermsAcceptance}
                     loading={bookMutation.isPending}
                     iconEnd={
                       <ChevronRight className="h-4 w-4" aria-hidden="true" />
