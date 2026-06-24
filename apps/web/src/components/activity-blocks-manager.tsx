@@ -12,8 +12,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Lock, Trash2, Loader2, ChevronDown } from 'lucide-react';
 import { type Block, buildDisplay, weekdayLabel } from '@/lib/activity-blocks';
 
+type DraftBlockBody = { date: string; endDate?: string; slotTimes?: string[]; repeatWeekly?: boolean };
+
 interface Props {
-  activityId: string;
+  activityId?: string;
   bookingType: 'HOURLY' | 'DAILY';
   // HOURLY slot config — used to build the start-time grid the vendor locks.
   checkInTime?: string | null;
@@ -23,6 +25,14 @@ interface Props {
   apiBase?: string;
   // When true, the section collapses behind an Open/Close toggle (garage gate).
   collapsible?: boolean;
+  // ── DRAFT MODE (create wizard) ── no activity yet, so we don't hit the API:
+  // the same calendar + slot grid collect lock "requests" ({date, endDate?,
+  // slotTimes?}) into `value`, bubbling via `onChange`. The wizard sends them
+  // with the create. Recurring-weekly is hidden in draft (add it in edit) to keep
+  // the 6-month expansion authoritative on the server.
+  draft?: boolean;
+  value?: DraftBlockBody[];
+  onChange?: (items: DraftBlockBody[]) => void;
 }
 
 const BRAND = '#1d4f35';
@@ -75,7 +85,7 @@ function prettyDate(dateStr: string): string {
   });
 }
 
-export default function ActivityBlocksManager({ activityId, bookingType, checkInTime, checkOutTime, durationValue, apiBase = '/vendor', collapsible = false }: Props) {
+export default function ActivityBlocksManager({ activityId, bookingType, checkInTime, checkOutTime, durationValue, apiBase = '/vendor', collapsible = false, draft = false, value, onChange }: Props) {
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -97,10 +107,33 @@ export default function ActivityBlocksManager({ activityId, bookingType, checkIn
 
   const queryKey = [apiBase === '/admin' ? 'admin-activity-blocks' : 'vendor-activity-blocks', activityId];
 
-  const { data: blocks = [], isLoading } = useQuery<Block[]>({
+  const { data: fetched = [], isLoading: loadingBlocks } = useQuery<Block[]>({
     queryKey,
     queryFn: () => api.get(`${apiBase}/activities/${activityId}/blocks`).then((r) => r.data),
+    enabled: !draft && !!activityId,
   });
+  // In draft mode synthesize Block[] from the collected lock requests so the
+  // calendar (red days) + slot grid reflect pending locks. Synthetic ids encode
+  // the source request index (+ slot) so a click-to-remove maps back to `value`.
+  const draftBlocks = useMemo<Block[]>(() => {
+    if (!draft) return [];
+    const out: Block[] = [];
+    (value ?? []).forEach((b, i) => {
+      if (b.slotTimes?.length) {
+        for (const s of b.slotTimes) {
+          const start = `${b.date}T${s}:00.000Z`;
+          out.push({ id: `draft-${i}-${s}`, blockStart: start, blockEnd: new Date(Date.parse(start) + 60 * 60 * 1000).toISOString() });
+        }
+      } else {
+        const start = `${b.date}T00:00:00.000Z`;
+        const endBase = b.endDate ?? b.date;
+        out.push({ id: `draft-${i}`, blockStart: start, blockEnd: new Date(Date.parse(`${endBase}T00:00:00.000Z`) + DAY_MS).toISOString() });
+      }
+    });
+    return out;
+  }, [draft, value]);
+  const blocks = draft ? draftBlocks : fetched;
+  const isLoading = draft ? false : loadingBlocks;
 
   // Weekday names spanned by the current selection — shown in the repeat-weekly note.
   const recurringWeekdays = useMemo(() => {
@@ -137,6 +170,40 @@ export default function ActivityBlocksManager({ activityId, bookingType, checkIn
 
   const clearSelection = () => { setSelectedDates(new Set()); setRangeAnchor(null); };
 
+  // ── Draft-mode collectors (create wizard) — append/remove lock REQUESTS into
+  // `value` instead of hitting the API. Whole-day selections group into runs
+  // (one {date,endDate} per contiguous range); slots become one {date,slotTimes}.
+  const draftLockWholeDays = () => {
+    const bodies: DraftBlockBody[] = groupRuns([...selectedDates]).map((run) =>
+      run.end !== run.start ? { date: run.start, endDate: run.end } : { date: run.start },
+    );
+    onChange?.([...(value ?? []), ...bodies]);
+    clearSelection();
+  };
+  const draftLockSlots = () => {
+    onChange?.([...(value ?? []), { date: activeDate, slotTimes: [...selectedSlots].sort() }]);
+    setSelectedSlots(new Set());
+  };
+  // Synthetic id → source request: `draft-<i>` (whole-day/range) or
+  // `draft-<i>-<slot>` (a single slot of request i).
+  const draftRemove = (id: string) => {
+    const m = id.match(/^draft-(\d+)(?:-(.+))?$/);
+    if (!m) return;
+    const idx = Number(m[1]);
+    const slot = m[2];
+    const next = [...(value ?? [])];
+    const body = next[idx];
+    if (!body) return;
+    if (slot && body.slotTimes) {
+      const remaining = body.slotTimes.filter((s) => s !== slot);
+      if (remaining.length) next[idx] = { ...body, slotTimes: remaining };
+      else next.splice(idx, 1);
+    } else {
+      next.splice(idx, 1);
+    }
+    onChange?.(next);
+  };
+
   // Calendar — click a free/partial day.
   const handleDayClick = (dateStr: string, shift: boolean) => {
     if (slotMode) {
@@ -166,12 +233,12 @@ export default function ActivityBlocksManager({ activityId, bookingType, checkIn
   // Calendar — click a red (locked whole-day) day → unblock.
   const handleUnlock = (dateStr: string) => {
     const id = coveringBlockId(dateStr);
-    if (id) deleteMut.mutate(id);
+    if (id) { draft ? draftRemove(id) : deleteMut.mutate(id); }
   };
 
   const toggleSlot = (s: string) => {
     const blockId = lockedSlots.get(s);
-    if (blockId) { deleteMut.mutate(blockId); return; } // click a locked slot → unblock it
+    if (blockId) { draft ? draftRemove(blockId) : deleteMut.mutate(blockId); return; } // click a locked slot → unblock it
     setSelectedSlots((prev) => {
       const next = new Set(prev);
       if (next.has(s)) next.delete(s); else next.add(s);
@@ -322,12 +389,14 @@ export default function ActivityBlocksManager({ activityId, bookingType, checkIn
             {t('vendor.activities.wizard.blocked.wholeDay', 'Block the whole day')}
           </label>
         )}
-        <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-300 cursor-pointer">
-          <input type="checkbox" checked={repeatWeekly}
-            onChange={(e) => { setRepeatWeekly(e.target.checked); clearSelection(); setSelectedSlots(new Set()); setActiveDate(''); }}
-            className="rounded border-gray-300 focus:ring-0" style={{ accentColor: BRAND }} />
-          {t('vendor.activities.wizard.blocked.repeatWeekly', 'Repeat every week for 6 months (these weekdays)')}
-        </label>
+        {!draft && (
+          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-300 cursor-pointer">
+            <input type="checkbox" checked={repeatWeekly}
+              onChange={(e) => { setRepeatWeekly(e.target.checked); clearSelection(); setSelectedSlots(new Set()); setActiveDate(''); }}
+              className="rounded border-gray-300 focus:ring-0" style={{ accentColor: BRAND }} />
+            {t('vendor.activities.wizard.blocked.repeatWeekly', 'Repeat every week for 6 months (these weekdays)')}
+          </label>
+        )}
       </div>
 
       {/* Legend */}
@@ -410,19 +479,19 @@ export default function ActivityBlocksManager({ activityId, bookingType, checkIn
       {(slotMode ? !!activeDate : true) && (
         <div className="mt-3 rounded-xl bg-stone-50 dark:bg-slate-800/50 p-4 border border-stone-200 dark:border-slate-700">
           {slotMode ? (
-            <button type="button" disabled={selectedSlots.size === 0 || lockSlotsMut.isPending}
-              onClick={() => lockSlotsMut.mutate()}
+            <button type="button" disabled={selectedSlots.size === 0 || (!draft && lockSlotsMut.isPending)}
+              onClick={() => draft ? draftLockSlots() : lockSlotsMut.mutate()}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ backgroundColor: BRAND }}>
-              {lockSlotsMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+              {!draft && lockSlotsMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
               {t('vendor.activities.wizard.blocked.lock', 'Lock')} {selectedSlots.size > 0 ? selectedSlots.size : ''} {t('vendor.activities.wizard.blocked.timesWord', 'time(s)')}
             </button>
           ) : (
-            <button type="button" disabled={selectedDates.size === 0 || lockMut.isPending}
-              onClick={() => lockMut.mutate()}
+            <button type="button" disabled={selectedDates.size === 0 || (!draft && lockMut.isPending)}
+              onClick={() => draft ? draftLockWholeDays() : lockMut.mutate()}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ backgroundColor: BRAND }}>
-              {lockMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+              {!draft && lockMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
               {repeatWeekly
                 ? `${t('vendor.activities.wizard.blocked.lockRecurring', 'Lock recurring')} (${recurringWeekdays.length} ${t('vendor.activities.wizard.blocked.weekdaysWord', 'weekday(s)')})`
                 : `${t('vendor.activities.wizard.blocked.lock', 'Lock')} ${selectedDates.size > 0 ? selectedDates.size : ''} ${t('vendor.activities.wizard.blocked.datesWord', 'date(s)')}`}

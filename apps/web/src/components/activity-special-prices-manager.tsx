@@ -30,12 +30,19 @@ interface SpecialPrice {
 }
 
 interface Props {
-  activityId: string;
+  activityId?: string;
   currency?: string;
   // '/vendor' (default, own activity) or '/admin' (any activity).
   apiBase?: string;
   // When true, collapses behind an Open/Close toggle (same as the blocks manager).
   collapsible?: boolean;
+  // ── DRAFT MODE (create wizard) ── no activity exists yet, so we don't hit the
+  // API: the calendar collects {date, price} into `value` and bubbles changes via
+  // `onChange`. The wizard holds the list and sends it with the create. Same UI +
+  // same per-date "set the price for this day" logic as the live (edit) mode.
+  draft?: boolean;
+  value?: Array<{ date: string; price: number }>;
+  onChange?: (items: Array<{ date: string; price: number }>) => void;
 }
 
 function ymd(y: number, m: number, d: number): string {
@@ -57,6 +64,9 @@ export default function ActivitySpecialPricesManager({
   currency = 'QAR',
   apiBase = '/vendor',
   collapsible = false,
+  draft = false,
+  value,
+  onChange,
 }: Props) {
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
@@ -72,10 +82,17 @@ export default function ActivitySpecialPricesManager({
   const maxMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + MAX_MONTHS_AHEAD, 1));
 
   const queryKey = [apiBase === '/admin' ? 'admin-special-prices' : 'vendor-special-prices', activityId];
-  const { data: prices = [], isLoading } = useQuery<SpecialPrice[]>({
+  const { data: fetched = [], isLoading: loadingPrices } = useQuery<SpecialPrice[]>({
     queryKey,
     queryFn: () => api.get(`${apiBase}/activities/${activityId}/special-prices`).then((r) => r.data),
+    enabled: !draft && !!activityId,
   });
+  // In draft mode the list comes from the wizard's local state (synthetic ids
+  // keyed by date); live mode uses the fetched rows.
+  const prices: SpecialPrice[] = draft
+    ? (value ?? []).map((p) => ({ id: `draft-${p.date}`, date: p.date, price: p.price }))
+    : fetched;
+  const isLoading = draft ? false : loadingPrices;
 
   // date (YYYY-MM-DD) → { id, price } for fast calendar lookup + the list.
   const byDate = useMemo(() => {
@@ -90,6 +107,7 @@ export default function ActivitySpecialPricesManager({
   const { data: blocks = [] } = useQuery<Block[]>({
     queryKey: [apiBase === '/admin' ? 'admin-activity-blocks' : 'vendor-activity-blocks', activityId],
     queryFn: () => api.get(`${apiBase}/activities/${activityId}/blocks`).then((r) => r.data),
+    enabled: !draft && !!activityId,
   });
   const isLocked = useCallback(
     (dateStr: string): boolean => {
@@ -134,7 +152,28 @@ export default function ActivitySpecialPricesManager({
   const selectedExisting = selectedDate ? byDate.get(selectedDate) : undefined;
 
   const save = () => {
-    if (selectedDate && priceValid) saveMut.mutate({ date: selectedDate, price: Math.round(priceNum * 100) / 100 });
+    if (!selectedDate || !priceValid) return;
+    const price = Math.round(priceNum * 100) / 100;
+    if (draft) {
+      // Upsert by date into the wizard's local list (same "set the price for this
+      // day" semantics the live core uses — one override per date).
+      onChange?.([...(value ?? []).filter((v) => v.date !== selectedDate), { date: selectedDate, price }]);
+      setSelectedDate('');
+      setPriceInput('');
+    } else {
+      saveMut.mutate({ date: selectedDate, price });
+    }
+  };
+
+  const removeDate = (date: string) => {
+    if (draft) {
+      onChange?.((value ?? []).filter((v) => v.date !== date));
+      setSelectedDate('');
+      setPriceInput('');
+    } else {
+      const ex = byDate.get(date);
+      if (ex) deleteMut.mutate(ex.id);
+    }
   };
 
   // Calendar grid (leading blanks + days) for the cursor month.
@@ -283,13 +322,13 @@ export default function ActivitySpecialPricesManager({
                         />
                         <span className="absolute inset-y-0 end-3 flex items-center text-xs text-gray-400 dark:text-slate-500">{currency}</span>
                       </div>
-                      <button type="button" disabled={!priceValid || saveMut.isPending} onClick={save}
+                      <button type="button" disabled={!priceValid || (!draft && saveMut.isPending)} onClick={save}
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1d4f35] text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-                        {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Tag className="h-4 w-4" />}
+                        {!draft && saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Tag className="h-4 w-4" />}
                         {selectedExisting ? t('vendor.activities.wizard.specialPrice.update', 'Update') : t('vendor.activities.wizard.specialPrice.save', 'Save')}
                       </button>
                       {selectedExisting && (
-                        <button type="button" disabled={deleteMut.isPending} onClick={() => deleteMut.mutate(selectedExisting.id)}
+                        <button type="button" disabled={!draft && deleteMut.isPending} onClick={() => removeDate(selectedDate)}
                           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50">
                           <Trash2 className="h-4 w-4" />
                           {t('vendor.activities.wizard.specialPrice.remove', 'Remove')}

@@ -16,6 +16,8 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ACTIVITY_TITLE_REGEX, ACTIVITY_TITLE_MESSAGE } from '../../common/validators/name-allowlist';
+import { CreateActivityBlockDto } from './create-activity-block.dto';
+import { CreateSpecialPriceDto } from './create-special-price.dto';
 
 enum BookingType {
   HOURLY = 'HOURLY',
@@ -183,4 +185,23 @@ export class CreateActivityDto {
   @Max(10000)
   @IsOptional()
   unitCapacity?: number;
+
+  // ── Optional availability LOCKS + SPECIAL PRICES set DURING create. The add
+  // wizard collects the exact same shapes the live sub-resource endpoints accept;
+  // createActivity processes them atomically (same transaction) via the SAME core
+  // logic the standalone endpoints use, so validation/expansion can't drift.
+  // Bounded so a nested-create payload stays sane.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateActivityBlockDto)
+  @ArrayMaxSize(200)
+  blocks?: CreateActivityBlockDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateSpecialPriceDto)
+  @ArrayMaxSize(200)
+  specialPrices?: CreateSpecialPriceDto[];
 }
