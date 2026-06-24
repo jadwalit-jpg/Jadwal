@@ -755,6 +755,7 @@ export default function CreateActivityPage() {
                   with the activity. Recurring-weekly locks are added later in edit. */}
               <ActivityBlocksManager
                 draft
+                collapsible
                 value={blocks}
                 onChange={setBlocks}
                 bookingType={form.bookingType as 'HOURLY' | 'DAILY'}
@@ -932,6 +933,7 @@ export default function CreateActivityPage() {
                   with the activity. Same UI + logic as the edit page. */}
               <ActivitySpecialPricesManager
                 draft
+                collapsible
                 value={specialPrices}
                 onChange={setSpecialPrices}
               />
