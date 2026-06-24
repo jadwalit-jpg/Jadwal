@@ -10,6 +10,7 @@ import { localized } from '@/lib/localize';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { ACTIVITY_WIZARD_ERR, wizardSteps, daysOfWeek } from '../../../_lib/vendor-activity-wizard-copy';
+import ActivitySpecialPricesManager from '@/components/activity-special-prices-manager';
 import { getApiError } from '@/lib/api-error';
 import { sanitize, sanitizeObject } from '@/lib/validation';
 import { VendorSidebar } from '../../../_components/vendor-sidebar';
@@ -281,6 +282,10 @@ export default function CreateActivityPage() {
   const [unitCount, setUnitCount] = useState('');
   const [unitCapacity, setUnitCapacity] = useState('');
 
+  // Lockouts + per-date special prices collected DURING create (draft — no
+  // activity exists yet). Sent with the create payload and saved atomically.
+  const [specialPrices, setSpecialPrices] = useState<Array<{ date: string; price: number }>>([]);
+
   const { data: categories } = useQuery({
     queryKey: [user?.id, 'public-categories'],
     queryFn: () => api.get('/catalog/categories').then(r => r.data),
@@ -434,6 +439,9 @@ export default function CreateActivityPage() {
       extraServices: extraServices.length > 0 ? extraServices : undefined,
       activeDays,
     });
+    // Nested sub-resources — added AFTER sanitizeObject so the date/price values
+    // pass through untouched. The create endpoint saves them atomically.
+    if (specialPrices.length > 0) (payload as Record<string, unknown>).specialPrices = specialPrices;
     createMutation.mutate(payload);
   };
 
@@ -890,6 +898,13 @@ export default function CreateActivityPage() {
                   </div>
                 </div>
               </div>
+              {/* Per-date special prices — set DURING create (draft mode), saved
+                  with the activity. Same UI + logic as the edit page. */}
+              <ActivitySpecialPricesManager
+                draft
+                value={specialPrices}
+                onChange={setSpecialPrices}
+              />
             </div>
           )}
 
