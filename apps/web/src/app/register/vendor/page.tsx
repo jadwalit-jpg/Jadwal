@@ -176,6 +176,9 @@ function VendorAuthContent() {
           website: website || undefined, // honeypot
         }),
         password: pw, // Never sanitize passwords — sanitize() strips valid chars like <, >
+        // Explicit Terms + Privacy consent — gated by `agreedTerms` above (the
+        // submit can't fire unless it's true); also confirms 18+.
+        termsAccepted: true,
       });
 
       setSuccess(true);

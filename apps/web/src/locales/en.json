@@ -290,6 +290,16 @@
     "createAccountBtn": "Create Account",
     "agreeTerms": "By signing up you agree to our",
     "and": "and",
+    "agreeTermsCheckbox": "I agree to the",
+    "and18Plus": "and confirm I am 18 or older",
+    "mustAgreeTerms": "You must accept the Terms and Privacy Policy",
+    "termsGate": {
+      "title": "One more step",
+      "body": "Please review and accept our Terms and Privacy Policy to continue using Jadwal.",
+      "accept": "Accept & continue",
+      "signOut": "Sign out",
+      "failed": "Could not record your acceptance. Please try again."
+    },
     "checkInbox": "Check your inbox",
     "sentVerificationTo": "We sent a verification link to",
     "linkExpires": "Click the link in the email to activate your account. It expires in 24 hours.",
@@ -1274,7 +1284,7 @@
     "lastUpdated": "Last updated",
     "acceptance": {
       "title": "1. Acceptance of Terms",
-      "p1": "By accessing or using the AL Jadwal platform (\"Platform\"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Platform."
+      "p1": "By accessing or using the AL Jadwal platform (\"Platform\"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Platform. You must be at least 18 years old to register for or use the Platform; by accepting these Terms you confirm that you are 18 years of age or older and legally able to enter into a binding contract."
     },
     "platform": {
       "title": "2. Platform Description",

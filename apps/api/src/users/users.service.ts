@@ -37,7 +37,7 @@ export class UsersService {
     } as any) as Promise<User | null>;
   }
 
-  async create(data: { fullName: string; email: string; password: string; phone?: string; role?: string; preferredLanguage?: 'EN' | 'AR' }): Promise<User> {
+  async create(data: { fullName: string; email: string; password: string; phone?: string; role?: string; preferredLanguage?: 'EN' | 'AR'; termsAcceptedAt?: Date; termsAcceptedVersion?: string }): Promise<User> {
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hashedPassword = await bcrypt.hash(data.password, bcryptRounds);
     return this.prisma.client.user.create({
@@ -50,6 +50,10 @@ export class UsersService {
         // Omitted → schema default 'EN'. Set from the Accept-Language header
         // captured at registration (see AuthService.registerAndLogin).
         ...(data.preferredLanguage ? { preferredLanguage: data.preferredLanguage } : {}),
+        // Terms acceptance captured at registration (the register DTO requires
+        // termsAccepted === true). Stamped together so version is never set
+        // without a timestamp.
+        ...(data.termsAcceptedAt ? { termsAcceptedAt: data.termsAcceptedAt, termsAcceptedVersion: data.termsAcceptedVersion } : {}),
       },
     });
   }

@@ -17,6 +17,7 @@ import { VendorService } from './vendor.service';
 import { BookingsService } from '../bookings/bookings.service';
 import { UploadService } from '../common/services/upload.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { TermsAcceptedGuard } from '../auth/guards/terms-accepted.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -72,6 +73,7 @@ export class VendorController {
 
   @Post('activities')
   @Throttle(RATE_LIMIT_WRITE)
+  @UseGuards(TermsAcceptedGuard) // consent required to publish a listing (anti-bypass)
   createActivity(@CurrentUser() user: RequestUser, @Body() dto: CreateActivityDto) {
     return this.vendorService.createActivity(user.id, dto);
   }
