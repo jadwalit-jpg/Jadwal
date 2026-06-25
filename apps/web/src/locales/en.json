@@ -1065,7 +1065,12 @@
           "update": "Update",
           "remove": "Remove",
           "cancel": "Cancel",
-          "invalid": "Enter a price greater than 0."
+          "invalid": "Enter a price greater than 0.",
+          "helpMulti": "Tap dates to select them — Shift-click to pick a whole range. One price applies to all selected dates. Locked (blocked) dates can’t be priced.",
+          "priceForN": "Special price for {{count}} selected dates",
+          "saveN": "Save {{count}} dates",
+          "savedN": "Saved {{count}} special price(s)",
+          "maxDates": "You can price up to {{max}} dates at once."
         },
         "steps": {
           "basicInfo": "Basic Info",

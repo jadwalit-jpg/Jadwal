@@ -96,6 +96,41 @@ describe('Special prices — CRUD + scope', () => {
     expect(list).toHaveLength(0);
   });
 
+  test('bulk: applies one price to a date list + a range in a single call', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { vendor } = makeServices();
+    const res = await vendor.bulkCreateActivitySpecialPrices(seed.vendorUser.id, seed.activity.id, {
+      dates: [futureDate(10), futureDate(11)],
+      startDate: futureDate(20), endDate: futureDate(22), // 3-day inclusive range
+      price: 250,
+    });
+    expect(res.count).toBe(5);
+    const list = await vendor.getActivitySpecialPrices(seed.vendorUser.id, seed.activity.id);
+    expect(list).toHaveLength(5);
+    expect(list.every((p) => Number(p.price) === 250)).toBe(true);
+  });
+
+  test('bulk: a single invalid (past) date rolls the WHOLE batch back (atomic)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { vendor } = makeServices();
+    await expect(
+      vendor.bulkCreateActivitySpecialPrices(seed.vendorUser.id, seed.activity.id, {
+        dates: [futureDate(10), '2020-01-01'], price: 150,
+      }),
+    ).rejects.toThrow();
+    const list = await vendor.getActivitySpecialPrices(seed.vendorUser.id, seed.activity.id);
+    expect(list).toHaveLength(0); // nothing persisted
+  });
+
+  test('bulk: a vendor cannot bulk-price another vendor\'s activity', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { vendor } = makeServices();
+    const other = await makeSecondVendorUser();
+    await expect(
+      vendor.bulkCreateActivitySpecialPrices(other.id, seed.activity.id, { dates: [futureDate(10)], price: 150 }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
   test('setting the same date twice UPDATES (one active row)', async () => {
     const seed = await seedReference(ctx.prisma);
     const { vendor } = makeServices();

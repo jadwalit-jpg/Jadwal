@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { isValidDate } from '../bookings/bookings.service';
 import type { CreateSpecialPriceDto } from './dto/create-special-price.dto';
+import type { BulkSpecialPriceDto } from './dto/bulk-special-price.dto';
 
 // How far ahead a special price may be set — 6 months, matching BOOKING_MAX_ADVANCE_MONTHS
 // (the booking horizon) and the customer + block (lock) calendars. A price set beyond
@@ -72,4 +73,61 @@ export async function createSpecialPriceCore(
     select: { id: true, date: true, price: true, createdAt: true },
   });
   return { ...created, created: true };
+}
+
+/** Max dates a single bulk request may touch (matches the DTO's ArrayMaxSize). */
+export const BULK_SPECIAL_PRICE_MAX_DATES = 200;
+
+/**
+ * Resolve a {dates, startDate, endDate} bulk request into a sorted, de-duped
+ * list of YYYY-MM-DD strings. Format is already validated by the DTO; this adds
+ * the cross-field rules: at least one source, both range ends together, range
+ * not inverted, and a hard cap so one request can't open an unbounded
+ * transaction. Per-date calendar/horizon/past validation stays in the core.
+ */
+export function expandSpecialPriceDates(dto: BulkSpecialPriceDto): string[] {
+  const set = new Set<string>(dto.dates ?? []);
+
+  if (dto.startDate || dto.endDate) {
+    if (!dto.startDate || !dto.endDate) {
+      throw new BadRequestException('Both startDate and endDate are required for a range');
+    }
+    if (dto.endDate < dto.startDate) {
+      throw new BadRequestException('endDate must be on or after startDate');
+    }
+    let cursor = specialPriceDate(dto.startDate);
+    const end = specialPriceDate(dto.endDate);
+    let guard = 0;
+    while (cursor <= end) {
+      set.add(cursor.toISOString().slice(0, 10));
+      cursor = new Date(cursor.getTime() + 86_400_000); // +1 day (date-only, UTC)
+      if (++guard > BULK_SPECIAL_PRICE_MAX_DATES + 1) break; // backstop; cap enforced below
+    }
+  }
+
+  const dates = [...set].sort();
+  if (dates.length === 0) {
+    throw new BadRequestException('Provide one or more dates, or a startDate and endDate range');
+  }
+  if (dates.length > BULK_SPECIAL_PRICE_MAX_DATES) {
+    throw new BadRequestException(`Cannot set a special price for more than ${BULK_SPECIAL_PRICE_MAX_DATES} dates at once`);
+  }
+  return dates;
+}
+
+/**
+ * Apply ONE price to MANY dates by looping the per-date core. The CALLER must
+ * resolve+authorise `activity`, wrap this in a $transaction (so the batch is
+ * all-or-nothing), and bust the availability cache once afterwards.
+ */
+export async function bulkCreateSpecialPricesCore(
+  db: any,
+  activity: SpecialPriceActivity,
+  dto: BulkSpecialPriceDto,
+): Promise<{ count: number; dates: string[] }> {
+  const dates = expandSpecialPriceDates(dto);
+  for (const date of dates) {
+    await createSpecialPriceCore(db, activity, { date, price: dto.price });
+  }
+  return { count: dates.length, dates };
 }

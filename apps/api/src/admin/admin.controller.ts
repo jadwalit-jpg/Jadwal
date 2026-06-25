@@ -45,6 +45,7 @@ import { UpdateActivityDto } from './dto/update-activity.dto';
 import { CreateActivityBlockDto } from '../vendor/dto/create-activity-block.dto';
 import { BulkDeleteBlocksDto } from '../vendor/dto/bulk-delete-blocks.dto';
 import { CreateSpecialPriceDto } from '../vendor/dto/create-special-price.dto';
+import { BulkSpecialPriceDto } from '../vendor/dto/bulk-special-price.dto';
 import { MarkPayoutPaidDto, MarkPayoutUnpaidDto } from './dto/payout.dto';
 import { ProcessPayoutRequestDto } from './dto/process-payout-request.dto';
 import { RevertPayoutRequestDto } from './dto/revert-payout-request.dto';
@@ -291,6 +292,12 @@ export class AdminController {
   @Throttle(RATE_LIMIT_WRITE)
   createActivitySpecialPrice(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateSpecialPriceDto) {
     return this.adminService.createActivitySpecialPrice(id, dto);
+  }
+
+  @Post('activities/:id/special-prices/bulk')
+  @Throttle(RATE_LIMIT_WRITE)
+  bulkCreateActivitySpecialPrices(@Param('id', ParseUUIDPipe) id: string, @Body() dto: BulkSpecialPriceDto) {
+    return this.adminService.bulkCreateActivitySpecialPrices(id, dto);
   }
 
   @Delete('activities/:id/special-prices/:priceId')
