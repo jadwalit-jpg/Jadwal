@@ -17,7 +17,7 @@ import { getTestContext, seedReference } from './_setup';
 import { AdminService } from '../../src/admin/admin.service';
 import { VendorService } from '../../src/vendor/vendor.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
-import { BookingsService } from '../../src/bookings/bookings.service';
+import { BookingsService, refundCouponUsage } from '../../src/bookings/bookings.service';
 import { BadRequestException } from '@nestjs/common';
 import * as crypto from 'crypto';
 
@@ -471,6 +471,68 @@ describe('Coupon lifecycle — platform voucher usage limit', () => {
     // usedCount never exceeded the limit and only the first booking exists.
     expect((await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } })).usedCount).toBe(1);
     expect(await ctx.prisma.booking.count()).toBe(1);
+  });
+
+  test('single-use voucher is RELEASED + re-usable after the booking is cancelled', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { bookings } = makeServices();
+
+    const voucher = await ctx.prisma.coupon.create({
+      data: {
+        code: `RELEASE-${crypto.randomUUID().slice(0, 6)}`, vendorId: null,
+        discountType: 'PERCENTAGE', discountValue: 10,
+        validFrom: new Date(futureDate(-1)), validTo: new Date(futureDate(60)),
+        usageLimit: 1, usedCount: 0, status: 'APPROVED',
+      },
+    });
+    const claim = await ctx.prisma.claimedCoupon.create({ data: { userId: seed.customer.id, couponId: voucher.id } });
+
+    // Book with the voucher → consumed: usedCount 1, auto-capped to EXPIRED, claim.used true.
+    const res = await bookings.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7), slotTime: '10:00', guests: 2,
+      bookingPhone: '+97455123456',
+      voucherId: claim.id,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    const afterBook = await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } });
+    expect(afterBook.usedCount).toBe(1);
+    expect(afterBook.status).toBe('EXPIRED'); // auto-capped at the limit
+    expect((await ctx.prisma.claimedCoupon.findUniqueOrThrow({ where: { id: claim.id } })).used).toBe(true);
+
+    // Cancel → released: usedCount 0, status restored to APPROVED, claim.used false.
+    await bookings.cancelBooking(seed.customer.id, res.booking.id);
+    const afterCancel = await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } });
+    expect(afterCancel.usedCount).toBe(0);
+    expect(afterCancel.status).toBe('APPROVED');
+    expect((await ctx.prisma.claimedCoupon.findUniqueOrThrow({ where: { id: claim.id } })).used).toBe(false);
+
+    // And it can be applied again on a fresh booking.
+    const res2 = await bookings.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(9), slotTime: '10:00', guests: 2,
+      bookingPhone: '+97455123456',
+      voucherId: claim.id,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    expect(res2.booking.id).toBeTruthy();
+    expect((await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } })).usedCount).toBe(1);
+  });
+
+  test('an admin-rejected (EXPIRED, never-used) coupon is NOT resurrected by a release', async () => {
+    // Guards the release fix from over-reaching: a rejected coupon has usedCount 0
+    // (< limit), so the release must leave it EXPIRED.
+    const seed = await seedReference(ctx.prisma);
+    const rejected = await ctx.prisma.coupon.create({
+      data: {
+        code: `REJECTED-${crypto.randomUUID().slice(0, 6)}`, vendorId: null,
+        discountType: 'FIXED', discountValue: 5,
+        validFrom: new Date(futureDate(-1)), validTo: new Date(futureDate(60)),
+        usageLimit: 1, usedCount: 0, status: 'EXPIRED',
+      },
+    });
+    await ctx.prisma.$transaction((tx) => refundCouponUsage(tx, rejected.code, seed.customer.id));
+    expect((await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: rejected.id } })).status).toBe('EXPIRED');
   });
 
   test('voucher redemption rejected when usedCount already at usageLimit', async () => {

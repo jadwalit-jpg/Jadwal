@@ -66,9 +66,12 @@ export async function refundCouponUsage(
   customerId: string,
 ): Promise<void> {
   if (!couponCode) return;
-  const coupon = await tx.coupon.findUnique({ where: { code: couponCode }, select: { id: true } });
+  const coupon = await tx.coupon.findUnique({
+    where: { code: couponCode },
+    select: { id: true, status: true, usageLimit: true, usedCount: true, validTo: true },
+  });
   if (!coupon) return;
-  await tx.coupon.updateMany({
+  const dec = await tx.coupon.updateMany({
     where: { id: coupon.id, usedCount: { gt: 0 } },
     data: { usedCount: { decrement: 1 } },
   });
@@ -76,6 +79,27 @@ export async function refundCouponUsage(
     where: { userId: customerId, couponId: coupon.id, used: true },
     data: { used: false },
   });
+  // Release a coupon that was auto-EXPIRED *solely* because it hit its usage cap
+  // (the increment path flips status→EXPIRED once usedCount reaches usageLimit).
+  // After refunding one use it's back under the limit, so restore it to APPROVED
+  // — otherwise a single-use voucher stays dead forever after the booking that
+  // claimed it is cancelled ("This voucher is no longer active"). Tight guards so
+  // we never resurrect an admin-rejected or time-expired coupon:
+  //   • dec.count > 0                         → a use was actually refunded
+  //   • status === 'EXPIRED'                  → currently "off"
+  //   • usageLimit set && usedCount >= it     → it was AT the cap (auto-capped);
+  //       an admin-rejected coupon is PENDING-origin with usedCount 0 < limit,
+  //       so it never matches this and stays rejected
+  //   • validTo in the future                 → not a time-expired coupon
+  if (
+    dec.count > 0 &&
+    coupon.status === 'EXPIRED' &&
+    coupon.usageLimit != null &&
+    coupon.usedCount >= coupon.usageLimit &&
+    coupon.validTo > new Date()
+  ) {
+    await tx.coupon.update({ where: { id: coupon.id }, data: { status: 'APPROVED' } });
+  }
 }
 
 /**
