@@ -13,7 +13,8 @@ import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { refundCouponUsage } from '../bookings/bookings.service';
 import { createActivityBlockCore } from './activity-blocks.logic';
-import { createSpecialPriceCore } from './activity-special-prices.logic';
+import { createSpecialPriceCore, bulkCreateSpecialPricesCore } from './activity-special-prices.logic';
+import { BulkSpecialPriceDto } from './dto/bulk-special-price.dto';
 
 @Injectable()
 export class VendorService {
@@ -1074,6 +1075,25 @@ export class VendorService {
     if (!activity) throw new NotFoundException('Activity not found');
 
     const result = await createSpecialPriceCore(db, activity, dto);
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async bulkCreateActivitySpecialPrices(userId: string, activityId: string, dto: BulkSpecialPriceDto) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true, vendorId: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // One transaction → all dates applied or none (a single bad/past date rolls
+    // the whole batch back). Cache busted once after, not per date.
+    const result = await db.$transaction(
+      (tx: any) => bulkCreateSpecialPricesCore(tx, activity, dto),
+      { timeout: 20000 },
+    );
     void this.availabilityCache.invalidate(activityId);
     return result;
   }

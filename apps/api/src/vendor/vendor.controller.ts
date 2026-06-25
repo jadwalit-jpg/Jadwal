@@ -27,6 +27,7 @@ import { UpdateActivityDto } from './dto/update-activity.dto';
 import { CreateActivityBlockDto } from './dto/create-activity-block.dto';
 import { BulkDeleteBlocksDto } from './dto/bulk-delete-blocks.dto';
 import { CreateSpecialPriceDto } from './dto/create-special-price.dto';
+import { BulkSpecialPriceDto } from './dto/bulk-special-price.dto';
 import { VendorPaginationDto } from './dto/vendor-query.dto';
 import { UpdateVendorSettingsDto } from './dto/update-settings.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -155,6 +156,16 @@ export class VendorController {
     @Body() dto: CreateSpecialPriceDto,
   ) {
     return this.vendorService.createActivitySpecialPrice(user.id, id, dto);
+  }
+
+  @Post('activities/:id/special-prices/bulk')
+  @Throttle(RATE_LIMIT_WRITE)
+  bulkCreateActivitySpecialPrices(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: BulkSpecialPriceDto,
+  ) {
+    return this.vendorService.bulkCreateActivitySpecialPrices(user.id, id, dto);
   }
 
   @Delete('activities/:id/special-prices/:priceId')

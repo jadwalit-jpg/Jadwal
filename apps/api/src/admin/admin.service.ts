@@ -14,8 +14,9 @@ import { UpdatePlatformSettingsDto } from './dto/platform-settings.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
 import { CreateActivityBlockDto } from '../vendor/dto/create-activity-block.dto';
 import { CreateSpecialPriceDto } from '../vendor/dto/create-special-price.dto';
+import { BulkSpecialPriceDto } from '../vendor/dto/bulk-special-price.dto';
 import { createActivityBlockCore } from '../vendor/activity-blocks.logic';
-import { createSpecialPriceCore } from '../vendor/activity-special-prices.logic';
+import { createSpecialPriceCore, bulkCreateSpecialPricesCore } from '../vendor/activity-special-prices.logic';
 import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
@@ -969,6 +970,21 @@ export class AdminService {
     });
     if (!activity) throw new NotFoundException('Activity not found');
     const result = await createSpecialPriceCore(db, activity, dto);
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async bulkCreateActivitySpecialPrices(activityId: string, dto: BulkSpecialPriceDto) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({
+      where: { id: activityId },
+      select: { id: true, vendorId: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const result = await db.$transaction(
+      (tx: any) => bulkCreateSpecialPricesCore(tx, activity, dto),
+      { timeout: 20000 },
+    );
     void this.availabilityCache.invalidate(activityId);
     return result;
   }

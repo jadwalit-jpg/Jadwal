@@ -3,9 +3,13 @@
 /**
  * Per-date special-price manager — mirrors ActivityBlocksManager. Reusable across
  * actors via the `apiBase` prop ('/vendor' = own activity, '/admin' = any). The
- * vendor/admin clicks a calendar day, enters a price, and saves; days with an
- * override show their price as a badge. The applied price is frozen onto bookings
- * server-side, so editing/removing an override never changes existing bookings.
+ * vendor/admin selects one or more calendar days (Shift-click for a range), enters
+ * a price, and saves; days with an override show their price as a badge. The
+ * applied price is frozen onto bookings server-side, so editing/removing an
+ * override never changes existing bookings.
+ *
+ * Multi-date is sent in ONE bulk request (`/special-prices/bulk`) so pricing many
+ * dates no longer fires one request per date (which tripped the rate limit).
  */
 
 import { useState, useMemo, useCallback } from 'react';
@@ -22,6 +26,8 @@ import { useToast } from '@/components/toast';
 const MAX_PRICE = 1_000_000;
 // Match the booking advance window + the block (lock) calendar — 6 months ahead.
 const MAX_MONTHS_AHEAD = 6;
+// Matches the backend bulk cap (BulkSpecialPriceDto @ArrayMaxSize / span cap).
+const MAX_BULK_DATES = 200;
 
 interface SpecialPrice {
   id: string;
@@ -58,6 +64,19 @@ function prettyDate(s: string, locale: string): string {
     weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
   });
 }
+// Inclusive list of YYYY-MM-DD between two dates (for Shift-click range select).
+function datesBetween(lo: string, hi: string): string[] {
+  const out: string[] = [];
+  let cur = new Date(`${lo}T00:00:00.000Z`);
+  const end = new Date(`${hi}T00:00:00.000Z`);
+  let guard = 0;
+  while (cur <= end && guard <= MAX_BULK_DATES + 1) {
+    out.push(cur.toISOString().slice(0, 10));
+    cur = new Date(cur.getTime() + 86_400_000);
+    guard++;
+  }
+  return out;
+}
 
 export default function ActivitySpecialPricesManager({
   activityId,
@@ -75,7 +94,8 @@ export default function ActivitySpecialPricesManager({
   const now = useMemo(() => new Date(), []);
   const [open, setOpen] = useState(!collapsible);
   const [cursor, setCursor] = useState({ y: now.getUTCFullYear(), m: now.getUTCMonth() });
-  const [selectedDate, setSelectedDate] = useState<string>('');
+  const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
+  const [lastClicked, setLastClicked] = useState<string | null>(null);
   const [priceInput, setPriceInput] = useState('');
 
   const todayStr = ymd(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
@@ -118,14 +138,15 @@ export default function ActivitySpecialPricesManager({
     [blocks],
   );
 
-  const saveMut = useMutation({
-    mutationFn: (body: { date: string; price: number }) =>
-      api.post(`${apiBase}/activities/${activityId}/special-prices`, body).then((r) => r.data),
-    onSuccess: () => {
-      toast(t('vendor.activities.wizard.specialPrice.saved', 'Special price saved'), 'success');
+  const clearSelection = () => { setSelectedDates(new Set()); setLastClicked(null); setPriceInput(''); };
+
+  const bulkSaveMut = useMutation({
+    mutationFn: (body: { dates: string[]; price: number }) =>
+      api.post(`${apiBase}/activities/${activityId}/special-prices/bulk`, body).then((r) => r.data),
+    onSuccess: (res: { count?: number }) => {
+      toast(t('vendor.activities.wizard.specialPrice.savedN', { defaultValue: 'Saved {{count}} special price(s)', count: res?.count ?? 0 }), 'success');
       qc.invalidateQueries({ queryKey });
-      setSelectedDate('');
-      setPriceInput('');
+      clearSelection();
     },
     onError: (e) => toast(getApiError(e, t('vendor.activities.wizard.specialPrice.saveFailed', 'Could not save special price')), 'error'),
   });
@@ -135,43 +156,69 @@ export default function ActivitySpecialPricesManager({
     onSuccess: () => {
       toast(t('vendor.activities.wizard.specialPrice.removed', 'Special price removed'), 'success');
       qc.invalidateQueries({ queryKey });
-      setSelectedDate('');
-      setPriceInput('');
+      clearSelection();
     },
     onError: (e) => toast(getApiError(e, t('vendor.activities.wizard.specialPrice.removeFailed', 'Could not remove special price')), 'error'),
   });
 
-  const selectDay = (dateStr: string) => {
-    setSelectedDate(dateStr);
-    const ex = byDate.get(dateStr);
-    setPriceInput(ex ? String(ex.price) : '');
+  // Toggle a day in/out of the selection; Shift-click extends an inclusive range
+  // from the last clicked day (skipping past + locked days).
+  const toggleDay = (dateStr: string, shiftKey: boolean) => {
+    const next = new Set(selectedDates);
+    if (shiftKey && lastClicked) {
+      const lo = lastClicked < dateStr ? lastClicked : dateStr;
+      const hi = lastClicked < dateStr ? dateStr : lastClicked;
+      for (const d of datesBetween(lo, hi)) {
+        if (d >= todayStr && !isLocked(d)) next.add(d);
+      }
+    } else if (next.has(dateStr)) {
+      next.delete(dateStr);
+    } else {
+      next.add(dateStr);
+    }
+    if (next.size > MAX_BULK_DATES) {
+      toast(t('vendor.activities.wizard.specialPrice.maxDates', { defaultValue: 'You can price up to {{max}} dates at once.', max: MAX_BULK_DATES }), 'error');
+      return;
+    }
+    setSelectedDates(next);
+    setLastClicked(dateStr);
+    // Prefill the price when the result is a single existing-priced date (edit UX);
+    // keep the typed value when selecting multiple.
+    if (next.size === 1) {
+      const ex = byDate.get([...next][0]);
+      setPriceInput(ex ? String(ex.price) : '');
+    } else if (next.size === 0) {
+      setPriceInput('');
+    }
   };
 
   const priceNum = Number(priceInput);
   const priceValid = priceInput.trim() !== '' && Number.isFinite(priceNum) && priceNum > 0 && priceNum <= MAX_PRICE;
-  const selectedExisting = selectedDate ? byDate.get(selectedDate) : undefined;
+  const selectedCount = selectedDates.size;
+  const onlyDate = selectedCount === 1 ? [...selectedDates][0] : null;
+  const selectedExisting = onlyDate ? byDate.get(onlyDate) : undefined;
 
   const save = () => {
-    if (!selectedDate || !priceValid) return;
+    if (selectedCount === 0 || !priceValid) return;
     const price = Math.round(priceNum * 100) / 100;
+    const dates = [...selectedDates];
     if (draft) {
-      // Upsert by date into the wizard's local list (same "set the price for this
-      // day" semantics the live core uses — one override per date).
-      onChange?.([...(value ?? []).filter((v) => v.date !== selectedDate), { date: selectedDate, price }]);
-      setSelectedDate('');
-      setPriceInput('');
+      // Upsert each selected date into the wizard's local list (one override per date).
+      const kept = (value ?? []).filter((v) => !selectedDates.has(v.date));
+      onChange?.([...kept, ...dates.map((date) => ({ date, price }))]);
+      clearSelection();
     } else {
-      saveMut.mutate({ date: selectedDate, price });
+      bulkSaveMut.mutate({ dates, price });
     }
   };
 
-  const removeDate = (date: string) => {
+  const removeSingle = () => {
+    if (!onlyDate) return;
     if (draft) {
-      onChange?.((value ?? []).filter((v) => v.date !== date));
-      setSelectedDate('');
-      setPriceInput('');
+      onChange?.((value ?? []).filter((v) => v.date !== onlyDate));
+      clearSelection();
     } else {
-      const ex = byDate.get(date);
+      const ex = byDate.get(onlyDate);
       if (ex) deleteMut.mutate(ex.id);
     }
   };
@@ -261,13 +308,13 @@ export default function ActivitySpecialPricesManager({
                     const isPast = dateStr < todayStr;
                     const locked = !isPast && isLocked(dateStr);
                     const ov = byDate.get(dateStr);
-                    const isSel = selectedDate === dateStr;
+                    const isSel = selectedDates.has(dateStr);
                     return (
                       <button
                         key={dateStr}
                         type="button"
                         disabled={isPast || locked}
-                        onClick={() => selectDay(dateStr)}
+                        onClick={(e) => toggleDay(dateStr, e.shiftKey)}
                         aria-pressed={isSel}
                         title={locked ? t('vendor.activities.wizard.specialPrice.lockedTitle', 'This date is locked (blocked) and cannot be booked') : undefined}
                         className={cn(
@@ -301,14 +348,16 @@ export default function ActivitySpecialPricesManager({
                   <span className="inline-flex items-center gap-1.5"><Lock className="h-2.5 w-2.5 text-rose-400" />{t('vendor.activities.wizard.specialPrice.legendLocked', 'Locked')}</span>
                 </div>
                 <p className="text-xs text-gray-400 dark:text-slate-500 mt-1.5 text-start">
-                  {t('vendor.activities.wizard.specialPrice.help', 'Tap a date to set its special price. Green dates already have one; locked (blocked) dates can’t be priced.')}
+                  {t('vendor.activities.wizard.specialPrice.helpMulti', 'Tap dates to select them — Shift-click to pick a whole range. One price applies to all selected dates. Locked (blocked) dates can’t be priced.')}
                 </p>
 
-                {/* Inline price form for the selected date */}
-                {selectedDate && (
+                {/* Inline price form for the selected date(s) */}
+                {selectedCount > 0 && (
                   <div className="mt-3 rounded-xl bg-stone-50 dark:bg-slate-800/50 p-4 border border-stone-200 dark:border-slate-700">
                     <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5 text-start">
-                      {t('vendor.activities.wizard.specialPrice.priceForDate', 'Special price for')} · {prettyDate(selectedDate, locale)}
+                      {onlyDate
+                        ? `${t('vendor.activities.wizard.specialPrice.priceForDate', 'Special price for')} · ${prettyDate(onlyDate, locale)}`
+                        : t('vendor.activities.wizard.specialPrice.priceForN', { defaultValue: 'Special price for {{count}} selected dates', count: selectedCount })}
                     </label>
                     <div className="flex items-center gap-2 flex-wrap">
                       <div className="relative">
@@ -322,19 +371,23 @@ export default function ActivitySpecialPricesManager({
                         />
                         <span className="absolute inset-y-0 end-3 flex items-center text-xs text-gray-400 dark:text-slate-500">{currency}</span>
                       </div>
-                      <button type="button" disabled={!priceValid || (!draft && saveMut.isPending)} onClick={save}
+                      <button type="button" disabled={!priceValid || (!draft && bulkSaveMut.isPending)} onClick={save}
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1d4f35] text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-                        {!draft && saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Tag className="h-4 w-4" />}
-                        {selectedExisting ? t('vendor.activities.wizard.specialPrice.update', 'Update') : t('vendor.activities.wizard.specialPrice.save', 'Save')}
+                        {!draft && bulkSaveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Tag className="h-4 w-4" />}
+                        {selectedExisting
+                          ? t('vendor.activities.wizard.specialPrice.update', 'Update')
+                          : onlyDate
+                            ? t('vendor.activities.wizard.specialPrice.save', 'Save')
+                            : t('vendor.activities.wizard.specialPrice.saveN', { defaultValue: 'Save {{count}} dates', count: selectedCount })}
                       </button>
                       {selectedExisting && (
-                        <button type="button" disabled={!draft && deleteMut.isPending} onClick={() => removeDate(selectedDate)}
+                        <button type="button" disabled={!draft && deleteMut.isPending} onClick={removeSingle}
                           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50">
                           <Trash2 className="h-4 w-4" />
                           {t('vendor.activities.wizard.specialPrice.remove', 'Remove')}
                         </button>
                       )}
-                      <button type="button" onClick={() => { setSelectedDate(''); setPriceInput(''); }}
+                      <button type="button" onClick={clearSelection}
                         className="p-2 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300" aria-label={t('vendor.activities.wizard.specialPrice.cancel', 'Cancel')}>
                         <X className="h-4 w-4" />
                       </button>
