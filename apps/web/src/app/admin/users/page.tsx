@@ -337,7 +337,9 @@ export default function AdminUsersPage() {
                             </div>
                             <div className="flex items-center gap-1.5 max-w-[240px]">
                               <p className="text-xs text-gray-400 dark:text-slate-500 wrap-break-word truncate">{user.email}</p>
-                              {user.emailVerified ? (
+                              {/* Vendors don't go through email verification — only show the
+                                  verified/unverified icon for non-vendor accounts. */}
+                              {user.role !== 'VENDOR' && (user.emailVerified ? (
                                 <span title="Email verified" className="inline-flex shrink-0 text-emerald-500">
                                   <MailCheck className="h-3.5 w-3.5" />
                                 </span>
@@ -345,7 +347,7 @@ export default function AdminUsersPage() {
                                 <span title="Email NOT verified" className="inline-flex shrink-0 text-amber-500">
                                   <MailWarning className="h-3.5 w-3.5" />
                                 </span>
-                              )}
+                              ))}
                             </div>
                           </div>
                         </div>

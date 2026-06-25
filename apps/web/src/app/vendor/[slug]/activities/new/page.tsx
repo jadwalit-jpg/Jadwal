@@ -17,6 +17,7 @@ import { sanitize, sanitizeObject } from '@/lib/validation';
 import { VendorSidebar } from '../../../_components/vendor-sidebar';
 import { Check, Loader2, X, BookmarkIcon, AlertCircle, ImagePlus } from 'lucide-react';
 import { useToast } from '@/components/toast';
+import TermsAcceptModal from '@/components/terms-accept-modal';
 import CustomSelect from '@/components/custom-select';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
 
@@ -240,7 +241,10 @@ export default function CreateActivityPage() {
       ] as const,
     [t],
   );
-  const { user } = useAuth();
+  const { user, checkAuth } = useAuth();
+  // Pre-Terms vendors (created before the consent rule) must accept before the
+  // server lets them create a listing. This modal pops at submit time.
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
   const router = useRouter();
   const { slug } = useParams() as { slug: string };
   const { toast } = useToast();
@@ -312,6 +316,15 @@ export default function CreateActivityPage() {
       router.push(`/vendor/${slug}/activities`);
     },
     onError: (err) => {
+      // Server consent guard (defense in depth if the submit-time modal was
+      // bypassed). Surface the accept modal + a clear message instead of the
+      // raw "TERMS_NOT_ACCEPTED" code.
+      const detail = String((err as { response?: { data?: { message?: unknown } } })?.response?.data?.message ?? '');
+      if (/TERMS_NOT_ACCEPTED/i.test(detail)) {
+        void checkAuth();
+        setTermsModalOpen(true);
+        return;
+      }
       toast(getApiError(err, t('vendor.activities.wizard.toast.createFailed')), 'error');
     },
   });
@@ -409,6 +422,17 @@ export default function CreateActivityPage() {
   };
 
   const handleSubmit = () => {
+    // Terms gate: a pre-Terms vendor must accept first. Pop the modal; its
+    // onAccepted re-runs the real submit (doSubmit), which now passes the
+    // server guard. The server remains the hard boundary regardless.
+    if (user?.needsTermsAcceptance) {
+      setTermsModalOpen(true);
+      return;
+    }
+    doSubmit();
+  };
+
+  const doSubmit = () => {
     // Auto-calculate capacity from units if hasUnits
     const totalCapacity = hasUnits && Number(unitCount) > 0
       ? Number(unitCount) * (Number(unitCapacity) || 1)
@@ -489,6 +513,11 @@ export default function CreateActivityPage() {
 
   return (
     <div className="min-h-screen bg-stone-50 dark:bg-slate-950 font-outfit">
+      <TermsAcceptModal
+        open={termsModalOpen}
+        onAccepted={() => { setTermsModalOpen(false); doSubmit(); }}
+        onCancel={() => setTermsModalOpen(false)}
+      />
       <VendorSidebar />
 
       <main className="md:ms-64 min-h-screen overflow-x-hidden">

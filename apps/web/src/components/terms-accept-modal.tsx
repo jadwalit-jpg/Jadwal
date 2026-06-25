@@ -73,10 +73,10 @@ export default function TermsAcceptModal({ open, onAccepted, onCancel }: Props) 
               <ShieldCheck className="h-6 w-6 text-[#1d4f35] dark:text-emerald-400" />
             </div>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {t('auth.termsGate.modalTitle', 'Accept our Terms to book')}
+              {t('auth.termsGate.modalTitle', 'Accept our Terms to continue')}
             </h2>
             <p className="mt-2 text-sm text-gray-500 dark:text-slate-400">
-              {t('auth.termsGate.modalBody', 'Before booking, please accept our')}{' '}
+              {t('auth.termsGate.modalBody', 'To continue, please accept our')}{' '}
               <Link href="/terms" target="_blank" className="underline text-[#1d4f35] dark:text-emerald-400 font-medium">{t('terms.title')}</Link>
               {' '}{t('auth.and')}{' '}
               <Link href="/privacy" target="_blank" className="underline text-[#1d4f35] dark:text-emerald-400 font-medium">{t('privacy.title')}</Link>.
