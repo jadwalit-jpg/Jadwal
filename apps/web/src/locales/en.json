@@ -304,8 +304,8 @@
       "dismiss": "Dismiss",
       "bannerTitle": "Review our Terms",
       "bannerBody": "Browse freely — to book, please accept our",
-      "modalTitle": "Accept our Terms to book",
-      "modalBody": "Before booking, please accept our",
+      "modalTitle": "Accept our Terms to continue",
+      "modalBody": "To continue, please accept our",
       "cancel": "Cancel"
     },
     "checkInbox": "Check your inbox",

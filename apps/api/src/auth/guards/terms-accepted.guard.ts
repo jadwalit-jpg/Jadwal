@@ -25,6 +25,11 @@ export class TermsAcceptedGuard implements CanActivate {
     // JwtAuthGuard should have authenticated already; fail closed if not.
     if (!userId) throw new ForbiddenException('TERMS_NOT_ACCEPTED');
 
+    // Admins are trusted operators and form no customer contract — never gated.
+    // (They don't normally reach these CUSTOMER/VENDOR routes, but this makes the
+    // exemption explicit so a future route reuse can't accidentally block them.)
+    if (req.user?.role === 'ADMIN') return true;
+
     const user = await this.prisma.client.user.findUnique({
       where: { id: userId },
       select: { termsAcceptedAt: true, termsAcceptedVersion: true },

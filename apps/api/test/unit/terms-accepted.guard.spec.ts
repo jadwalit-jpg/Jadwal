@@ -39,4 +39,15 @@ describe('TermsAcceptedGuard', () => {
     await expect(guard.canActivate(ctxFor(undefined))).rejects.toBeInstanceOf(ForbiddenException);
     expect(findUnique).not.toHaveBeenCalled();
   });
+
+  it('ALLOWS an ADMIN even with no consent recorded, and never hits the DB', async () => {
+    // Admins are trusted operators and form no customer contract — the guard
+    // must never block them regardless of termsAcceptedAt.
+    const { guard, findUnique } = guardReturning({ termsAcceptedAt: null, termsAcceptedVersion: null });
+    const ctx = {
+      switchToHttp: () => ({ getRequest: () => ({ user: { id: 'admin1', role: 'ADMIN' } }) }),
+    } as any;
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(findUnique).not.toHaveBeenCalled();
+  });
 });
