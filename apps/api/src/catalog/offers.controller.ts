@@ -66,7 +66,11 @@ export class OffersController {
       minOrderAmount: o.minOrderAmount ? Number(o.minOrderAmount) : null,
       expiresAt: o.validTo,
       claimedCount: o._count.claimedBy,
-      isFull: o.usageLimit ? o.usedCount >= o.usageLimit : false,
+      // "Full" is gated by CLAIMS, not redemptions — claiming is what the cap
+      // limits now (a claimed-out voucher must show "Fully claimed", not a live
+      // Claim button that would 409 on tap). usedCount tracks redemptions, which
+      // start at 0 even after the claim cap is hit.
+      isFull: o.usageLimit ? o._count.claimedBy >= o.usageLimit : false,
     }));
   }
 

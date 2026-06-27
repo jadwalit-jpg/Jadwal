@@ -570,6 +570,10 @@ describe('Coupon lifecycle — platform voucher usage limit', () => {
     // 3rd distinct user exceeds the 2-claim cap → rejected (no redemption needed).
     await expect(offers.claimOffer({ id: c3.id, role: 'CUSTOMER' } as any, voucher.id)).rejects.toThrow();
     expect(await ctx.prisma.claimedCoupon.count({ where: { couponId: voucher.id } })).toBe(2);
+
+    // /offers must now report the voucher as full (claim count, not redemptions).
+    const list = await offers.listOffers({} as any);
+    expect(list.find((o) => o.id === voucher.id)?.isFull).toBe(true);
   });
 
   test('voucher redemption rejected when usedCount already at usageLimit', async () => {
