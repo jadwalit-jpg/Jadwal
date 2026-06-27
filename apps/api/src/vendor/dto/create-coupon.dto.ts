@@ -25,7 +25,7 @@ export class CreateVendorCouponDto {
   discountType!: 'PERCENTAGE' | 'FIXED';
 
   @IsNumber()
-  @Min(0)
+  @Min(0.01) // a 0-value coupon is a no-op; matches the admin DTO
   @Max(10000)
   @IsValidCouponDiscount() // PERCENTAGE coupons capped at 100
   discountValue!: number;

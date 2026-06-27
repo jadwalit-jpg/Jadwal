@@ -671,6 +671,19 @@ describe('Coupon lifecycle — platform voucher usage limit', () => {
     ).rejects.toThrow();
   });
 
+  test('vendor createCoupon stores the code UPPERCASE (a lowercase entry stays redeemable)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { vendor } = makeServices();
+    const created = await vendor.createCoupon(seed.vendorUser.id, {
+      code: `vlow-${crypto.randomUUID().slice(0, 6)}`, // lowercase entry
+      discountType: 'PERCENTAGE', discountValue: 10,
+      validFrom: futureDate(-1), validTo: futureDate(30),
+    });
+    // Stored uppercase so the redeem/validate paths (which uppercase the lookup) match.
+    expect(created.code).toBe(created.code.toUpperCase());
+    expect(created.code.startsWith('VLOW-')).toBe(true);
+  });
+
   test('voucher redemption rejected when usedCount already at usageLimit', async () => {
     const seed = await seedReference(ctx.prisma);
     const { bookings } = makeServices();

@@ -1186,7 +1186,12 @@ export class VendorService {
     const vendor = await this.resolveVendor(userId);
     const db = this.prisma.client;
 
-    const existing = await db.coupon.findUnique({ where: { code: body.code } });
+    // Normalise to UPPERCASE — every redeem/validate path (validateCoupon +
+    // createBooking) looks the code up uppercased, so a lowercase code stored
+    // verbatim would be permanently unredeemable. Admin createCoupon already
+    // does this; match it here.
+    const code = body.code.toUpperCase().trim();
+    const existing = await db.coupon.findUnique({ where: { code } });
     if (existing) throw new ConflictException('Coupon code already exists');
 
     // Activity scoping (Bug A): a non-empty list restricts the coupon to those
@@ -1215,7 +1220,7 @@ export class VendorService {
 
     return db.coupon.create({
       data: {
-        code: body.code,
+        code,
         vendorId: vendor.id,
         applicableActivityIds: activityIds,
         discountType: body.discountType,

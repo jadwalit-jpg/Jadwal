@@ -950,7 +950,7 @@ export class PaymentService {
         !liveCoupon ||
         liveCoupon.status !== 'APPROVED' ||
         liveCoupon.validTo < now ||
-        (liveCoupon.usageLimit !== null && liveCoupon.usedCount > liveCoupon.usageLimit);
+        (liveCoupon.usageLimit !== null && liveCoupon.usedCount >= liveCoupon.usageLimit);
       if (couponInvalid) {
         await this.auditLogger.log({
           actorType: 'SYSTEM',
