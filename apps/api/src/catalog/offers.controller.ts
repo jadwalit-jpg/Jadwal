@@ -58,20 +58,22 @@ export class OffersController {
       skip: (page - 1) * limit,
     });
 
-    return offers.map((o) => ({
-      id: o.id,
-      discountType: o.discountType,
-      discountValue: Number(o.discountValue),
-      maxDiscount: o.maxDiscount ? Number(o.maxDiscount) : null,
-      minOrderAmount: o.minOrderAmount ? Number(o.minOrderAmount) : null,
-      expiresAt: o.validTo,
-      claimedCount: o._count.claimedBy,
-      // "Full" is gated by CLAIMS, not redemptions — claiming is what the cap
-      // limits now (a claimed-out voucher must show "Fully claimed", not a live
-      // Claim button that would 409 on tap). usedCount tracks redemptions, which
-      // start at 0 even after the claim cap is hit.
-      isFull: o.usageLimit ? o._count.claimedBy >= o.usageLimit : false,
-    }));
+    return offers
+      // Hide fully-claimed vouchers entirely — once the claim count hits the
+      // usage limit there's nothing left to grab, so it shouldn't appear on the
+      // offers page at all. (Claim count is the cap now, not redemptions; the
+      // offers table is small — <~50 rows — so filtering post-fetch is fine.)
+      .filter((o) => !(o.usageLimit && o._count.claimedBy >= o.usageLimit))
+      .map((o) => ({
+        id: o.id,
+        discountType: o.discountType,
+        discountValue: Number(o.discountValue),
+        maxDiscount: o.maxDiscount ? Number(o.maxDiscount) : null,
+        minOrderAmount: o.minOrderAmount ? Number(o.minOrderAmount) : null,
+        expiresAt: o.validTo,
+        claimedCount: o._count.claimedBy,
+        isFull: false, // fully-claimed coupons are filtered out above
+      }));
   }
 
   /**

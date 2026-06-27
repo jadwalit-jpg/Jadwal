@@ -571,9 +571,9 @@ describe('Coupon lifecycle — platform voucher usage limit', () => {
     await expect(offers.claimOffer({ id: c3.id, role: 'CUSTOMER' } as any, voucher.id)).rejects.toThrow();
     expect(await ctx.prisma.claimedCoupon.count({ where: { couponId: voucher.id } })).toBe(2);
 
-    // /offers must now report the voucher as full (claim count, not redemptions).
+    // A fully-claimed voucher is excluded from /offers entirely (nothing left to grab).
     const list = await offers.listOffers({} as any);
-    expect(list.find((o) => o.id === voucher.id)?.isFull).toBe(true);
+    expect(list.find((o) => o.id === voucher.id)).toBeUndefined();
   });
 
   test('claim + redeem of a usageLimit=1 voucher counts each dimension ONCE (no double-count)', async () => {
