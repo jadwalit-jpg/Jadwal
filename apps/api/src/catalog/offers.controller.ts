@@ -102,15 +102,26 @@ export class OffersController {
       throw new BadRequestException('This offer has reached its limit');
     }
 
-    // Check if already claimed
-    const existing = await db.claimedCoupon.findUnique({
-      where: { userId_couponId: { userId: user.id, couponId } },
-    });
-    if (existing) throw new BadRequestException('You have already claimed this offer');
-
-    await db.claimedCoupon.create({
-      data: { userId: user.id, couponId },
-    });
+    // Atomically cap the number of CLAIMS at usageLimit so a limited voucher
+    // can't be added to more wallets than it can ever serve (previously the
+    // claim only checked usedCount — redemptions — so unlimited users could
+    // claim a 1-use voucher and all but one were rejected at checkout). The
+    // redemption-time conditional updateMany remains the hard cap on actual
+    // uses. Serializable so two users can't both grab the last slot via a
+    // stale count.
+    await db.$transaction(async (tx) => {
+      const existing = await tx.claimedCoupon.findUnique({
+        where: { userId_couponId: { userId: user.id, couponId } },
+      });
+      if (existing) throw new BadRequestException('You have already claimed this offer');
+      if (coupon.usageLimit) {
+        const claimCount = await tx.claimedCoupon.count({ where: { couponId } });
+        if (claimCount >= coupon.usageLimit) {
+          throw new BadRequestException('This offer has reached its limit');
+        }
+      }
+      await tx.claimedCoupon.create({ data: { userId: user.id, couponId } });
+    }, { isolationLevel: 'Serializable' });
 
     return { message: 'Offer claimed successfully' };
   }

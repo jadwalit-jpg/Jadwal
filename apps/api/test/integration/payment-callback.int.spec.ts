@@ -344,6 +344,34 @@ describe('PaymentService.handleCallback — email outbox (R4)', () => {
 
     expect(await ctx.prisma.emailOutbox.count()).toBe(0);
   });
+
+  test('FAILURE callback REFUNDS a coupon-applied booking (usedCount--, status restored, claim freed)', async () => {
+    const { svc } = makePaymentService();
+    const { seed, basketId, bookingId, amountStr } = await seedPendingPayment(120);
+    // The state createBooking leaves for a single-use voucher it consumed:
+    // usedCount at the cap, auto-EXPIRED, claim marked used.
+    const voucher = await ctx.prisma.coupon.create({
+      data: {
+        code: `FAILREF-${crypto.randomUUID().slice(0, 6)}`, vendorId: null,
+        discountType: 'PERCENTAGE', discountValue: 10,
+        validFrom: new Date('2020-01-01T00:00:00Z'), validTo: new Date('2035-01-01T00:00:00Z'),
+        usageLimit: 1, usedCount: 1, status: 'EXPIRED',
+      },
+    });
+    const claim = await ctx.prisma.claimedCoupon.create({ data: { userId: seed.customer.id, couponId: voucher.id, used: true } });
+    await ctx.prisma.booking.update({ where: { id: bookingId }, data: { couponCode: voucher.code } });
+
+    // PAY2M reports failure → booking torn down → the coupon must be returned.
+    await svc.handleCallback({
+      err_code: '99', basket_id: basketId,
+      Response_Key: signCallback(basketId, amountStr, '99'),
+    });
+
+    const after = await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } });
+    expect(after.usedCount).toBe(0);
+    expect(after.status).toBe('APPROVED'); // restored — voucher back in the customer's wallet
+    expect((await ctx.prisma.claimedCoupon.findUniqueOrThrow({ where: { id: claim.id } })).used).toBe(false);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

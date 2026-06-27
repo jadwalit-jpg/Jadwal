@@ -13,7 +13,6 @@ import {
   Matches,
 } from 'class-validator';
 import { IsValidCouponDiscount } from '../../common/validators/coupon-discount';
-import { IsDateAfter } from '../../common/validators/is-date-after';
 
 export class CreateVendorCouponDto {
   @IsString()
@@ -34,8 +33,10 @@ export class CreateVendorCouponDto {
   @IsDateString()
   validFrom!: string;
 
+  // Order/same-day validation lives in the service (validTo end-of-day must be
+  // >= validFrom start-of-day) so same-day vendor coupons are allowed, matching
+  // the admin path. Keeping a strict @IsDateAfter here would reject same-day.
   @IsDateString()
-  @IsDateAfter('validFrom', { message: 'validTo must be after validFrom' })
   validTo!: string;
 
   @IsNumber()

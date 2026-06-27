@@ -1201,6 +1201,18 @@ export class VendorService {
       }
     }
 
+    // Whole-day UTC validity bounds (END-of-day validTo) — same reason as the
+    // admin path: a bare-midnight validTo expires the coupon at 00:00 of the
+    // expiry day, so it never matches `validTo > now` at checkout / listing.
+    const validFrom = new Date(`${String(body.validFrom).slice(0, 10)}T00:00:00.000Z`);
+    const validTo = new Date(`${String(body.validTo).slice(0, 10)}T23:59:59.999Z`);
+    if (Number.isNaN(validFrom.getTime()) || Number.isNaN(validTo.getTime())) {
+      throw new BadRequestException('Invalid validity dates');
+    }
+    if (validTo <= validFrom) {
+      throw new BadRequestException('Expiry date must be after the start date');
+    }
+
     return db.coupon.create({
       data: {
         code: body.code,
@@ -1208,8 +1220,8 @@ export class VendorService {
         applicableActivityIds: activityIds,
         discountType: body.discountType,
         discountValue: body.discountValue,
-        validFrom: new Date(body.validFrom),
-        validTo: new Date(body.validTo),
+        validFrom,
+        validTo,
         usageLimit: body.usageLimit ? Number(body.usageLimit) : null,
         minOrderAmount: body.minOrderAmount || null,
         maxDiscount: body.maxDiscount || null,
