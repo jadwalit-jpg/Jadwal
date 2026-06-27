@@ -609,6 +609,68 @@ describe('Coupon lifecycle — platform voucher usage limit', () => {
     expect((await ctx.prisma.claimedCoupon.findUniqueOrThrow({ where: { id: claim.id } })).used).toBe(true);
   });
 
+  test('vendor coupon: usage limit enforced + the customer who CANCELS can reuse the code', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { bookings } = makeServices();
+    const code = `VND-${crypto.randomUUID().slice(0, 6)}`.toUpperCase();
+    const coupon = await ctx.prisma.coupon.create({
+      data: {
+        code, vendorId: seed.vendor.id, applicableActivityIds: [],
+        discountType: 'PERCENTAGE', discountValue: 10,
+        validFrom: new Date(futureDate(-1)), validTo: new Date(futureDate(30)),
+        usageLimit: 1, usedCount: 0, status: 'APPROVED',
+      },
+    });
+    const book = (days: number) => bookings.createBooking(seed.customer.id, {
+      activityId: seed.activity.id, checkInDate: futureDate(days), slotTime: '10:00', guests: 2,
+      bookingPhone: '+97455123456', couponCode: code, idempotencyKey: crypto.randomUUID(),
+    });
+
+    // Redeem → usedCount 1.
+    const r1 = await book(7);
+    expect((await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: coupon.id } })).usedCount).toBe(1);
+
+    // CANCEL → usedCount returned to 0, status restored, customer NOT locked out.
+    await bookings.cancelBooking(seed.customer.id, r1.booking.id);
+    const afterCancel = await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: coupon.id } });
+    expect(afterCancel.usedCount).toBe(0);
+    expect(afterCancel.status).toBe('APPROVED');
+
+    // Same customer can apply the SAME code again (the cancelled booking is excluded
+    // from the per-user "already used" check).
+    const r2 = await book(9);
+    expect(r2.booking.id).toBeTruthy();
+    expect((await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: coupon.id } })).usedCount).toBe(1);
+  });
+
+  test('vendor coupon: a second customer cannot exceed the usage limit', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { bookings } = makeServices();
+    const code = `VND2-${crypto.randomUUID().slice(0, 6)}`.toUpperCase();
+    await ctx.prisma.coupon.create({
+      data: {
+        code, vendorId: seed.vendor.id, applicableActivityIds: [],
+        discountType: 'PERCENTAGE', discountValue: 10,
+        validFrom: new Date(futureDate(-1)), validTo: new Date(futureDate(30)),
+        usageLimit: 1, usedCount: 0, status: 'APPROVED',
+      },
+    });
+    const other = await ctx.prisma.user.create({
+      data: { email: `vc-${crypto.randomUUID().slice(0, 8)}@t.com`, password: 'x', fullName: 'Other', role: 'CUSTOMER', emailVerified: true },
+    });
+    await bookings.createBooking(seed.customer.id, {
+      activityId: seed.activity.id, checkInDate: futureDate(7), slotTime: '10:00', guests: 2,
+      bookingPhone: '+97455123456', couponCode: code, idempotencyKey: crypto.randomUUID(),
+    });
+    // Cap is reached → a different customer is rejected.
+    await expect(
+      bookings.createBooking(other.id, {
+        activityId: seed.activity.id, checkInDate: futureDate(8), slotTime: '10:00', guests: 2,
+        bookingPhone: '+97455123457', couponCode: code, idempotencyKey: crypto.randomUUID(),
+      }),
+    ).rejects.toThrow();
+  });
+
   test('voucher redemption rejected when usedCount already at usageLimit', async () => {
     const seed = await seedReference(ctx.prisma);
     const { bookings } = makeServices();
