@@ -576,6 +576,39 @@ describe('Coupon lifecycle — platform voucher usage limit', () => {
     expect(list.find((o) => o.id === voucher.id)?.isFull).toBe(true);
   });
 
+  test('claim + redeem of a usageLimit=1 voucher counts each dimension ONCE (no double-count)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const offers = new OffersController({ client: ctx.prisma } as any);
+    const { bookings } = makeServices();
+    const voucher = await ctx.prisma.coupon.create({
+      data: {
+        code: `NODBL-${crypto.randomUUID().slice(0, 6)}`, vendorId: null,
+        discountType: 'PERCENTAGE', discountValue: 10,
+        validFrom: new Date(futureDate(-1)), validTo: new Date(futureDate(30)),
+        usageLimit: 1, usedCount: 0, status: 'APPROVED',
+      },
+    });
+    // CLAIM → claim count 1, usedCount untouched (claiming is not a redemption).
+    await offers.claimOffer({ id: seed.customer.id, role: 'CUSTOMER' } as any, voucher.id);
+    expect(await ctx.prisma.claimedCoupon.count({ where: { couponId: voucher.id } })).toBe(1);
+    expect((await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } })).usedCount).toBe(0);
+
+    const claim = await ctx.prisma.claimedCoupon.findFirstOrThrow({ where: { couponId: voucher.id, userId: seed.customer.id } });
+    // REDEEM → usedCount becomes 1, claim count STAYS 1 (existing row flipped used=true, no new row).
+    await bookings.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7), slotTime: '10:00', guests: 2,
+      bookingPhone: '+97455123456',
+      voucherId: claim.id,
+      idempotencyKey: crypto.randomUUID(),
+    });
+
+    const after = await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } });
+    expect(after.usedCount).toBe(1); // redeemed exactly once, not doubled
+    expect(await ctx.prisma.claimedCoupon.count({ where: { couponId: voucher.id } })).toBe(1); // claimed once, not doubled
+    expect((await ctx.prisma.claimedCoupon.findUniqueOrThrow({ where: { id: claim.id } })).used).toBe(true);
+  });
+
   test('voucher redemption rejected when usedCount already at usageLimit', async () => {
     const seed = await seedReference(ctx.prisma);
     const { bookings } = makeServices();
