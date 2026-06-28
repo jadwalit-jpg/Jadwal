@@ -6,7 +6,7 @@ import { ShieldCheck } from 'lucide-react';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 
-const LAST_UPDATED = '2026-05-22';
+const LAST_UPDATED = '2026-06-28';
 
 type SectionDef =
   | { key: string; paragraphs: string[] }
@@ -32,9 +32,10 @@ export default function PrivacyPage() {
     { key: 'sharing', labeledItems: [
       { labelKey: 'privacy.sharing.vendors.label', textKey: 'privacy.sharing.vendors.text' },
       { labelKey: 'privacy.sharing.gateway.label', textKey: 'privacy.sharing.gateway.text' },
+      { labelKey: 'privacy.sharing.processors.label', textKey: 'privacy.sharing.processors.text' },
       { labelKey: 'privacy.sharing.legal.label', textKey: 'privacy.sharing.legal.text' },
     ], paragraphs: ['privacy.sharing.neverSell'] },
-    { key: 'security', intro: 'privacy.security.intro', bulletsKey: 'privacy.security.items' },
+    { key: 'security', intro: 'privacy.security.intro', bulletsKey: 'privacy.security.items', paragraphs: ['privacy.security.breach'] },
     { key: 'retention', paragraphs: ['privacy.retention.p1'] },
     { key: 'cookies', paragraphs: ['privacy.cookies.p1'] },
     { key: 'rights', intro: 'privacy.rights.intro', bulletsKey: 'privacy.rights.items', paragraphs: ['privacy.rights.contact'] },

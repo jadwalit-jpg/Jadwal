@@ -1068,11 +1068,7 @@ export default function ActivityDetailClient({
                               </div>
                             </div>
                           </div>
-                          {review.text ? (
-                            <p className="text-[13px] text-jadwal-text leading-relaxed line-clamp-3">
-                              {review.text}
-                            </p>
-                          ) : null}
+                          {/* Reviews are rating-only — no customer free text is shown. */}
                         </article>
                       ))}
                   </div>

@@ -1,5 +1,8 @@
-import { IsString, IsUUID, IsInt, IsOptional, Min, Max, MaxLength } from 'class-validator';
+import { IsUUID, IsInt, Min, Max } from 'class-validator';
 
+// Reviews are RATING-ONLY by product decision — no customer free text. The
+// global ValidationPipe (forbidNonWhitelisted) rejects any `text` a client tries
+// to POST directly, so there is no customer-generated text to moderate.
 export class CreateReviewDto {
   @IsUUID('4')
   activityId!: string;
@@ -8,9 +11,4 @@ export class CreateReviewDto {
   @Min(1)
   @Max(5)
   rating!: number;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(2000)
-  text?: string;
 }
