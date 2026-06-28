@@ -385,15 +385,18 @@ export default function AdminCouponsPage() {
                 <div>
                   <label className={labelCls}>Min Order (QAR)</label>
                   <input name="minOrderAmount" type="number" step="0.01" min="0" defaultValue="0" className={inputCls} />
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Smallest booking total before this coupon can be used. 0 = no minimum.</p>
                 </div>
                 <div>
                   <label className={labelCls}>Max Discount (QAR)</label>
                   <input name="maxDiscount" type="number" step="0.01" min="0" defaultValue="0" className={inputCls} />
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Most a customer can save with this coupon. 0 = no cap.</p>
                 </div>
               </div>
               <div>
                 <label className={labelCls}>Usage Limit</label>
                 <input name="usageLimit" type="number" min="1" defaultValue="100" className={inputCls} />
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Total number of times this coupon can be claimed/redeemed across all customers.</p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

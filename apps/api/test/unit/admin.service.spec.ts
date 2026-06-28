@@ -380,13 +380,24 @@ describe('AdminService.createCoupon', () => {
       .rejects.toThrow(/cannot exceed 100/i);
   });
 
-  test('400 when validTo <= validFrom', async () => {
+  test('400 when validTo is before validFrom (by day)', async () => {
+    // Dates normalise to whole-day UTC bounds (validFrom start-of-day, validTo
+    // end-of-day), so the range must be inverted by CALENDAR DAY to be rejected —
+    // a same-day coupon is now valid (end-of-day > start-of-day).
     const ctx = await buildSut();
     await expect(ctx.sut.createCoupon({
       ...baseDto,
-      validFrom: new Date(Date.now() + 1000).toISOString(),
-      validTo: new Date(Date.now()).toISOString(),
+      validFrom: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days ahead
+      validTo: new Date(Date.now()).toISOString(),                              // today
     } as any)).rejects.toThrow(/after the start date/i);
+  });
+
+  test('ALLOWS a same-day coupon (validFrom and validTo on the same date)', async () => {
+    const ctx = await buildSut();
+    const sameDay = new Date().toISOString().slice(0, 10);
+    await expect(
+      ctx.sut.createCoupon({ ...baseDto, validFrom: sameDay, validTo: sameDay } as any),
+    ).resolves.toBeDefined();
   });
 
   test('400 when code already exists (case-insensitive)', async () => {

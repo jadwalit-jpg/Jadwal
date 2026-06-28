@@ -1186,7 +1186,12 @@ export class VendorService {
     const vendor = await this.resolveVendor(userId);
     const db = this.prisma.client;
 
-    const existing = await db.coupon.findUnique({ where: { code: body.code } });
+    // Normalise to UPPERCASE — every redeem/validate path (validateCoupon +
+    // createBooking) looks the code up uppercased, so a lowercase code stored
+    // verbatim would be permanently unredeemable. Admin createCoupon already
+    // does this; match it here.
+    const code = body.code.toUpperCase().trim();
+    const existing = await db.coupon.findUnique({ where: { code } });
     if (existing) throw new ConflictException('Coupon code already exists');
 
     // Activity scoping (Bug A): a non-empty list restricts the coupon to those
@@ -1201,15 +1206,27 @@ export class VendorService {
       }
     }
 
+    // Whole-day UTC validity bounds (END-of-day validTo) — same reason as the
+    // admin path: a bare-midnight validTo expires the coupon at 00:00 of the
+    // expiry day, so it never matches `validTo > now` at checkout / listing.
+    const validFrom = new Date(`${String(body.validFrom).slice(0, 10)}T00:00:00.000Z`);
+    const validTo = new Date(`${String(body.validTo).slice(0, 10)}T23:59:59.999Z`);
+    if (Number.isNaN(validFrom.getTime()) || Number.isNaN(validTo.getTime())) {
+      throw new BadRequestException('Invalid validity dates');
+    }
+    if (validTo <= validFrom) {
+      throw new BadRequestException('Expiry date must be after the start date');
+    }
+
     return db.coupon.create({
       data: {
-        code: body.code,
+        code,
         vendorId: vendor.id,
         applicableActivityIds: activityIds,
         discountType: body.discountType,
         discountValue: body.discountValue,
-        validFrom: new Date(body.validFrom),
-        validTo: new Date(body.validTo),
+        validFrom,
+        validTo,
         usageLimit: body.usageLimit ? Number(body.usageLimit) : null,
         minOrderAmount: body.minOrderAmount || null,
         maxDiscount: body.maxDiscount || null,

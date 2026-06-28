@@ -1858,8 +1858,17 @@ export class AdminService {
     if (dto.discountType === 'PERCENTAGE' && dto.discountValue > 100) {
       throw new BadRequestException('Percentage discount cannot exceed 100%');
     }
-    // Expiry must be after start
-    if (new Date(dto.validTo) <= new Date(dto.validFrom)) {
+    // Normalise the validity window to whole-day UTC bounds — start-of-day for
+    // validFrom, END-of-day for validTo — so a coupon "valid to <date>" stays
+    // usable through that entire day. The /offers + checkout queries filter
+    // `validTo > now`; a bare-midnight validTo expired the coupon at 00:00 of
+    // the expiry day, so it never showed (the reported "coupon not showing").
+    const validFrom = new Date(`${String(dto.validFrom).slice(0, 10)}T00:00:00.000Z`);
+    const validTo = new Date(`${String(dto.validTo).slice(0, 10)}T23:59:59.999Z`);
+    if (Number.isNaN(validFrom.getTime()) || Number.isNaN(validTo.getTime())) {
+      throw new BadRequestException('Invalid validity dates');
+    }
+    if (validTo <= validFrom) {
       throw new BadRequestException('Expiry date must be after the start date');
     }
     // Check for duplicate code
@@ -1874,8 +1883,8 @@ export class AdminService {
         applicableActivityIds: dto.activityIds ?? [],
         discountType: dto.discountType,
         discountValue: dto.discountValue,
-        validFrom: new Date(dto.validFrom),
-        validTo: new Date(dto.validTo),
+        validFrom,
+        validTo,
         usageLimit: dto.usageLimit ?? null,
         minOrderAmount: dto.minOrderAmount ?? null,
         maxDiscount: dto.maxDiscount ?? null,
