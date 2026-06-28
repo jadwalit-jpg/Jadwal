@@ -1364,7 +1364,7 @@
     },
     "contact": {
       "title": "16. Contact",
-      "p1": "For questions about these Terms, contact AL Jadwal at jadwalit@gmail.com or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
+      "p1": "For questions about these Terms, contact AL Jadwal at Management@jadwal.qa or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
     }
   },
   "privacy": {
@@ -1428,6 +1428,10 @@
         "label": "Payment Providers:",
         "text": "Transaction data is shared with our payment gateway for processing."
       },
+      "processors": {
+        "label": "Service Providers (Sub-processors):",
+        "text": "We rely on vetted third parties that process data on our behalf under data-processing agreements, each receiving only what its function requires: Amazon Web Services (hosting, database, and backups — Frankfurt, Germany), Cloudflare (CDN, DNS, and edge security — global), Resend (transactional email delivery), PAY2M (payment processing — Qatar), and Google (Sign-In / OAuth, for users who choose it)."
+      },
       "legal": {
         "label": "Legal Requirements:",
         "text": "We may disclose data when required by law or to protect our rights."
@@ -1445,7 +1449,8 @@
         "Regular security audits of our codebase",
         "PII masking in free-text logs (emails and phone numbers are never logged in full)",
         "IP address and session metadata stored in dedicated security tables only — never scattered across free-text logs"
-      ]
+      ],
+      "breach": "In the event of a personal-data breach that is likely to affect your rights, we will notify the affected users and the competent Qatar authority without undue delay after becoming aware of it, in line with the Qatar Personal Data Privacy Protection Law (Law No. 13 of 2016). The notice will describe the nature of the breach, the data involved, and the measures taken to address it and limit its effects."
     },
     "retention": {
       "title": "6. Data Retention",
@@ -1474,7 +1479,7 @@
     },
     "intlTransfer": {
       "title": "10. International Data Transfers",
-      "p1": "AL Jadwal is a Qatar-based platform, but for technical reasons our infrastructure runs on cloud providers outside Qatar. Specifically: (a) our database, application servers, and backups are hosted in Amazon Web Services Frankfurt (Germany) region; (b) our content delivery network and DNS are operated by Cloudflare globally; (c) push notifications are routed through Apple, Google, or Mozilla push services depending on your browser. By using the Platform, you acknowledge that your personal data is transferred and processed outside of Qatar. We rely on contractual safeguards (AWS Data Processing Addendum, Cloudflare Data Processing Addendum) to maintain confidentiality and integrity in transit and at rest. We process your personal data in compliance with the Qatar Personal Data Privacy Protection Law (Law No. 13 of 2016) ('PDPPL'), and we apply the appropriate safeguards required by Article 8 of the PDPPL when transferring personal data outside the State of Qatar."
+      "p1": "AL Jadwal is a Qatar-based platform, but for technical reasons our infrastructure runs on cloud providers outside Qatar. Specifically: (a) our database, application servers, and backups are hosted in Amazon Web Services Frankfurt (Germany) region; (b) our content delivery network and DNS are operated by Cloudflare globally; (c) push notifications are routed through Apple, Google, or Mozilla push services depending on your browser; (d) transactional and account emails are delivered through Resend; (e) if you sign in with Google, Google processes your authentication data. By using the Platform, you acknowledge that your personal data is transferred and processed outside of Qatar. We rely on contractual safeguards (AWS Data Processing Addendum, Cloudflare Data Processing Addendum) to maintain confidentiality and integrity in transit and at rest. We process your personal data in compliance with the Qatar Personal Data Privacy Protection Law (Law No. 13 of 2016) ('PDPPL'), and we apply the appropriate safeguards required by Article 8 of the PDPPL when transferring personal data outside the State of Qatar."
     },
     "changes": {
       "title": "11. Changes to This Policy",
@@ -1482,7 +1487,7 @@
     },
     "contact": {
       "title": "12. Contact Us",
-      "p1": "For privacy-related inquiries, contact AL Jadwal's Data Protection team at jadwalit@gmail.com or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
+      "p1": "For privacy-related inquiries, contact AL Jadwal's Data Protection team at Management@jadwal.qa or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
     }
   },
   "explore": {
