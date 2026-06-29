@@ -315,6 +315,15 @@
     "linkExpires": "Click the link in the email to activate your account. It expires in 24 hours.",
     "backToLogin": "Back to login",
     "passwordHint": "Min. 8 chars, A-Z, a-z, 0-9",
+    "passwordStrength": {
+      "veryWeak": "Very weak",
+      "weak": "Weak",
+      "fair": "Fair",
+      "good": "Good",
+      "strong": "Strong",
+      "minHint": "Use a stronger password",
+      "tooWeak": "Password is too weak. Use a longer, less common password."
+    },
     "forgotPasswordTitle": "Forgot your password?",
     "forgotPasswordDesc": "Enter your email and we'll send you a reset link.",
     "emailPlaceholder": "Email address",

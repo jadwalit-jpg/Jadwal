@@ -16,6 +16,8 @@ import { useAuth } from '@/context/auth-context';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { sanitize, validateEmail, validatePassword, validateFullName, validatePhone } from '@/lib/validation';
+import PasswordStrengthMeter from '@/components/password-strength-meter';
+import { evaluatePassword } from '@/lib/password-strength';
 import { getApiError } from '@/lib/api-error';
 import api, { API_BASE } from '@/lib/api';
 
@@ -69,6 +71,18 @@ export default function RegisterForm() {
 
     const pwCheck = validatePassword(password);
     if (!pwCheck.valid) { setError(pwCheck.error); return; }
+
+    // Same zxcvbn strength gate as the server — catch a weak password here with a
+    // clear reason instead of an opaque prod 400.
+    const strength = await evaluatePassword(password, [email, fullName, phone]);
+    if (!strength.ok) {
+      setError(
+        strength.warning ||
+        strength.suggestions[0] ||
+        t('auth.passwordStrength.tooWeak', { defaultValue: 'Password is too weak. Use a longer, less common password.' }),
+      );
+      return;
+    }
 
     if (password !== confirmPassword) {
       setError(t('auth.toast.passwordsNoMatch'));
@@ -258,6 +272,7 @@ export default function RegisterForm() {
             onChange={(e) => setPassword(e.target.value)}
             className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
           />
+          {password && <PasswordStrengthMeter password={password} identityParts={[email, fullName, phone]} />}
         </div>
 
         <div className="space-y-1.5">

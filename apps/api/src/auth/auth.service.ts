@@ -784,8 +784,18 @@ export class AuthService {
     const existingBusiness = await db.vendor.findUnique({ where: { businessId: dto.businessId } });
     if (existingBusiness) throw new ConflictException('Business ID already registered');
 
-    const existingSlug = await db.vendor.findUnique({ where: { slug: dto.slug } });
-    if (existingSlug) throw new ConflictException('Slug already taken');
+    // The slug is auto-derived from the business name on the client and is
+    // READ-ONLY, so a collision (two vendors with the same business name) can't
+    // be fixed by the user. Auto-resolve to the next free variant (base, base-2,
+    // base-3, …) so vendor registration never dead-ends. The vendor.slug unique
+    // index is the final integrity backstop — a rare concurrent-registration
+    // race surfaces as the standard duplicate error and the vendor just retries.
+    let resolvedSlug = dto.slug;
+    for (let n = 2; n <= 1000; n++) {
+      const taken = await db.vendor.findUnique({ where: { slug: resolvedSlug }, select: { id: true } });
+      if (!taken) break;
+      resolvedSlug = `${dto.slug}-${n}`;
+    }
 
     if (dto.phone) {
       // Neutral anti-enumeration message — must match the customer-register
@@ -825,7 +835,7 @@ export class AuthService {
           businessNameEn: dto.businessNameEn,
           businessNameAr: dto.businessNameAr,
           businessId: dto.businessId,
-          slug: dto.slug,
+          slug: resolvedSlug,
           phone: dto.phone ?? null,
           countryId: dto.countryId,
           status: 'PENDING',
