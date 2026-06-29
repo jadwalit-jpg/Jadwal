@@ -176,16 +176,23 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Hero content. Same pt/pb scale as `/home` (`pt-16 sm:pt-20 md:pt-0
-            pb-56 md:pb-64`): the asymmetric bottom padding lifts the centered
-            block well above the waves and the boat at the bottom of the
-            section, on every breakpoint. On md+ we drop pt to 0 so the
-            content centers naturally in the larger viewport. */}
-        <div className="relative z-20 flex-1 flex flex-col items-center justify-center max-w-6xl mx-auto w-full px-6 pt-16 sm:pt-20 md:pt-0 pb-56 md:pb-64 text-center">
-          <HeroTitle />
-          <HeroSearchBar />
-          <HeroTrustMetrics />
-          <HeroBrowseCtaBasic />
+        {/* Hero content. The navbar is a TRANSPARENT OVERLAY on top of this
+            section, so the content needs a top floor that clears it. `pt-*`
+            provides that floor at every breakpoint; the asymmetric `pb-56
+            md:pb-64` lifts the block above the waves + boat at the bottom.
+            The inner `my-auto` block centres the content when the viewport has
+            room, but PINS it to the top floor (below the navbar) when the
+            viewport is too short to centre — so on short / zoomed desktop
+            windows the title can never slide up under the navbar (it overflows
+            downward instead). Replaces the old `justify-center` + `md:pt-0`,
+            which let a too-tall centred block overflow UPWARD into the navbar. */}
+        <div className="relative z-20 flex-1 flex flex-col items-center max-w-6xl mx-auto w-full px-6 pt-20 sm:pt-24 md:pt-28 pb-56 md:pb-64 text-center">
+          <div className="my-auto w-full flex flex-col items-center">
+            <HeroTitle />
+            <HeroSearchBar />
+            <HeroTrustMetrics />
+            <HeroBrowseCtaBasic />
+          </div>
         </div>
 
         {/* Waves (light) */}
