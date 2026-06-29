@@ -281,24 +281,25 @@ export default function BookingCalendar({
     const all = [...daysLeft, ...daysRight];
     const blocked = new Set(all.filter((d) => d.isBlocked).map((d) => d.date));
     if (blocked.size === 0) return set;
-    const selectingCheckout = !!checkIn && !checkOut;
+    const nights = minNights ?? 0;
+    const rangeHitsLock = (from: string, to: string) => {
+      for (let n = from; n < to; n = addDaysStr(n, 1)) if (blocked.has(n)) return true;
+      return false;
+    };
     for (const d of all) {
       if (d.isPast || !d.isActiveDay) continue;
-      if (selectingCheckout) {
-        if (d.date <= checkIn!) continue; // only dates after check-in can be a check-out
-        for (let n = checkIn!; n < d.date; n = addDaysStr(n, 1)) {
-          if (blocked.has(n)) { set.add(d.date); break; }
-        }
-      } else {
-        const nights = minNights ?? 0;
-        if (nights < 1) continue;
-        for (let i = 0; i < nights; i++) {
-          if (blocked.has(addDaysStr(d.date, i))) { set.add(d.date); break; }
-        }
+      if (d.date === checkIn) continue; // the selected check-in — a tap clears it
+      if (checkIn && d.date > checkIn) {
+        // Check-OUT / extension (incl. extending the auto-set min-night stay):
+        // the stay [checkIn, d) must not cross a locked night.
+        if (rangeHitsLock(checkIn, d.date)) set.add(d.date);
+      } else if (nights >= 1) {
+        // Check-IN candidate: the minimum stay [d, d+minNights) must not cross a lock.
+        if (rangeHitsLock(d.date, addDaysStr(d.date, nights))) set.add(d.date);
       }
     }
     return set;
-  }, [daysLeft, daysRight, minNights, checkIn, checkOut]);
+  }, [daysLeft, daysRight, minNights, checkIn]);
 
   // Can't go before current month
   const today = new Date();
