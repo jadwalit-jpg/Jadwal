@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
+import { motion } from 'framer-motion';
 import { Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -25,6 +26,9 @@ export interface HourRangePickerProps {
   start: string | null;
   end: string | null;
   onChange: (start: string | null, end: string | null) => void;
+  // Called when the user taps a host-locked time — drives the "can't book over
+  // off-hours" toast in the parent.
+  onBlockedAttempt?: () => void;
   formatTime: (hhmm: string) => string;
   labels?: {
     selectStart?: string;
@@ -61,10 +65,13 @@ export function HourRangePicker({
   start,
   end,
   onChange,
+  onBlockedAttempt,
   formatTime,
   labels,
 }: HourRangePickerProps) {
   const [hoverHour, setHoverHour] = useState<string | null>(null);
+  // Hour currently playing the "earthquake" shake after a blocked tap.
+  const [shakeHour, setShakeHour] = useState<string | null>(null);
 
   const unitMins = durationValue * 60;
   const checkInMins = useMemo(() => toMinutes(checkInTime), [checkInTime]);
@@ -114,9 +121,10 @@ export function HourRangePicker({
       const m = toMinutes(hh);
       if (m + unitMins > checkOutMins) return false;
       if (pastByStart.has(hh)) return false;
-      // Vendor-locked start slot — can't begin a booking here. (Capacity is
-      // intact, so isValidEnd still lets a booking starting earlier span across
-      // it; the lock only forbids STARTING at this slot.)
+      // Vendor-locked: isBlocked is RANGE-overlap (a booking of this activity's
+      // duration starting here would cross a lock), so a start whose window spans
+      // a lock is rejected — matching the server. (Extending the END across a
+      // lock isn't pre-checked here; the server still rejects it on submit.)
       if (blockedByStart.has(hh)) return false;
       const a = availByStart.get(hh);
       if (a !== null && a !== undefined && a < guests) return false;
@@ -268,12 +276,10 @@ export function HourRangePicker({
             enabled = isValidEnd(hh, start);
           }
 
-          // Vendor-locked: the slot STARTING at this hour overlaps a block the
-          // vendor set, so it can't be a start. Given its own rose+lock
-          // treatment so it reads as "blocked" rather than "doesn't fit".
-          // Only when the cell is genuinely unusable — a locked hour can still
-          // be a valid END of an earlier booking (e.g. 9→11 when only 12–13 is
-          // locked), and then it stays a normal, clickable cell.
+          // Vendor-locked: a booking of this activity's duration starting here
+          // would cross a host lock (range overlap), so it can't be a start.
+          // Given its own rose+lock treatment so it reads as "blocked" rather
+          // than "doesn't fit", and (below) it stays clickable to shake + warn.
           const isLocked =
             blockedByStart.has(hh) && !enabled && !isStart && !isEnd && !inSelectedRange;
           // "Unavailable" means the cell would never be bookable (past, over
@@ -284,12 +290,24 @@ export function HourRangePicker({
             !enabled && !isLocked && !inSelectedRange && !inPreviewRange && !isPreviewEnd && !isStart && !isEnd;
 
           return (
-            <button
+            <motion.button
               key={hh}
               type="button"
               role="gridcell"
-              disabled={!enabled}
-              onClick={() => handleClick(hh)}
+              // Locked cells stay clickable so a tap can shake + warn; other
+              // unavailable cells (past / no capacity / beyond close) are inert.
+              disabled={!enabled && !isLocked}
+              animate={shakeHour === hh ? { x: [0, -6, 6, -5, 5, -3, 3, 0] } : { x: 0 }}
+              transition={{ duration: 0.45 }}
+              onClick={() => {
+                if (isLocked) {
+                  setShakeHour(hh);
+                  onBlockedAttempt?.();
+                  window.setTimeout(() => setShakeHour((c) => (c === hh ? null : c)), 500);
+                  return;
+                }
+                handleClick(hh);
+              }}
               onMouseEnter={() => setHoverHour(hh)}
               onFocus={() => setHoverHour(hh)}
               aria-label={isLocked ? `${formatTime(hh)} — ${labels?.blocked ?? 'blocked by host'}` : formatTime(hh)}
@@ -330,7 +348,7 @@ export function HourRangePicker({
               ) : (
                 formatTime(hh)
               )}
-            </button>
+            </motion.button>
           );
         })}
       </div>

@@ -96,29 +96,35 @@ const PHONE = '+97455123456';
 // Enforcement: lock → unavailable → booking rejected
 // ═══════════════════════════════════════════════════════════════════════════
 describe('vendor lock enforcement (HOURLY)', () => {
-  test('locking a start slot blocks ONLY that start; a booking starting earlier may span across it', async () => {
+  test('locking a slot rejects ANY booking whose range overlaps it — including one starting earlier that spans across', async () => {
     const seed = await seedReference(ctx.prisma);
     const { vendor, bookings } = makeServices();
     const date = futureDate(7);
 
-    // Lock the 10:00 start slot. Activity is 2h, 09:00–21:00 → slots 09:00..19:00.
+    // Lock the 10:00 slot. Activity is 2h, 09:00–21:00 → slots 09:00..19:00.
     await vendor.createActivityBlock(seed.vendorUser.id, seed.activity.id, { date, slotTimes: ['10:00'] });
 
     const avail: any = await bookings.getHourlyAvailability(seed.activity.id, date);
     const slot = (s: string) => avail.slots.find((x: any) => x.slotStart === s);
-    // Only 10:00 is start-locked; 09:00 is NOT (its 9–11 booking merely runs across it).
+    // RANGE OVERLAP: a slot is blocked if a duration-long booking starting there
+    // would cross the locked window — so 09:00 (its 9–11 run spans the lock) is
+    // now blocked too, not just 10:00. A slot well clear of the lock is free.
     expect(slot('10:00').isBlocked).toBe(true);
-    expect(slot('09:00').isBlocked).toBe(false);
-    // Capacity is intact on the locked slot (not zeroed) so spanning still works.
-    expect(slot('10:00').available).toBe(10);
+    expect(slot('09:00').isBlocked).toBe(true);
+    expect(slot('14:00').isBlocked).toBe(false);
 
     // A booking that STARTS at 10:00 → rejected.
     await expect(
       bookings.createBooking(seed.customer.id, { activityId: seed.activity.id, checkInDate: date, slotTime: '10:00', guests: 2, bookingPhone: PHONE }),
     ).rejects.toThrow(/not available/i);
 
-    // A booking that STARTS at 09:00 (runs 9–11, across the locked 10:00) → ALLOWED.
-    const ok = await bookings.createBooking(seed.customer.id, { activityId: seed.activity.id, checkInDate: date, slotTime: '09:00', guests: 2, bookingPhone: PHONE });
+    // A booking that STARTS at 09:00 (runs 9–11, spanning the locked 10:00) → now REJECTED.
+    await expect(
+      bookings.createBooking(seed.customer.id, { activityId: seed.activity.id, checkInDate: date, slotTime: '09:00', guests: 2, bookingPhone: PHONE }),
+    ).rejects.toThrow(/not available/i);
+
+    // A booking that STARTS at 14:00 (well clear of the lock) → ALLOWED.
+    const ok = await bookings.createBooking(seed.customer.id, { activityId: seed.activity.id, checkInDate: date, slotTime: '14:00', guests: 2, bookingPhone: PHONE });
     expect(ok.booking.id).toBeTruthy();
   });
 

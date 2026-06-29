@@ -511,12 +511,13 @@ export class BookingsService {
 
       // Past-slot marker — uses activity's local timezone
       const isSlotPast = isPastDate || (isToday && slotStart <= nowTimeLocal);
-      // Vendor lock — START-MATCH: a slot is locked only if its START time falls
-      // inside a block window. The slot can't be a booking START (the picker greys
-      // it), but capacity is NOT zeroed — a booking starting earlier may still run
-      // across it. A whole-day block [00:00,next) contains every slot start → the
-      // whole day is locked.
-      const isBlocked = dayBlocks.some((b) => startDatetime >= b.blockStart && startDatetime < b.blockEnd);
+      // Vendor lock — RANGE OVERLAP: a slot is blocked if a booking of this
+      // activity's duration starting here [slotStart, slotEnd) would cross any
+      // locked window — not only when the START is inside one. So a 3-hour slot
+      // at 12:00 is blocked by a 14:00–15:00 lock (it would run across it).
+      // Mirrors the booking-create rejection so the picker can't offer a start
+      // the server will reject. Half-open overlap.
+      const isBlocked = dayBlocks.some((b) => startDatetime < b.blockEnd && endDatetime > b.blockStart);
 
       if (activity.hasUnits && activity.unitCount > 0) {
         const wholeUnit = rentsWholeUnit(activity);
@@ -525,8 +526,8 @@ export class BookingsService {
           const peak = maxConcurrentInWindow(unitBookings, startDatetime, endDatetime);
           // Whole-unit rentals are all-or-nothing: any overlap takes the entire
           // unit out (no seat-sharing). Per-person units count remaining seats.
-          // Capacity is independent of the start-lock (isBlocked) so a booking
-          // starting earlier can still span across a locked start slot.
+          // Capacity (concurrency) is computed independently of isBlocked; the
+          // lock is surfaced via isBlocked and enforced at booking create.
           const available = wholeUnit
             ? (peak > 0 ? 0 : activity.unitCapacity)
             : Math.max(0, activity.unitCapacity - peak);
@@ -542,7 +543,7 @@ export class BookingsService {
       } else {
         const peak = maxConcurrentInWindow(dayBookings, startDatetime, endDatetime);
         const cap = activity.capacity ?? Infinity;
-        // Capacity is independent of the start-lock (isBlocked) — see note above.
+        // Capacity (concurrency) is independent of isBlocked — see note above.
         const available = cap === Infinity ? Infinity : Math.max(0, cap - peak);
         return { slotStart, slotEnd, capacity: activity.capacity, booked: peak, available, isPast: isSlotPast, isBlocked };
       }
@@ -1104,13 +1105,11 @@ export class BookingsService {
     // Vendor availability lock. Checked here, before the Redis lock + capacity
     // transaction, so a locked slot fails fast with a clear message rather than
     // appearing as "no capacity".
-    //   HOURLY → START-MATCH: reject only if the booking STARTS inside a block
-    //            window (a booking starting earlier may run across a locked slot).
-    //   DAILY  → OVERLAP: reject any stay overlapping a blocked day.
-    const blockWhere =
-      activity.bookingType === 'HOURLY'
-        ? { blockStart: { lte: startDatetime }, blockEnd: { gt: startDatetime } }
-        : { blockStart: { lt: endDatetime }, blockEnd: { gt: startDatetime } };
+    //   Both HOURLY and DAILY → RANGE OVERLAP: reject if the booking's full
+    //   range [start, end) crosses any locked window, even when it starts before
+    //   the lock. A 3-hour or 3-night booking may not span an off-hour / off-day.
+    //   Half-open overlap: block.start < booking.end && block.end > booking.start.
+    const blockWhere = { blockStart: { lt: endDatetime }, blockEnd: { gt: startDatetime } };
     const overlappingBlock = await db.activityBlock.findFirst({
       where: { activityId: dto.activityId, deletedAt: null, ...blockWhere },
       select: { id: true },

@@ -243,6 +243,8 @@
     "hourRangeHint": "Minimum {{hours}}h. Tap a later hour to extend. Closing: {{closing}}.",
     "slotBlocked": "blocked by host",
     "slotBlockedLegend": "Times marked with a lock are blocked by the host.",
+    "cantBookOverOffHours": "Can't book over the host's off-hours — pick a time that doesn't cross a locked slot.",
+    "cantBookOverOffDays": "Can't book over the host's off-days — your stay would cross a locked date.",
     "clear": "Clear",
     "duration": "Duration",
     "toast": {

@@ -986,6 +986,7 @@ export default function BookActivityPage() {
                               setSelectedSlot(s);
                               setSelectedSlotEnd(e);
                             }}
+                            onBlockedAttempt={() => toast(t('booking.cantBookOverOffHours', { defaultValue: "Can't book over the host's off-hours — pick a time that doesn't cross a locked slot." }), 'error')}
                             formatTime={formatTime12h}
                             labels={{
                               // i18n interpolation: {{hours}} and {{closing}} are
@@ -1036,6 +1037,7 @@ export default function BookActivityPage() {
                   checkIn={checkIn}
                   checkOut={checkOut}
                   onDateSelect={handleDailyDateSelect}
+                  onBlockedAttempt={() => toast(t('booking.cantBookOverOffDays', { defaultValue: "Can't book over the host's off-days — your stay would cross a locked date." }), 'error')}
                   currency={currency}
                   showPrices={false}
                   minNights={minNights}

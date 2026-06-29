@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useState } from 'react';
+import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -17,6 +18,8 @@ export interface CalendarDay {
   booked: number;
   available: number | null;
   isFullyBooked: boolean;
+  /** A vendor availability lock touches this date (whole- or part-day). */
+  isBlocked?: boolean;
 }
 
 interface BookingCalendarProps {
@@ -34,6 +37,9 @@ interface BookingCalendarProps {
   checkOut: string | null;
   /** Called when user clicks a date */
   onDateSelect: (date: string) => void;
+  /** Called when the user taps a date whose min-night stay would cross a lock —
+   *  drives the "can't book over off-days" toast in the parent. */
+  onBlockedAttempt?: () => void;
   /** Currency code for price display */
   currency: string;
   /** Whether to show prices on each day */
@@ -81,6 +87,13 @@ function formatPrice(price: number): string {
   return price.toFixed(0);
 }
 
+// YYYY-MM-DD + n days (UTC, date-only) — used for the min-nights lock lookahead.
+function addDaysStr(dateStr: string, n: number): string {
+  const d = new Date(`${dateStr}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 /* ─── Month Grid ──────────────────────────────────────────── */
 
 function MonthGrid({
@@ -89,6 +102,8 @@ function MonthGrid({
   checkIn,
   checkOut,
   onDateSelect,
+  onBlockedAttempt,
+  lockBlockedStarts,
   currency,
   showPrices,
 }: {
@@ -97,10 +112,13 @@ function MonthGrid({
   checkIn: string | null;
   checkOut: string | null;
   onDateSelect: (date: string) => void;
+  onBlockedAttempt?: () => void;
+  lockBlockedStarts: Set<string>;
   currency: string;
   showPrices?: boolean;
 }) {
   const { t, i18n } = useTranslation();
+  const [shakeDate, setShakeDate] = useState<string | null>(null);
   const locale = dateLocale(i18n.language);
   const weekdays = useMemo(() => localizedWeekdays(locale), [locale]);
   const { year, mon } = parseMonth(month);
@@ -156,23 +174,39 @@ function MonthGrid({
           }
 
           const dateNum = parseInt(day.date.split('-')[2], 10);
-          const isDisabled = day.isPast || day.isFullyBooked || !day.isActiveDay;
+          // A min-night stay starting here would cross a host lock — stays
+          // clickable so the tap can shake + warn (vs. a genuinely full / past
+          // day, which is inert).
+          const isLockShake = !day.isPast && day.isActiveDay && lockBlockedStarts.has(day.date);
+          const isDisabled = day.isPast || !day.isActiveDay || (day.isFullyBooked && !isLockShake);
           const isCheckIn = checkIn === day.date;
           const isCheckOut = checkOut === day.date;
           const isSelected = isCheckIn || isCheckOut;
           const inRange = isInRange(day.date);
 
           return (
-            <button
+            <motion.button
               key={day.date}
               type="button"
               disabled={isDisabled}
-              onClick={() => onDateSelect(day.date)}
+              animate={shakeDate === day.date ? { x: [0, -5, 5, -4, 4, -2, 2, 0] } : { x: 0 }}
+              transition={{ duration: 0.45 }}
+              onClick={() => {
+                if (isLockShake) {
+                  setShakeDate(day.date);
+                  onBlockedAttempt?.();
+                  window.setTimeout(() => setShakeDate((c) => (c === day.date ? null : c)), 500);
+                  return;
+                }
+                onDateSelect(day.date);
+              }}
               className={`
                 relative h-14 flex flex-col items-center justify-center text-sm transition-all
-                ${isDisabled
-                  ? 'text-gray-300 dark:text-slate-700 cursor-not-allowed'
-                  : 'hover:bg-sky-50 dark:hover:bg-sky-900/20 cursor-pointer'
+                ${isLockShake
+                  ? 'text-rose-400 dark:text-rose-300/70 cursor-not-allowed'
+                  : isDisabled
+                    ? 'text-gray-300 dark:text-slate-700 cursor-not-allowed'
+                    : 'hover:bg-sky-50 dark:hover:bg-sky-900/20 cursor-pointer'
                 }
                 ${isSelected
                   ? 'bg-sky-600 text-white rounded-lg z-10'
@@ -207,7 +241,7 @@ function MonthGrid({
               {day.isFullyBooked && !day.isPast && (
                 <span className="absolute inset-x-2 top-1/2 h-px bg-gray-300 dark:bg-slate-600 -rotate-12" />
               )}
-            </button>
+            </motion.button>
           );
         })}
       </div>
@@ -225,13 +259,35 @@ export default function BookingCalendar({
   checkIn,
   checkOut,
   onDateSelect,
+  onBlockedAttempt,
   currency,
   showPrices = true,
+  minNights,
   isLoading = false,
   maxAdvanceMonths = 6,
 }: BookingCalendarProps) {
   const { t } = useTranslation();
   const rightMonth = nextMonth(month);
+
+  // Dates whose minimum-night stay [date, date + minNights) would cross a host
+  // lock — the picker shakes + warns instead of letting the user select them.
+  // Only meaningful for DAILY (minNights set); hourly date-locks are whole-day
+  // and already surface as fully-booked. Lookahead spans both visible months.
+  const lockBlockedStarts = useMemo(() => {
+    const set = new Set<string>();
+    const nights = minNights ?? 0;
+    if (nights < 1) return set;
+    const all = [...daysLeft, ...daysRight];
+    const blocked = new Set(all.filter((d) => d.isBlocked).map((d) => d.date));
+    if (blocked.size === 0) return set;
+    for (const d of all) {
+      if (d.isPast || !d.isActiveDay) continue;
+      for (let i = 0; i < nights; i++) {
+        if (blocked.has(addDaysStr(d.date, i))) { set.add(d.date); break; }
+      }
+    }
+    return set;
+  }, [daysLeft, daysRight, minNights]);
 
   // Can't go before current month
   const today = new Date();
@@ -296,6 +352,8 @@ export default function BookingCalendar({
           checkIn={checkIn}
           checkOut={checkOut}
           onDateSelect={onDateSelect}
+          onBlockedAttempt={onBlockedAttempt}
+          lockBlockedStarts={lockBlockedStarts}
           currency={currency}
           showPrices={showPrices}
         />
@@ -306,6 +364,8 @@ export default function BookingCalendar({
           checkIn={checkIn}
           checkOut={checkOut}
           onDateSelect={onDateSelect}
+          onBlockedAttempt={onBlockedAttempt}
+          lockBlockedStarts={lockBlockedStarts}
           currency={currency}
           showPrices={showPrices}
         />
