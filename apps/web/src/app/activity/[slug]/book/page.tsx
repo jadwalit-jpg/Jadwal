@@ -328,6 +328,13 @@ export default function BookActivityPage() {
 
   const handleDailyDateSelect = useCallback(
     (date: string) => {
+      // Tapping the currently-selected check-in again clears the whole
+      // selection (toggle off) — no need to click an earlier date to reset.
+      if (date === checkIn) {
+        setCheckIn(null);
+        setCheckOut(null);
+        return;
+      }
       if (minNights && minNights > 0) {
         // Minimum-stay model: the first pick (or a pick on/before the current
         // check-in) sets check-in and INSTANTLY pre-selects the minimum stay;
@@ -986,6 +993,7 @@ export default function BookActivityPage() {
                               setSelectedSlot(s);
                               setSelectedSlotEnd(e);
                             }}
+                            onBlockedAttempt={() => toast(t('booking.cantBookOverOffHours', { defaultValue: "Can't book over the host's off-hours — pick a time that doesn't cross a locked slot." }), 'error')}
                             formatTime={formatTime12h}
                             labels={{
                               // i18n interpolation: {{hours}} and {{closing}} are
@@ -1036,6 +1044,7 @@ export default function BookActivityPage() {
                   checkIn={checkIn}
                   checkOut={checkOut}
                   onDateSelect={handleDailyDateSelect}
+                  onBlockedAttempt={() => toast(t('booking.cantBookOverOffDays', { defaultValue: "Can't book over the host's off-days — your stay would cross a locked date." }), 'error')}
                   currency={currency}
                   showPrices={false}
                   minNights={minNights}
