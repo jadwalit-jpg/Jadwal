@@ -135,6 +135,23 @@ describe('Terms acceptance', () => {
     expect((u as any).termsAcceptedVersion).toBe(TERMS_VERSION);
   });
 
+  test('registerVendor auto-suffixes a colliding slug (read-only slug never dead-ends)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeAuth();
+    const base = {
+      businessNameEn: 'Doha Tours', businessNameAr: 'دوحة تورز',
+      countryId: seed.country.id, termsAccepted: true, password: 'S3cure!Pass1',
+    };
+    // Two different vendors derive the SAME slug from an identical business name.
+    await svc.registerVendor({ ...base, fullName: 'V One', email: 'v1-slug@t.com', businessId: 'CR-SLUG-1', slug: 'doha-tours' } as any);
+    await svc.registerVendor({ ...base, fullName: 'V Two', email: 'v2-slug@t.com', businessId: 'CR-SLUG-2', slug: 'doha-tours' } as any);
+
+    const v1 = await ctx.prisma.vendor.findUniqueOrThrow({ where: { businessId: 'CR-SLUG-1' } });
+    const v2 = await ctx.prisma.vendor.findUniqueOrThrow({ where: { businessId: 'CR-SLUG-2' } });
+    expect(v1.slug).toBe('doha-tours');
+    expect(v2.slug).toBe('doha-tours-2'); // auto-suffixed — no 409, no dead-end
+  });
+
   test('acceptTerms sets consent for a user that had none (e.g. OAuth / pre-feature account)', async () => {
     await seedReference(ctx.prisma);
     const { svc } = makeAuth();

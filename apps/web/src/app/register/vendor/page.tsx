@@ -13,6 +13,8 @@ import { Building2, CheckCircle, LogIn, UserPlus } from 'lucide-react';
 import { sanitize, sanitizeObject, validateEmail, validatePassword, validateFullName, validatePhone, validateSlug } from '@/lib/validation';
 import { getApiError } from '@/lib/api-error';
 import CustomSelect from '@/components/custom-select';
+import PasswordStrengthMeter from '@/components/password-strength-meter';
+import { evaluatePassword } from '@/lib/password-strength';
 
 interface Country {
   id: string;
@@ -57,14 +59,16 @@ function VendorAuthContent() {
   const [agreedTerms, setAgreedTerms] = useState(false);
   const [businessNameEn, setBusinessNameEn] = useState('');
   const [slug, setSlug] = useState('');
-  const [slugTouched, setSlugTouched] = useState(false);
+  const [pwValue, setPwValue] = useState(''); // controlled — drives the live strength meter
 
   const toSlug = (name: string) =>
     name.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 
   const handleBusinessNameChange = (value: string) => {
     setBusinessNameEn(value);
-    if (!slugTouched) setSlug(toSlug(value));
+    // Slug is ALWAYS auto-derived from the business name — the field is read-only
+    // (not user-editable), so it can't drift into an invalid value.
+    setSlug(toSlug(value));
   };
 
   const { data: countries } = useQuery<Country[]>({
@@ -132,6 +136,18 @@ function VendorAuthContent() {
 
     const pwCheck = validatePassword(pw);
     if (!pwCheck.valid) errs.password = (pwCheck as { error: string }).error;
+    else {
+      // Authoritative strength gate — same zxcvbn rules + userInputs as the server
+      // (lib/password-strength). Catches a weak password HERE with a clear reason
+      // instead of letting it round-trip to an opaque prod 400 ("Bad Request").
+      const strength = await evaluatePassword(pw, [emailVal, fullName, phone]);
+      if (!strength.ok) {
+        errs.password =
+          strength.warning ||
+          strength.suggestions[0] ||
+          t('auth.passwordStrength.tooWeak', { defaultValue: 'Password is too weak. Use a longer, less common password.' });
+      }
+    }
 
     if (pw && confirmPw && pw !== confirmPw) errs.confirmPassword = 'Passwords do not match'; // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_password
     else if (!confirmPw) errs.confirmPassword = 'Please confirm your password'; // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_password
@@ -372,13 +388,18 @@ function VendorAuthContent() {
                       {fieldErrors.phone && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.phone}</p>}
                     </div>
                     <div>
-                      <input name="password" type="password" minLength={8} maxLength={128} placeholder={t('auth.passwordHint')} className={`${inputCls} ${fieldErrors.password ? '!border-red-500' : ''}`} />
+                      <input name="password" type="password" minLength={8} maxLength={128} placeholder={t('auth.passwordHint')} value={pwValue} onChange={(e) => setPwValue(e.target.value)} className={`${inputCls} ${fieldErrors.password ? '!border-red-500' : ''}`} />
                       {fieldErrors.password && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.password}</p>}
                     </div>
                     <div className="col-span-2">
                       <input name="confirmPassword" type="password" minLength={8} maxLength={128} placeholder={t('auth.confirmPassword')} className={`${inputCls} ${fieldErrors.confirmPassword ? '!border-red-500' : ''}`} />
                       {fieldErrors.confirmPassword && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.confirmPassword}</p>}
                     </div>
+                    {pwValue && (
+                      <div className="col-span-2">
+                        <PasswordStrengthMeter password={pwValue} identityParts={[businessNameEn]} />
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -399,7 +420,7 @@ function VendorAuthContent() {
                       {fieldErrors.businessId && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.businessId}</p>}
                     </div>
                     <div>
-                      <input name="slug" type="text" maxLength={60} placeholder={t('vendor.slugHint')} pattern="[a-z0-9-]+" title="Only lowercase letters, numbers, and hyphens" value={slug} onChange={(e) => { setSlug(e.target.value); setSlugTouched(true); }} className={`${inputCls} ${fieldErrors.slug ? '!border-red-500' : ''}`} />
+                      <input name="slug" type="text" maxLength={60} placeholder={t('vendor.slugHint')} value={slug} readOnly aria-readonly="true" tabIndex={-1} title="Auto-generated from your business name" className={`${inputCls} cursor-not-allowed bg-gray-100 dark:bg-slate-800/60 text-gray-500 dark:text-slate-400 ${fieldErrors.slug ? '!border-red-500' : ''}`} />
                       {fieldErrors.slug && <p className="text-xs text-red-500 mt-1 ms-0.5">{fieldErrors.slug}</p>}
                     </div>
                     <div className="col-span-2">
