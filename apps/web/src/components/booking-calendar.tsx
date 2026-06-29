@@ -202,11 +202,9 @@ function MonthGrid({
               }}
               className={`
                 relative h-14 flex flex-col items-center justify-center text-sm transition-all
-                ${isLockShake
-                  ? 'text-rose-400 dark:text-rose-300/70 cursor-not-allowed'
-                  : isDisabled
-                    ? 'text-gray-300 dark:text-slate-700 cursor-not-allowed'
-                    : 'hover:bg-sky-50 dark:hover:bg-sky-900/20 cursor-pointer'
+                ${isDisabled
+                  ? 'text-gray-300 dark:text-slate-700 cursor-not-allowed'
+                  : 'hover:bg-sky-50 dark:hover:bg-sky-900/20 cursor-pointer'
                 }
                 ${isSelected
                   ? 'bg-sky-600 text-white rounded-lg z-10'

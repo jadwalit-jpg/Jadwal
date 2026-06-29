@@ -2,7 +2,6 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export interface HourRangePickerSlot {
@@ -111,8 +110,6 @@ export function HourRangePicker({
     for (const s of slots) if (s.isBlocked) set.add(s.slotStart);
     return set;
   }, [slots]);
-
-  const anyBlocked = blockedByStart.size > 0;
 
   // Does the half-open hour range [fromM, toM) cross any host-locked hour?
   // blockedByStart holds the raw locked hour-starts (per-hour signal from the
@@ -343,9 +340,10 @@ export function HourRangePicker({
                 (inPreviewRange || isPreviewEnd) &&
                   !(isStart || isEnd || inSelectedRange) &&
                   'border-sky-200 bg-sky-50 text-sky-600 dark:bg-sky-900/20 dark:border-sky-800 dark:text-sky-300',
-                // Vendor-locked — rose tint with a lock glyph
+                // Host-locked — render like a normal cell (NO red); a tap shakes
+                // + shows the "can't book over off-hours" message.
                 isLocked &&
-                  'cursor-not-allowed bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/60 text-rose-400 dark:text-rose-300/70',
+                  'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 text-gray-900 dark:text-white',
                 // Truly unavailable (past, no capacity, beyond close) — muted
                 isUnreachable &&
                   'opacity-40 cursor-not-allowed bg-gray-50 dark:bg-slate-900/30 border-gray-100 dark:border-slate-800 text-gray-400',
@@ -359,25 +357,11 @@ export function HourRangePicker({
                   'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 hover:border-sky-400 text-gray-900 dark:text-white',
               )}
             >
-              {isLocked ? (
-                <span className="inline-flex items-center justify-center gap-1">
-                  <Lock className="h-3 w-3 shrink-0" />
-                  {formatTime(hh)}
-                </span>
-              ) : (
-                formatTime(hh)
-              )}
+              {formatTime(hh)}
             </motion.button>
           );
         })}
       </div>
-
-      {anyBlocked && (
-        <p className="mt-3 inline-flex items-center gap-1.5 text-[11px] text-rose-500 dark:text-rose-300/80">
-          <Lock className="h-3 w-3 shrink-0" />
-          {labels?.blockedLegend ?? 'Times marked with a lock are blocked by the host.'}
-        </p>
-      )}
 
       <p className="mt-3 text-[11px] text-gray-400 dark:text-slate-500">
         {labels?.hint ??
