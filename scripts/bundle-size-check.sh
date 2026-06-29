@@ -8,16 +8,22 @@
 # home route. Fails the build if the total static size exceeds a
 # budget — guards against accidental dependency creep.
 #
-# Defaults are deliberately generous (~5 MB total) so the check
+# Defaults are deliberately generous (~6 MiB total) so the check
 # catches regressions like "we accidentally bundled all of Lodash"
 # without yelling about every legitimate page that adds 30 KB.
+#
+# 2026-06-29: raised 5000 → 6144 KiB to accommodate `zxcvbn` on the
+# signup forms. It's an intentional dependency (the client must run the
+# SAME strength check as the server) and is LAZY-loaded (dynamic import,
+# only on /register* — never on the homepage / critical path), so it has
+# no LCP/initial-load impact; it just counts toward this total-static dir.
 #
 # Tighten the BUDGET_KB value when actual numbers stabilise — to
 # halve the bundle, halve the budget, then watch the next PR fail
 # until we trim what the budget doesn't allow.
 #
 # Usage:   ./scripts/bundle-size-check.sh
-# Env:     BUDGET_KB=5000   (default budget in KiB)
+# Env:     BUDGET_KB=6144   (default budget in KiB)
 #          BUILD=1          (default: 1; set 0 to skip rebuild)
 #
 # Exit:    0 on pass, 1 on budget exceeded, 2 on missing build.
@@ -29,7 +35,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB_DIR="$ROOT/apps/web"
 STATIC_DIR="$WEB_DIR/.next/static"
 
-BUDGET_KB="${BUDGET_KB:-5000}"
+BUDGET_KB="${BUDGET_KB:-6144}"
 BUILD="${BUILD:-1}"
 
 if [[ "$BUILD" == "1" ]]; then
