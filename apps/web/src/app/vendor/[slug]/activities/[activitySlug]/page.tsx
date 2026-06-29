@@ -369,7 +369,11 @@ export default function EditActivityPage() {
     mutationFn: (data: any) => api.patch(`/vendor/activities/${activity?.id}`, data),
     onSuccess: () => {
       toast(t('vendor.activities.wizard.toast.updateSuccess'), 'success');
-      queryClient.invalidateQueries({ queryKey: ['vendor-activities'] });
+      // Prefix MUST start with user?.id to match the list query key
+      // [user?.id, 'vendor-activities', page, search, filterStatus] — otherwise
+      // the list isn't refetched and keeps showing the stale (pre-edit) status
+      // badge until a manual refresh. An edit flips the activity back to PENDING.
+      queryClient.invalidateQueries({ queryKey: [user?.id, 'vendor-activities'] });
       queryClient.invalidateQueries({ queryKey: [user?.id, 'vendor-activity', activitySlug] });
       router.push(`/vendor/${vendorSlug}/activities`);
     },
