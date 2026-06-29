@@ -290,8 +290,8 @@ export function HourRangePicker({
 
           // Would tapping here cross a host lock — either as a NEW start (its
           // duration-long baseline) or as an END-extension of the current start?
-          // Either way it's not a valid pick; show the rose+lock treatment and
-          // (below) keep it clickable so the tap shakes + warns.
+          // Either way it's not a valid pick; the cell renders as a normal chip
+          // (no red) but stays clickable (below) so the tap shakes + warns.
           const wouldHitLock =
             !start || startM === null || m <= startM
               ? hitsLock(m, m + unitMins)
@@ -301,7 +301,8 @@ export function HourRangePicker({
           // "Unavailable" means the cell would never be bookable (past, over
           // capacity, beyond close). Shown as a greyed-out chip. Distinct
           // from "inside range, not clickable" which uses the range color, and
-          // from "locked" which gets the rose treatment below.
+          // from "locked" (a lock-crossing pick), which stays a normal clickable
+          // chip that shakes on tap.
           const isUnreachable =
             !enabled && !isLocked && !inSelectedRange && !inPreviewRange && !isPreviewEnd && !isStart && !isEnd;
 
