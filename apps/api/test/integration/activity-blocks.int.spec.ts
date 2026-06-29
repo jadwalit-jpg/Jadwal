@@ -106,11 +106,12 @@ describe('vendor lock enforcement (HOURLY)', () => {
 
     const avail: any = await bookings.getHourlyAvailability(seed.activity.id, date);
     const slot = (s: string) => avail.slots.find((x: any) => x.slotStart === s);
-    // RANGE OVERLAP: a slot is blocked if a duration-long booking starting there
-    // would cross the locked window — so 09:00 (its 9–11 run spans the lock) is
-    // now blocked too, not just 10:00. A slot well clear of the lock is free.
+    // isBlocked is the RAW per-hour lock signal (this hour boundary sits inside a
+    // lock): only 10:00 is a locked hour. 09:00 is NOT a locked hour — but a 2h
+    // booking STARTING at 09:00 still spans the lock, so it's rejected by the
+    // range check at create (asserted below); the picker derives that range block.
     expect(slot('10:00').isBlocked).toBe(true);
-    expect(slot('09:00').isBlocked).toBe(true);
+    expect(slot('09:00').isBlocked).toBe(false);
     expect(slot('14:00').isBlocked).toBe(false);
 
     // A booking that STARTS at 10:00 → rejected.
@@ -118,7 +119,7 @@ describe('vendor lock enforcement (HOURLY)', () => {
       bookings.createBooking(seed.customer.id, { activityId: seed.activity.id, checkInDate: date, slotTime: '10:00', guests: 2, bookingPhone: PHONE }),
     ).rejects.toThrow(/not available/i);
 
-    // A booking that STARTS at 09:00 (runs 9–11, spanning the locked 10:00) → now REJECTED.
+    // A booking that STARTS at 09:00 (runs 9–11, spanning the locked 10:00) → REJECTED (range overlap).
     await expect(
       bookings.createBooking(seed.customer.id, { activityId: seed.activity.id, checkInDate: date, slotTime: '09:00', guests: 2, bookingPhone: PHONE }),
     ).rejects.toThrow(/not available/i);

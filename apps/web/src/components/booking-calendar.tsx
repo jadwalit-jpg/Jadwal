@@ -269,25 +269,38 @@ export default function BookingCalendar({
   const { t } = useTranslation();
   const rightMonth = nextMonth(month);
 
-  // Dates whose minimum-night stay [date, date + minNights) would cross a host
-  // lock — the picker shakes + warns instead of letting the user select them.
-  // Only meaningful for DAILY (minNights set); hourly date-locks are whole-day
-  // and already surface as fully-booked. Lookahead spans both visible months.
+  // Dates that would create a stay crossing a host lock — the picker shakes +
+  // warns instead of selecting them. SELECTION-AWARE:
+  //   • picking a check-OUT (check-in set, check-out not): block any date whose
+  //     stay [checkIn, date) contains a locked night — so you can't book ACROSS
+  //     a lock (e.g. 9→12 over locked 10,11).
+  //   • picking a check-IN: block dates whose minimum stay [date, date+minNights)
+  //     already contains a lock.
+  // Hourly date-locks are whole-day → surface as fully-booked, so this stays
+  // empty there. Lookahead spans both visible months; the server is the backstop.
   const lockBlockedStarts = useMemo(() => {
     const set = new Set<string>();
-    const nights = minNights ?? 0;
-    if (nights < 1) return set;
     const all = [...daysLeft, ...daysRight];
     const blocked = new Set(all.filter((d) => d.isBlocked).map((d) => d.date));
     if (blocked.size === 0) return set;
+    const selectingCheckout = !!checkIn && !checkOut;
     for (const d of all) {
       if (d.isPast || !d.isActiveDay) continue;
-      for (let i = 0; i < nights; i++) {
-        if (blocked.has(addDaysStr(d.date, i))) { set.add(d.date); break; }
+      if (selectingCheckout) {
+        if (d.date <= checkIn!) continue; // only dates after check-in can be a check-out
+        for (let n = checkIn!; n < d.date; n = addDaysStr(n, 1)) {
+          if (blocked.has(n)) { set.add(d.date); break; }
+        }
+      } else {
+        const nights = minNights ?? 0;
+        if (nights < 1) continue;
+        for (let i = 0; i < nights; i++) {
+          if (blocked.has(addDaysStr(d.date, i))) { set.add(d.date); break; }
+        }
       }
     }
     return set;
-  }, [daysLeft, daysRight, minNights]);
+  }, [daysLeft, daysRight, minNights, checkIn, checkOut]);
 
   // Can't go before current month
   const today = new Date();

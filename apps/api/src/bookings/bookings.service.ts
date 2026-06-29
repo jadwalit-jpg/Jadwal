@@ -511,13 +511,12 @@ export class BookingsService {
 
       // Past-slot marker — uses activity's local timezone
       const isSlotPast = isPastDate || (isToday && slotStart <= nowTimeLocal);
-      // Vendor lock — RANGE OVERLAP: a slot is blocked if a booking of this
-      // activity's duration starting here [slotStart, slotEnd) would cross any
-      // locked window — not only when the START is inside one. So a 3-hour slot
-      // at 12:00 is blocked by a 14:00–15:00 lock (it would run across it).
-      // Mirrors the booking-create rejection so the picker can't offer a start
-      // the server will reject. Half-open overlap.
-      const isBlocked = dayBlocks.some((b) => startDatetime < b.blockEnd && endDatetime > b.blockStart);
+      // Vendor lock — RAW per-hour signal: is THIS hour boundary inside a lock
+      // window. The hourly picker uses this to reject any booking whose RANGE
+      // (start..end, including a longer/earlier-started one) crosses a locked
+      // hour. The authoritative range rejection lives in createBooking.
+      // Half-open: [blockStart, blockEnd).
+      const isBlocked = dayBlocks.some((b) => startDatetime >= b.blockStart && startDatetime < b.blockEnd);
 
       if (activity.hasUnits && activity.unitCount > 0) {
         const wholeUnit = rentsWholeUnit(activity);

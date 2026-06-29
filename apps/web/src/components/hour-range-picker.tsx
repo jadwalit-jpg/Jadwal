@@ -114,23 +114,35 @@ export function HourRangePicker({
 
   const anyBlocked = blockedByStart.size > 0;
 
+  // Does the half-open hour range [fromM, toM) cross any host-locked hour?
+  // blockedByStart holds the raw locked hour-starts (per-hour signal from the
+  // server), so a booking of ANY length is checked against every hour it covers
+  // — matching the server's range rejection. Used by both start + end validity.
+  const hitsLock = useCallback(
+    (fromM: number, toM: number) => {
+      for (let m = fromM; m < toM; m += 60) {
+        if (blockedByStart.has(fromMinutes(m))) return true;
+      }
+      return false;
+    },
+    [blockedByStart],
+  );
+
   // A tick is a valid START if the activity fits before close, the slot
-  // starting here isn't in the past, and it has capacity for the guest count.
+  // starting here isn't in the past, its duration-long window doesn't cross a
+  // lock, and it has capacity for the guest count.
   const isValidStart = useCallback(
     (hh: string) => {
       const m = toMinutes(hh);
       if (m + unitMins > checkOutMins) return false;
       if (pastByStart.has(hh)) return false;
-      // Vendor-locked: isBlocked is RANGE-overlap (a booking of this activity's
-      // duration starting here would cross a lock), so a start whose window spans
-      // a lock is rejected — matching the server. (Extending the END across a
-      // lock isn't pre-checked here; the server still rejects it on submit.)
-      if (blockedByStart.has(hh)) return false;
+      // Range check: the baseline booking [m, m+duration) must not cross a lock.
+      if (hitsLock(m, m + unitMins)) return false;
       const a = availByStart.get(hh);
       if (a !== null && a !== undefined && a < guests) return false;
       return true;
     },
-    [unitMins, checkOutMins, pastByStart, blockedByStart, availByStart, guests],
+    [unitMins, checkOutMins, pastByStart, hitsLock, availByStart, guests],
   );
 
   // A tick is a valid END from a given start iff the resulting window is
@@ -159,12 +171,15 @@ export function HourRangePicker({
       for (let m = startM; m < endM; m += 60) {
         const slotHh = fromMinutes(m);
         if (pastByStart.has(slotHh)) return false;
+        // A locked hour anywhere inside the range makes the whole booking invalid
+        // — you can't extend the END across a host lock.
+        if (blockedByStart.has(slotHh)) return false;
         const a = availByStart.get(slotHh);
         if (a !== null && a !== undefined && a < guests) return false;
       }
       return true;
     },
-    [unitMins, checkOutMins, maxSlotUnits, pastByStart, availByStart, guests],
+    [unitMins, checkOutMins, maxSlotUnits, pastByStart, blockedByStart, availByStart, guests],
   );
 
   const startM = start ? toMinutes(start) : null;
@@ -276,12 +291,16 @@ export function HourRangePicker({
             enabled = isValidEnd(hh, start);
           }
 
-          // Vendor-locked: a booking of this activity's duration starting here
-          // would cross a host lock (range overlap), so it can't be a start.
-          // Given its own rose+lock treatment so it reads as "blocked" rather
-          // than "doesn't fit", and (below) it stays clickable to shake + warn.
+          // Would tapping here cross a host lock — either as a NEW start (its
+          // duration-long baseline) or as an END-extension of the current start?
+          // Either way it's not a valid pick; show the rose+lock treatment and
+          // (below) keep it clickable so the tap shakes + warns.
+          const wouldHitLock =
+            !start || startM === null || m <= startM
+              ? hitsLock(m, m + unitMins)
+              : hitsLock(startM, m);
           const isLocked =
-            blockedByStart.has(hh) && !enabled && !isStart && !isEnd && !inSelectedRange;
+            wouldHitLock && !enabled && !isStart && !isEnd && !inSelectedRange;
           // "Unavailable" means the cell would never be bookable (past, over
           // capacity, beyond close). Shown as a greyed-out chip. Distinct
           // from "inside range, not clickable" which uses the range color, and
