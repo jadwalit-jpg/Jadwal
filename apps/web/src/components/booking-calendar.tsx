@@ -282,6 +282,7 @@ export default function BookingCalendar({
     const blocked = new Set(all.filter((d) => d.isBlocked).map((d) => d.date));
     if (blocked.size === 0) return set;
     const nights = minNights ?? 0;
+    const isMinNight = nights >= 1;
     const rangeHitsLock = (from: string, to: string) => {
       for (let n = from; n < to; n = addDaysStr(n, 1)) if (blocked.has(n)) return true;
       return false;
@@ -289,17 +290,27 @@ export default function BookingCalendar({
     for (const d of all) {
       if (d.isPast || !d.isActiveDay) continue;
       if (d.date === checkIn) continue; // the selected check-in — a tap clears it
-      if (checkIn && d.date > checkIn) {
-        // Check-OUT / extension (incl. extending the auto-set min-night stay):
-        // the stay [checkIn, d) must not cross a locked night.
-        if (rangeHitsLock(checkIn, d.date)) set.add(d.date);
-      } else if (nights >= 1) {
-        // Check-IN candidate: the minimum stay [d, d+minNights) must not cross a lock.
+      // Does tapping d.date EXTEND the current stay (set / grow the check-out)?
+      //   • min-night mode: the check-out is auto-set, so any date after check-in
+      //     extends it.
+      //   • flexible mode: only while a check-in is set AND no check-out yet. Once
+      //     BOTH are set, the next tap RE-PICKS a fresh check-in (handleDailyDate-
+      //     Select), so it must NOT be treated as an extension — otherwise a valid
+      //     new check-in that happens to cross the OLD check-in's lock is wrongly
+      //     blocked.
+      const isExtend = !!checkIn && d.date > checkIn && (isMinNight || !checkOut);
+      if (isExtend) {
+        // The stay [checkIn, d) must not cross a locked night.
+        if (rangeHitsLock(checkIn!, d.date)) set.add(d.date);
+      } else if (isMinNight) {
+        // Check-IN candidate (first pick or re-pick): the minimum stay
+        // [d, d+minNights) must not cross a lock. Flexible mode imposes no minimum,
+        // so a lone check-in is never blocked — overlap is checked at check-out.
         if (rangeHitsLock(d.date, addDaysStr(d.date, nights))) set.add(d.date);
       }
     }
     return set;
-  }, [daysLeft, daysRight, minNights, checkIn]);
+  }, [daysLeft, daysRight, minNights, checkIn, checkOut]);
 
   // Can't go before current month
   const today = new Date();
