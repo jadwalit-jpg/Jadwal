@@ -115,7 +115,7 @@ export default async function GuidePage({
       {guide.published && <JsonLd data={[articleLd, breadcrumbLd]} />}
       <Navbar variant="solid" />
       <main className="min-h-[60vh] bg-jadwal-bg">
-        <article className="max-w-3xl mx-auto px-4 sm:px-6 py-12 md:py-16">
+        <article className="max-w-3xl mx-auto px-4 sm:px-6 pt-24 pb-12 md:pt-28 md:pb-16">
           <nav className="mb-6 text-sm text-jadwal-text-muted">
             <Link href={localePath('/blog', lang)} className="hover:text-jadwal-accent">
               {isAr ? 'الدليل' : 'Guides'}
