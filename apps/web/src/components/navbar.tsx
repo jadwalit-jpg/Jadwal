@@ -34,7 +34,7 @@ import api from '@/lib/api';
 import { CountryPicker } from '@/components/country-picker';
 import {
   Sun, Moon, Menu, X, Globe,
-  Home, Compass, Tag, Store,
+  Home, Compass, Tag, Store, BookOpen, Waves,
   Bell, CalendarDays, Heart, User, LogOut, ChevronDown,
 } from 'lucide-react';
 
@@ -144,6 +144,8 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
   const links = [
     { href: '/', label: t('nav.home'), icon: Home },
     { href: '/explore', label: t('nav.explore'), icon: Compass },
+    { href: '/blog', label: t('nav.guides'), icon: BookOpen },
+    { href: '/redsea', label: t('nav.redSea'), icon: Waves },
     { href: '/offers', label: t('nav.offers'), icon: Tag },
   ];
 
@@ -195,7 +197,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
               <Link
                 key={l.href}
                 href={l.href}
-                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${linkCls}`}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${l.href === '/redsea' ? 'text-[#D4AF6E] hover:text-[#B8965A]' : linkCls}`}
               >
                 {l.label}
               </Link>
@@ -442,9 +444,9 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
                     key={l.href}
                     href={l.href}
                     onClick={() => setOpen(false)}
-                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800 hover:text-sky-600 dark:hover:text-white transition-colors"
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium hover:bg-sky-50 dark:hover:bg-slate-800 transition-colors ${l.href === '/redsea' ? 'text-[#D4AF6E] hover:text-[#B8965A]' : 'text-gray-700 dark:text-slate-300 hover:text-sky-600 dark:hover:text-white'}`}
                   >
-                    <l.icon aria-hidden="true" className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                    <l.icon aria-hidden="true" className={`h-4 w-4 ${l.href === '/redsea' ? 'text-[#D4AF6E]' : 'text-gray-400 dark:text-slate-500'}`} />
                     {l.label}
                   </Link>
                 ))}
