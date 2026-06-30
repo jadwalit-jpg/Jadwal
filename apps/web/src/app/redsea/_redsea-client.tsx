@@ -354,7 +354,7 @@ export default function RedSeaClient() {
             {DETAILS.map((d) => (
               <div key={d.h}>
                 <h3 className={`${serif} text-[21px] font-semibold text-[#1A2230]`}>{d.h}</h3>
-                <div className="my-[14px_0_16px] h-px w-9 bg-[#B8965A]" />
+                <div className="mt-[14px] mb-4 h-px w-9 bg-[#B8965A]" />
                 <p className="text-[15px] leading-[1.65] text-[#4A4A4A]">{d.body}</p>
               </div>
             ))}
