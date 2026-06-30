@@ -52,7 +52,7 @@ export default async function BlogIndexPage() {
       <Navbar variant="solid" />
       <main className="min-h-[60vh] bg-jadwal-bg">
         <section className="bg-jadwal-surface border-b border-jadwal-border-subtle">
-          <div className="max-w-5xl mx-auto px-4 sm:px-6 py-12 md:py-16">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-24 pb-12 md:pt-28 md:pb-16">
             <h1 className="text-3xl md:text-4xl font-bold text-jadwal-text tracking-tight text-start">
               {isAr ? 'دليل قطر' : 'Qatar Guides'}
             </h1>
