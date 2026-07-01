@@ -68,11 +68,12 @@ export function validateFullName(name: string): ValidationResult {
   if (!trimmed) return { valid: false, error: 'Full name is required' };
   if (trimmed.length < 2) return { valid: false, error: 'Name is too short' };
   if (trimmed.length > 100) return { valid: false, error: 'Name is too long' };
-  if (/[<>{}()[\]\\\/;]/.test(trimmed)) return { valid: false, error: 'Name contains invalid characters' };
-  // `\p{Nd}` matches decimal digits across all scripts — ASCII 0-9
-  // AND Arabic-Indic 0-9 (٠١٢٣٤٥٦٧٨٩). Real personal names don't
-  // contain digits in any script; reject defensively.
-  if (/\p{Nd}/u.test(trimmed)) return { valid: false, error: 'Name cannot contain numbers' };
+  // Positive whitelist: letters of any script (\p{L} — Arabic + accented
+  // Latin), combining marks (\p{M}), spaces, hyphen, apostrophe (straight +
+  // curly) and period; first char must be a letter. Rejects digits AND
+  // symbols like @$#$. Mirrors the server-side @Matches on the name DTOs.
+  if (!/^[\p{L}\p{M}][\p{L}\p{M}\s'’.\-]*$/u.test(trimmed))
+    return { valid: false, error: 'Name may only contain letters, spaces, hyphens and apostrophes' };
   return { valid: true };
 }
 
