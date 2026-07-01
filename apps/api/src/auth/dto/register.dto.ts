@@ -7,11 +7,14 @@ export class RegisterDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
-  // `\P{Nd}` (capital P) matches anything EXCEPT a decimal digit across
-  // every script — rejects ASCII 0-9 AND Arabic-Indic ٠-٩. Real personal
-  // names don't contain digits; this is the server-side authority for
-  // the same rule enforced client-side by `validateFullName`.
-  @Matches(/^\P{Nd}*$/u, { message: 'Full name cannot contain numbers' })
+  // Positive whitelist: letters of ANY script (\p{L} — Arabic + accented
+  // Latin included), combining marks (\p{M}), spaces, hyphen, apostrophe
+  // (straight + curly) and period. Rejects digits AND symbols like @$#$;
+  // the first character must be a letter. Server-side authority for the
+  // same rule enforced client-side by `validateFullName`.
+  @Matches(/^[\p{L}\p{M}][\p{L}\p{M}\s'’.\-]*$/u, {
+    message: 'Full name may only contain letters, spaces, hyphens and apostrophes',
+  })
   @Transform(({ value }) => typeof value === 'string' ? value.replace(/[<>]/g, '').trim() : value)
   fullName!: string;
 

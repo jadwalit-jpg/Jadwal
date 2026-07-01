@@ -8,12 +8,14 @@ export class RegisterVendorDto {
   @IsNotEmpty({ message: 'Full name is required' })
   @MinLength(2, { message: 'Full name must be at least 2 characters' })
   @MaxLength(100, { message: 'Full name is too long' })
-  // `\P{Nd}` (capital P) matches anything EXCEPT a decimal digit across
-  // every script — rejects ASCII 0-9 AND Arabic-Indic ٠-٩ together. Real
-  // personal names don't contain digits in any script. Defence-in-depth
-  // server-side: the frontend has the same check in `validateFullName`,
-  // this DTO is the canonical authority.
-  @Matches(/^\P{Nd}*$/u, { message: 'Full name cannot contain numbers' })
+  // Positive whitelist: letters of ANY script (\p{L} — Arabic + accented
+  // Latin included), combining marks (\p{M}), spaces, hyphen, apostrophe
+  // (straight + curly) and period. Rejects digits AND symbols like @$#$;
+  // the first character must be a letter. Canonical server-side authority;
+  // the frontend mirrors it in `validateFullName`.
+  @Matches(/^[\p{L}\p{M}][\p{L}\p{M}\s'’.\-]*$/u, {
+    message: 'Full name may only contain letters, spaces, hyphens and apostrophes',
+  })
   @Transform(({ value }) => typeof value === 'string' ? value.replace(/[<>]/g, '').trim() : value)
   fullName!: string;
 
