@@ -15,8 +15,17 @@ import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
 import { Sparkles } from 'lucide-react';
+import { fbTrack } from '@/lib/fb-pixel';
 
 const WA = 'https://wa.me/97477499399?text=RED%20SEA';
+
+// Meta Pixel conversion for the WhatsApp CTA — the page's primary goal is a
+// WhatsApp inquiry, so a click is a Lead. No-ops unless the pixel loaded after
+// cookie consent (see lib/fb-pixel.ts). Opens in a new tab, so the beacon has
+// time to send from the still-open page.
+function trackWhatsappLead() {
+  fbTrack('Lead', { content_name: 'Red Sea Escape', content_category: 'redsea' });
+}
 
 /** Shared scroll-reveal wrapper — matches the .reveal CSS (fade + rise). */
 function Reveal({ children, className = '' }: { children: React.ReactNode; className?: string }) {
@@ -54,6 +63,7 @@ function GoldButton({ className = '' }: { className?: string }) {
       href={WA}
       target="_blank"
       rel="noopener noreferrer"
+      onClick={trackWhatsappLead}
       className={`inline-flex items-center gap-[0.7em] bg-[#B8965A] px-8 py-[17px] text-sm font-bold uppercase tracking-[0.12em] text-white transition-[transform,background] duration-300 hover:-translate-y-0.5 hover:bg-[#D4AF6E] ${className}`}
     >
       <Sparkles className="h-[1.15em] w-[1.15em]" aria-hidden="true" /> DM us “Red Sea”
