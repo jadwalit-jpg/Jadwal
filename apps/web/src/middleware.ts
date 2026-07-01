@@ -70,6 +70,9 @@ const IMG_HOSTS = [
   'https://jadwal-assets.s3.amazonaws.com',
   'https://jadwal-assets.s3.eu-central-1.amazonaws.com',
   'https://cdn.jadwal.qa',
+  // Meta Pixel image beacons (fbevents.js posts tracking to facebook.com/tr).
+  // The pixel loads ONLY after cookie consent — see components/meta-pixel.tsx.
+  'https://www.facebook.com',
   // Build-time CDN host (NEXT_PUBLIC_CDN_URL). Add to the allowlist ONLY if
   // it differs from the hardcoded production fallback above — prevents the
   // duplicate `cdn.jadwal.qa cdn.jadwal.qa` entry that the live CSP header
@@ -117,7 +120,9 @@ function buildCsp(nonce: string, isProd: boolean): string {
     // script-src above is nonce-based with NO 'unsafe-inline'.
     `style-src 'self' 'unsafe-inline'`,
     `img-src ${IMG_HOSTS.join(' ')}`,
-    `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
+    // Meta Pixel: fbevents.js is fetched from connect.facebook.net and beacons
+    // to www.facebook.com (only after cookie consent — see MetaPixel).
+    `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org https://www.facebook.com https://connect.facebook.net${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
     `font-src 'self' data:`,
     `frame-src ${FRAME_HOSTS.join(' ')}`,
     `frame-ancestors 'none'`,

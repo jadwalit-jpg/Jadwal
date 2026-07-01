@@ -16,6 +16,7 @@ import { useAuth } from '@/context/auth-context';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { sanitize, validateEmail, validatePassword, validateFullName, validatePhone } from '@/lib/validation';
+import { fbTrack } from '@/lib/fb-pixel';
 import PasswordStrengthMeter from '@/components/password-strength-meter';
 import { evaluatePassword } from '@/lib/password-strength';
 import { getApiError } from '@/lib/api-error';
@@ -113,6 +114,9 @@ export default function RegisterForm() {
         // bots that auto-fill every input will populate it.
         website: website || undefined,
       });
+      // Meta Pixel conversion — customer signup. No-ops unless the pixel loaded
+      // after cookie consent (see lib/fb-pixel.ts).
+      fbTrack('CompleteRegistration');
       setPendingEmail(sanitize(email));
     } catch (err: unknown) {
       setError(getApiError(err, 'Registration failed. Please try again.'));

@@ -8,6 +8,10 @@ import { I18nProvider } from "@/context/i18n-provider";
 import { ThemeProvider } from "next-themes";
 import { QueryProvider } from "@/lib/query-provider";
 import { ToastProvider } from "@/components/toast";
+import { CookieConsentProvider } from "@/context/cookie-consent";
+import CookieConsentBanner from "@/components/cookie-consent-banner";
+import MetaPixel from "@/components/meta-pixel";
+import { Suspense } from "react";
 // CustomerShell conditionally wraps children with GeoProvider + LazyPrompts
 // based on pathname. Staff (admin / vendor) and auth routes skip both —
 // they don't need country detection or "verify your phone" prompts.
@@ -214,17 +218,26 @@ export default async function RootLayout({
                   new theme instead of crossfading every transitioned element (the
                   navbar's transitions + the hero's `dark:` swaps were the "theme
                   toggle lag" on /home). */}
-              <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange nonce={nonce}>
-                <AuthProvider>
-                  <ToastProvider>
-                    <CustomerShell>{children}</CustomerShell>
-                    {/* One-time post-login Terms consent gate (OAuth signups,
-                        pre-feature accounts, Terms version bumps). Renders null
-                        unless the logged-in customer/vendor must accept. */}
-                    <TermsConsentGate />
-                  </ToastProvider>
-                </AuthProvider>
-              </ThemeProvider>
+              <CookieConsentProvider>
+                <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange nonce={nonce}>
+                  <AuthProvider>
+                    <ToastProvider>
+                      <CustomerShell>{children}</CustomerShell>
+                      {/* One-time post-login Terms consent gate (OAuth signups,
+                          pre-feature accounts, Terms version bumps). Renders null
+                          unless the logged-in customer/vendor must accept. */}
+                      <TermsConsentGate />
+                      {/* Cookie-consent banner + Meta Pixel. The pixel loads only
+                          after Accept. Suspense wraps it because it reads
+                          useSearchParams (route-change PageView tracking). */}
+                      <CookieConsentBanner />
+                      <Suspense fallback={null}>
+                        <MetaPixel />
+                      </Suspense>
+                    </ToastProvider>
+                  </AuthProvider>
+                </ThemeProvider>
+              </CookieConsentProvider>
             </I18nProvider>
           </QueryProvider>
         </ErrorBoundary>
