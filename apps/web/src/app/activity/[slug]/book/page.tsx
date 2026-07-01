@@ -21,6 +21,7 @@ import api from '@/lib/api';
 import { getApiError } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import { sanitizeObject } from '@/lib/validation';
+import { fbTrack } from '@/lib/fb-pixel';
 import { localized } from '@/lib/localize';
 import { useAuth } from '@/context/auth-context';
 import { useGeo } from '@/context/geo-context';
@@ -652,6 +653,16 @@ export default function BookActivityPage() {
   useEffect(() => {
     if (!canSubmit && usePoints) setUsePoints(false);
   }, [canSubmit, usePoints]);
+
+  // Meta Pixel: customer reached checkout. Fired once when the activity loads
+  // (no-ops unless the pixel loaded after cookie consent — see lib/fb-pixel.ts).
+  const checkoutTracked = useRef(false);
+  useEffect(() => {
+    if (activity && !checkoutTracked.current) {
+      checkoutTracked.current = true;
+      fbTrack('InitiateCheckout', { currency, value: bookingCost });
+    }
+  }, [activity, currency, bookingCost]);
 
   // ─── Coupon validation ──────────────────────────────────
   const handleApplyCoupon = async () => {

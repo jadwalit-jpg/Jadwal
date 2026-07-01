@@ -1,6 +1,13 @@
 {
   "brand": "AL Jadwal",
   "brandAr": "الجدول",
+  "cookies": {
+    "title": "Cookies",
+    "message": "We use cookies to analyze traffic and improve your experience. You can accept or decline analytics and marketing cookies.",
+    "learnMore": "Learn more",
+    "accept": "Accept",
+    "decline": "Decline"
+  },
   "nav": {
     "home": "Home",
     "explore": "Explore",

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import api from '@/lib/api';
+import { fbTrack } from '@/lib/fb-pixel';
 import { localized } from '@/lib/localize';
 import { getApiError } from '@/lib/api-error';
 import { isAllowedPay2mFormAction } from '@/lib/pay2m';
@@ -144,6 +145,24 @@ export default function BookingDetailPage() {
   useEffect(() => {
     if (needsEmailOtp) setShowEmailOtpModal(true);
   }, [needsEmailOtp]);
+
+  // Meta Pixel: Purchase fires once when the booking is CONFIRMED — covers both
+  // card-paid and points-only bookings (both land here confirmed) and never
+  // fires on PENDING/failed ones. sessionStorage guard prevents a re-fire on
+  // revisit. No-ops unless the pixel loaded after cookie consent.
+  useEffect(() => {
+    if (booking?.status !== 'CONFIRMED' || !id) return;
+    const key = `fb_purchase_${id}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch {
+      // sessionStorage unavailable — fall through (at worst a rare double-count).
+    }
+    const cur = booking.currencyCode ?? booking.activity?.country?.currencyCode ?? 'QAR';
+    const value = Number(booking.totalPrice ?? 0) + Number(booking.serviceFee ?? 0);
+    fbTrack('Purchase', { currency: cur, value });
+  }, [booking, id]);
 
   const handleOtpVerified = useCallback(() => {
     setShowEmailOtpModal(false);
