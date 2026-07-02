@@ -95,7 +95,7 @@ export class AuthController {
   // be expired (that's why the client is calling refresh). Auth here is
   // by the RefreshToken cookie, which auth.service.refreshTokens
   // validates against the DB.
-  @Throttle(RATE_LIMIT_WRITE)
+  @Throttle(RATE_LIMIT_AUTH)
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) response: Response,

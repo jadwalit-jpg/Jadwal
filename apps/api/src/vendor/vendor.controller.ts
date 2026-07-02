@@ -68,7 +68,7 @@ export class VendorController {
   }
 
   @Get('activities/:id')
-  getActivity(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  getActivity(@CurrentUser() user: RequestUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.vendorService.getActivity(user.id, id);
   }
 
@@ -83,7 +83,7 @@ export class VendorController {
   @Throttle(RATE_LIMIT_WRITE)
   updateActivity(
     @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateActivityDto,
   ) {
     return this.vendorService.updateActivity(user.id, id, dto);
@@ -91,13 +91,13 @@ export class VendorController {
 
   @Delete('activities/:id')
   @Throttle(RATE_LIMIT_WRITE)
-  deleteActivity(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  deleteActivity(@CurrentUser() user: RequestUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.vendorService.deleteActivity(user.id, id);
   }
 
   @Patch('activities/:id/toggle')
   @Throttle(RATE_LIMIT_CALLBACK)
-  toggleActivityStatus(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  toggleActivityStatus(@CurrentUser() user: RequestUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.vendorService.toggleActivityStatus(user.id, id);
   }
 
@@ -188,7 +188,7 @@ export class VendorController {
   @Throttle(RATE_LIMIT_CALLBACK)
   updateBookingStatus(
     @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: VendorUpdateBookingStatusDto,
   ) {
     return this.vendorService.updateBookingStatus(user.id, id, dto.status);
@@ -215,7 +215,7 @@ export class VendorController {
   @Throttle(RATE_LIMIT_WRITE)
   replyToReview(
     @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ReplyReviewDto,
   ) {
     return this.vendorService.replyToReview(user.id, id, dto.reply);
