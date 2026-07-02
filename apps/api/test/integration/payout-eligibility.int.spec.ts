@@ -101,6 +101,38 @@ describe('VendorService.getPayoutEligibility — DB-backed', () => {
     expect(elig2.available).toBe(0);
   });
 
+  test('escrow: a FUTURE-activity booking is NOT payout-eligible (endDatetime > now)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    await ctx.prisma.vendor.update({
+      where: { id: seed.vendor.id },
+      data: { bankDetails: { iban: 'QA00..' } as any },
+    });
+    // Paid + SUCCESS + UNPAID, but the activity is still 30 days out — the
+    // customer can still cancel, so this must NOT be payable (refund-after-
+    // payout collusion guard). Gated on endDatetime in evaluatePayoutEligibility.
+    const payment = await ctx.prisma.payment.create({
+      data: { amount: 500, currency: 'QAR', status: 'SUCCESS', method: 'PAY2M', paidAt: new Date(), payoutStatus: 'UNPAID' },
+    });
+    const futureStart = new Date(Date.now() + 30 * 86_400_000);
+    await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-FUT-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456',
+        totalPrice: 500, serviceFee: 0, commissionAmount: 50,
+        status: 'CONFIRMED',
+        startDatetime: futureStart, endDatetime: new Date(futureStart.getTime() + 3600_000),
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+        paymentId: payment.id,
+      },
+    });
+
+    const { vendor } = makeServices();
+    const elig: any = await vendor.getPayoutEligibility(seed.vendorUser.id);
+    expect(elig.ok).toBe(false);
+    expect(elig.code).toBe('NO_BALANCE'); // future activity excluded → available 0
+    expect(elig.available).toBe(0);
+  });
+
   test('BELOW_MINIMUM fires when unlocked balance < MIN_PAYOUT_AMOUNT (env override)', async () => {
     const original = process.env.MIN_PAYOUT_AMOUNT;
     process.env.MIN_PAYOUT_AMOUNT = '500';

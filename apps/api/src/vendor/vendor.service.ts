@@ -1376,9 +1376,19 @@ export class VendorService {
     });
     const lockedPaymentIds = lockedRequests.flatMap((r) => r.paymentIds ?? []);
 
+    // Escrow: only pay out for activities that have already ENDED (+ an optional
+    // settlement/dispute buffer via PAYOUT_SETTLEMENT_BUFFER_DAYS, default 0). A
+    // customer cannot cancel once the activity has started, so gating payout on
+    // endDatetime closes the "vendor gets paid, then the customer cancels a
+    // still-future booking for a points refund" collusion vector — no cash
+    // leaves while the booking is still reversible.
+    const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
+    const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
+
     const agg = await db.booking.aggregate({
       where: {
         vendorId,
+        endDatetime: { lt: payoutCutoff },
         payment: {
           status: 'SUCCESS',
           payoutStatus: 'UNPAID',

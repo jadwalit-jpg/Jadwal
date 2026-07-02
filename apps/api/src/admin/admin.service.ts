@@ -2432,11 +2432,17 @@ export class AdminService {
     // PayoutRequest.
     if (action === 'APPROVED' && request.status === 'PENDING') {
       const updated = await db.$transaction(async (tx) => {
+        // Escrow buffer — mirror evaluatePayoutEligibility: only settle bookings
+        // whose activity has ENDED (+ optional PAYOUT_SETTLEMENT_BUFFER_DAYS), so
+        // the FIFO lock (ordered by payment.createdAt, which does NOT track the
+        // activity date) can't tie up a still-cancellable future booking.
+        const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
+        const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
         const eligible = await tx.payment.findMany({
           where: {
             status: 'SUCCESS',
             payoutStatus: 'UNPAID',
-            booking: { vendorId: request.vendorId },
+            booking: { vendorId: request.vendorId, endDatetime: { lt: payoutCutoff } },
           },
           select: {
             id: true,
