@@ -1,8 +1,14 @@
 'use client';
 
 /**
- * Loads the Meta (Facebook) Pixel AFTER cookie consent and fires a PageView on
- * every client-side navigation. Rendered once in the root layout.
+ * Loads the Meta (Facebook) Pixel and fires a PageView on every client-side
+ * navigation. Rendered once in the root layout.
+ *
+ * Consent = OPT-OUT: the pixel loads by DEFAULT for every visitor once the
+ * stored choice is read, EXCEPT visitors who explicitly clicked "Decline"
+ * (consent === 'declined'). Declining after load calls fbq('consent','revoke')
+ * so Meta stops receiving events. (An Accept-first gate killed ad-conversion
+ * tracking because most ad visitors never click Accept.)
  *
  * CSP: the app's script-src uses 'strict-dynamic', so a <script> element
  * inserted by our (nonce-trusted) bundle is itself trusted — fbevents.js loads
@@ -46,25 +52,36 @@ function isTrackablePath(pathname: string | null): boolean {
 }
 
 export default function MetaPixel() {
-  const { consent } = useCookieConsent();
+  const { consent, hydrated } = useCookieConsent();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const loaded = useRef(false);
 
-  // Load the pixel once, the first time consent is granted on a customer page.
+  // Opt-out: allowed by default once the stored choice is read (`hydrated`),
+  // unless the visitor previously declined. Waiting for `hydrated` ensures a
+  // prior "Decline" is respected before anything fires.
+  const allowed = hydrated && consent !== 'declined';
+
+  // Load the pixel once, on the first trackable customer page.
   useEffect(() => {
-    if (consent !== 'accepted' || !FB_PIXEL_ID || !isTrackablePath(pathname)) return;
+    if (!allowed || !FB_PIXEL_ID || !isTrackablePath(pathname)) return;
     if (!loaded.current) {
       loadPixel(FB_PIXEL_ID);
       loaded.current = true;
     }
-  }, [consent, pathname]);
+  }, [allowed, pathname]);
 
   // Fire PageView on first load + every subsequent client-side navigation.
   useEffect(() => {
-    if (consent !== 'accepted' || !FB_PIXEL_ID || !isTrackablePath(pathname)) return;
+    if (!allowed || !FB_PIXEL_ID || !isTrackablePath(pathname)) return;
     window.fbq?.('track', 'PageView');
-  }, [consent, pathname, searchParams]);
+  }, [allowed, pathname, searchParams]);
+
+  // If the visitor declines AFTER the pixel already loaded, tell Meta to stop.
+  // fbevents can't be unloaded, but consent-revoke halts further events.
+  useEffect(() => {
+    if (consent === 'declined' && loaded.current) window.fbq?.('consent', 'revoke');
+  }, [consent]);
 
   return null;
 }
