@@ -1478,7 +1478,7 @@
     },
     "cookies": {
       "title": "7. Cookies",
-      "p1": "We use essential cookies for authentication (login sessions). We use localStorage for UI preferences (theme, language). We do not use tracking cookies or third-party advertising cookies."
+      "p1": "We use essential cookies for authentication (login sessions) and localStorage for UI preferences (theme, language). We also use analytics and marketing cookies — including the Meta (Facebook) Pixel — to measure our advertising and understand how visitors use the site. You can decline these at any time via the cookie banner; declining does not affect core functionality."
     },
     "rights": {
       "title": "8. Your Rights",
