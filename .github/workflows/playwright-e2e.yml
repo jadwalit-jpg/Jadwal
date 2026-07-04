@@ -48,6 +48,13 @@ env:
   # accepts any 32+ char value here; rotating is fine and expected.
   JWT_SECRET: ci-only-test-secret-do-not-use-in-prod-eeeeeeeeeeeeeeeeeee
   JWT_REFRESH_SECRET: ci-only-test-refresh-secret-do-not-use-eeeeeeeeeeeeeee
+  # Access-token TTL. Default is 900s (15 min); a sharded run is ~12 min and the
+  # auth storageState is captured up-front in the setup project, so late-running
+  # specs (vendor-* sort last) would hit an EXPIRED token → the page redirects to
+  # login before the axios refresh lands → flaky "heading not visible". A 2-hour
+  # TTL keeps the seeded session valid for the whole run. TEST-ONLY — prod sets
+  # JWT_EXPIRATION via the ECS task definition, never this file.
+  JWT_EXPIRATION: '7200'
   DATABASE_URL: postgresql://jadwal:jadwal@localhost:5432/jadwal_e2e
   REDIS_URL: redis://localhost:6379
   NEXT_PUBLIC_API_URL: http://localhost:4000/api
