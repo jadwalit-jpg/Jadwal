@@ -39,6 +39,11 @@ permissions:
 
 env:
   NODE_VERSION: 22
+  # Total shard count — single source of truth for the `--shard=N/TOTAL`
+  # denominator (the value that actually decides which tests each job runs).
+  # Keep the `matrix.shard` list length in sync with this (GitHub Actions can't
+  # generate a matrix list from an env value); the job name mirrors it too.
+  TOTAL_SHARDS: 3
   # Test-only secrets — never used in production. The auth layer
   # accepts any 32+ char value here; rotating is fine and expected.
   JWT_SECRET: ci-only-test-secret-do-not-use-in-prod-eeeeeeeeeeeeeeeeeee
@@ -278,9 +283,9 @@ jobs:
           GREP_PATTERN: ${{ inputs.grep_pattern }}
         run: |
           if [ -n "$GREP_PATTERN" ]; then
-            npx playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3 --grep "$GREP_PATTERN"
+            npx playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ env.TOTAL_SHARDS }} --grep "$GREP_PATTERN"
           else
-            npx playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3
+            npx playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ env.TOTAL_SHARDS }}
           fi
 
       - name: Upload Playwright report (on success or failure)
