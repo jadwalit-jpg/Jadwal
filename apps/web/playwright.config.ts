@@ -4,9 +4,12 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  // Retry once locally too — dev server compile-on-demand can take 10-20s
-  // for cold pages, which races a 30s test timeout under suite load.
-  retries: process.env.CI ? 2 : 1,
+  // One retry everywhere. 1 retry (2 attempts) still absorbs genuine flake
+  // (dev/cold-compile races) but halves the wall-clock a real failure burns
+  // vs the old CI value of 2 — the suite is sharded across parallel CI jobs
+  // (see playwright-e2e.yml), so keeping the per-failure penalty low is what
+  // keeps every shard comfortably inside its job timeout.
+  retries: 1,
   // Slightly longer per-test budget so cold compiles + auth-context settle
   // don't trip the default 30 s.
   timeout: 60_000,
@@ -32,14 +35,18 @@ export default defineConfig({
     },
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      // Default storageState = anonymous + seeded cookie-consent (anon.json,
+      // written by the setup project) so the fixed bottom consent banner never
+      // intercepts clicks. Specs that log in override this via
+      // test.use({ storageState }); those states are consent-seeded too.
+      use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/anon.json' },
       dependencies: ['setup'],
     },
     // Safari (desktop) — runs only when explicitly invoked
     // (--project=webkit) to avoid doubling local-run time.
     {
       name: 'webkit',
-      use: { ...devices['Desktop Safari'] },
+      use: { ...devices['Desktop Safari'], storageState: 'e2e/.auth/anon.json' },
       dependencies: ['setup'],
     },
     // Mobile coverage — Jadwal is a GCC marketplace where most customer
@@ -49,13 +56,13 @@ export default defineConfig({
     // pages run on mobile as the real coverage target.
     {
       name: 'mobile-chrome',
-      use: { ...devices['Pixel 7'] },
+      use: { ...devices['Pixel 7'], storageState: 'e2e/.auth/anon.json' },
       dependencies: ['setup'],
       testIgnore: /(admin-|vendor-).+\.spec\.ts$/,
     },
     {
       name: 'mobile-safari',
-      use: { ...devices['iPhone 13'] },
+      use: { ...devices['iPhone 13'], storageState: 'e2e/.auth/anon.json' },
       dependencies: ['setup'],
       testIgnore: /(admin-|vendor-).+\.spec\.ts$/,
     },

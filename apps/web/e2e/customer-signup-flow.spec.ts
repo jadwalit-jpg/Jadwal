@@ -41,6 +41,11 @@ test.describe('Customer signup — golden path', () => {
       await confirmPasswordField.fill(password);
     }
 
+    // Tick the Terms + Privacy consent checkbox — it gates the submit button
+    // (register-form.tsx: `disabled={isSubmitting || !termsAccepted}`). Without
+    // this the button stays disabled and the click times out.
+    await page.getByRole('checkbox').first().check();
+
     await page.getByRole('button', { name: /register|sign up|create account|إنشاء|تسجيل/i }).click();
 
     // 3. Expect the "check your inbox" screen
@@ -74,6 +79,7 @@ test.describe('Customer signup — golden path', () => {
     if (await confirmPasswordField.isVisible()) {
       await confirmPasswordField.fill(password);
     }
+    await page.getByRole('checkbox').first().check();
     await page.getByRole('button', { name: /register|sign up|create account|إنشاء|تسجيل/i }).click();
     await expect(page.getByText(/check.*inbox|verification.*sent|تحقق|تم إرسال/i)).toBeVisible({ timeout: 10_000 });
 
@@ -85,6 +91,7 @@ test.describe('Customer signup — golden path', () => {
     if (await confirmPasswordField.isVisible()) {
       await confirmPasswordField.fill(password);
     }
+    await page.getByRole('checkbox').first().check();
     await page.getByRole('button', { name: /register|sign up|create account|إنشاء|تسجيل/i }).click();
 
     await expect(

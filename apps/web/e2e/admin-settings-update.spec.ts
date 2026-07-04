@@ -15,18 +15,21 @@ test.describe('Admin platform settings update', () => {
     await page.goto('/admin/settings');
     await page.waitForLoadState('networkidle');
 
-    // Settings inputs use <label> without htmlFor — locate by name=.
-    const aboutInput = page.locator('textarea[name="aboutText"]').first();
-    await expect(aboutInput).toBeVisible({ timeout: 10000 });
-    const newAbout = `E2E test about ${Date.now()}`;
-    await aboutInput.fill(newAbout);
+    // Settings inputs use <label> without htmlFor — locate by name=. The form
+    // exposes platformName / supportEmail / supportPhone / pct (there is no
+    // longer an aboutText field). Use supportEmail: free-form enough to write a
+    // unique value, lowest blast radius (no branding / commission impact).
+    const supportEmail = page.locator('input[name="supportEmail"]').first();
+    await expect(supportEmail).toBeVisible({ timeout: 10000 });
+    const newEmail = `e2e-support-${Date.now()}@jadwal-test.local`;
+    await supportEmail.fill(newEmail);
 
     await page.getByRole('button', { name: /save|update|حفظ|تحديث/i }).first().click();
     await expect(page.getByText(/saved|updated|تم/i).first()).toBeVisible({ timeout: 10000 });
 
     await page.reload();
     await page.waitForLoadState('networkidle');
-    await expect(aboutInput).toHaveValue(newAbout);
+    await expect(supportEmail).toHaveValue(newEmail);
   });
 
   test('error: settings page heading visible', async ({ page }) => {
