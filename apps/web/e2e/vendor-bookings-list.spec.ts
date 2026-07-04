@@ -20,9 +20,14 @@ test.describe('Vendor bookings list', () => {
       page.getByRole('heading', { name: /bookings|الحجوزات/i }).first(),
     ).toBeVisible();
 
-    const hasRows = (await page.locator('tbody tr, [data-testid="booking-row"]').count()) > 0;
-    const hasEmpty = await page.getByText(/no bookings|empty|لا توجد/i).isVisible().catch(() => false);
-    expect(hasRows || hasEmpty).toBe(true);
+    // Waited assertion: a synchronous count()/isVisible() races the client-side
+    // bookings query, which can settle after networkidle → flaky false negative.
+    await expect(
+      page
+        .locator('tbody tr, [data-testid="booking-row"]')
+        .first()
+        .or(page.getByText(/no bookings|empty|لا توجد/i).first()),
+    ).toBeVisible({ timeout: 10000 });
   });
 
   test('error: status filter narrows / clears table', async ({ page }) => {

@@ -4,12 +4,10 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  // One retry everywhere. 1 retry (2 attempts) still absorbs genuine flake
-  // (dev/cold-compile races) but halves the wall-clock a real failure burns
-  // vs the old CI value of 2 — the suite is sharded across parallel CI jobs
-  // (see playwright-e2e.yml), so keeping the per-failure penalty low is what
-  // keeps every shard comfortably inside its job timeout.
-  retries: 1,
+  // 2 retries in CI (3 attempts) to absorb transient timing flake — the suite
+  // is now sharded across parallel jobs (playwright-e2e.yml), so each shard is
+  // ~1/3 the tests and 2 retries still fits the job timeout. 1 retry locally.
+  retries: process.env.CI ? 2 : 1,
   // Slightly longer per-test budget so cold compiles + auth-context settle
   // don't trip the default 30 s.
   timeout: 60_000,

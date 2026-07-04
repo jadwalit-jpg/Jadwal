@@ -195,11 +195,16 @@ async function main() {
       totalPrice: 200,
       serviceFee: 0,
       status: 'PENDING',
+      // Mark the payment email-OTP step-up as already done, so the booking
+      // detail page shows the "Proceed to Payment" button (needsEmailOtp =
+      // PENDING && !emailOtpVerifiedAt). customer-activity-book-mock-pay needs it.
+      emailOtpVerifiedAt: new Date(),
     },
     update: {
       status: 'PENDING',
       startDatetime: pendingStart,
       endDatetime: pendingEnd,
+      emailOtpVerifiedAt: new Date(),
     },
   });
 

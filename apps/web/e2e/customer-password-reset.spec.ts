@@ -26,13 +26,15 @@ test.describe('Customer password reset', () => {
     await page.waitForLoadState('networkidle');
     const fullName = page.getByLabel(/full name|الاسم/i).first();
     await expect(fullName).toBeVisible({ timeout: 10000 });
-    await fullName.fill('E2E Reset');
+    await fullName.fill('Eeva Reset'); // digit-free — name validator rejects numbers
     await page.getByLabel(/email|البريد/i).fill(email);
     await page.getByLabel(/^password$|كلمة المرور/i).fill('S3cure!Pass1');
     const confirmField = page.getByLabel(/confirm password|تأكيد/i);
     if (await confirmField.isVisible().catch(() => false)) {
       await confirmField.fill('S3cure!Pass1');
     }
+    // Terms checkbox gates the submit button (disabled until checked).
+    await page.getByRole('checkbox').first().check();
     await page.getByRole('button', { name: /register|sign up|create account|إنشاء/i }).click();
 
     // Now try the reset.

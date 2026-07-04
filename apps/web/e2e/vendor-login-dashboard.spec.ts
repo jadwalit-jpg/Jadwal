@@ -28,13 +28,15 @@ test.describe('Vendor login + dashboard', () => {
     await expect(
       page.getByRole('link', { name: /activities|الأنشطة/i }).first(),
     ).toBeVisible();
-    // KPI cards or empty-state — either is acceptable for a smoke test.
-    const hasKpi = await page
-      .locator('[class*="rounded"][class*="border"]')
-      .first()
-      .isVisible()
-      .catch(() => false);
-    expect(hasKpi).toBe(true);
+    // KPI cards rendered — assert on their labels (content), not CSS classes
+    // (the cards are borderless rounded+shadow, so a [class*=border] selector
+    // misses them). A waited assertion also rides out the client-side query that
+    // populates the numbers after networkidle.
+    await expect(
+      page
+        .getByText(/total bookings|bookings value|revenue|total activities|إجمالي/i)
+        .first(),
+    ).toBeVisible({ timeout: 10000 });
 
     // Lighthouse-style "no JS errors during load"
     expect(errors.filter((e) => !/favicon|net::ERR|429|too many requests|404/i.test(e))).toEqual([]);
