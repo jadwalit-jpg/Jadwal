@@ -116,9 +116,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # mobile-chrome temporarily removed (2026-05-03) — runtime was ~12 min
-        # per project, doubling PR wall-clock. Re-add once the suite is green.
-        project: [chromium]
+        # Desktop Chrome + mobile Chrome (Pixel 7). Jadwal is a GCC marketplace
+        # where most customer traffic is on phones, so mobile coverage matters.
+        # mobile-chrome skips the admin/vendor spec families (desktop-only
+        # dashboards, see playwright.config.ts testIgnore) and the visual-
+        # regression spec is CI-skipped, so it runs the customer + landing flows.
+        project: [chromium, mobile-chrome]
         # Shard the suite across 3 parallel jobs (each spins up its OWN
         # isolated Postgres+Redis+API+Web below, so there is NO cross-shard
         # shared-state race — within a shard workers=1 keeps it serial too).

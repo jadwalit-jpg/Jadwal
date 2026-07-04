@@ -42,7 +42,7 @@ interface RefundRequest {
   cancelledAt: string | null;
   cancelledBy: string | null;
   createdAt: string;
-  customer: { id: string; fullName: string; email: string; phone: string | null };
+  customer: { fullName: string; email: string; phone: string | null };
   activity: {
     titleEn: string;
     titleAr: string | null;

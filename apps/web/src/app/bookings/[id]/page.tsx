@@ -408,20 +408,46 @@ export default function BookingDetailPage() {
                     className="w-5 h-5 text-jadwal-warning shrink-0 mt-0.5"
                     aria-hidden="true"
                   />
-                  <div>
-                    <p className="text-sm font-semibold text-jadwal-warning">
-                      {t('booking.refundPendingTitle', {
-                        defaultValue:
-                          'Cancellation recorded · Awaiting vendor review',
-                      })}
-                    </p>
-                    <p className="text-xs text-jadwal-warning/90 mt-0.5">
-                      {t('booking.refundPendingDesc', {
-                        defaultValue:
-                          'The vendor will review your refund request. Any approved amount will be added as Wanasa points to your balance.',
-                      })}
-                    </p>
-                  </div>
+                  {booking.cancelledBy === 'SYSTEM' ? (
+                    // System auto-cancel (e.g. the spot became unavailable before
+                    // the payment could be confirmed): the customer did NOT ask
+                    // to cancel, so reassure them their money is coming back
+                    // rather than framing it as a "refund request under review".
+                    <div>
+                      <p className="text-sm font-semibold text-jadwal-warning">
+                        {t('booking.refundQueuedTitle', {
+                          defaultValue: "We couldn't confirm your booking",
+                        })}
+                      </p>
+                      <p className="text-xs text-jadwal-warning/90 mt-0.5">
+                        {t('booking.refundQueuedDesc', {
+                          defaultValue:
+                            'The spot became unavailable before your payment could be confirmed. Your payment of {{amount}} {{cur}} is safe — a refund has been queued and will be added to your balance as Wanasa points once processed. No action needed.',
+                          amount: Number(
+                            booking.payment.refundAmount ??
+                              booking.payment.amount ??
+                              0,
+                          ).toLocaleString(),
+                          cur: currency,
+                        })}
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-sm font-semibold text-jadwal-warning">
+                        {t('booking.refundPendingTitle', {
+                          defaultValue:
+                            'Cancellation recorded · Awaiting vendor review',
+                        })}
+                      </p>
+                      <p className="text-xs text-jadwal-warning/90 mt-0.5">
+                        {t('booking.refundPendingDesc', {
+                          defaultValue:
+                            'The vendor will review your refund request. Any approved amount will be added as Wanasa points to your balance.',
+                        })}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : null}
 

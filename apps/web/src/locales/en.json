@@ -201,6 +201,8 @@
       "verifyToPay": "Verify your email to pay",
       "reopenCta": "Enter verification code"
     },
+    "refundQueuedTitle": "We couldn't confirm your booking",
+    "refundQueuedDesc": "The spot became unavailable before your payment could be confirmed. Your payment of {{amount}} {{cur}} is safe — a refund has been queued and will be added to your balance as Wanasa points once processed. No action needed.",
     "cancel": "Cancel",
     "bookAgain": "Book again",
     "date": "Date",
@@ -1442,7 +1444,7 @@
       "title": "4. Data Sharing",
       "vendors": {
         "label": "With Vendors:",
-        "text": "Your name, phone number, and booking details are shared with the vendor providing the activity."
+        "text": "Your name, email address, phone number, and booking details are shared with the vendor providing the activity (including when you request a refund)."
       },
       "gateway": {
         "label": "Payment Providers:",
