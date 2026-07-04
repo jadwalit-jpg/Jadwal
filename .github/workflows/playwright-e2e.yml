@@ -107,12 +107,9 @@ jobs:
     name: E2E (${{ matrix.project }} ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # NOT job-level continue-on-error — that makes the check display ❌
-    # on the PR even though the workflow conclusion is success. Instead
-    # we mark the single failure-prone step (Run Playwright) with
-    # continue-on-error and always-run the artefact uploads. End result:
-    # job conclusion = success → check shows ✓ on the PR, while spec
-    # failures still surface via the uploaded report artefact.
+    # A spec failure fails the job (the Run Playwright step is no longer
+    # continue-on-error) → E2E is a real green/red check. Report + trace
+    # artefacts still upload on failure via `if: always()` on the upload steps.
     strategy:
       fail-fast: false
       matrix:
@@ -283,11 +280,13 @@ jobs:
 
       - name: Run Playwright (${{ matrix.project }})
         working-directory: apps/web
-        # Step-level continue-on-error so the job conclusion is success
-        # (and the check shows ✓ on the PR) even when individual specs
-        # fail. Failure context is preserved via the report + traces
-        # artefacts, which now upload on success too via if: always().
-        continue-on-error: true
+        # NOTE: no continue-on-error — a spec failure now FAILS the job, so E2E
+        # is a real green/red signal (the prerequisite for making it a required
+        # merge gate). The report + trace artefacts still upload on failure via
+        # `if: always()` on the upload steps below. If this proves flaky in
+        # practice, re-add `continue-on-error: true` here to make it advisory
+        # again rather than blocking (once it's a required branch-protection
+        # check, an advisory revert also means removing it from that list).
         env:
           CI: '1'
           PLAYWRIGHT_BASE_URL: http://localhost:3000
