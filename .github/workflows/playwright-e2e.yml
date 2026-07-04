@@ -18,11 +18,12 @@ name: Playwright E2E
 
 on:
   pull_request:
+    # No `paths:` filter — E2E runs on EVERY PR to main/develop. This is required
+    # for E2E to be a branch-protection REQUIRED check: a path-filtered workflow
+    # that doesn't trigger never reports its check, which would deadlock any PR
+    # that doesn't touch the filtered paths (docs/config-only). Matches how the
+    # repo's other required checks (ci.yml) run on all PRs.
     branches: [main, develop]
-    paths:
-      - 'apps/web/**'
-      - 'apps/api/**'
-      - '.github/workflows/playwright-e2e.yml'
   workflow_dispatch:
     inputs:
       grep_pattern:
