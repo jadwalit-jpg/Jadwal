@@ -55,6 +55,12 @@ env:
   # TTL keeps the seeded session valid for the whole run. TEST-ONLY — prod sets
   # JWT_EXPIRATION via the ECS task definition, never this file.
   JWT_EXPIRATION: '7200'
+  # Disable rate limiting for the E2E run. In CI every request originates from
+  # 127.0.0.1, so the whole serial suite shares ONE rate-limit bucket → the auth
+  # (5/min) and write tiers trip constantly → intermittent 429s on whichever
+  # specs happen to hit the ceiling first (the random, shifting failure set we
+  # saw). TEST-ONLY — production sets THROTTLE_ENABLED=true via the ECS task def.
+  THROTTLE_ENABLED: 'false'
   DATABASE_URL: postgresql://jadwal:jadwal@localhost:5432/jadwal_e2e
   REDIS_URL: redis://localhost:6379
   NEXT_PUBLIC_API_URL: http://localhost:4000/api
