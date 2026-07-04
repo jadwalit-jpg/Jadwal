@@ -31,8 +31,9 @@ test.describe('Customer signup — golden path', () => {
     await expect(page.getByRole('heading', { name: /create.*account|sign up|register|إنشاء|تسجيل/i }))
       .toBeVisible();
 
-    // 2. Submit registration form
-    await page.getByLabel(/full name|الاسم/i).fill('E2E Customer');
+    // 2. Submit registration form (full name must be digit-free — the name
+    // validator rejects numbers, and "E2E Customer" contains a "2").
+    await page.getByLabel(/full name|الاسم/i).fill('Eeva Customer');
     await page.getByLabel(/email|البريد/i).fill(uniqueEmail);
     await page.getByLabel(/^password$|كلمة المرور/i).fill(password);
 
