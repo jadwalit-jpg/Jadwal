@@ -35,14 +35,18 @@ export default defineConfig({
     },
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      // Default storageState = anonymous + seeded cookie-consent (anon.json,
+      // written by the setup project) so the fixed bottom consent banner never
+      // intercepts clicks. Specs that log in override this via
+      // test.use({ storageState }); those states are consent-seeded too.
+      use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/anon.json' },
       dependencies: ['setup'],
     },
     // Safari (desktop) — runs only when explicitly invoked
     // (--project=webkit) to avoid doubling local-run time.
     {
       name: 'webkit',
-      use: { ...devices['Desktop Safari'] },
+      use: { ...devices['Desktop Safari'], storageState: 'e2e/.auth/anon.json' },
       dependencies: ['setup'],
     },
     // Mobile coverage — Jadwal is a GCC marketplace where most customer
@@ -52,13 +56,13 @@ export default defineConfig({
     // pages run on mobile as the real coverage target.
     {
       name: 'mobile-chrome',
-      use: { ...devices['Pixel 7'] },
+      use: { ...devices['Pixel 7'], storageState: 'e2e/.auth/anon.json' },
       dependencies: ['setup'],
       testIgnore: /(admin-|vendor-).+\.spec\.ts$/,
     },
     {
       name: 'mobile-safari',
-      use: { ...devices['iPhone 13'] },
+      use: { ...devices['iPhone 13'], storageState: 'e2e/.auth/anon.json' },
       dependencies: ['setup'],
       testIgnore: /(admin-|vendor-).+\.spec\.ts$/,
     },
