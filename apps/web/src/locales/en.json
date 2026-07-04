@@ -1444,7 +1444,7 @@
       "title": "4. Data Sharing",
       "vendors": {
         "label": "With Vendors:",
-        "text": "Your name, phone number, and booking details are shared with the vendor providing the activity."
+        "text": "Your name, email address, phone number, and booking details are shared with the vendor providing the activity (including when you request a refund)."
       },
       "gateway": {
         "label": "Payment Providers:",

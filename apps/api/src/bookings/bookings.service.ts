@@ -2532,7 +2532,11 @@ export class BookingsService {
         cancelledBy: true,
         createdAt: true,
         customer: {
-          select: { id: true, fullName: true, email: true, phone: true },
+          // Name/email/phone: the vendor needs these to identify + coordinate the
+          // refund for THEIR own customer (disclosed in Privacy §4 Data Sharing).
+          // The internal user id is NOT exposed — the vendor UI never uses it and
+          // it has no business purpose here (PDPPL data-minimisation).
+          select: { fullName: true, email: true, phone: true },
         },
         activity: {
           select: {
