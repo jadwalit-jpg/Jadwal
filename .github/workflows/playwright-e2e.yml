@@ -86,7 +86,7 @@ env:
 
 jobs:
   e2e:
-    name: E2E (${{ matrix.project }})
+    name: E2E (${{ matrix.project }} ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # NOT job-level continue-on-error — that makes the check display ❌
@@ -99,11 +99,16 @@ jobs:
       fail-fast: false
       matrix:
         # mobile-chrome temporarily removed (2026-05-03) — runtime was ~12 min
-        # per project, doubling PR wall-clock; both projects fail consistently
-        # on prod-targeted PRs because no staging stack exists yet. Re-add
-        # mobile-chrome once a dedicated staging environment is wired up so
-        # the suite can actually pass green and the wait is justified.
+        # per project, doubling PR wall-clock. Re-add once the suite is green.
         project: [chromium]
+        # Shard the suite across 3 parallel jobs (each spins up its OWN
+        # isolated Postgres+Redis+API+Web below, so there is NO cross-shard
+        # shared-state race — within a shard workers=1 keeps it serial too).
+        # This is what lets the full suite FINISH well inside the 30-min job
+        # timeout (a single unsharded run overran it and got cancelled) and is
+        # the prerequisite for turning E2E into a required merge gate. Keep the
+        # denominator here in sync with `--shard=.../N` in the Run step below.
+        shard: [1, 2, 3]
 
     services:
       postgres:
@@ -273,16 +278,16 @@ jobs:
           GREP_PATTERN: ${{ inputs.grep_pattern }}
         run: |
           if [ -n "$GREP_PATTERN" ]; then
-            npx playwright test --project=${{ matrix.project }} --grep "$GREP_PATTERN"
+            npx playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3 --grep "$GREP_PATTERN"
           else
-            npx playwright test --project=${{ matrix.project }}
+            npx playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3
           fi
 
       - name: Upload Playwright report (on success or failure)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: playwright-report-${{ matrix.project }}
+          name: playwright-report-${{ matrix.project }}-shard${{ matrix.shard }}
           path: apps/web/playwright-report/
           retention-days: 14
 
@@ -290,6 +295,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: playwright-traces-${{ matrix.project }}
+          name: playwright-traces-${{ matrix.project }}-shard${{ matrix.shard }}
           path: apps/web/test-results/
           retention-days: 14
