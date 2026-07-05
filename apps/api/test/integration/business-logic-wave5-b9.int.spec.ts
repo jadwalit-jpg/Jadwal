@@ -130,7 +130,7 @@ describe('§B9 — deleteUser anonymises PII + preserves financial records', () 
     const ledgerAfter = await ctx.prisma.loyaltyLedger.findUnique({ where: { id: ledger.id } });
     expect(ledgerAfter).not.toBeNull();
     expect(ledgerAfter!.userId).toBe(seed.customer.id);
-    expect(ledgerAfter!.delta).toBe(100);
+    expect(Number(ledgerAfter!.delta)).toBe(100); // Decimal column → Number()
   });
 
   test('ephemerals are hard-deleted (sessions, push subs, notifications, claims, likes)', async () => {

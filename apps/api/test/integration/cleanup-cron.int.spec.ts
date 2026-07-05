@@ -209,7 +209,7 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
 
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
     const user = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
-    expect(user.loyaltyPoints).toBe(0);
+    expect(Number(user.loyaltyPoints)).toBe(0);
     expect(await ctx.prisma.loyaltyLedger.findFirst({ where: { userId: seed.customer.id } })).toBeNull();
   });
 
