@@ -88,12 +88,16 @@ export class UpdateActivityDto {
   @IsOptional()
   pricingModel?: PricingModel;
 
+  // Must align to the 30-min booking-slot grid (:00 or :30) — an off-grid time
+  // makes every generated hourly slot off-grid and unbookable (KAN-12).
   @IsString()
   @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):(00|30)$/, { message: 'checkInTime must be on the hour or half-hour (HH:00 or HH:30)' })
   checkInTime?: string;
 
   @IsString()
   @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):(00|30)$/, { message: 'checkOutTime must be on the hour or half-hour (HH:00 or HH:30)' })
   checkOutTime?: string;
 
   @IsInt()

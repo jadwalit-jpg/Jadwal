@@ -761,6 +761,7 @@ export default function EditActivityPage() {
                       onChange={val => updateField('checkInTime', val)}
                       hasError={!!errors.checkInTime}
                       placeholder={t('vendor.activities.wizard.ui.phSelectStartTime')}
+                      minuteStep={30}
                     />
                   </FieldGroup>
                   <FieldGroup label={t('vendor.activities.wizard.ui.fieldEndTime')} required error={errors.checkOutTime}>
@@ -769,6 +770,7 @@ export default function EditActivityPage() {
                       onChange={val => updateField('checkOutTime', val)}
                       hasError={!!errors.checkOutTime}
                       placeholder={t('vendor.activities.wizard.ui.phSelectEndTime')}
+                      minuteStep={30}
                     />
                   </FieldGroup>
                 </div>
@@ -787,6 +789,7 @@ export default function EditActivityPage() {
                         onChange={val => updateField('checkInTime', val)}
                         hasError={!!errors.checkInTime}
                         placeholder={t('vendor.activities.wizard.ui.phSelectCheckInTime')}
+                        minuteStep={30}
                       />
                     </FieldGroup>
                     <FieldGroup label={t('vendor.activities.wizard.ui.fieldCheckOutTime')} required error={errors.checkOutTime}
@@ -796,6 +799,7 @@ export default function EditActivityPage() {
                         onChange={val => updateField('checkOutTime', val)}
                         hasError={!!errors.checkOutTime}
                         placeholder={t('vendor.activities.wizard.ui.phSelectCheckOutTime')}
+                        minuteStep={30}
                       />
                     </FieldGroup>
                   </div>

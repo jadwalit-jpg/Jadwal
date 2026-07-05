@@ -13,9 +13,14 @@ interface TimePickerProps {
    *  forms on a blue palette pass "blue" so the picker matches its sibling
    *  DatePicker + inputs instead of clashing beside them. */
   accent?: 'green' | 'blue';
+  /** Minute increment for the spinner. Default 5 (free-form times, e.g. a
+   *  marketing event). Activity check-in/out MUST pass 30 so the operating
+   *  window stays aligned to the 30-min booking-slot grid — an off-grid time
+   *  (e.g. 08:15) makes every generated slot off-grid and unbookable. */
+  minuteStep?: number;
 }
 
-export default function TimePicker({ value, onChange, hasError, placeholder = 'Select time', direction = 'down', accent = 'green' }: TimePickerProps) {
+export default function TimePicker({ value, onChange, hasError, placeholder = 'Select time', direction = 'down', accent = 'green', minuteStep = 5 }: TimePickerProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -74,14 +79,16 @@ export default function TimePicker({ value, onChange, hasError, placeholder = 'S
 
   const incrementMinute = () => {
     const current = minute ?? 0;
-    const next = current >= 55 ? 0 : current + 5;
-    setMinuteVal(next);
+    // Next grid point above (snaps an off-grid current up), wrapping at 60.
+    const next = (Math.floor(current / minuteStep) + 1) * minuteStep;
+    setMinuteVal(next >= 60 ? 0 : next);
   };
 
   const decrementMinute = () => {
     const current = minute ?? 0;
-    const next = current <= 0 ? 55 : current - 5;
-    setMinuteVal(next);
+    // Previous grid point below (snaps an off-grid current down), wrapping at 60.
+    const prev = Math.ceil(current / minuteStep) * minuteStep - minuteStep;
+    setMinuteVal(prev < 0 ? 60 - minuteStep : prev);
   };
 
   const formatDisplay = () => {

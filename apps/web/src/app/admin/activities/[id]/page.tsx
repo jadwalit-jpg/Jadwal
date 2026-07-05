@@ -426,10 +426,10 @@ export default function AdminEditActivityPage() {
                 </FieldGroup>
                 <div />
                 <FieldGroup label="Start Time" required error={errors.checkInTime}>
-                  <TimePicker value={form.checkInTime} onChange={val => updateField('checkInTime', val)} hasError={!!errors.checkInTime} placeholder="Select start time" />
+                  <TimePicker value={form.checkInTime} onChange={val => updateField('checkInTime', val)} hasError={!!errors.checkInTime} placeholder="Select start time" minuteStep={30} />
                 </FieldGroup>
                 <FieldGroup label="End Time" required error={errors.checkOutTime}>
-                  <TimePicker value={form.checkOutTime} onChange={val => updateField('checkOutTime', val)} hasError={!!errors.checkOutTime} placeholder="Select end time" />
+                  <TimePicker value={form.checkOutTime} onChange={val => updateField('checkOutTime', val)} hasError={!!errors.checkOutTime} placeholder="Select end time" minuteStep={30} />
                 </FieldGroup>
               </div>
             ) : (
@@ -440,10 +440,10 @@ export default function AdminEditActivityPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-5">
                   <FieldGroup label="Check-in Time" required error={errors.checkInTime}>
-                    <TimePicker value={form.checkInTime} onChange={val => updateField('checkInTime', val)} hasError={!!errors.checkInTime} placeholder="Select check-in time" />
+                    <TimePicker value={form.checkInTime} onChange={val => updateField('checkInTime', val)} hasError={!!errors.checkInTime} placeholder="Select check-in time" minuteStep={30} />
                   </FieldGroup>
                   <FieldGroup label="Check-out Time" required error={errors.checkOutTime}>
-                    <TimePicker value={form.checkOutTime} onChange={val => updateField('checkOutTime', val)} hasError={!!errors.checkOutTime} placeholder="Select check-out time" />
+                    <TimePicker value={form.checkOutTime} onChange={val => updateField('checkOutTime', val)} hasError={!!errors.checkOutTime} placeholder="Select check-out time" minuteStep={30} />
                   </FieldGroup>
                 </div>
                 {/* Minimum stay — optional. Empty = flexible day-by-day; set = at least N nights (extendable, pays per night). */}
