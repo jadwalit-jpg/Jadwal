@@ -489,6 +489,64 @@ describe('BookingsService.createBooking — loyalty redemption', () => {
     expect(redeemRow.bookingId).toBe(b.id);
   });
 
+  test('EXACT current config (1 / 0.01 / min 1): a 1-point redemption is accepted → 0.01 QAR off, balance -1', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+
+    // The live admin values: Points per QAR = 1, QAR per Point = 0.01, Min Redemption = 1.
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', pointsPerQar: 1, qarPerPoint: 0.01, minRedemption: 1 },
+      update: { pointsPerQar: 1, qarPerPoint: 0.01, minRedemption: 1 },
+    });
+    await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 1_000 } });
+    await ctx.prisma.loyaltyLedger.create({
+      data: { userId: seed.customer.id, delta: 1_000, balanceAfter: 1_000, source: 'ADMIN_ADJUST', actorType: 'SYSTEM', reason: 'genesis' },
+    });
+
+    // Redeem exactly the minimum (1 point). minRedemption=1 must NOT block it.
+    const res = await svc.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7),
+      slotTime: '10:00',
+      guests: 1,
+      bookingPhone: '+97455123456',
+      redeemPoints: 1,
+      idempotencyKey: crypto.randomUUID(),
+    });
+
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    expect(Number(b.pointsRedeemed)).toBe(1);
+    expect(Number(b.pointsDiscount)).toBe(0.01); // 1 point × qarPerPoint(0.01) = 0.01 QAR
+    const user = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
+    expect(user.loyaltyPoints).toBe(999);
+  });
+
+  test('Min Redemption floor is enforced: redeeming below it is rejected (config-driven)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', pointsPerQar: 1, qarPerPoint: 0.01, minRedemption: 100 },
+      update: { pointsPerQar: 1, qarPerPoint: 0.01, minRedemption: 100 },
+    });
+    await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 1_000 } });
+
+    await expect(
+      svc.createBooking(seed.customer.id, {
+        activityId: seed.activity.id,
+        checkInDate: futureDate(7),
+        slotTime: '10:00',
+        guests: 1,
+        bookingPhone: '+97455123456',
+        redeemPoints: 50, // below the 100 floor
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    ).rejects.toThrow(/minimum redemption/i);
+    // No booking created on rejection.
+    expect(await ctx.prisma.booking.count()).toBe(0);
+  });
+
   test('insufficient points → whole tx rolls back (no booking, no payment, no debit)', async () => {
     const seed = await seedReference(ctx.prisma);
     const { svc } = makeBookingsService();

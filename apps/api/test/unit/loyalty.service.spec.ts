@@ -266,6 +266,28 @@ describe('LoyaltyService.computeEarnedPoints', () => {
     expect(sut.computeEarnedPoints(300, 400, 1)).toBe(0);
   });
 
+  // ── Current prod config: Points per QAR = 1 (→ 1 QAR of points per 100 QAR) ──
+  test('NEW config (rate=1): 100 QAR → 100 pts; small bookings still earn (no flooring to 0)', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(100, 0, 1)).toBe(100);
+    expect(sut.computeEarnedPoints(50, 0, 1)).toBe(50);
+    expect(sut.computeEarnedPoints(99, 0, 1)).toBe(99);
+  });
+
+  test('OLD swapped config (rate=0.01) floored small bookings to 0 — the reported "no points" bug', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(100, 0, 0.01)).toBe(1);  // 100 QAR → 1 pt
+    expect(sut.computeEarnedPoints(99, 0, 0.01)).toBe(0);   // 99 QAR → 0 (floored)
+    expect(sut.computeEarnedPoints(50, 0, 0.01)).toBe(0);   // 50 QAR → 0
+  });
+
+  test('NEW config + partial redemption: earn on the remaining cash only', async () => {
+    const { sut } = await buildSut();
+    // Redeem 50 pts (= 0.50 QAR at qarPerPoint 0.01) on a 100 QAR booking →
+    // cash basis 99.50 → floor(99.50 × 1) = 99 points earned.
+    expect(sut.computeEarnedPoints(100, 0.5, 1)).toBe(99);
+  });
+
   test('rate of 0 earns nothing', async () => {
     const { sut } = await buildSut();
     expect(sut.computeEarnedPoints(300, 0, 0)).toBe(0);
