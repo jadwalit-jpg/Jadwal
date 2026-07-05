@@ -41,8 +41,27 @@ COPY apps/web/package.json ./apps/web/
 #      fixtures (test/, __tests__/, examples/) shipped inside packages.
 #      No runtime path reads them; pure shipping cost.
 # Combined: ~150-200 MB drop on the final image with zero behaviour change.
+#
+# sharp determinism: `sharp`'s native runtime lives in a NESTED optional dep
+# (sharp → @img/sharp-linuxmusl-x64 [the .node addon] → @img/sharp-libvips-
+# linuxmusl-x64 [the libvips-cpp.so]). `npm ci` intermittently drops that
+# optional-of-optional (npm/cli#4828), worsened by the shared BuildKit npm
+# cache below — so the SAME lockfile non-deterministically produces a bootable
+# image on one run and one that dies with `ERR_DLOPEN_FAILED: libvips-cpp.so`
+# on the next (which then fails the ECS rollout + auto-rollbacks). We defeat
+# the coin-flip by explicitly re-installing sharp FOR the target platform
+# (--os/--cpu/--libc pinned to this stage's linux/musl/x64), which forces npm
+# to resolve + place the matching @img libvips binary. Version is read from the
+# already-installed sharp so this never drifts from the lockfile; --no-save
+# --no-package-lock leaves the manifest/lockfile untouched; --ignore-scripts
+# keeps the no-arbitrary-scripts posture (the binary ships prebuilt, no script
+# needed). The runner stage adds a build-time `require('sharp')` smoke test so
+# a bad image can never again pass CI silently.
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --ignore-scripts --workspace=api --include-workspace-root=false \
+ && SHARP_VER="$(node -p "require('/app/node_modules/sharp/package.json').version")" \
+ && npm install --no-save --no-package-lock --include=optional --ignore-scripts \
+      --os=linux --cpu=x64 --libc=musl "sharp@${SHARP_VER}" \
  && rm -rf node_modules/prisma node_modules/.bin/prisma \
            node_modules/typescript node_modules/.bin/tsc node_modules/.bin/tsserver \
            apps/api/node_modules/prisma apps/api/node_modules/typescript \
@@ -114,6 +133,14 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
 COPY --from=builder /app/apps/api/package.json ./apps/api/
 COPY --from=builder /app/package.json ./
+
+# Build-time sharp smoke test — FAIL THE BUILD, not the prod rollout, if the
+# native libvips binary is missing/unloadable in the assembled image. Before
+# this guard a coin-flip `npm ci` (see deps stage) could ship an image that
+# only crashed at ECS startup with ERR_DLOPEN_FAILED, tripping the deployment
+# circuit breaker + an auto-rollback to the previous task-def. This turns that
+# into a fast, loud, pre-push CI failure.
+RUN node -e "const s=require('sharp'); if(!s||!s.format){throw new Error('sharp.format missing')} console.log('[build] sharp OK v'+require('sharp/package.json').version)"
 
 # Strip the npm CLI shipped with the node:22-alpine base image. The
 # runtime never calls npm (entrypoint is `node dist/main.js`), and npm's
