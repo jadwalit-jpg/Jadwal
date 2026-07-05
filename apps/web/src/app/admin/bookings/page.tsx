@@ -381,10 +381,10 @@ export default function AdminBookingsPage() {
                               <div className="space-y-1.5">
                                 <p className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider">Dates</p>
                                 <p className="font-medium text-gray-900 dark:text-white leading-tight">
-                                  {new Date(booking.startDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                  {new Date(booking.startDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })}
                                 </p>
                                 <p className="text-xs text-gray-500 dark:text-slate-400">
-                                  → {new Date(booking.endDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                  → {new Date(booking.endDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })}
                                 </p>
                               </div>
 

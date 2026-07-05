@@ -130,6 +130,10 @@ function formatDateTime(iso: string | null, t: TFunction) {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
+    // Booking times are stored as local-wall-clock tagged UTC — render in UTC to
+    // match every other booking-time display (else a non-UTC browser shows a shifted time).
+    timeZone: 'UTC',
   });
 }
 
