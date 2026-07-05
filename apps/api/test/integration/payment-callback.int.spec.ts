@@ -76,6 +76,11 @@ function makePaymentService(configOverrides: Record<string, string> = {}) {
     refund: jest.fn().mockResolvedValue(undefined),
     redeem: jest.fn().mockResolvedValue(undefined),
     reverseAwarded: jest.fn().mockResolvedValue(undefined),
+    // Pure function (no DB) — mirror the real LoyaltyService formula so the
+    // booking-confirmation email's projected-points value is computed correctly.
+    computeEarnedPoints: jest.fn((total: number, discount: number, rate: number) =>
+      rate <= 0 ? 0 : Math.floor(Math.max(0, total - discount) * rate),
+    ),
   } as any;
 
   return {

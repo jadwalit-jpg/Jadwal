@@ -24,7 +24,6 @@ function makeBookingsSvcMock() {
     getDailyAvailability:  jest.fn().mockResolvedValue({ days: [] }),
     getCalendarAvailability: jest.fn().mockResolvedValue({ days: [] }),
     getVendorRefundRequests: jest.fn().mockResolvedValue([]),
-    awardLoyaltyPoints:    jest.fn().mockResolvedValue(null),
   };
 }
 

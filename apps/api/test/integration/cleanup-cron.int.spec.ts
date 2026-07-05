@@ -498,6 +498,90 @@ describe('CleanupService.autoCompletePastBookings', () => {
     expect(u2.loyaltyPoints).toBe(0);
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Proves the timing the test-team questioned: points are NOT granted at
+  // booking/payment (CONFIRMED), only after the event completes.
+  // ─────────────────────────────────────────────────────────────────────────
+  test('points are NOT awarded at booking/payment (CONFIRMED) — only after the event completes', async () => {
+    const seed = await seedReference(ctx.prisma);
+    // Default earn rate (pointsPerQar=1, qarPerPoint=0.01) → 100 QAR = 100 pts.
+    await ctx.prisma.loyaltyConfig.upsert({ where: { id: 'singleton' }, create: { id: 'singleton' }, update: {} });
+    await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 0 } });
+
+    // A paid + CONFIRMED booking whose event is still in the FUTURE.
+    const booking = await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-CONF-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR', guests: 2, bookingPhone: '+97455123456',
+        totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        status: 'CONFIRMED',
+        startDatetime: new Date('2030-01-01T10:00:00Z'),
+        endDatetime:   new Date('2030-01-01T12:00:00Z'),
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+      },
+    });
+
+    const { svc } = makeCleanup();
+
+    // STEP 1 — just booked + paid (CONFIRMED, event upcoming): NO points, NO earn row.
+    await svc.autoCompletePastBookings(); // future booking is not eligible
+    expect(
+      await ctx.prisma.loyaltyLedger.findMany({ where: { userId: seed.customer.id, source: 'BOOKING_EARN' } }),
+    ).toHaveLength(0);
+    expect((await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } })).loyaltyPoints).toBe(0);
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).pointsAwarded).toBe(false);
+
+    // STEP 2 — event happens (endDatetime now in the past) → auto-complete awards.
+    await ctx.prisma.booking.update({ where: { id: booking.id }, data: { endDatetime: new Date('2020-01-01T12:00:00Z') } });
+    await svc.autoCompletePastBookings();
+
+    const earn = await ctx.prisma.loyaltyLedger.findMany({ where: { userId: seed.customer.id, source: 'BOOKING_EARN' } });
+    expect(earn).toHaveLength(1);
+    expect(earn[0].delta).toBe(100); // 100 QAR × pointsPerQar(1)
+    expect((await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } })).loyaltyPoints).toBe(100);
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).status).toBe('COMPLETED');
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Reproduces the LIVE admin config (Points per QAR Spent = 0.01) to show why
+  // customers earn near-nothing: floor() zeroes small bookings.
+  // ─────────────────────────────────────────────────────────────────────────
+  test('earn rate pointsPerQar=0.01 (current prod value) → 100 QAR earns 1 pt; 99 QAR earns 0 (floored)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', pointsPerQar: 0.01, qarPerPoint: 1, minRedemption: 1 },
+      update: { pointsPerQar: 0.01, qarPerPoint: 1, minRedemption: 1 },
+    });
+    await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 0 } });
+
+    const mkPast = (ref: string, price: number) => ctx.prisma.booking.create({
+      data: {
+        ref, currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456',
+        totalPrice: price, serviceFee: 0, commissionAmount: 10, status: 'CONFIRMED',
+        startDatetime: new Date('2020-01-01T10:00:00Z'), endDatetime: new Date('2020-01-01T12:00:00Z'),
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+      },
+    });
+    const b100 = await mkPast(`JDWL-R100-${crypto.randomUUID().slice(0, 6)}`, 100);
+    const b99 = await mkPast(`JDWL-R99-${crypto.randomUUID().slice(0, 6)}`, 99);
+
+    const { svc } = makeCleanup();
+    await svc.autoCompletePastBookings();
+
+    // 100 QAR → floor(100 × 0.01) = 1 pt earned; 99 QAR → floor(0.99) = 0 → no row.
+    const earn = await ctx.prisma.loyaltyLedger.findMany({
+      where: { userId: seed.customer.id, source: 'BOOKING_EARN' },
+    });
+    expect(earn).toHaveLength(1);
+    expect(earn[0].bookingId).toBe(b100.id);
+    expect(earn[0].delta).toBe(1);
+    // Both bookings still COMPLETED (completion is independent of earning);
+    // the 99 QAR customer just got 0 points.
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: b99.id } })).status).toBe('COMPLETED');
+    expect((await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } })).loyaltyPoints).toBe(1);
+  });
+
   test('CANCELLED past booking → NOT completed (skipped by status filter)', async () => {
     const seed = await seedReference(ctx.prisma);
     const cancelled = await ctx.prisma.booking.create({

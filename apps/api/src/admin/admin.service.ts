@@ -1474,7 +1474,7 @@ export class AdminService {
         // admin is now cancelling. Without this, the customer keeps the
         // earned points (8+ QAR per 100 in store credit) plus gets a
         // cash refund — repeatable double-dip exploit. Computed using the
-        // same earn-rate formula as awardLoyaltyPoints so reversal mirrors
+        // same earn-rate formula (LoyaltyService.computeEarnedPoints) so reversal mirrors
         // exactly what was credited. Idempotent — `pointsAwarded` is
         // flipped to false alongside the debit so re-cancel attempts (which
         // shouldn't happen because of the double-cancel guard, but defence

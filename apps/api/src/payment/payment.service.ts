@@ -1169,6 +1169,7 @@ export class PaymentService {
         totalPrice: true,
         serviceFee: true,
         couponDiscount: true,
+        pointsDiscount: true,
         currencyCode: true,
         startDatetime: true,
         endDatetime: true,
@@ -1259,6 +1260,19 @@ export class PaymentService {
       // may have been recreated by the §B2 path while the customer was being
       // soft-deleted in another tab; the customer email is then
       // `<id>@deleted.local`, a non-routable sentinel that would bounce at SES.
+      // Wanasa points the customer will EARN once this booking completes (after
+      // the event). Reuse LoyaltyService.computeEarnedPoints with the SAME inputs
+      // the award will use (totalPrice, pointsDiscount, current rate) so the email
+      // never promises a different number than what's granted. A points-paid
+      // booking yields 0 → the template hides the reward line. This is a display
+      // estimate only — it does NOT award points here (award stays at COMPLETED).
+      const loyaltyCfg = await db.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
+      const pointsToEarn = this.loyalty.computeEarnedPoints(
+        Number(bookingForNotify.totalPrice),
+        Number(bookingForNotify.pointsDiscount),
+        loyaltyCfg ? loyaltyCfg.pointsPerQar.toNumber() : 1.0,
+      );
+
       const customerEmail = bookingForNotify.customer.email;
       if (!customerEmail.endsWith('@deleted.local')) {
         try {
@@ -1278,6 +1292,7 @@ export class PaymentService {
                 bookingId: payment.bookingId!,
                 ...(bookingForNotify.activity?.locationAddress ? { locationAddress: bookingForNotify.activity.locationAddress } : {}),
                 ...(mapsLink ? { mapsLink } : {}),
+                ...(pointsToEarn > 0 ? { pointsToEarn } : {}),
               },
             },
           });
