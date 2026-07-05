@@ -220,8 +220,13 @@ export default function BookingDetailPage() {
     : 0;
   const cashPaid = Number(booking?.payment?.amount || 0);
   const paidWithWanasa = booking?.payment?.method === 'WANASA_POINTS';
+  // What the customer actually pays: activity price (already post-coupon) +
+  // service fee − the Wanasa points discount. Points are NOT baked into
+  // totalPrice, so they must be subtracted here — otherwise the "You paid"
+  // total ignores the redemption the breakdown shows just above it (e.g. a
+  // 1-point redeem on a 300 + 5 booking would wrongly read 305 instead of 304).
   const total = booking
-    ? Number(booking.totalPrice) + Number(booking.serviceFee)
+    ? Math.round((Number(booking.totalPrice) + Number(booking.serviceFee) - pointsValue) * 100) / 100
     : 0;
   const statusVariant =
     booking && STATUS_VARIANT[booking.status]

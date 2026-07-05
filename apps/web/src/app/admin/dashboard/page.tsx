@@ -189,7 +189,10 @@ export default function AdminDashboardPage() {
     [],
   );
 
-  const loyaltyCap = Number(process.env.NEXT_PUBLIC_LOYALTY_DISPLAY_CAP || 100000);
+  // Gauge ceiling for the loyalty-liability bar, in QAR (points are now
+  // QAR-denominated). Default 1000 QAR preserves the old effective ceiling
+  // (the previous 100000-points default × the old 0.01 rate = 1000 QAR).
+  const loyaltyCap = Number(process.env.NEXT_PUBLIC_LOYALTY_DISPLAY_CAP || 1000);
   const pointsIssued = Number(stats?.totalPointsIssued ?? 0);
   const pointsWorthQar = useMemo(() => {
     // 1 point = 1 QAR (default). Points are QAR-denominated, so the exposure ≈
