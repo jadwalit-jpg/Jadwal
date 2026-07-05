@@ -194,6 +194,52 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
     expect(Number(ledger?.delta)).toBe(500);
   });
 
+  test('RACE: a booking a late PAY2M success CONFIRMED after the scan is NOT refunded (no points mint)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 0 } });
+    // Customer redeemed 500 points; booking PENDING awaiting a slow PAY2M callback.
+    const { bookingId, paymentId } = await mkPendingBooking({
+      seed,
+      reservedUntil: new Date(Date.now() - 10_000),
+      paymentBasketId: 'basket-race',
+      pointsRedeemed: 500,
+    });
+    // What the cron's scan selected while the booking was still PENDING.
+    const staleSnapshot = [{
+      id: bookingId,
+      ref: 'JDWL-RACE',
+      paymentId,
+      activityId: seed.activity.id,
+      customerId: seed.customer.id,
+      couponCode: null,
+      pointsRedeemed: 500,
+    }];
+    // THE RACE: between that scan and the cron's transaction, a delayed/retried
+    // PAY2M success CONFIRMS the booking and marks its payment SUCCESS.
+    await ctx.prisma.booking.update({ where: { id: bookingId }, data: { status: 'CONFIRMED' } });
+    if (paymentId) await ctx.prisma.payment.update({ where: { id: paymentId }, data: { status: 'SUCCESS' } });
+
+    // Feed the cron the stale (PENDING) snapshot so it tries to reap the now-CONFIRMED booking.
+    const spy = jest.spyOn(ctx.prisma.booking, 'findMany').mockResolvedValueOnce(staleSnapshot as never);
+    const { svc } = makeCleanup();
+    await svc.autoCancelStalePendingBookings();
+    spy.mockRestore();
+
+    // The atomic claim-delete matched 0 rows (booking is CONFIRMED) → refund SKIPPED.
+    const user = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
+    expect(Number(user.loyaltyPoints)).toBe(0); // NOT minted back to 500
+    const booking = await ctx.prisma.booking.findUnique({ where: { id: bookingId } });
+    expect(booking?.status).toBe('CONFIRMED'); // paid, confirmed booking survives
+    const ledger = await ctx.prisma.loyaltyLedger.findFirst({
+      where: { userId: seed.customer.id, source: 'CANCEL_REFUND_UNPAID' },
+    });
+    expect(ledger).toBeNull(); // no refund ledger row written
+    if (paymentId) {
+      const pay = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+      expect(pay.status).toBe('SUCCESS'); // real success left intact (not soft-failed)
+    }
+  });
+
   test('stale PENDING booking with ZERO redeemed points → balance untouched, no ledger row', async () => {
     const seed = await seedReference(ctx.prisma);
     await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 0 } });
