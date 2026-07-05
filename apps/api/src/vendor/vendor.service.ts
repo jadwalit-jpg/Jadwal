@@ -484,7 +484,7 @@ export class VendorService {
     const booking = await db.booking.findFirst({
       where: { id: bookingId, vendorId: vendor.id },
       select: {
-        id: true, ref: true, vendorId: true, activityId: true, customerId: true, status: true, totalPrice: true, pointsRedeemed: true, pointsAwarded: true, endDatetime: true, couponCode: true,
+        id: true, ref: true, vendorId: true, activityId: true, customerId: true, status: true, totalPrice: true, pointsRedeemed: true, pointsDiscount: true, pointsAwarded: true, endDatetime: true, couponCode: true,
         activity: { select: { titleEn: true } },
         payment: { select: { id: true, status: true, amount: true } },
       },
@@ -581,7 +581,9 @@ export class VendorService {
           let loyaltyConfig = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
           if (!loyaltyConfig) loyaltyConfig = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
           const qarPerPoint = loyaltyConfig.qarPerPoint.toNumber();
-          const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+          // Points are QAR-denominated (1 pt = 1 QAR): round to 2 dp, don't floor
+          // (a 50.75 QAR refund → 50.75 points). Mirrors the customer/admin paths.
+          const refundPoints = qarPerPoint > 0 ? Math.round((paidAmount / qarPerPoint) * 100) / 100 : 0;
           if (refundPoints > 0) {
             await this.loyalty.refund(tx, {
               userId: result.customerId,
@@ -660,7 +662,17 @@ export class VendorService {
         if (!config) {
           config = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
         }
-        const points = Math.floor(Number(booking.totalPrice) * config.pointsPerQar.toNumber());
+        // Use the SHARED earn basis (LoyaltyService.computeEarnedPoints): 2-dp
+        // round (not floor, so sub-100 QAR bookings still earn their 1%), on the
+        // CASH paid only (totalPrice − pointsDiscount, so a points-paid booking
+        // earns 0 — no minting loop). Byte-identical to the cron + admin earn so
+        // the later reverse-on-cancel (which also uses computeEarnedPoints) matches
+        // exactly and never leaves a residual balance.
+        const points = this.loyalty.computeEarnedPoints(
+          Number(booking.totalPrice),
+          Number(booking.pointsDiscount),
+          config.pointsPerQar.toNumber(),
+        );
         if (points > 0) {
           await tx.booking.update({
             where: { id: bookingId },

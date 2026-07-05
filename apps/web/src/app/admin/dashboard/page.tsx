@@ -189,11 +189,16 @@ export default function AdminDashboardPage() {
     [],
   );
 
-  const loyaltyCap = Number(process.env.NEXT_PUBLIC_LOYALTY_DISPLAY_CAP || 100000);
+  // Gauge ceiling for the loyalty-liability bar, in QAR (points are now
+  // QAR-denominated). Default 1000 QAR preserves the old effective ceiling
+  // (the previous 100000-points default × the old 0.01 rate = 1000 QAR).
+  const loyaltyCap = Number(process.env.NEXT_PUBLIC_LOYALTY_DISPLAY_CAP || 1000);
   const pointsIssued = Number(stats?.totalPointsIssued ?? 0);
   const pointsWorthQar = useMemo(() => {
-    const qarPerPoint = Number(process.env.NEXT_PUBLIC_LOYALTY_QAR_PER_POINT || 0.01);
-    return Math.round(pointsIssued * qarPerPoint);
+    // 1 point = 1 QAR (default). Points are QAR-denominated, so the exposure ≈
+    // the points count; keep 2 dp rather than rounding to whole QAR.
+    const qarPerPoint = Number(process.env.NEXT_PUBLIC_LOYALTY_QAR_PER_POINT || 1);
+    return Math.round(pointsIssued * qarPerPoint * 100) / 100;
   }, [pointsIssued]);
   const loyaltyPct = loyaltyCap > 0 ? Math.min(100, Math.round((pointsIssued / loyaltyCap) * 100)) : 0;
 
@@ -462,10 +467,10 @@ export default function AdminDashboardPage() {
             <div className="flex items-end justify-between mb-3">
               <div>
                 <p className="text-2xl font-black tracking-tight">
-                  {pointsIssued.toLocaleString()}
+                  {pointsIssued.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   <span className="text-sm font-normal text-gray-500 dark:text-slate-500 ms-1.5">pts</span>
                 </p>
-                <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">≈ QAR {pointsWorthQar.toLocaleString()} exposure</p>
+                <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">≈ QAR {pointsWorthQar.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} exposure</p>
               </div>
               <span className="text-sm font-bold text-yellow-600 dark:text-yellow-400">{loyaltyPct}%</span>
             </div>
@@ -476,7 +481,7 @@ export default function AdminDashboardPage() {
               />
             </div>
             <p className="text-[11px] text-gray-400 dark:text-slate-700 mt-1.5">
-              {pointsIssued.toLocaleString()} of {loyaltyCap.toLocaleString()} cap
+              {pointsIssued.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} of {loyaltyCap.toLocaleString()} cap
             </p>
           </div>
 

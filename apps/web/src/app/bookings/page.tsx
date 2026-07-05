@@ -250,7 +250,7 @@ function BookingCard({ booking }: { booking: BookingSummary }) {
                 <Sparkles className="w-3 h-3" aria-hidden="true" />
                 {t('booking.pointsUsed', {
                   defaultValue: '{{n}} pts used',
-                  n: pointsUsed,
+                  n: pointsUsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
                 })}
               </span>
             ) : null}

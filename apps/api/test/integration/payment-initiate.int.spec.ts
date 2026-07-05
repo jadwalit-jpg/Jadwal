@@ -60,7 +60,7 @@ function makePaymentService() {
     redeem: jest.fn().mockResolvedValue(undefined),
     reverseAwarded: jest.fn().mockResolvedValue(undefined),
     computeEarnedPoints: jest.fn((total: number, discount: number, rate: number) =>
-      rate <= 0 ? 0 : Math.floor(Math.max(0, total - discount) * rate),
+      rate <= 0 ? 0 : Math.round(Math.max(0, total - discount) * rate * 100) / 100,
     ),
   } as any;
 

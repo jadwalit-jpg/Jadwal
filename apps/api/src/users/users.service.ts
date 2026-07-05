@@ -159,7 +159,9 @@ export class UsersService {
     }
 
     return {
-      loyaltyPoints: user.loyaltyPoints,
+      // loyaltyPoints is a Decimal column (QAR-denominated) — convert to a JS
+      // number so it serialises as a JSON number, not a Decimal string.
+      loyaltyPoints: Number(user.loyaltyPoints),
       pointsPerQar: config.pointsPerQar.toNumber(),
       qarPerPoint: config.qarPerPoint.toNumber(),
       minRedemption: config.minRedemption,

@@ -2,6 +2,7 @@ import {
   IsString,
   IsNotEmpty,
   IsInt,
+  IsNumber,
   IsOptional,
   IsUUID,
   IsArray,
@@ -149,9 +150,12 @@ export class CreateBookingDto {
   @IsUUID('4')
   voucherId?: string;
 
-  /** Number of loyalty points to redeem for a discount on this booking */
+  /**
+   * Loyalty points to redeem for a discount on this booking. Points are
+   * QAR-denominated (1 point = 1 QAR), so fractional amounts (2 dp) are valid.
+   */
   @IsOptional()
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(10000000)
   redeemPoints?: number;

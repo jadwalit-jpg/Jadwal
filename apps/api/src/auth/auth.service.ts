@@ -1328,12 +1328,19 @@ export class AuthService {
     return {
       generatedAt: new Date().toISOString(),
       schemaVersion: 1,
-      user,
+      // loyaltyPoints + ledger delta/balanceAfter became Decimal columns in the
+      // QAR redenomination; Number() them so the export keeps emitting them as
+      // JSON numbers (as it did when they were Int), not Decimal strings.
+      user: { ...user, loyaltyPoints: Number(user.loyaltyPoints) },
       bookings,
       reviews,
       likes,
       claimedCoupons,
-      loyaltyLedger,
+      loyaltyLedger: loyaltyLedger.map((r) => ({
+        ...r,
+        delta: Number(r.delta),
+        balanceAfter: Number(r.balanceAfter),
+      })),
       notifications,
       sessions,
     };

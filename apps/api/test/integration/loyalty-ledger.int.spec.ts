@@ -59,7 +59,7 @@ async function balanceOf(userId: string): Promise<number> {
   const u = await ctx.prisma.user.findUniqueOrThrow({
     where: { id: userId }, select: { loyaltyPoints: true },
   });
-  return u.loyaltyPoints;
+  return Number(u.loyaltyPoints);
 }
 
 async function ledgerSum(userId: string): Promise<number> {
@@ -158,10 +158,10 @@ describe('LoyaltyService — double-entry invariant', () => {
       orderBy: { createdAt: 'asc' },
     });
     expect(rows).toHaveLength(2);
-    expect(rows[0].delta).toBe(-100);
-    expect(rows[0].balanceAfter).toBe(400);
-    expect(rows[1].delta).toBe(-50);
-    expect(rows[1].balanceAfter).toBe(350); // Snapshot matches actual post-write balance
+    expect(Number(rows[0].delta)).toBe(-100);
+    expect(Number(rows[0].balanceAfter)).toBe(400);
+    expect(Number(rows[1].delta)).toBe(-50);
+    expect(Number(rows[1].balanceAfter)).toBe(350); // Snapshot matches actual post-write balance
   });
 });
 
@@ -209,7 +209,7 @@ describe('LoyaltyService.redeem — TOCTOU-safe under parallel race', () => {
       where: { userId, source: 'BOOKING_REDEEM' },
     });
     expect(rows).toHaveLength(1);
-    expect(rows[0].delta).toBe(-60);
+    expect(Number(rows[0].delta)).toBe(-60);
   });
 
   test('10 parallel 15-point redeems on 100-point balance → at most 6 succeed (100/15 floor)', async () => {
@@ -284,7 +284,7 @@ describe('LoyaltyService.adjust — clamp never drives balance negative', () => 
     const row = await ctx.prisma.loyaltyLedger.findFirstOrThrow({
       where: { userId, source: 'ADMIN_ADJUST', NOT: { reason: { contains: 'genesis' } } },
     });
-    expect(row.delta).toBe(-100);
+    expect(Number(row.delta)).toBe(-100);
     expect(row.reason).toMatch(/clamped from -500/);
     expect(row.reason).toMatch(/balance was 100/);
   });

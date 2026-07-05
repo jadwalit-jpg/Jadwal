@@ -23,7 +23,10 @@ model User {
   profilePicture    String?
   role              Role      @default(CUSTOMER)
   isDeactivated     Boolean   @default(false)
-  loyaltyPoints     Int       @default(0)
+  // Wanasa loyalty balance, denominated in QAR (1 point = 1 QAR). Decimal(12,2)
+  // so a 1%-of-cash earn lands exactly (90 QAR paid → 0.90 points = 0.90 QAR)
+  // with no rounding loss. Was Int (100 pts = 1 QAR) before the redenomination.
+  loyaltyPoints     Decimal   @default(0) @db.Decimal(12, 2)
   preferredCountryId String?
   preferredCountry  Country?  @relation(fields: [preferredCountryId], references: [id], onDelete: SetNull)
   /// Preferred email language. Captured from the Accept-Language header at
@@ -444,7 +447,7 @@ model Booking {
   commissionAmount  Decimal       @default(0) @db.Decimal(10, 2) // platform commission = totalPrice * commissionPct / 100
   couponCode        String?       @db.VarChar(50)                 // coupon applied at booking time (frozen)
   couponDiscount    Decimal       @default(0) @db.Decimal(10, 2)  // discount amount applied
-  pointsRedeemed    Int           @default(0)                      // loyalty points used for discount
+  pointsRedeemed    Decimal       @default(0) @db.Decimal(10, 2)   // loyalty points used for discount (QAR-denominated; equals pointsDiscount at 1 pt = 1 QAR)
   pointsDiscount    Decimal       @default(0) @db.Decimal(10, 2)  // monetary value of redeemed points
   pointsAwarded     Boolean       @default(false)                  // true after points earned on COMPLETED — prevents double-earn
   currencyCode      String        @db.VarChar(10) @default("QAR") // currency at booking time — survives country config changes
@@ -737,9 +740,12 @@ model LoyaltyConfig {
   // Financial rates — stored as exact Decimal (Postgres NUMERIC(10,4)) so the
   // loyalty↔money conversion can't drift through float rounding errors.
   // Decimal.js at the Prisma client level, NUMERIC(10,4) at the DB level.
-  pointsPerQar   Decimal  @default(1.0)  @db.Decimal(10, 4)
-  qarPerPoint    Decimal  @default(0.01) @db.Decimal(10, 4)
-  minRedemption  Int      @default(100)
+  // 1 point = 1 QAR model. Earn = 1% of cash paid (pointsPerQar = 0.01 →
+  // 100 QAR earns 1.00 point); a point redeems for 1 QAR (qarPerPoint = 1.0).
+  pointsPerQar   Decimal  @default(0.01) @db.Decimal(10, 4)
+  qarPerPoint    Decimal  @default(1.0)  @db.Decimal(10, 4)
+  // Minimum points (= QAR) a customer must redeem in one booking.
+  minRedemption  Int      @default(1)
   updatedAt      DateTime @updatedAt
 
   @@map("loyalty_config")
@@ -778,8 +784,8 @@ model LoyaltyLedger {
   id             String              @id @default(uuid())
   userId         String
   user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  delta          Int                 // positive = credit, negative = debit. Never zero.
-  balanceAfter   Int                 // user.loyaltyPoints AFTER this delta — used to detect drift
+  delta          Decimal             @db.Decimal(12, 2)  // positive = credit, negative = debit. Never zero. QAR-denominated.
+  balanceAfter   Decimal             @db.Decimal(12, 2)  // user.loyaltyPoints AFTER this delta — used to detect drift
   source         LoyaltyLedgerSource
   bookingId      String?             // nullable — ADMIN_ADJUST isn't tied to a booking
   actorType      LoyaltyActorType

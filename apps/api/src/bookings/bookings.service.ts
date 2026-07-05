@@ -167,7 +167,7 @@ export function buildBookingSnapshot(booking: {
   commissionAmount: any;
   couponCode: string | null;
   couponDiscount: any;
-  pointsRedeemed: number;
+  pointsRedeemed: any;        // Prisma.Decimal (QAR-denominated)
   pointsDiscount: any;
   currencyCode: string;
   idempotencyKey: string | null;
@@ -193,7 +193,7 @@ export function buildBookingSnapshot(booking: {
     commissionAmount: dec(booking.commissionAmount),
     couponCode: booking.couponCode ?? null,
     couponDiscount: dec(booking.couponDiscount),
-    pointsRedeemed: booking.pointsRedeemed,
+    pointsRedeemed: Number(booking.pointsRedeemed),
     pointsDiscount: dec(booking.pointsDiscount),
     currencyCode: booking.currencyCode,
     idempotencyKey: booking.idempotencyKey ?? null,
@@ -1571,7 +1571,10 @@ export class BookingsService {
         let effectiveServiceFee = serviceFee;
 
         if (dto.redeemPoints && dto.redeemPoints > 0) {
-          const redeemAmount = Math.floor(dto.redeemPoints); // enforce integer
+          // Points are QAR-denominated (1 point = 1 QAR), so fractional
+          // redemption is valid (e.g. redeem 5.50 points = 5.50 QAR). Round to
+          // 2 dp — no longer floored to whole points.
+          const redeemAmount = Math.round(dto.redeemPoints * 100) / 100;
 
           // Load loyalty config for conversion rate + minimum redemption
           let loyaltyConfig = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
@@ -1599,8 +1602,9 @@ export class BookingsService {
             // "Pay with Wanasa" path — customer's points fully cover the
             // activity price (post-coupon). Waive the service fee and cap
             // the redemption at exactly what's needed, so extra points
-            // aren't burned on a waived fee.
-            pointsRedeemed = Math.ceil(activityPrice / qarPerPoint);
+            // aren't burned on a waived fee. Points are fractional QAR now, so
+            // this is an exact 2-dp amount (was Math.ceil for whole points).
+            pointsRedeemed = Math.round((activityPrice / qarPerPoint) * 100) / 100;
             pointsDiscount = activityPrice;
             effectiveServiceFee = 0;
           } else {
@@ -2395,10 +2399,11 @@ export class BookingsService {
     const qarPerPoint = loyaltyConfig.qarPerPoint.toNumber();
 
     // Points conversion: amount / qarPerPoint = how many points the customer gets.
-    // Example: 200 QAR refund ÷ 0.01 qarPerPoint = 20,000 points (worth 200 QAR at checkout).
-    // Math.floor ensures we never award fractional points. Integer arithmetic only.
+    // Points are QAR-denominated (1 pt = 1 QAR at qarPerPoint = 1.0), so a
+    // 200 QAR refund → 200.00 points; a 50.75 QAR refund → 50.75 points. Rounded
+    // to 2 dp (money precision) rather than floored to whole points.
     const refundPoints = action === 'APPROVE' && finalAmount > 0 && qarPerPoint > 0
-      ? Math.floor(finalAmount / qarPerPoint)
+      ? Math.round((finalAmount / qarPerPoint) * 100) / 100
       : 0;
 
     // ── Commit the decision inside a transaction with optimistic locking ──

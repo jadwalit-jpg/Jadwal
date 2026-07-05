@@ -303,7 +303,7 @@ export default function VendorDashboardPage() {
                               ) : pts > 0 ? (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-medium text-purple-600 dark:text-purple-400 w-fit">
                                   <Sparkles className="h-2.5 w-2.5" aria-hidden="true" />
-                                  {t('vendor.dashboard.pts', { count: pts })}
+                                  {t('vendor.dashboard.pts', { count: pts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })}
                                 </span>
                               ) : null}
                             </div>

@@ -514,7 +514,7 @@ export default function PaymentsTab() {
                             <div className="flex items-center justify-between gap-2">
                               <span className="inline-flex items-center gap-1 text-purple-600 dark:text-purple-400">
                                 <Sparkles className="h-3 w-3" aria-hidden="true" />
-                                {pointsUsed} pts
+                                {pointsUsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} pts
                               </span>
                               <span className="font-medium text-purple-600 dark:text-purple-400 tabular-nums">
                                 {pointsValue.toLocaleString()} {currency}

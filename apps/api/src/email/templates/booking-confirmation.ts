@@ -44,7 +44,7 @@ const STRINGS: Record<
     mapsButton: 'Open in Google Maps',
     viewButton: 'View Booking',
     questions: 'If you have any questions, reply to this email and our team will help.',
-    pointsReward: (n) => `You'll earn ${n} Wanasa points as a reward once your booking is completed.`,
+    pointsReward: (n) => `You'll earn ${n.toFixed(2)} Wanasa points (1 point = 1 QAR) as a reward once your booking is completed.`,
   },
   AR: {
     subject: 'تأكيد الحجز — AL Jadwal',
@@ -55,7 +55,7 @@ const STRINGS: Record<
     mapsButton: 'افتح في خرائط Google',
     viewButton: 'عرض الحجز',
     questions: 'إذا كان لديك أي استفسار، يمكنك الرد على هذا البريد وسيساعدك فريقنا.',
-    pointsReward: (n) => `ستحصل على ${n} نقطة ونسة كمكافأة بعد اكتمال حجزك.`,
+    pointsReward: (n) => `ستحصل على ${n.toFixed(2)} نقطة ونسة (كل نقطة = 1 ريال) كمكافأة بعد اكتمال حجزك.`,
   },
 };
 
