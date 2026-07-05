@@ -314,6 +314,20 @@ export default function AdminLoyaltyPage() {
               </p>
             </div>
           </div>
+
+          {/* Worked example — how the two rates combine into "1% back" */}
+          <div className="mt-4 p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
+            <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1.5">
+              Example — give 1 QAR of points per 100 QAR spent (1% back)
+            </p>
+            <ul className="space-y-1 text-[11px] leading-snug text-blue-700/90 dark:text-blue-300/90">
+              <li><strong>Points per QAR = 1</strong> → a 100 QAR booking earns floor(100 × 1) = <strong>100 points</strong></li>
+              <li><strong>QAR per Point = 0.01</strong> → 100 points × 0.01 = <strong>1 QAR worth</strong> ✅</li>
+            </ul>
+            <p className="mt-2 text-[11px] leading-snug text-blue-700/70 dark:text-blue-300/70">
+              Rule of thumb: <strong>Points per QAR × QAR per Point = 0.01</strong> → 1% back. Points are credited <strong>after the booking is completed</strong>, not at payment.
+            </p>
+          </div>
         </div>
       ) : null}
 
