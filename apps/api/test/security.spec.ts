@@ -960,9 +960,9 @@ describe('REGRESSION: Hourly flex slots — maxConcurrentInWindow', () => {
 });
 
 describe('REGRESSION: Hourly flex slots — service source wiring', () => {
-  test('bookings.service uses HOURLY_SLOT_GRANULARITY_MINUTES = 60', () => {
+  test('bookings.service uses HOURLY_SLOT_GRANULARITY_MINUTES = 30 (half-hour slots)', () => {
     const src = readSrc('src/bookings/bookings.service.ts');
-    expect(src).toContain('HOURLY_SLOT_GRANULARITY_MINUTES = 60');
+    expect(src).toContain('HOURLY_SLOT_GRANULARITY_MINUTES = 30');
     expect(src).toContain('t += HOURLY_SLOT_GRANULARITY_MINUTES');
   });
 
@@ -980,14 +980,14 @@ describe('REGRESSION: Hourly flex slots — service source wiring', () => {
     expect(block).toContain('findMany');
   });
 
-  test('createBooking rejects non-hourly slot times', () => {
+  test('createBooking rejects slot times that are not on the hour/half-hour', () => {
     const src = readSrc('src/bookings/bookings.service.ts');
-    expect(src).toContain('must start on the hour');
+    expect(src).toContain('must be on the hour or half-hour');
   });
 
-  test('DTO slotTime regex enforces HH:00', () => {
+  test('DTO slotTime regex enforces HH:00 or HH:30', () => {
     const src = readSrc('src/bookings/dto/create-booking.dto.ts');
-    expect(src).toContain('[01]\\d|2[0-3]):00');
+    expect(src).toContain('[01]\\d|2[0-3]):(00|30)');
   });
 });
 
