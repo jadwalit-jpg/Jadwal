@@ -172,28 +172,10 @@ describe('BookingsService.cancelBooking', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// awardLoyaltyPoints — idempotency
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe('BookingsService.awardLoyaltyPoints', () => {
-  test('returns null when booking does not exist (no throw)', async () => {
-    const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce(null);
-    const r = await ctx.sut.awardLoyaltyPoints('b-missing');
-    expect(r).toBeNull();
-  });
-
-  test('returns null when points already awarded (double-earn guard)', async () => {
-    const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', ref: 'JDWL-ABC', pointsAwarded: true, totalPrice: 100, customerId: 'u1',
-    });
-    const r = await ctx.sut.awardLoyaltyPoints('b1');
-    expect(r).toBeNull();
-    expect(ctx.loyalty.earnPoints).not.toHaveBeenCalled();
-  });
-});
+// Note: the standalone BookingsService.awardLoyaltyPoints method was removed —
+// it was dead (0 callers). Awarding happens inline in the admin/vendor status-
+// completion paths + the auto-complete cron, covered by cleanup-cron.int.spec.ts
+// (earn-on-completion + pointsAwarded idempotency) and the admin/vendor suites.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // getHourlyAvailability — precondition guards
