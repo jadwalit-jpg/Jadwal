@@ -12,6 +12,13 @@ export interface BookingConfirmationData {
   bookingId: string;
   locationAddress?: string;
   mapsLink?: string;
+  /**
+   * Wanasa points the customer will earn once the booking is COMPLETED (after
+   * the event). Computed by the caller via LoyaltyService.computeEarnedPoints so
+   * it exactly matches what will be awarded. Omit / 0 = don't show the reward
+   * line (e.g. a booking fully paid with points earns nothing).
+   */
+  pointsToEarn?: number;
 }
 
 const STRINGS: Record<
@@ -25,6 +32,7 @@ const STRINGS: Record<
     mapsButton: string;
     viewButton: string;
     questions: string;
+    pointsReward: (n: number) => string;
   }
 > = {
   EN: {
@@ -36,6 +44,7 @@ const STRINGS: Record<
     mapsButton: 'Open in Google Maps',
     viewButton: 'View Booking',
     questions: 'If you have any questions, reply to this email and our team will help.',
+    pointsReward: (n) => `You'll earn ${n} Wanasa points as a reward once your booking is completed.`,
   },
   AR: {
     subject: 'تأكيد الحجز — AL Jadwal',
@@ -46,6 +55,7 @@ const STRINGS: Record<
     mapsButton: 'افتح في خرائط Google',
     viewButton: 'عرض الحجز',
     questions: 'إذا كان لديك أي استفسار، يمكنك الرد على هذا البريد وسيساعدك فريقنا.',
+    pointsReward: (n) => `ستحصل على ${n} نقطة ونسة كمكافأة بعد اكتمال حجزك.`,
   },
 };
 
@@ -92,6 +102,20 @@ export function bookingConfirmationTemplate(
       </table>`
     : '';
 
+  // Wanasa reward — shown only when the booking will earn points (a cash
+  // booking); a points-paid booking earns 0 so this stays hidden.
+  const pointsSection =
+    data.pointsToEarn && data.pointsToEarn > 0
+      ? `
+      <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin-top: 16px; background-color: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 8px;">
+        <tr>
+          <td style="padding: 12px 16px; font-family: Arial, sans-serif; font-size: 14px; color: #6d28d9; text-align: center; line-height: 20px;">
+            &#127873; ${escapeHtml(t.pointsReward(data.pointsToEarn))}
+          </td>
+        </tr>
+      </table>`
+      : '';
+
   const content = `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
       <tr>
@@ -131,6 +155,8 @@ export function bookingConfirmationTemplate(
       </tr>
     </table>
 
+    ${pointsSection}
+
     ${locationSection}
 
     ${ctaButton(t.viewButton, viewUrl)}
@@ -153,6 +179,7 @@ export function bookingConfirmationTemplate(
     ...(data.time ? [`${L.time}: ${data.time}`] : []),
     `${L.guests}: ${data.guests}`,
     `${L.total}: ${data.currency} ${data.totalAmount}`,
+    ...(data.pointsToEarn && data.pointsToEarn > 0 ? ['', t.pointsReward(data.pointsToEarn)] : []),
     ...(data.locationAddress ? ['', `${L.location}: ${data.locationAddress}`] : []),
     ...(data.mapsLink ? [data.mapsLink] : []),
     '',

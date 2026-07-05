@@ -142,6 +142,7 @@ export class EmailService {
       bookingId: string;
       locationAddress?: string;
       mapsLink?: string;
+      pointsToEarn?: number;
     },
     locale?: EmailLanguage,
   ) {
