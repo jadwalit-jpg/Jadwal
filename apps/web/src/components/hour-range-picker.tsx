@@ -161,6 +161,10 @@ export function HourRangePicker({
       const startM = toMinutes(fromStart);
       const endM = toMinutes(hh);
       const span = endM - startM;
+      // Whole-hour booking lengths only (server enforces span % 60 === 0). A :30
+      // START is allowed, but a half-hour SPAN would be rounded up server-side and
+      // overcharge vs this preview — so never offer a half-hour-span end.
+      if (span % 60 !== 0) return false;
       if (span < unitMins) return false;
       if (endM > checkOutMins) return false;
       const maxMins = maxSlotUnits * unitMins;

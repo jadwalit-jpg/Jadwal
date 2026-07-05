@@ -879,3 +879,68 @@ describe('BookingsService.createBooking — activeDays restriction', () => {
     ).rejects.toThrow(/not available on/i);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// KAN-12 — 30-minute slots. A :30 START is bookable; a half-hour SPAN is not
+// (whole-hour lengths only, so the server's hour rounding can't overcharge vs
+// the client preview — the MEDIUM defect the security audit caught).
+// Seeded activity: HOURLY, duration 2h, window 09:00–21:00, 100/person.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('BookingsService.createBooking — HOURLY 30-minute slots (KAN-12)', () => {
+  test('accepts a :30 start time', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+
+    const res = await svc.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7),
+      slotTime: '10:30',
+      guests: 1,
+      bookingPhone: '+97455123456',
+    });
+
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    expect(b.status).toBe('PENDING');
+    // 10:30 + 2h duration → 12:30; the :30 start is preserved.
+    expect(b.startDatetime.getUTCHours()).toBe(10);
+    expect(b.startDatetime.getUTCMinutes()).toBe(30);
+    expect(b.endDatetime.getUTCHours()).toBe(12);
+    expect(b.endDatetime.getUTCMinutes()).toBe(30);
+  });
+
+  test('rejects a half-hour SPAN (10:00→12:30) — whole-hour lengths only', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+
+    await expect(
+      svc.createBooking(seed.customer.id, {
+        activityId: seed.activity.id,
+        checkInDate: futureDate(7),
+        slotTime: '10:00',
+        slotEndTime: '12:30', // 2.5h span — server would round up + overcharge
+        guests: 1,
+        bookingPhone: '+97455123456',
+      }),
+    ).rejects.toThrow(/whole number of hours/i);
+  });
+
+  test('accepts a whole-hour extended span from a :30 start (10:30→14:30 = 4h)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+
+    const res = await svc.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7),
+      slotTime: '10:30',
+      slotEndTime: '14:30', // 4h = 2 × duration, whole-hour span
+      guests: 1,
+      bookingPhone: '+97455123456',
+    });
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    expect(b.status).toBe('PENDING');
+    expect(b.startDatetime.getUTCMinutes()).toBe(30);
+    expect(b.endDatetime.getUTCHours()).toBe(14);
+    expect(b.endDatetime.getUTCMinutes()).toBe(30);
+  });
+});

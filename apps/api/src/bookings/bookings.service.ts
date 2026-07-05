@@ -1052,6 +1052,14 @@ export class BookingsService {
         if (span <= 0) {
           throw new BadRequestException('Slot end time must be after slot start time');
         }
+        // Whole-hour booking LENGTHS only. :30 START times are allowed (KAN-12),
+        // but a half-hour SPAN (e.g. 09:00→10:30) would be rounded UP by the
+        // server's hour math (Math.round) while the client preview shows the
+        // lower whole hour → a silent overcharge. A :30 start + N×duration end is
+        // always a whole-hour span; this rejects only an explicit half-hour range.
+        if (span % 60 !== 0) {
+          throw new BadRequestException('Booking length must be a whole number of hours');
+        }
         if (span < unitMins) {
           throw new BadRequestException(
             `Booking must be at least ${activity.durationValue} hour(s). Requested ${span / 60}.`,
