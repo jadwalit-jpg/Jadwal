@@ -295,18 +295,23 @@ export class CleanupService {
     });
   }
 
-  // ─── Auto-complete Past Bookings (1 AM daily) ────────────────────────────
-  // CONFIRMED bookings whose activity date has passed → COMPLETED
-  // Also awards loyalty points for each newly completed booking.
+  // ─── Auto-complete Past Bookings (every 10 min) ──────────────────────────
+  // CONFIRMED bookings whose activity date has passed → COMPLETED, awarding
+  // Wanasa loyalty points for each. Runs every 10 minutes (was 1 AM daily) so a
+  // customer receives their points within ~10 min of the event ending instead
+  // of up to ~24h later. Cheap + safe to run often: each pass only touches
+  // bookings that ended since the last run, and it is idempotent (the
+  // pointsAwarded flag + the unique (bookingId, source) ledger constraint
+  // prevent any double-award even if two ticks overlap).
 
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron(CronExpression.EVERY_10_MINUTES)
   async autoCompletePastBookings() {
-    // Leader-election TTL = 60 min. The per-booking loyalty-points loop
-    // can take a while if hundreds of bookings completed yesterday, but
-    // duplicate execution would call loyalty.earn() twice for each booking
-    // — pointsAwarded flag would prevent the double-credit, but the audit
-    // log line would still be duplicated. Lock keeps the picture clean.
-    await this.lock.withLeaderLock('cron:auto-complete-bookings', 60 * 60_000, async () => {
+    // Leader-election so only one API task runs it per tick (avoids duplicate
+    // audit-log lines; double-credit is already impossible per the guards
+    // above). TTL 15 min: longer than any run (each pass processes only
+    // newly-ended bookings) yet short enough that a crashed leader is recovered
+    // within a couple of ticks.
+    await this.lock.withLeaderLock('cron:auto-complete-bookings', 15 * 60_000, async () => {
       await this.runAutoCompletePastBookings();
     });
   }
