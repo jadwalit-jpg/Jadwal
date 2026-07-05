@@ -478,8 +478,28 @@ jobs:
             --task-definition "$NEW_TD" \
             --deployment-configuration "maximumPercent=200,minimumHealthyPercent=100"
 
-          aws ecs wait services-stable \
-            --cluster ${{ env.ECS_CLUSTER }} --services ${{ matrix.service.name }}
+          # Wait for the rolling deployment to COMPLETE. The built-in
+          # `aws ecs wait services-stable` caps at 40×15s = 10 min, too short for
+          # this fixed-capacity infra (minHealthy=100 + a slow cold start under a
+          # 1-hour health-check grace): it false-fails while prod actually updates.
+          # Poll rolloutState instead — succeed on COMPLETED, fail ONLY on a real
+          # FAILED (circuit-breaker rollback), give up after 30 min.
+          CLUSTER="${{ env.ECS_CLUSTER }}"; SVC="${{ matrix.service.name }}"
+          DEADLINE=$(( $(date +%s) + 1800 ))
+          while true; do
+            STATE=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SVC" \
+              --query 'services[0].deployments[?status==`PRIMARY`].rolloutState | [0]' \
+              --output text)
+            echo "[deploy] $SVC rolloutState=$STATE"
+            if [ "$STATE" = "COMPLETED" ]; then echo "[deploy] $SVC stable"; break; fi
+            if [ "$STATE" = "FAILED" ]; then
+              echo "::error::$SVC deployment FAILED (ECS circuit breaker rolled back)"; exit 1
+            fi
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "::error::$SVC did not reach rolloutState=COMPLETED within 30 min"; exit 1
+            fi
+            sleep 15
+          done
 
       - name: Log rollback command for this deploy
         if: success()

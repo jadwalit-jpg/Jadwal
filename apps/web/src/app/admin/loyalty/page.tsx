@@ -264,7 +264,7 @@ export default function AdminLoyaltyPage() {
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{config.pointsPerQar}</p>
               )}
               <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
-                Points a customer <strong>earns</strong> for every 1 QAR spent on a booking. Example: 1 = the customer gets 1 point per QAR paid.
+                How many points a customer <strong>earns</strong> per 1 QAR paid. Example: at <strong>1</strong> → a 100 QAR booking earns <strong>100 points</strong> (50 QAR → 50). Points are given after the booking is completed.
               </p>
             </div>
 
@@ -287,7 +287,7 @@ export default function AdminLoyaltyPage() {
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{config.qarPerPoint}</p>
               )}
               <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
-                How much each point is <strong>worth</strong> when redeemed, and the rate used to convert refunds to points. Refund credit = refund amount ÷ this value (rounded down). Example: 0.1 → 10 points = 1 QAR; a 1 QAR refund at 0.1 = 10 points. If this is larger than the refund (e.g. 2), a 1 QAR refund rounds down to 0 points.
+                How much <strong>1 point is worth</strong> when redeemed. Example: at <strong>0.01</strong> → <strong>100 points = 1 QAR</strong> off (so the points earned on a 100 QAR booking redeem for 1 QAR). Refunds convert back the same way: refund ÷ this value → a 1 QAR refund at 0.01 = 100 points.
               </p>
             </div>
 
@@ -310,7 +310,7 @@ export default function AdminLoyaltyPage() {
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{config.minRedemption}</p>
               )}
               <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
-                Fewest points a customer must spend in one booking before points can be redeemed. Stops tiny &ldquo;dust&rdquo; redemptions. Example: 100 = a customer needs at least 100 points to apply any discount.
+                Fewest points a customer can redeem in one booking (blocks tiny &ldquo;dust&rdquo; redemptions). Example: at <strong>1</strong> → any amount can be used (1 point = 0.01 QAR); at <strong>100</strong> → they need ~1 QAR of points first.
               </p>
             </div>
           </div>
