@@ -25,6 +25,11 @@ export function makeLoyaltyMock() {
     redeemPoints:  jest.fn().mockResolvedValue(undefined),
     refundPoints:  jest.fn().mockResolvedValue(undefined),
     adjustBalance: jest.fn().mockResolvedValue(undefined),
+    // Points are QAR-denominated (1 pt = 1 QAR): earn on cash basis, round to
+    // 2 dp (mirrors the real LoyaltyService.computeEarnedPoints).
+    computeEarnedPoints: jest.fn((total: number, discount: number, rate: number) =>
+      rate <= 0 ? 0 : Math.round(Math.max(0, total - discount) * rate * 100) / 100,
+    ),
   };
 }
 

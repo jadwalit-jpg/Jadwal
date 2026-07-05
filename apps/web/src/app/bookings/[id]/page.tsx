@@ -699,7 +699,7 @@ export default function BookingDetailPage() {
                         <Sparkles className="w-3.5 h-3.5 text-purple-600" aria-hidden="true" />
                         {t('booking.pointsRedeemed', {
                           defaultValue: 'Wanasa points ({{n}})',
-                          n: pointsUsed,
+                          n: pointsUsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
                         })}
                       </span>
                       <span className="text-purple-600 font-medium tabular-nums">

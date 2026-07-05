@@ -434,7 +434,7 @@ describe('VendorService.updateBookingStatus — Complete guard', () => {
     ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
       id: 'b1', ref: 'JDWL-PAST', vendorId: 'v1', activityId: 'a1',
       customerId: 'c1', status: 'CONFIRMED',
-      totalPrice: 100, pointsRedeemed: 0, pointsAwarded: false,
+      totalPrice: 100, pointsRedeemed: 0, pointsDiscount: 0, pointsAwarded: false,
       // 1 minute ago → transition allowed
       endDatetime: new Date(Date.now() - 60_000),
       activity: { titleEn: 'Tour' },

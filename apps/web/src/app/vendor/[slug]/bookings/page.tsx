@@ -301,7 +301,7 @@ export default function VendorBookingsPage() {
                               {pointsUsed > 0 && (
                                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-600 dark:text-purple-400">
                                   <Sparkles className="h-3 w-3" aria-hidden="true" />
-                                  {t('vendor.bookings.ptsUsed', { count: pointsUsed })}
+                                  {t('vendor.bookings.ptsUsed', { count: pointsUsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })}
                                 </span>
                               )}
                             </div>
@@ -544,7 +544,7 @@ export default function VendorBookingsPage() {
                           {t('vendor.bookings.details.pointsUsed')}
                         </span>
                         <span className="text-sm font-medium text-purple-600 dark:text-purple-400">
-                          {t('vendor.dashboard.pts', { count: pointsUsed })} <span className="text-gray-400 dark:text-slate-500 font-normal">(−{currency} {pointsValue.toFixed(2)})</span>
+                          {t('vendor.dashboard.pts', { count: pointsUsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })} <span className="text-gray-400 dark:text-slate-500 font-normal">(−{currency} {pointsValue.toFixed(2)})</span>
                         </span>
                       </div>
                     )}

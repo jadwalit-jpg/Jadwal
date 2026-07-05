@@ -317,7 +317,7 @@ export default function AdminBookingsPage() {
                                 {pts > 0 && (
                                   <span className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-600 dark:text-purple-400">
                                     <Sparkles className="h-3 w-3" aria-hidden="true" />
-                                    {pts} pts used
+                                    {pts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} pts used
                                   </span>
                                 )}
                               </div>
@@ -415,7 +415,7 @@ export default function AdminBookingsPage() {
                                         <div className="flex justify-between text-xs">
                                           <span className="text-purple-600 dark:text-purple-400 inline-flex items-center gap-1">
                                             <Sparkles className="h-3 w-3" aria-hidden="true" />
-                                            Wanasa points ({pts})
+                                            Wanasa points ({pts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                                           </span>
                                           <span className="text-purple-600 dark:text-purple-400">-{Number(booking.pointsDiscount).toLocaleString()} {currency}</span>
                                         </div>
