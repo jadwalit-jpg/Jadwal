@@ -149,9 +149,12 @@ describe('BookingsService.cancelBooking — unpaid booking', () => {
     const refundRow = await ctx.prisma.loyaltyLedger.findFirstOrThrow({
       where: { userId: seed.customer.id, source: 'CANCEL_REFUND_UNPAID' },
     });
-    expect(refundRow.delta).toBe(500);
+    // Refund of redeemed points returns the SAME amount that was debited
+    // (500) — pass-through, not a rate calc, so unaffected by the
+    // pointsPerQar/qarPerPoint redenomination.
+    expect(Number(refundRow.delta)).toBe(500);
     const user = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
-    expect(user.loyaltyPoints).toBe(500);
+    expect(Number(user.loyaltyPoints)).toBe(500);
   });
 });
 
@@ -225,7 +228,10 @@ describe('BookingsService.cancelBooking — paid booking', () => {
     const ledgerRow = await ctx.prisma.loyaltyLedger.findFirstOrThrow({
       where: { userId: booking.customerId, source: 'CANCEL_REFUND_PAID' },
     });
-    expect(ledgerRow.delta).toBe(1_000);
+    // pointsRedeemed (1,000) is refunded as-is — pass-through of the
+    // debited amount, not a qarPerPoint calc — so the seed is unaffected
+    // by the redenomination.
+    expect(Number(ledgerRow.delta)).toBe(1_000);
   });
 });
 
@@ -254,7 +260,10 @@ describe('BookingsService.cancelBooking — points-only booking', () => {
         status: 'CONFIRMED',
         startDatetime: start, endDatetime: new Date(start.getTime() + 2 * 3600_000),
         activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
-        paymentId: payment.id, pointsRedeemed: 10_000,
+        // Fully paid via points: 100 QAR totalPrice / qarPerPoint (new
+        // default 1.0) = 100 points. (Old default qarPerPoint 0.01 gave
+        // 100 / 0.01 = 10,000 points for the same 100 QAR price.)
+        paymentId: payment.id, pointsRedeemed: 100,
       },
     });
 
@@ -270,11 +279,11 @@ describe('BookingsService.cancelBooking — points-only booking', () => {
     expect(b.status).toBe('CANCELLED');
     expect(b.refundDecisionActor).toBe('CUSTOMER');
 
-    // All 10,000 points refunded automatically (no vendor review)
+    // All 100 points refunded automatically (no vendor review)
     const ledger = await ctx.prisma.loyaltyLedger.findFirstOrThrow({
       where: { userId: seed.customer.id, source: 'CANCEL_REFUND_PAID' },
     });
-    expect(ledger.delta).toBe(10_000);
+    expect(Number(ledger.delta)).toBe(100);
   });
 });
 
@@ -371,11 +380,12 @@ describe('BookingsService.recordRefundDecision — vendor/admin APPROVE', () => 
     expect(b.refundDecisionActor).toBe('VENDOR');
     expect(b.refundDecisionBy).toBe(seed.vendorUser.id);
 
-    // 200 QAR × 0.01 qarPerPoint = 20,000 points
+    // 200 QAR / 1.0 qarPerPoint (new default) = 200 points
+    // (old default qarPerPoint 0.01 gave 200 / 0.01 = 20,000 points)
     const row = await ctx.prisma.loyaltyLedger.findFirstOrThrow({
       where: { userId: booking.customerId, source: 'VENDOR_REFUND_APPROVED' },
     });
-    expect(row.delta).toBe(20_000);
+    expect(Number(row.delta)).toBe(200);
   });
 
   test('vendor APPROVE partial refund with note', async () => {
@@ -391,10 +401,12 @@ describe('BookingsService.recordRefundDecision — vendor/admin APPROVE', () => 
 
     const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(Number(p.refundAmount)).toBe(75);
+    // 75 QAR / 1.0 qarPerPoint (new default) = 75 points
+    // (old default qarPerPoint 0.01 gave 75 / 0.01 = 7,500 points)
     const row = await ctx.prisma.loyaltyLedger.findFirstOrThrow({
       where: { userId: booking.customerId, source: 'VENDOR_REFUND_APPROVED' },
     });
-    expect(row.delta).toBe(7_500);
+    expect(Number(row.delta)).toBe(75);
   });
 
   test('admin APPROVE → source=ADMIN_REFUND_APPROVED on ledger row', async () => {

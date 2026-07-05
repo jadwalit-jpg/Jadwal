@@ -349,7 +349,7 @@ describe('B3 — admin cancel of COMPLETED booking debits previously-awarded poi
       where: { id: seed.customer.id },
       select: { loyaltyPoints: true },
     });
-    expect(userAfter?.loyaltyPoints).toBe(10_000);
+    expect(Number(userAfter?.loyaltyPoints)).toBe(10_000);
 
     // CANCEL_REVERSE_AWARDED ledger row exists with delta -100
     const reverseRow = await ctx.prisma.loyaltyLedger.findFirst({

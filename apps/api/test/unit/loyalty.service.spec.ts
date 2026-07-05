@@ -26,14 +26,32 @@ async function buildSut() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('LoyaltyService.redeem', () => {
-  test('400 on non-positive amount (0, negative, non-integer)', async () => {
+  test('400 on non-positive amount (0, negative, NaN)', async () => {
     const { sut, tx } = await buildSut();
     await expect(sut.redeem(tx, { userId: 'u1', amount: 0, bookingId: 'b1', note: 'n' }))
       .rejects.toThrow(BadRequestException);
     await expect(sut.redeem(tx, { userId: 'u1', amount: -5, bookingId: 'b1', note: 'n' }))
       .rejects.toThrow(BadRequestException);
-    await expect(sut.redeem(tx, { userId: 'u1', amount: 1.5, bookingId: 'b1', note: 'n' }))
+    await expect(sut.redeem(tx, { userId: 'u1', amount: NaN, bookingId: 'b1', note: 'n' }))
       .rejects.toThrow(BadRequestException);
+  });
+
+  test('accepts a fractional (2 dp) amount — points are QAR-denominated', async () => {
+    const { sut, tx } = await buildSut();
+    tx.user.updateMany.mockResolvedValueOnce({ count: 1 });
+    tx.user.findUniqueOrThrow.mockResolvedValueOnce({ loyaltyPoints: 8.5 });
+
+    await sut.redeem(tx, { userId: 'u1', amount: 1.5, bookingId: 'b1', note: 'partial redeem' });
+
+    expect(tx.user.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'u1', loyaltyPoints: { gte: 1.5 } },
+        data:  { loyaltyPoints: { decrement: 1.5 } },
+      }),
+    );
+    expect(tx.loyaltyLedger.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ delta: -1.5 }) }),
+    );
   });
 
   test('409 when balance insufficient (updateMany count=0)', async () => {
@@ -271,8 +289,23 @@ describe('LoyaltyService.computeEarnedPoints', () => {
     expect(sut.computeEarnedPoints(300, 0, 0)).toBe(0);
   });
 
-  test('fractional rate is floored', async () => {
+  test('fractional earn is kept to 2 dp — NOT floored (points are QAR-denominated)', async () => {
     const { sut } = await buildSut();
-    expect(sut.computeEarnedPoints(255, 0, 0.1)).toBe(25); // floor(25.5)
+    expect(sut.computeEarnedPoints(255, 0, 0.1)).toBe(25.5); // round2(25.5), was floor→25
+  });
+
+  // New "1 point = 1 QAR" model: earn = 1% of cash paid (pointsPerQar = 0.01).
+  test('1% earn model — 100 QAR → 1.00, 90 QAR → 0.90, 250 QAR → 2.50', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(100, 0, 0.01)).toBe(1);
+    expect(sut.computeEarnedPoints(90, 0, 0.01)).toBe(0.9);
+    expect(sut.computeEarnedPoints(250, 0, 0.01)).toBe(2.5);
+  });
+
+  test('float-safe: 90 * 0.01 (=0.8999… in JS) rounds cleanly to 0.90', async () => {
+    const { sut } = await buildSut();
+    // Guards the binary-float trap: without round2 this would be 0.8999999999999999.
+    expect(sut.computeEarnedPoints(90, 0, 0.01)).toBe(0.9);
+    expect(sut.computeEarnedPoints(70, 0, 0.01)).toBe(0.7);
   });
 });

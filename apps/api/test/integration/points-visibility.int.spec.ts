@@ -134,7 +134,7 @@ describe('Booking list endpoints — Wanasa points visibility', () => {
 
     expect(row.customer.id).toBe(seed.customer.id);
     // Points fields MUST come back (bug fix)
-    expect(row.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(row.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(row.pointsDiscount)).toBeGreaterThan(0);
     // Payment method identifies the Wanasa path
     expect(row.payment.method).toBe('WANASA_POINTS');
@@ -155,7 +155,7 @@ describe('Booking list endpoints — Wanasa points visibility', () => {
     expect(res.data).toHaveLength(1);
     const row = res.data[0];
 
-    expect(row.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(row.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(row.pointsDiscount)).toBeGreaterThan(0);
     expect(row.payment.method).toBe('WANASA_POINTS');
     // totalPrice = full vendor value (2 × 100 = 200).
@@ -176,7 +176,7 @@ describe('Booking list endpoints — Wanasa points visibility', () => {
     expect(res.data).toHaveLength(1);
     const row = res.data[0];
 
-    expect(row.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(row.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(row.pointsDiscount)).toBeGreaterThan(0);
     expect(row.payment.method).toBe('WANASA_POINTS');
   });
@@ -186,7 +186,7 @@ describe('Booking list endpoints — Wanasa points visibility', () => {
     const { bookings } = makeServices();
 
     const row: any = await bookings.getBookingById(seed.customer.id, bookingId);
-    expect(row.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(row.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(row.pointsDiscount)).toBeGreaterThan(0);
     expect(row.payment.method).toBe('WANASA_POINTS');
   });
@@ -227,7 +227,7 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
     // Wanasa chip + method badge on the earnings table.
     expect(earnings.recentPayments).toHaveLength(1);
     const p = earnings.recentPayments[0];
-    expect(p.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(p.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(p.pointsDiscount)).toBeGreaterThan(0);
     expect(p.payment.method).toBe('WANASA_POINTS');
   });
@@ -293,7 +293,7 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
     // Service fee is waived as a loyalty incentive to the customer.
     expect(Number(row.serviceFee)).toBe(0);
     // Redemption is capped at activity price — 200 QAR worth of points used.
-    expect(row.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(row.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(row.pointsDiscount)).toBe(200);
   });
 
@@ -303,8 +303,8 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
 
     await ctx.prisma.loyaltyConfig.upsert({
       where: { id: 'singleton' },
-      create: { id: 'singleton', pointsPerQar: 1, qarPerPoint: 1 },
-      update: { pointsPerQar: 1, qarPerPoint: 1 },
+      create: { id: 'singleton', pointsPerQar: 1, qarPerPoint: 1, minRedemption: 100 },
+      update: { pointsPerQar: 1, qarPerPoint: 1, minRedemption: 100 },
     });
     await ctx.prisma.user.update({
       where: { id: seed.customer.id },
@@ -349,7 +349,7 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
     expect(b.status).toBe('PENDING');
     expect(Number(b.serviceFee)).toBe(5);
     expect(Number(b.totalPrice)).toBe(200);
-    expect(b.pointsRedeemed).toBe(100);
+    expect(Number(b.pointsRedeemed)).toBe(100);
     expect(Number(b.pointsDiscount)).toBe(100);
     expect(Number(b.payment!.amount)).toBe(105);
   });
@@ -363,7 +363,7 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
     const p = res.data[0];
     // Admin getPayouts uses `include` (not `select`) on booking → all
     // scalar fields are returned by default, including loyalty fields.
-    expect(p.booking.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(p.booking.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(p.booking.pointsDiscount)).toBeGreaterThan(0);
     expect(p.method).toBe('WANASA_POINTS');
   });

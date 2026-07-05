@@ -119,7 +119,10 @@ export class AdminService {
       }),
       db.user.count({ where }),
     ]);
-    return { data: users, total, page, limit, totalPages: Math.ceil(total / limit) };
+    // loyaltyPoints is a Decimal column (QAR-denominated) — normalise to a JS
+    // number so the admin table receives a JSON number, not a Decimal string.
+    const data = users.map((u) => ({ ...u, loyaltyPoints: Number(u.loyaltyPoints) }));
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   /**
@@ -146,7 +149,7 @@ export class AdminService {
         where: { id: userId },
         select: { id: true, fullName: true, loyaltyPoints: true },
       });
-      return { ...fresh, appliedDelta: result.appliedDelta };
+      return { ...fresh, loyaltyPoints: Number(fresh.loyaltyPoints), appliedDelta: result.appliedDelta };
     });
   }
 
@@ -1095,7 +1098,7 @@ export class AdminService {
                 },
               });
               const refundPoints =
-                qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+                qarPerPoint > 0 ? Math.round((paidAmount / qarPerPoint) * 100) / 100 : 0;
               if (refundPoints > 0) {
                 await this.loyalty.refund(tx, {
                   userId: bk.customerId,
@@ -1187,7 +1190,7 @@ export class AdminService {
       if (!bk.payment) continue;
       try {
         const paidAmount = Number(bk.payment.amount);
-        const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+        const refundPoints = qarPerPoint > 0 ? Math.round((paidAmount / qarPerPoint) * 100) / 100 : 0;
         const committed = await db.$transaction(async (tx: any) => {
           // Optimistic lock — only the first writer flips REFUND_PENDING.
           const upd = await tx.payment.updateMany({
@@ -1437,7 +1440,7 @@ export class AdminService {
           let loyaltyConfig = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
           if (!loyaltyConfig) loyaltyConfig = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
           const qarPerPoint = loyaltyConfig.qarPerPoint.toNumber();
-          const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+          const refundPoints = qarPerPoint > 0 ? Math.round((paidAmount / qarPerPoint) * 100) / 100 : 0;
           if (refundPoints > 0) {
             await this.loyalty.refund(tx, {
               userId: result.customerId,

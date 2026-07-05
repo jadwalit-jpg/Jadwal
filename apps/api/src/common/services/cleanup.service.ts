@@ -235,15 +235,16 @@ export class CleanupService {
         // customer-cancel-unpaid path (bookings.service.ts) — source
         // CANCEL_REFUND_UNPAID; the ledger row's bookingId is a soft pointer, so
         // the delete below doesn't invalidate it.
-        if (b.pointsRedeemed > 0) {
+        const redeemed = Number(b.pointsRedeemed); // Decimal column (QAR-denominated) → number
+        if (redeemed > 0) {
           await this.loyalty.refund(tx, {
             userId: b.customerId,
-            amount: b.pointsRedeemed,
+            amount: redeemed,
             bookingId: b.id,
             source: 'CANCEL_REFUND_UNPAID',
             actorType: 'SYSTEM',
             actorId: 'cron',
-            note: `Stale PENDING auto-cancel — returned ${b.pointsRedeemed} redeemed points, booking ${b.ref}`,
+            note: `Stale PENDING auto-cancel — returned ${redeemed} redeemed points, booking ${b.ref}`,
           });
         }
       }

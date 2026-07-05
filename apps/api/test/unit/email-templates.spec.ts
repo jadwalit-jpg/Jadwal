@@ -183,12 +183,13 @@ describe('bilingual email templates', () => {
       guests: 2, totalAmount: '200', currency: 'QAR', bookingId: 'JDWL-1',
     };
 
-    test('shows the earn-after-completion reward line (EN + AR) when pointsToEarn > 0', () => {
-      const en = bookingConfirmationTemplate({ ...base, pointsToEarn: 200 }, 'EN');
-      expect(en.html).toMatch(/200 Wanasa points/i);
+    test('shows the earn-after-completion reward line, 2 dp (EN + AR) when pointsToEarn > 0', () => {
+      // Points are QAR-denominated (1 pt = 1 QAR) and fractional → rendered to 2 dp.
+      const en = bookingConfirmationTemplate({ ...base, pointsToEarn: 2.5 }, 'EN');
+      expect(en.html).toMatch(/2\.50 Wanasa points/i);
       expect(en.html).toMatch(/completed/i);
-      expect(en.text).toMatch(/200 Wanasa points/i);
-      const ar = bookingConfirmationTemplate({ ...base, pointsToEarn: 200 }, 'AR');
+      expect(en.text).toMatch(/2\.50 Wanasa points/i);
+      const ar = bookingConfirmationTemplate({ ...base, pointsToEarn: 2.5 }, 'AR');
       expect(ar.html).toContain('نقطة ونسة');
       expect(ar.text).toContain('نقطة ونسة');
     });

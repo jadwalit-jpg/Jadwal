@@ -70,6 +70,11 @@ function maskEmail(email: string): string {
   return `${visible}***@${domain}`;
 }
 
+// Points are QAR-denominated (1 point = 1 QAR) and fractional — always show 2 dp.
+function fmtPts(n: number): string {
+  return Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // ─── Page Component ───────────────────────────────────────────────────────────
 
 export default function AdminLoyaltyPage() {
@@ -176,7 +181,9 @@ export default function AdminLoyaltyPage() {
 
   const handleAdjustSubmit = useCallback(() => {
     if (!adjustModal) return;
-    const amount = parseInt(adjustAmount, 10);
+    // Points are QAR-denominated (1 pt = 1 QAR), so a fractional adjust (e.g.
+    // +0.50) is valid. Round to 2 dp to match the money precision.
+    const amount = Math.round(parseFloat(adjustAmount) * 100) / 100;
     if (!amount || amount <= 0) {
       toast('Enter a valid positive number', 'error');
       return;
@@ -264,7 +271,7 @@ export default function AdminLoyaltyPage() {
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{config.pointsPerQar}</p>
               )}
               <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
-                How many points a customer <strong>earns</strong> per 1 QAR paid. Example: at <strong>1</strong> → a 100 QAR booking earns <strong>100 points</strong> (50 QAR → 50). Points are given after the booking is completed.
+                Points a customer <strong>earns</strong> per 1 QAR spent. At <strong>0.01</strong> → a 100 QAR booking earns <strong>1.00 point</strong> (90 QAR → 0.90). Since 1 point = 1 QAR, that&rsquo;s 1% back. Credited <strong>after the booking is completed</strong>.
               </p>
             </div>
 
@@ -287,7 +294,7 @@ export default function AdminLoyaltyPage() {
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{config.qarPerPoint}</p>
               )}
               <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
-                How much <strong>1 point is worth</strong> when redeemed. Example: at <strong>0.01</strong> → <strong>100 points = 1 QAR</strong> off (so the points earned on a 100 QAR booking redeem for 1 QAR). Refunds convert back the same way: refund ÷ this value → a 1 QAR refund at 0.01 = 100 points.
+                How much <strong>1 point is worth</strong> when redeemed &mdash; and the rate refunds convert at. At <strong>1</strong> → <strong>1 point = 1 QAR</strong>, so a 50 QAR refund becomes <strong>50.00 points</strong>. Refund credit = refund amount ÷ this value.
               </p>
             </div>
 
@@ -310,22 +317,22 @@ export default function AdminLoyaltyPage() {
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{config.minRedemption}</p>
               )}
               <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-slate-500">
-                Fewest points a customer can redeem in one booking (blocks tiny &ldquo;dust&rdquo; redemptions). Example: at <strong>1</strong> → any amount can be used (1 point = 0.01 QAR); at <strong>100</strong> → they need ~1 QAR of points first.
+                Fewest points (= QAR, since 1 pt = 1 QAR) a customer must redeem in one booking. Stops tiny &ldquo;dust&rdquo; redemptions. At <strong>1</strong> → they need at least 1 point (1 QAR) to apply any discount.
               </p>
             </div>
           </div>
 
-          {/* Worked example — how the two rates combine into "1% back" */}
+          {/* Worked example — the "1 point = 1 QAR" model at 1% back */}
           <div className="mt-4 p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
             <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1.5">
-              Example — give 1 QAR of points per 100 QAR spent (1% back)
+              Example — 1 point = 1 QAR, earn 1% of what they pay
             </p>
             <ul className="space-y-1 text-[11px] leading-snug text-blue-700/90 dark:text-blue-300/90">
-              <li><strong>Points per QAR = 1</strong> → a 100 QAR booking earns floor(100 × 1) = <strong>100 points</strong></li>
-              <li><strong>QAR per Point = 0.01</strong> → 100 points × 0.01 = <strong>1 QAR worth</strong> ✅</li>
+              <li><strong>Points per QAR = 0.01</strong> → a 100 QAR booking earns 100 × 0.01 = <strong>1.00 point</strong> (a 90 QAR booking → <strong>0.90</strong>)</li>
+              <li><strong>QAR per Point = 1</strong> → 1 point redeems for <strong>1 QAR</strong> ✅</li>
             </ul>
             <p className="mt-2 text-[11px] leading-snug text-blue-700/70 dark:text-blue-300/70">
-              Rule of thumb: <strong>Points per QAR × QAR per Point = 0.01</strong> → 1% back. Points are credited <strong>after the booking is completed</strong>, not at payment.
+              In short: the customer gets <strong>1% of what they pay back as points</strong>, and each point spends like <strong>1 QAR</strong>. Credited <strong>after the booking is completed</strong>, not at payment.
             </p>
           </div>
         </div>
@@ -419,7 +426,7 @@ export default function AdminLoyaltyPage() {
                           : 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500'
                       }`}>
                         <Award className="h-3.5 w-3.5" />
-                        {user.loyaltyPoints.toLocaleString()}
+                        {fmtPts(user.loyaltyPoints)}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-end">
@@ -495,7 +502,7 @@ export default function AdminLoyaltyPage() {
             {/* Current balance */}
             <div className="p-3 rounded-xl bg-gray-50 dark:bg-slate-800/40 border border-gray-100 dark:border-slate-700/50 mb-5">
               <p className="text-xs text-gray-400 dark:text-slate-500">Current Balance</p>
-              <p className="text-xl font-bold text-gray-900 dark:text-white">{adjustModal.loyaltyPoints.toLocaleString()} pts</p>
+              <p className="text-xl font-bold text-gray-900 dark:text-white">{fmtPts(adjustModal.loyaltyPoints)} pts</p>
             </div>
 
             {/* Add / Deduct toggle */}
@@ -531,11 +538,11 @@ export default function AdminLoyaltyPage() {
               <span className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5 block">Points Amount</span>
               <input
                 type="number"
-                min="1"
-                step="1"
+                min="0"
+                step="0.01"
                 value={adjustAmount}
                 onChange={(e) => setAdjustAmount(e.target.value)}
-                placeholder="e.g. 100"
+                placeholder="e.g. 5.00"
                 className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white placeholder:text-gray-300 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition-shadow"
               />
             </label>
@@ -554,13 +561,13 @@ export default function AdminLoyaltyPage() {
             </label>
 
             {/* Preview */}
-            {adjustAmount && parseInt(adjustAmount) > 0 && (
+            {adjustAmount && parseFloat(adjustAmount) > 0 && (
               <div className="p-3 rounded-xl bg-gray-50 dark:bg-slate-800/40 border border-gray-100 dark:border-slate-700/50 mb-5 text-center">
                 <p className="text-xs text-gray-400 dark:text-slate-500 mb-1">New Balance</p>
                 <p className={`text-lg font-bold ${
                   adjustMode === 'add' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
                 }`}>
-                  {(adjustModal.loyaltyPoints + (adjustMode === 'add' ? parseInt(adjustAmount) : -parseInt(adjustAmount))).toLocaleString()} pts
+                  {fmtPts(adjustModal.loyaltyPoints + (adjustMode === 'add' ? parseFloat(adjustAmount) : -parseFloat(adjustAmount)))} pts
                 </p>
               </div>
             )}

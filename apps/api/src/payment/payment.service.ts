@@ -1270,7 +1270,7 @@ export class PaymentService {
       const pointsToEarn = this.loyalty.computeEarnedPoints(
         Number(bookingForNotify.totalPrice),
         Number(bookingForNotify.pointsDiscount),
-        loyaltyCfg ? loyaltyCfg.pointsPerQar.toNumber() : 1.0,
+        loyaltyCfg ? loyaltyCfg.pointsPerQar.toNumber() : 0.01,
       );
 
       const customerEmail = bookingForNotify.customer.email;

@@ -89,13 +89,14 @@ export class LoyaltyService {
    * has ≥ amount and both rows update, or no change and we throw 409.
    */
   async redeem(tx: Tx, args: RedeemArgs): Promise<{ balanceAfter: number }> {
-    this.assertPositive(args.amount, 'amount');
+    const amount = this.round2(args.amount);
+    this.assertPositive(amount, 'amount');
 
     // Conditional updateMany — only decrements if current balance ≥ amount.
     // `count: 0` means the guard failed → insufficient funds.
     const updated = await tx.user.updateMany({
-      where: { id: args.userId, loyaltyPoints: { gte: args.amount } },
-      data: { loyaltyPoints: { decrement: args.amount } },
+      where: { id: args.userId, loyaltyPoints: { gte: amount } },
+      data: { loyaltyPoints: { decrement: amount } },
     });
     if (updated.count === 0) {
       // Either the user doesn't exist or balance < amount. We return the
@@ -110,8 +111,8 @@ export class LoyaltyService {
 
     await this.writeLedger(tx, {
       userId: args.userId,
-      delta: -args.amount,
-      balanceAfter: user.loyaltyPoints,
+      delta: -amount,
+      balanceAfter: this.toNum(user.loyaltyPoints),
       source: 'BOOKING_REDEEM',
       bookingId: args.bookingId,
       actorType: 'CUSTOMER',
@@ -119,7 +120,7 @@ export class LoyaltyService {
       reason: args.note,
     });
 
-    return { balanceAfter: user.loyaltyPoints };
+    return { balanceAfter: this.toNum(user.loyaltyPoints) };
   }
 
   /**
@@ -129,18 +130,19 @@ export class LoyaltyService {
    * against double-cancel).
    */
   async refund(tx: Tx, args: RefundArgs): Promise<{ balanceAfter: number }> {
-    this.assertPositive(args.amount, 'amount');
+    const amount = this.round2(args.amount);
+    this.assertPositive(amount, 'amount');
 
     const user = await tx.user.update({
       where: { id: args.userId },
-      data: { loyaltyPoints: { increment: args.amount } },
+      data: { loyaltyPoints: { increment: amount } },
       select: { loyaltyPoints: true },
     });
 
     await this.writeLedger(tx, {
       userId: args.userId,
-      delta: args.amount,
-      balanceAfter: user.loyaltyPoints,
+      delta: amount,
+      balanceAfter: this.toNum(user.loyaltyPoints),
       source: args.source,
       bookingId: args.bookingId,
       actorType: args.actorType,
@@ -148,7 +150,7 @@ export class LoyaltyService {
       reason: args.note,
     });
 
-    return { balanceAfter: user.loyaltyPoints };
+    return { balanceAfter: this.toNum(user.loyaltyPoints) };
   }
 
   /**
@@ -156,18 +158,19 @@ export class LoyaltyService {
    * Called from cleanup cron and admin/vendor status-completion paths.
    */
   async earn(tx: Tx, args: EarnArgs): Promise<{ balanceAfter: number }> {
-    this.assertPositive(args.amount, 'amount');
+    const amount = this.round2(args.amount);
+    this.assertPositive(amount, 'amount');
 
     const user = await tx.user.update({
       where: { id: args.userId },
-      data: { loyaltyPoints: { increment: args.amount } },
+      data: { loyaltyPoints: { increment: amount } },
       select: { loyaltyPoints: true },
     });
 
     await this.writeLedger(tx, {
       userId: args.userId,
-      delta: args.amount,
-      balanceAfter: user.loyaltyPoints,
+      delta: amount,
+      balanceAfter: this.toNum(user.loyaltyPoints),
       source: 'BOOKING_EARN',
       bookingId: args.bookingId,
       actorType: 'SYSTEM',
@@ -175,7 +178,7 @@ export class LoyaltyService {
       reason: args.note,
     });
 
-    return { balanceAfter: user.loyaltyPoints };
+    return { balanceAfter: this.toNum(user.loyaltyPoints) };
   }
 
   /**
@@ -194,7 +197,11 @@ export class LoyaltyService {
   computeEarnedPoints(totalPrice: number, pointsDiscount: number, pointsPerQar: number): number {
     if (pointsPerQar <= 0) return 0;
     const cashBasis = Math.max(0, totalPrice - pointsDiscount);
-    return Math.floor(cashBasis * pointsPerQar);
+    // Points are QAR-denominated (1 point = 1 QAR), so the 1% earn keeps its
+    // fractional value rounded to 2 dp — NOT floored. 90 QAR × 0.01 = 0.90 pt,
+    // 100 → 1.00, 250 → 2.50. round2 also absorbs float dust (90 * 0.01 in JS
+    // is 0.8999999999999999).
+    return this.round2(cashBasis * pointsPerQar);
   }
 
   /**
@@ -210,7 +217,8 @@ export class LoyaltyService {
    * clamp for reconciliation.
    */
   async reverseAwarded(tx: Tx, args: ReverseAwardedArgs): Promise<{ balanceAfter: number; appliedDelta: number }> {
-    this.assertPositive(args.amount, 'amount');
+    const requestedDebit = this.round2(args.amount);
+    this.assertPositive(requestedDebit, 'amount');
 
     const current = await tx.user.findUniqueOrThrow({
       where: { id: args.userId },
@@ -220,13 +228,13 @@ export class LoyaltyService {
     // Negative delta — clamp magnitude to current balance so the row
     // never drives the balance below zero (balance constraint at
     // user.loyaltyPoints column would otherwise reject the update).
-    const requestedDebit = args.amount;
-    const actualDebit = Math.min(requestedDebit, current.loyaltyPoints);
+    const currentBalance = this.toNum(current.loyaltyPoints);
+    const actualDebit = this.round2(Math.min(requestedDebit, currentBalance));
     const appliedDelta = -actualDebit;
 
     const clampNote =
       actualDebit !== requestedDebit
-        ? ` (clamped from -${requestedDebit} — balance was ${current.loyaltyPoints})`
+        ? ` (clamped from -${requestedDebit} — balance was ${currentBalance})`
         : '';
 
     const user = await tx.user.update({
@@ -238,7 +246,7 @@ export class LoyaltyService {
     await this.writeLedger(tx, {
       userId: args.userId,
       delta: appliedDelta,
-      balanceAfter: user.loyaltyPoints,
+      balanceAfter: this.toNum(user.loyaltyPoints),
       source: 'CANCEL_REVERSE_AWARDED',
       bookingId: args.bookingId,
       actorType: args.actorType,
@@ -246,7 +254,7 @@ export class LoyaltyService {
       reason: `${args.note}${clampNote}`,
     });
 
-    return { balanceAfter: user.loyaltyPoints, appliedDelta };
+    return { balanceAfter: this.toNum(user.loyaltyPoints), appliedDelta };
   }
 
   /**
@@ -255,7 +263,8 @@ export class LoyaltyService {
    * current balance so the ledger row matches the actual change.
    */
   async adjust(tx: Tx, args: AdjustArgs): Promise<{ balanceAfter: number; appliedDelta: number }> {
-    if (args.delta === 0) {
+    const delta = this.round2(args.delta);
+    if (delta === 0) {
       throw new BadRequestException('Adjustment delta must be non-zero');
     }
 
@@ -267,15 +276,16 @@ export class LoyaltyService {
     });
 
     // Clamp negative deltas so balance never goes below zero.
+    const currentBalance = this.toNum(current.loyaltyPoints);
     const appliedDelta =
-      args.delta < 0 ? -Math.min(-args.delta, current.loyaltyPoints) : args.delta;
+      delta < 0 ? -this.round2(Math.min(-delta, currentBalance)) : delta;
 
     // If the admin asked to deduct 500 but the user only has 100, we
     // actually deducted 100 — the ledger reason notes the clamp so
     // reconciliation shows the intent vs. the applied change.
     const clampNote =
-      appliedDelta !== args.delta
-        ? ` (clamped from ${args.delta} — balance was ${current.loyaltyPoints})`
+      appliedDelta !== delta
+        ? ` (clamped from ${delta} — balance was ${currentBalance})`
         : '';
 
     const user = await tx.user.update({
@@ -287,7 +297,7 @@ export class LoyaltyService {
     await this.writeLedger(tx, {
       userId: args.userId,
       delta: appliedDelta,
-      balanceAfter: user.loyaltyPoints,
+      balanceAfter: this.toNum(user.loyaltyPoints),
       source: 'ADMIN_ADJUST',
       bookingId: null,
       actorType: args.actorType,
@@ -295,14 +305,30 @@ export class LoyaltyService {
       reason: `${args.reason}${clampNote}`,
     });
 
-    return { balanceAfter: user.loyaltyPoints, appliedDelta };
+    return { balanceAfter: this.toNum(user.loyaltyPoints), appliedDelta };
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
 
+  /**
+   * Round to 2 decimals (QAR precision). Points are QAR-denominated, so every
+   * balance/delta is money and must be exactly 2 dp — this also absorbs binary
+   * float dust (e.g. 90 * 0.01 === 0.8999999999999999 in JS → 0.90).
+   */
+  private round2(n: number): number {
+    return Math.round((n + Number.EPSILON) * 100) / 100;
+  }
+
+  /** Prisma returns Decimal columns as Prisma.Decimal; normalise to a JS number. */
+  private toNum(value: Prisma.Decimal | number): number {
+    return typeof value === 'number' ? value : value.toNumber();
+  }
+
   private assertPositive(value: number, field: string) {
-    if (!Number.isInteger(value) || value <= 0) {
-      throw new BadRequestException(`${field} must be a positive integer`);
+    // Points are QAR-denominated to 2 dp, so fractional amounts (e.g. 0.90) are
+    // valid — only reject non-finite or non-positive values.
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      throw new BadRequestException(`${field} must be a positive amount`);
     }
   }
 

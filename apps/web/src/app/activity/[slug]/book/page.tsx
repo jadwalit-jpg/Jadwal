@@ -505,9 +505,13 @@ export default function BookActivityPage() {
   // the minimum → PARTIAL (redeem the whole balance, pay the rest in cash, fee
   // kept); below the minimum → the option is locked. One toggle drives all
   // three — it redeems as much as helps (capped at full coverage).
-  const qarPerPoint = loyaltyData?.qarPerPoint ?? 0.01;
+  // 1 point = 1 QAR (qarPerPoint default 1.0). Points are QAR-denominated and
+  // fractional, so the points needed to fully cover the price is an exact 2-dp
+  // amount (matches the backend's round2(activityPrice / qarPerPoint)), not a
+  // whole-point ceil.
+  const qarPerPoint = loyaltyData?.qarPerPoint ?? 1;
   const requiredPoints = activityPayable > 0 && qarPerPoint > 0
-    ? Math.ceil(activityPayable / qarPerPoint)
+    ? Math.round((activityPayable / qarPerPoint) * 100) / 100
     : 0;
   const minRedemption = loyaltyData?.minRedemption ?? 1;
   // Show the Wanasa block only when redemption is configured AND the
@@ -1481,18 +1485,18 @@ export default function BookActivityPage() {
                             {isFullCoverage
                               ? t('loyalty.needsPoints', {
                                   defaultValue: 'Needs {{n}} points · service fee waived',
-                                  n: requiredPoints.toLocaleString(),
+                                  n: requiredPoints.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
                                 })
                               : canUsePoints
                                 ? t('loyalty.partialPoints', {
                                     defaultValue: 'Use your {{have}} points · save {{currency}} {{save}}, pay the rest',
-                                    have: pointsBalance.toLocaleString(),
+                                    have: pointsBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
                                     currency,
-                                    save: (redeemablePoints * qarPerPoint).toFixed(0),
+                                    save: (redeemablePoints * qarPerPoint).toFixed(2),
                                   })
                                 : t('loyalty.belowMinPoints', {
                                     defaultValue: 'You have {{have}} · minimum {{min}} points to redeem',
-                                    have: pointsBalance.toLocaleString(),
+                                    have: pointsBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
                                     min: minRedemption.toLocaleString(),
                                   })}
                           </p>
@@ -1528,7 +1532,7 @@ export default function BookActivityPage() {
                       <span className="text-amber-600 dark:text-amber-400">{t('loyalty.pointsDiscount')}</span>
                       <button type="button" onClick={() => { setUsePoints(false); setRedeemPoints(0); }} className="text-xs text-gray-400 hover:text-red-500 transition-colors">{t('booking.remove')}</button>
                     </div>
-                    <span className="text-amber-600 dark:text-amber-400 font-medium">-{currency} {pointsDiscount.toFixed(0)}</span>
+                    <span className="text-amber-600 dark:text-amber-400 font-medium">-{currency} {pointsDiscount.toFixed(2)}</span>
                   </div>
                 )}
 
@@ -1567,7 +1571,7 @@ export default function BookActivityPage() {
                     {bookingCost > 0
                       ? isPointsOnly
                         ? t('booking.paidWithPoints', { defaultValue: 'Paid with points' })
-                        : `${currency} ${cashDue.toFixed(0)}`
+                        : `${currency} ${cashDue.toFixed(2)}`
                       : '—'}
                   </span>
                 </div>
@@ -1590,20 +1594,24 @@ export default function BookActivityPage() {
                       {t('booking.earnOnComplete', {
                         defaultValue:
                           "You'll earn {{n}} points when this completes",
-                        n: Math.floor(
-                          // Mirror the backend earn basis EXACTLY (LoyaltyService
-                          // .computeEarnedPoints): earn on the CASH paid only —
-                          // price minus coupon/voucher AND the points-redeemed
-                          // portion. A partial-points booking earns on what's left
-                          // to pay; a full one earns 0 (hidden by isPointsOnly above).
-                          Math.max(
-                            0,
-                            bookingCost -
-                              (appliedCoupon?.discount ?? 0) -
-                              (selectedVoucher?.discount ?? 0) -
-                              pointsDiscount,
-                          ) * loyaltyData.pointsPerQar,
-                        ),
+                        // Mirror the backend earn basis EXACTLY (LoyaltyService
+                        // .computeEarnedPoints): earn on the CASH paid only —
+                        // price minus coupon/voucher AND the points-redeemed
+                        // portion. Points are QAR-denominated (1 pt = 1 QAR), so
+                        // this is rounded to 2 dp — NOT floored (a 90 QAR booking
+                        // earns 0.90, not 0). A full-points booking earns 0
+                        // (hidden by isPointsOnly above).
+                        n: (
+                          Math.round(
+                            Math.max(
+                              0,
+                              bookingCost -
+                                (appliedCoupon?.discount ?? 0) -
+                                (selectedVoucher?.discount ?? 0) -
+                                pointsDiscount,
+                            ) * loyaltyData.pointsPerQar * 100,
+                          ) / 100
+                        ).toFixed(2),
                       })}
                     </span>
                   </div>

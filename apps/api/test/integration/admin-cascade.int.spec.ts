@@ -68,7 +68,8 @@ async function seedWithBookings(opts: {
   const seed = await seedReference(ctx.prisma);
 
   // Ensure a loyalty config exists so cascadeCancelFutureBookings doesn't race
-  // to create it mid-cascade. Default qarPerPoint=0.01 → 200 QAR = 20,000 pts.
+  // to create it mid-cascade. Default qarPerPoint=1.0 (1 pt = 1 QAR) →
+  // round2(200 / 1.0) = 200 pts.
   await ctx.prisma.loyaltyConfig.upsert({
     where: { id: 'singleton' },
     create: { id: 'singleton' },
@@ -298,7 +299,7 @@ describe('AdminService.updateVendorStatus — SUSPENDED cascade', () => {
   });
 
   test('loyalty ledger row written for paid refund → Wanasa points (paidAmount / qarPerPoint)', async () => {
-    // qarPerPoint default = 0.01 → 200 QAR ≡ 20,000 points
+    // qarPerPoint default = 1.0 (1 pt = 1 QAR) → round2(200 / 1.0) = 200 points
     const { seed, admin, buyer, bookings } = await seedWithBookings({
       numFutureBookings: 1, paymentAmountQar: 200,
     });
@@ -309,14 +310,14 @@ describe('AdminService.updateVendorStatus — SUSPENDED cascade', () => {
       where: { userId: buyer.id, source: 'ADMIN_REFUND_APPROVED' },
     });
     expect(rows).toHaveLength(1);
-    expect(rows[0].delta).toBe(20_000);
+    expect(Number(rows[0].delta)).toBe(200);
     expect(rows[0].bookingId).toBe(bookings[0].id);
     expect(rows[0].actorType).toBe('ADMIN');
     expect(rows[0].actorId).toBe(admin.id);
 
     // User balance increased by the same amount
     const u = await ctx.prisma.user.findUniqueOrThrow({ where: { id: buyer.id } });
-    expect(u.loyaltyPoints).toBe(20_000);
+    expect(Number(u.loyaltyPoints)).toBe(200);
   });
 
   test('redeemed points on the booking are also refunded via CANCEL_REFUND_PAID ledger row', async () => {
@@ -332,7 +333,10 @@ describe('AdminService.updateVendorStatus — SUSPENDED cascade', () => {
       where: { userId: buyer.id, source: 'CANCEL_REFUND_PAID' },
     });
     expect(redemptionRefunds).toHaveLength(1);
-    expect(redemptionRefunds[0].delta).toBe(500);
+    // Redeemed-points refund is a direct passthrough of Booking.pointsRedeemed
+    // (admin.service.ts: `redeemed = Number(bk.pointsRedeemed) || 0`), not run
+    // through qarPerPoint — value is unchanged by the redenomination.
+    expect(Number(redemptionRefunds[0].delta)).toBe(500);
     expect(redemptionRefunds[0].actorType).toBe('ADMIN');
   });
 

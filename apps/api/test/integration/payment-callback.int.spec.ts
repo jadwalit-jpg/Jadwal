@@ -79,7 +79,7 @@ function makePaymentService(configOverrides: Record<string, string> = {}) {
     // Pure function (no DB) — mirror the real LoyaltyService formula so the
     // booking-confirmation email's projected-points value is computed correctly.
     computeEarnedPoints: jest.fn((total: number, discount: number, rate: number) =>
-      rate <= 0 ? 0 : Math.floor(Math.max(0, total - discount) * rate),
+      rate <= 0 ? 0 : Math.round(Math.max(0, total - discount) * rate * 100) / 100,
     ),
   } as any;
 

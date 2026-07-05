@@ -1051,13 +1051,15 @@ describe('REGRESSION: LoyaltyService — atomic redeem + ledger', () => {
 
   test('adjust clamps negative delta so balance never goes below zero', () => {
     const fn = svc.slice(svc.indexOf('async adjust'), svc.indexOf('// ─'));
-    expect(fn).toContain('Math.min(-args.delta, current.loyaltyPoints)');
+    // Points are QAR-denominated (Decimal), so the balance is normalised via
+    // toNum() and the clamp uses the local `delta`/`currentBalance`.
+    expect(fn).toContain('Math.min(-delta, currentBalance)');
     expect(fn).toContain('appliedDelta');
   });
 
-  test('zero delta / non-integer amounts rejected', () => {
+  test('zero delta rejected; amounts must be positive (points are fractional QAR)', () => {
     expect(svc).toContain('Adjustment delta must be non-zero');
-    expect(svc).toContain('must be a positive integer');
+    expect(svc).toContain('must be a positive amount');
     expect(svc).toContain('Ledger delta must be non-zero');
   });
 });
@@ -1223,8 +1225,9 @@ describe('REGRESSION: Wanasa points are customer-side discount, not vendor deduc
   test('pointsRedeemed caps at activity price worth (never burn extra on waived fee)', () => {
     // When Wanasa fully covers the activity, we cap redemption at exactly
     // what's needed. Earlier versions capped against activity+fee, burning
-    // extra points to cover the fee — now the fee is waived instead.
-    expect(svc).toMatch(/pointsRedeemed\s*=\s*Math\.ceil\(activityPrice\s*\/\s*qarPerPoint\)/);
+    // extra points to cover the fee — now the fee is waived instead. Points
+    // are QAR-denominated (fractional) so the cap is round-to-2dp, not ceil.
+    expect(svc).toMatch(/pointsRedeemed\s*=\s*Math\.round\(\(activityPrice\s*\/\s*qarPerPoint\)\s*\*\s*100\)\s*\/\s*100/);
   });
 
   test('vendor share (afterCouponPrice) is NOT reduced by points redemption', () => {
