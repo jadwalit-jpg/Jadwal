@@ -47,6 +47,12 @@ function fromMinutes(mins: number): string {
   return `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
 }
 
+// Slot-start granularity in minutes — mirrors the server's
+// HOURLY_SLOT_GRANULARITY_MINUTES (30 = half-hour slots so a customer can pick
+// e.g. 3:30 PM). The range/lock/capacity walks step by this so every 30-min
+// slot in a range is checked, not just the top of each hour.
+const TICK_MINUTES = 30;
+
 function availOf(s: HourRangePickerSlot | undefined): number | null {
   if (!s) return null;
   if (typeof s.available === 'number' && s.available !== Infinity) return s.available;
@@ -80,7 +86,7 @@ export function HourRangePicker({
   // These are the only clickable "tick" positions.
   const hours = useMemo(() => {
     const out: string[] = [];
-    for (let m = checkInMins; m <= checkOutMins; m += 60) {
+    for (let m = checkInMins; m <= checkOutMins; m += TICK_MINUTES) {
       out.push(fromMinutes(m));
     }
     return out;
@@ -117,7 +123,7 @@ export function HourRangePicker({
   // — matching the server's range rejection. Used by both start + end validity.
   const hitsLock = useCallback(
     (fromM: number, toM: number) => {
-      for (let m = fromM; m < toM; m += 60) {
+      for (let m = fromM; m < toM; m += TICK_MINUTES) {
         if (blockedByStart.has(fromMinutes(m))) return true;
       }
       return false;
@@ -165,7 +171,7 @@ export function HourRangePicker({
       // reject a range that would actually fit (because slots past the
       // end of our range also contribute), but never approves an impossible
       // one. The server's peak-concurrent sweep is authoritative at POST.
-      for (let m = startM; m < endM; m += 60) {
+      for (let m = startM; m < endM; m += TICK_MINUTES) {
         const slotHh = fromMinutes(m);
         if (pastByStart.has(slotHh)) return false;
         // A locked hour anywhere inside the range makes the whole booking invalid
@@ -341,10 +347,11 @@ export function HourRangePicker({
                 (inPreviewRange || isPreviewEnd) &&
                   !(isStart || isEnd || inSelectedRange) &&
                   'border-sky-200 bg-sky-50 text-sky-600 dark:bg-sky-900/20 dark:border-sky-800 dark:text-sky-300',
-                // Host-locked — render like a normal cell (NO red); a tap shakes
-                // + shows the "can't book over off-hours" message.
+                // Host-locked / off-hours — rendered RED so the customer sees it's
+                // unavailable BEFORE tapping. Stays clickable: a tap shakes + shows
+                // the "can't book over off-hours" toast as the explanation (KAN-10).
                 isLocked &&
-                  'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 text-gray-900 dark:text-white',
+                  'border-red-300 bg-red-50 text-red-600 dark:border-red-800/70 dark:bg-red-900/20 dark:text-red-300',
                 // Truly unavailable (past, no capacity, beyond close) — muted
                 isUnreachable &&
                   'opacity-40 cursor-not-allowed bg-gray-50 dark:bg-slate-900/30 border-gray-100 dark:border-slate-800 text-gray-400',

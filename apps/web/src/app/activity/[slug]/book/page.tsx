@@ -1107,11 +1107,7 @@ export default function BookActivityPage() {
                     3
                   </span>
                 ) : null}
-                <span>
-                  {isHourly
-                    ? t('activity.tickets', { defaultValue: 'Tickets' })
-                    : t('activity.guests')}
-                </span>
+                <span>{t('activity.guests')}</span>
               </h2>
               <div className="rounded-xl border border-jadwal-border-subtle bg-jadwal-surface p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -1121,9 +1117,7 @@ export default function BookActivityPage() {
                   />
                   <div>
                     <p className="text-sm font-medium text-jadwal-text">
-                      {isHourly
-                        ? t('activity.tickets', { defaultValue: 'Tickets' })
-                        : t('activity.guests')}
+                      {t('activity.guests')}
                     </p>
                   </div>
                 </div>

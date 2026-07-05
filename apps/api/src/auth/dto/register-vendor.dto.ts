@@ -2,6 +2,7 @@ import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matche
 import { Transform } from 'class-transformer';
 import { IsStrongPassword } from '../../common/validators/password-strength';
 import { IsNotDisposableEmail } from '../../common/validators/disposable-email';
+import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
 
 export class RegisterVendorDto {
   @IsString()
@@ -54,6 +55,7 @@ export class RegisterVendorDto {
   @IsNotEmpty({ message: 'URL slug is required' })
   @Matches(/^[a-z0-9-]+$/, { message: 'Slug must contain only lowercase letters, numbers, and hyphens' })
   @MaxLength(60, { message: 'Slug is too long' })
+  @IsNotReservedSlug()
   slug!: string;
 
   @IsOptional()

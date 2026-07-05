@@ -209,11 +209,13 @@ function fromMinutes(mins: number): string {
 
 /**
  * Granularity between consecutive hourly slot start times, in minutes.
- * Hard-coded to 60 (top of the hour) — this is the ONLY accepted flex granularity.
- * Changing this to a finer value (e.g. 30) would also require tightening the
- * DTO regex for `slotTime` and re-reviewing UX + lock contention.
+ * 30 = half-hour slots (…:00 and …:30) so customers can pick e.g. 3:30 PM.
+ * Safe at a finer granularity because slot conflict/availability is computed
+ * on the actual [start, start+duration] time RANGE (sweep-line max-concurrency
+ * below), not on slot indexes — a 30-min-offset start is just a shorter offset.
+ * The `slotTime`/`slotEndTime` DTO regexes accept `:00` or `:30` to match.
  */
-const HOURLY_SLOT_GRANULARITY_MINUTES = 60;
+const HOURLY_SLOT_GRANULARITY_MINUTES = 30;
 
 /**
  * Maximum number of slots ever returned to the frontend in a single response.
@@ -1017,7 +1019,7 @@ export class BookingsService {
       }
 
       // Flex-hour booking validation. A request is valid iff:
-      //   (1) slotTime + slotEndTime both start on the hour (DTO regex)
+      //   (1) slotTime + slotEndTime are on the hour or half-hour (:00/:30, DTO regex)
       //   (2) slotTime ≥ activity checkInTime
       //   (3) slotEndTime ≤ activity checkOutTime
       //   (4) hours(end − start) ≥ durationValue              (the minimum)
@@ -1031,8 +1033,8 @@ export class BookingsService {
       // slotEndTime is optional: when omitted, end = start + durationValue
       // (legacy single-slot behaviour, backward compatible with clients that
       // only send slotTime).
-      if (!/:00$/.test(dto.slotTime)) {
-        throw new BadRequestException('Slot time must start on the hour (e.g. 09:00, 14:00)');
+      if (!/:(00|30)$/.test(dto.slotTime)) {
+        throw new BadRequestException('Slot time must be on the hour or half-hour (e.g. 09:00, 09:30)');
       }
       const slotStartMins = toMinutes(dto.slotTime);
       const checkInMins = toMinutes(activity.checkInTime);
@@ -1042,8 +1044,8 @@ export class BookingsService {
 
       let slotEndMins: number;
       if (dto.slotEndTime) {
-        if (!/:00$/.test(dto.slotEndTime)) {
-          throw new BadRequestException('Slot end time must start on the hour (e.g. 10:00, 18:00)');
+        if (!/:(00|30)$/.test(dto.slotEndTime)) {
+          throw new BadRequestException('Slot end time must be on the hour or half-hour (e.g. 10:00, 10:30)');
         }
         slotEndMins = toMinutes(dto.slotEndTime);
         const span = slotEndMins - slotStartMins;

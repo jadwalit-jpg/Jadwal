@@ -223,7 +223,7 @@ export default function HomePage() {
 
         {/* Boat — same split-div pattern as `/home` (outer owns centering;
             inner owns the float animation, so the two transforms don't fight). */}
-        <div aria-hidden="true" className="absolute bottom-10 md:bottom-14 left-1/2 -translate-x-1/2 z-20 w-28 sm:w-36 md:w-44 pointer-events-none">
+        <div aria-hidden="true" className="absolute bottom-10 md:bottom-14 left-1/2 -translate-x-1/2 z-10 w-28 sm:w-36 md:w-44 pointer-events-none">
           <div className="hero-boat">
             <Image
               src="/images/userhero/boat.svg"
