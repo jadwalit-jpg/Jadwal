@@ -1483,19 +1483,13 @@ export class AdminService {
         // shouldn't happen because of the double-cancel guard, but defence
         // in depth) don't double-reverse.
         if (result.pointsAwarded === true) {
-          let loyaltyConfigForReverse = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
-          if (!loyaltyConfigForReverse) loyaltyConfigForReverse = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
-          // Mirror the earn basis EXACTLY (LoyaltyService.computeEarnedPoints —
-          // cash paid only; the points-redeemed portion earns 0) so the
-          // reversal debits exactly what was credited. Same config + the frozen
-          // totalPrice/pointsDiscount on the row → a points-paid booking earned
-          // 0 and therefore reverses 0.
-          const pointsPerQar = loyaltyConfigForReverse.pointsPerQar.toNumber();
-          const awardedPoints = this.loyalty.computeEarnedPoints(
-            Number(result.totalPrice),
-            Number(result.pointsDiscount),
-            pointsPerQar,
-          );
+          // Reverse the EXACT points credited on this booking (its BOOKING_EARN
+          // ledger row), NOT a recompute with the CURRENT earn rate — an admin
+          // rate change between award and cancel would otherwise debit the wrong
+          // amount (or 0, leaving free residual points). 0 → nothing to reverse
+          // (points-paid booking earned 0). pointsAwarded → false so a re-cancel
+          // can't double-reverse.
+          const awardedPoints = await this.loyalty.getEarnedPoints(tx, bookingId);
           if (awardedPoints > 0) {
             await this.loyalty.reverseAwarded(tx, {
               userId: result.customerId,
@@ -1531,24 +1525,30 @@ export class AdminService {
           config.pointsPerQar.toNumber(),
         );
         if (points > 0) {
-          await tx.booking.update({
-            where: { id: bookingId },
+          // Atomically CLAIM the award: flip pointsAwarded false→true only if it
+          // is still false, so two concurrent completes can't both earn. (See the
+          // matching guard in vendor.service.ts — status→COMPLETED above is not a
+          // claim, and the stale pre-tx check let both through.)
+          const claim = await tx.booking.updateMany({
+            where: { id: bookingId, pointsAwarded: false },
             data: { pointsAwarded: true },
           });
-          await this.loyalty.earn(tx, {
-            userId: booking.customerId,
-            amount: points,
-            bookingId,
-            note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
-          });
-          // Notify customer (fire-and-forget, after transaction)
-          this.notificationService.send({
-            userId: booking.customerId,
-            type: 'SYSTEM' as any,
-            title: 'Points Earned!',
-            message: `You earned ${points} WANASA points for booking ${booking.ref}`,
-            link: '/bookings',
-          });
+          if (claim.count === 1) {
+            await this.loyalty.earn(tx, {
+              userId: booking.customerId,
+              amount: points,
+              bookingId,
+              note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
+            });
+            // Notify customer (fire-and-forget, after transaction)
+            this.notificationService.send({
+              userId: booking.customerId,
+              type: 'SYSTEM' as any,
+              title: 'Points Earned!',
+              message: `You earned ${points} WANASA points for booking ${booking.ref}`,
+              link: '/bookings',
+            });
+          }
         }
       }
 
