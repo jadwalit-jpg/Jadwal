@@ -310,6 +310,31 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     expect(notificationService.notifyAdmins).toHaveBeenCalledTimes(1);
   });
 
+  test('TZ-discriminating: ended in Qatar-local (tagged end still raw-future) → REFUND_PENDING, NOT recreated', async () => {
+    const { svc, auditLogger } = makePaymentService();
+    // Tagged end +1h vs raw UTC, but ~2h in the PAST in Asia/Qatar (+3, the seed
+    // country) — the window where a raw-Date.now() gate would WRONGLY recreate.
+    // The sibling test's -1h is past under BOTH frames so it can't catch a
+    // raw-now regression; this one can.
+    const { basketId, paymentId, amountStr, snapshot } = await seedOrphanedPayment({
+      startOffsetMs: -1 * 3600_000,
+      endOffsetMs:   +1 * 3600_000,
+    });
+
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'T1',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    expect(await ctx.prisma.booking.findFirst({ where: { ref: snapshot.ref } })).toBeNull(); // NOT recreated
+    const p = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(p!.status).toBe('REFUND_PENDING');
+    const refundAudit = (auditLogger.log as jest.Mock).mock.calls
+      .map((c) => c[0])
+      .find((c: any) => c.action === 'PAYMENT_RECOVERY_REFUND_QUEUED');
+    expect(refundAudit?.details).toMatch(/ACTIVITY_ALREADY_ENDED/);
+  });
+
   test('slot already taken → REFUND_PENDING, audit SLOT_CONFLICT', async () => {
     const { svc, auditLogger } = makePaymentService();
     const { basketId, paymentId, amountStr, snapshot, seed } = await seedOrphanedPayment({
@@ -752,6 +777,29 @@ describe('§M6 — callback un-cancels SYSTEM-cancelled booking when safe', () =
     expect(p!.status).toBe('REFUND_PENDING');
     const reasons = (auditLogger.log as jest.Mock).mock.calls.map(c => c[0]);
     expect(reasons.some((c: any) =>
+      c.action === 'PAYMENT_RECOVERY_REFUND_QUEUED' && /ACTIVITY_ALREADY_ENDED/.test(c.details))).toBe(true);
+  });
+
+  test('TZ-discriminating: ended in Qatar-local (tagged end still raw-future) → REFUND_PENDING, no un-cancel', async () => {
+    const { svc, auditLogger } = makePaymentService();
+    // +1h raw UTC = Qatar-local past (+3 seed country); a raw-Date.now() gate
+    // would WRONGLY un-cancel. The -1h sibling is past under both frames.
+    const { basketId, paymentId, bookingId } = await seedSystemCancelledFixture({
+      startOffsetMs: -1 * 3600_000,
+      endOffsetMs:   +1 * 3600_000,
+    });
+
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'T1',
+      Response_Key: signCallback(basketId, '200.00', '00'),
+    });
+
+    const booking = await ctx.prisma.booking.findUnique({ where: { id: bookingId } });
+    expect(booking!.status).toBe('CANCELLED');   // NOT un-cancelled
+    const p = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(p!.status).toBe('REFUND_PENDING');
+    const reasons2 = (auditLogger.log as jest.Mock).mock.calls.map(c => c[0]);
+    expect(reasons2.some((c: any) =>
       c.action === 'PAYMENT_RECOVERY_REFUND_QUEUED' && /ACTIVITY_ALREADY_ENDED/.test(c.details))).toBe(true);
   });
 });
