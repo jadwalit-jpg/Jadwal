@@ -126,6 +126,11 @@ const nextConfig: NextConfig = {
   images: {
     // Modern formats first — Next.js negotiates based on Accept header
     formats: ["image/avif", "image/webp"],
+    // Cache optimized variants for 30 days (default is 60s → the slow AVIF
+    // re-encode kept recurring for new visitors). Long-lived so an image is
+    // encoded once and then served from cache (origin + Cloudflare). Static
+    // public assets are content-stable; uploaded assets get hashed URLs.
+    minimumCacheTTL: 2592000,
     remotePatterns: [
       {
         protocol: "https",

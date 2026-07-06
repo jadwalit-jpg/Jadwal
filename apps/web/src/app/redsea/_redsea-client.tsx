@@ -178,6 +178,15 @@ export default function RedSeaClient() {
           fill
           priority
           sizes="100vw"
+          // Served directly (no on-the-fly AVIF re-encode). The source is an
+          // already-optimized 134KB WebP, so Next's optimizer only added a slow
+          // first-request AVIF encode (blank hero until done → a refresh then
+          // showed the cached variant) for negligible byte savings. Direct +
+          // priority-preloaded + Cloudflare-cached as a static asset = instant,
+          // reliable first paint. The blur placeholder fills the sub-second wait.
+          unoptimized
+          placeholder="blur"
+          blurDataURL="data:image/webp;base64,UklGRmIAAABXRUJQVlA4IFYAAADwAQCdASoQAAsAA4BaJbACdAEMV6mMNAAA/kEsITIlDMAInddVuhlmajApNI3hyqf6n0DE/WDz5W2kg/5IxZ+CdNRcUeHEXOYCqDOvDM1p9ub+PoAAAA=="
           className="object-cover object-[center_38%]"
         />
         <div className="absolute inset-0 bg-gradient-to-b from-[#141A26]/[0.78] via-[#141A26]/[0.38] to-[#141A26]/[0.88]" />
@@ -380,6 +389,9 @@ export default function RedSeaClient() {
           aria-hidden="true"
           fill
           sizes="100vw"
+          // Same static WebP as the hero — serve it directly too (decorative
+          // faded backdrop) so it doesn't trigger a second slow AVIF encode.
+          unoptimized
           className="object-cover opacity-[0.16] saturate-[0.7]"
         />
         <div className="absolute inset-0 bg-gradient-to-b from-[#1A2230]/[0.86] to-[#141A26]/[0.94]" />
