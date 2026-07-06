@@ -46,6 +46,13 @@ export class CleanupService {
 
   // Business rules — all read from env so ops can tune without a code deploy
   private readonly PENDING_BOOKING_FALLBACK_HOURS: number;
+  // Grace before reaping a booking that DID reach PAY2M (has a basket id). The
+  // slot is already freed the moment reservedUntil passes (availability ignores
+  // expired-PENDING), so the cron gains nothing by reaping fast — and reaping at
+  // ~30 min could race a slow/retried PAY2M success. A generous grace (default 2h,
+  // well beyond PAY2M's ~15-20 min session + IPN delivery) makes that race
+  // practically impossible without storing anything extra. Tunable via env.
+  private readonly PAY2M_PENDING_GRACE_MINUTES: number;
 
   constructor(
     private prisma: PrismaService,
@@ -73,6 +80,10 @@ export class CleanupService {
     this.PENDING_BOOKING_FALLBACK_HOURS = Number(
       this.configService.get('PENDING_BOOKING_FALLBACK_HOURS', '4'),
     );
+    // Default 120 min (2h). Clamp to a positive integer so a bad SSM value can't
+    // turn the cutoff into an Invalid Date or reap in-flight payments early.
+    const grace = Number(this.configService.get('PAY2M_PENDING_GRACE_MINUTES', '120'));
+    this.PAY2M_PENDING_GRACE_MINUTES = Number.isInteger(grace) && grace > 0 ? grace : 120;
   }
 
   // ─── Daily Cleanup (3 AM) — purge stale data ─────────────────────────────
@@ -135,8 +146,12 @@ export class CleanupService {
     const now = new Date();
     const fallbackCutoff = new Date(now.getTime() - this.PENDING_BOOKING_FALLBACK_HOURS * 60 * 60 * 1000);
 
-    // PAY2M checkout sessions last ~15-20 min max. 30 min is safe buffer.
-    const paymentInitiatedCutoff = new Date(now.getTime() - 30 * 60 * 1000);
+    // PAY2M checkout sessions last ~15-20 min. We wait PAY2M_PENDING_GRACE_MINUTES
+    // (default 120) — far beyond that + IPN delivery — before reaping a
+    // basket-initiated booking, so a slow/retried success can't be raced. The slot
+    // is already free (reservedUntil filter), so the extra wait costs nothing but a
+    // ghost PENDING row lingering a bit longer (its points return when reaped).
+    const paymentInitiatedCutoff = new Date(now.getTime() - this.PAY2M_PENDING_GRACE_MINUTES * 60 * 1000);
 
     const staleBookings = await this.prisma.client.booking.findMany({
       where: {

@@ -4,7 +4,7 @@
  * Tests the invariants that only a live DB can verify:
  *   - autoCancelStalePendingBookings deletes expired reservations + payments
  *   - fresh PENDING bookings (reservedUntil in future) stay intact
- *   - in-flight PAY2M sessions (< 30 min) stay intact; > 30 min get reaped
+ *   - in-flight PAY2M sessions stay intact until past the grace (default 2h); then reaped
  *   - autoCompletePastBookings flips CONFIRMED → COMPLETED once endDatetime passes
  *   - loyalty points are earned exactly once per booking (pointsAwarded idempotent)
  *   - autoExpireCoupons only touches APPROVED coupons past validTo
@@ -294,13 +294,13 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).not.toBeNull();
   });
 
-  test('PENDING + PAY2M session abandoned (> 30 min, reservation expired) → booking deleted, payment soft-failed (kept for recovery)', async () => {
+  test('PENDING + PAY2M session abandoned (past the 2h grace, reservation expired) → booking deleted, payment soft-failed (kept for recovery)', async () => {
     const seed = await seedReference(ctx.prisma);
     const { bookingId, paymentId } = await mkPendingBooking({
       seed,
       reservedUntil: new Date(Date.now() - 10 * 60 * 1000), // reservation already expired (the realistic abandoned shape)
       paymentBasketId: 'BSK-abandoned',
-      createdAt: new Date(Date.now() - 45 * 60 * 1000), // 45 min ago
+      createdAt: new Date(Date.now() - 150 * 60 * 1000), // 2.5h ago — past the 2h PAY2M grace
     });
 
     const { svc } = makeCleanup();
@@ -318,18 +318,37 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
     }
   });
 
-  test('M2: PAY2M >30 min old BUT reservation still actively held (reservedUntil future) → NOT reaped', async () => {
+  test('LAZY GRACE: PAY2M session ~45 min old (past old 30-min cutoff, within 2h grace) → NOT reaped', async () => {
+    // The widened grace: a basket-initiated booking must NOT be reaped at ~30 min —
+    // a slow/retried PAY2M success could still land. It's kept until well past any
+    // possible success (default 2h); the slot is already free meanwhile. Before this
+    // fix a 45-min-old booking here would have been deleted (and could race a late pay).
+    const seed = await seedReference(ctx.prisma);
+    const { bookingId } = await mkPendingBooking({
+      seed,
+      reservedUntil: new Date(Date.now() - 10 * 60 * 1000), // reservation expired
+      paymentBasketId: 'BSK-slowpay',
+      createdAt: new Date(Date.now() - 45 * 60 * 1000), // 45 min ago — inside the 2h grace
+    });
+
+    const { svc } = makeCleanup();
+    await svc.autoCancelStalePendingBookings();
+
+    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).not.toBeNull();
+  });
+
+  test('M2: PAY2M past the payment grace BUT reservation still actively held (reservedUntil future) → NOT reaped', async () => {
     // A verified NAPS hold extends reservedUntil while PAY2M's delayed capture
-    // (IPN) is still expected. Case 3's 30-min payment anchor must NOT reap a
-    // booking whose reservation is still in the future — doing so dropped a paid
-    // customer into §B2 recovery. The 4-hour fallback (Case 4) is still the
-    // backstop against an indefinitely-extended hold.
+    // (IPN) is still expected. Case 3's payment grace must NOT reap a booking whose
+    // reservation is still in the future — doing so dropped a paid customer into
+    // §B2 recovery. Seeded past the 2h grace so this proves the hold protects even
+    // then; the 4-hour fallback (Case 4) is still the backstop against a stuck hold.
     const seed = await seedReference(ctx.prisma);
     const { bookingId } = await mkPendingBooking({
       seed,
       reservedUntil: new Date(Date.now() + 25 * 60 * 1000), // held +25 min
       paymentBasketId: 'BSK-held',
-      createdAt: new Date(Date.now() - 45 * 60 * 1000), // payment first-initiated 45 min ago
+      createdAt: new Date(Date.now() - 150 * 60 * 1000), // 2.5h ago — past the 2h grace, but held
     });
 
     const { svc } = makeCleanup();
