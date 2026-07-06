@@ -48,8 +48,14 @@ describe('UsersService.getProfile', () => {
       createdAt: new Date(),
     });
     ctx.prisma._client.booking.count.mockResolvedValueOnce(10);  // total
-    ctx.prisma._client.booking.count.mockResolvedValueOnce(3);   // upcoming
     ctx.prisma._client.booking.count.mockResolvedValueOnce(5);   // completed
+    // upcoming is now a findMany + per-tz count in-app — 3 clearly-future bookings.
+    const far = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    ctx.prisma._client.booking.findMany.mockResolvedValueOnce([
+      { startDatetime: new Date(far), activity: { country: { defaultTimezone: 'Asia/Qatar' } } },
+      { startDatetime: new Date(far + 1), activity: { country: { defaultTimezone: 'Asia/Riyadh' } } },
+      { startDatetime: new Date(far + 2), activity: { country: { defaultTimezone: 'Asia/Amman' } } },
+    ]);
     ctx.prisma._client.booking.aggregate.mockResolvedValueOnce({
       _sum: { totalPrice: 1000.55, serviceFee: 100.45 },
     });
@@ -60,11 +66,33 @@ describe('UsersService.getProfile', () => {
     });
   });
 
+  test('upcomingCount is per-activity-timezone: a booking already started in its tz (tagged start still raw-future) is NOT upcoming', async () => {
+    const ctx = await buildUsersSut();
+    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
+      id: 'u1', fullName: 'A', email: 'a@b.com', phone: null,
+      emailVerified: true, role: 'CUSTOMER', createdAt: new Date(),
+    });
+    ctx.prisma._client.booking.count.mockResolvedValueOnce(5);   // total
+    ctx.prisma._client.booking.count.mockResolvedValueOnce(0);   // completed
+    const now = Date.now();
+    ctx.prisma._client.booking.findMany.mockResolvedValueOnce([
+      // +1h raw UTC, but ~2h in the PAST in Asia/Qatar (+3) → NOT upcoming.
+      { startDatetime: new Date(now + 60 * 60 * 1000), activity: { country: { defaultTimezone: 'Asia/Qatar' } } },
+      // clearly future everywhere → upcoming.
+      { startDatetime: new Date(now + 30 * 24 * 60 * 60 * 1000), activity: { country: { defaultTimezone: 'Asia/Qatar' } } },
+    ]);
+    ctx.prisma._client.booking.aggregate.mockResolvedValueOnce({ _sum: {} });
+
+    const r = await ctx.sut.getProfile('u1');
+    expect(r.stats.upcomingCount).toBe(1); // raw-UTC would have wrongly counted 2
+  });
+
   test('never returns password hash (select explicitly scoped)', async () => {
     const ctx = await buildUsersSut();
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
       id: 'u1', fullName: 'A', email: 'a@b.com',
     });
+    ctx.prisma._client.booking.findMany.mockResolvedValueOnce([]); // upcoming (per-tz count)
     ctx.prisma._client.booking.aggregate.mockResolvedValueOnce({ _sum: {} });
 
     await ctx.sut.getProfile('u1');
