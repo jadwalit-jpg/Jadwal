@@ -544,7 +544,7 @@ export default function BookingDetailPage() {
                       />
                       {new Date(booking.startDatetime).toLocaleDateString(
                         locale,
-                        { day: 'numeric', month: 'short', year: 'numeric' },
+                        { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' },
                       )}
                     </p>
                     {/* Show activity's fixed check-in time only for DAILY
@@ -574,7 +574,7 @@ export default function BookingDetailPage() {
                         />
                         {new Date(booking.endDatetime).toLocaleDateString(
                           locale,
-                          { day: 'numeric', month: 'short', year: 'numeric' },
+                          { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' },
                         )}
                       </p>
                       {booking.activity?.checkOutTime ? (

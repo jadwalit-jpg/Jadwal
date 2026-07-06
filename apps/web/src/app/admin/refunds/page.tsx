@@ -176,7 +176,7 @@ export default function AdminRefundQueuePage() {
                       <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1 text-xs text-gray-600 dark:text-slate-400">
                         <div><span className="text-gray-400 dark:text-slate-500">Paid:</span> <span className="tabular-nums">{b.currencyCode} {paid.toFixed(2)}</span></div>
                         <div><span className="text-gray-400 dark:text-slate-500">Suggested:</span> <span className="tabular-nums">{suggested !== null ? `${b.currencyCode} ${suggested.toFixed(2)}` : '—'}</span></div>
-                        <div><span className="text-gray-400 dark:text-slate-500">Start:</span> {new Date(b.startDatetime).toLocaleDateString()}</div>
+                        <div><span className="text-gray-400 dark:text-slate-500">Start:</span> {new Date(b.startDatetime).toLocaleDateString(undefined, { timeZone: 'UTC' })}</div>
                         <div><span className="text-gray-400 dark:text-slate-500">Cancelled:</span> {b.cancelledAt ? new Date(b.cancelledAt).toLocaleDateString() : '—'}{b.cancelledBy ? ` (${b.cancelledBy.toLowerCase()})` : ''}</div>
                       </div>
                     </div>

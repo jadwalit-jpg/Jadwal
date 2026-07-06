@@ -285,7 +285,7 @@ export default function AdminBookingsPage() {
                           <p className="text-xs text-gray-400 dark:text-slate-500 wrap-break-word max-w-[240px]">{booking.vendor.businessNameEn}</p>
                         </td>
                         <td className="px-6 py-4 text-gray-500 dark:text-slate-400 text-xs">
-                          <p>{new Date(booking.startDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                          <p>{new Date(booking.startDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</p>
                           {(() => {
                             // For HOURLY bookings, show the actual booked
                             // time range and duration — with flex-length

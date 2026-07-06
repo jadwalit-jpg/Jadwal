@@ -269,7 +269,7 @@ export default function VendorBookingsPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600 dark:text-slate-300">
-                        <p>{new Date(b.startDatetime).toLocaleDateString()}</p>
+                        <p>{new Date(b.startDatetime).toLocaleDateString(undefined, { timeZone: 'UTC' })}</p>
                         {(() => {
                           // Show the actual booked time range for HOURLY so
                           // the vendor sees when the customer is coming in
