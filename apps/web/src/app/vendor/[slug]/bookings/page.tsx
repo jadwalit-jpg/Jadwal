@@ -348,15 +348,16 @@ export default function VendorBookingsPage() {
                             <Eye className="h-4 w-4" />
                           </button>
                           {transitions.length > 0 && transitions.map(s => {
-                            // Complete is only meaningful once the event has
-                            // ended. Hiding the button pre-end matches the
-                            // backend guard and the 1 AM auto-complete cron —
-                            // all three agree that "completed" = event occurred.
-                            // Cancel remains available for future bookings
-                            // (no-shows, vendor emergencies).
-                            if (s === 'COMPLETED' && new Date(b.endDatetime).getTime() > Date.now()) {
-                              return null;
-                            }
+                            // NOTE: we deliberately do NOT pre-hide "Complete"
+                            // client-side. endDatetime is local-wall-clock
+                            // tagged-UTC, so a browser `Date.now()` compare here
+                            // is wrong by the activity country's UTC offset
+                            // (+3h GCC) — it used to HIDE the button for ~3h
+                            // AFTER a Qatar event had truly ended, blocking a
+                            // legitimate completion. The backend guard
+                            // (updateBookingStatus → nowInTimezone(activity tz))
+                            // is the single source of truth; a too-early click
+                            // returns a 400 surfaced via the existing toast.
                             return (
                               <button
                                 key={s}

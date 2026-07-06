@@ -257,6 +257,37 @@ describe('AdminService.updateVendorStatus — SUSPENDED cascade', () => {
     expect(past.cancelledBy).toBeNull();
   });
 
+  // TIMEZONE boundary: seedReference's activity country is Asia/Qatar (+3).
+  // startDatetime is local-wall-clock tagged-UTC. A booking whose tagged start
+  // is raw-now + 1h is, in Qatar local (raw-now + 3h), 2h in the PAST — i.e. the
+  // customer is already IN the activity. The old `gte: new Date()` filter would
+  // treat it as "future", CANCEL it and 100%-refund a customer who is attending.
+  // The fix (gte: nowInTimezone(activity tz)) must EXCLUDE it.
+  test('TIMEZONE: an in-progress (Qatar-local) booking is NOT cancelled/refunded by the cascade, despite tagged start > raw UTC now', async () => {
+    const { seed, buyer, admin } = await seedWithBookings({ numFutureBookings: 1 });
+    const svc = makeAdminService();
+    const now = Date.now();
+    const inProgress = await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-INPROG-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR',
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        status: 'CONFIRMED',
+        startDatetime: new Date(now + 60 * 60 * 1000),      // +1h raw = ~2h ago in Qatar local
+        endDatetime: new Date(now + 3 * 60 * 60 * 1000),
+        activityId: seed.activity.id,
+        customerId: buyer.id,
+        vendorId: seed.vendor.id,
+      },
+    });
+
+    await svc.updateVendorStatus(seed.vendor.id, 'SUSPENDED', admin.id);
+
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: inProgress.id } });
+    expect(b.status).toBe('CONFIRMED'); // NOT cancelled — already started locally
+    expect(b.cancelledBy).toBeNull();
+  });
+
   test('SUCCESS payment → REFUNDED with refundAmount + refundedAt', async () => {
     const { seed, admin, bookings } = await seedWithBookings({ numFutureBookings: 2, paymentAmountQar: 150 });
     const svc = makeAdminService();
