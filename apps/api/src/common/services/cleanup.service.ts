@@ -215,26 +215,40 @@ export class CleanupService {
     // blows past, Postgres rolls back cleanly and the next cron run
     // (5 min later) picks up the same set and retries. No per-tx SET
     // LOCAL override — repo enforces a hard no-raw-SQL gate.
-    await this.prisma.client.$transaction(async (tx) => {
-      const bookingIds = staleBookings.map(b => b.id);
+    const claimedBookingIds = await this.prisma.client.$transaction(async (tx) => {
       const paymentIds = staleBookings.map(b => b.paymentId).filter(Boolean) as string[];
+      const claimedIds: string[] = [];
 
-      // Refund coupon usage before delete — createBooking incremented
-      // usedCount at reservation time; bookings that never paid must return
-      // that increment so coupons stay accurate. Per-booking loop is fine
-      // because this cron runs every 5 min and batch sizes are small
-      // (usually < 20 stale reservations).
+      // Per-booking: CLAIM (hard-delete) each stale reservation, THEN refund what
+      // the customer put in — but ONLY for a row we actually reaped. Claiming
+      // before refunding is what closes a money-mint race: a delayed/retried PAY2M
+      // success can CONFIRM a booking in the window between the findMany above and
+      // this transaction. If that happened, the claim-delete matches 0 rows and we
+      // skip the refund — otherwise the customer would keep a paid, CONFIRMED
+      // booking AND get the redeemed points + coupon usage back (a mint).
+      // (Previously the coupon/points refund ran UNCONDITIONALLY and only the
+      // delete/payment-fail were PENDING-guarded, so the refund leaked on the race.)
       for (const b of staleBookings) {
+        // Atomic claim: delete only if STILL PENDING. Deleting the booking — the
+        // FK-owning side — leaves the soft-failed payment intact for §B2 recovery;
+        // loyaltyLedger.bookingId is a soft pointer (no FK) so the refund ledger
+        // written below stays valid after the row is gone.
+        const del = await tx.booking.deleteMany({
+          where: { id: b.id, status: 'PENDING' },
+        });
+        if (del.count === 0) continue; // a late success CONFIRMED it → leave it (and its points) alone
+        claimedIds.push(b.id);
+
+        // Refund coupon usage — createBooking incremented usedCount at reservation
+        // time; an abandoned booking must return that increment so coupons stay accurate.
         if (b.couponCode) {
           await refundCouponUsage(tx, b.couponCode, b.customerId);
         }
-        // Return any Wanasa points redeemed on this PENDING booking. Points are
-        // debited at booking-create time (so the same points can't double-book),
-        // so hard-deleting an abandoned booking without refunding them would
-        // silently confiscate the customer's store credit. Mirrors the
-        // customer-cancel-unpaid path (bookings.service.ts) — source
-        // CANCEL_REFUND_UNPAID; the ledger row's bookingId is a soft pointer, so
-        // the delete below doesn't invalidate it.
+        // Return any Wanasa points redeemed on this booking. Points are debited at
+        // booking-create time (so the same points can't double-book), so dropping
+        // an abandoned booking without refunding them would silently confiscate the
+        // customer's store credit. Mirrors the customer-cancel-unpaid path
+        // (bookings.service.ts) — source CANCEL_REFUND_UNPAID.
         const redeemed = Number(b.pointsRedeemed); // Decimal column (QAR-denominated) → number
         if (redeemed > 0) {
           await this.loyalty.refund(tx, {
@@ -261,7 +275,7 @@ export class CleanupService {
       // snapshot or queue a refund — and restores this file's stated invariant
       // that payments are never hard-deleted. Only flip rows still PENDING: a
       // payment a concurrent success-callback already moved to SUCCESS must be
-      // left intact (its booking, now CONFIRMED, is protected by the guard below).
+      // left intact (its booking, now CONFIRMED, is protected by the claim above).
       if (paymentIds.length > 0) {
         await tx.payment.updateMany({
           where: { id: { in: paymentIds }, status: 'PENDING' },
@@ -269,21 +283,20 @@ export class CleanupService {
         });
       }
 
-      // Delete the abandoned bookings — but ONLY ones still PENDING. If a
-      // success callback CONFIRMED one in the race window between the findMany
-      // above and this tx, the status guard makes this a no-op for that row, so
-      // a paid, confirmed booking is never destroyed. (Deleting the booking —
-      // the FK-owning side — leaves the soft-failed payment intact for recovery.)
-      await tx.booking.deleteMany({
-        where: { id: { in: bookingIds }, status: 'PENDING' },
-      });
+      return claimedIds;
     });
 
-    this.logger.log({ event: 'CLEANUP_STALE_PENDING_CANCELLED', count: staleBookings.length });
+    // Report only the bookings we ACTUALLY reaped. A row a late PAY2M success
+    // confirmed between the scan and the transaction was skipped above, so counting
+    // all staleBookings here would over-report cancellations in the log + audit.
+    const claimedSet = new Set(claimedBookingIds);
+    const claimedActivityIds = staleBookings.filter((b) => claimedSet.has(b.id)).map((b) => b.activityId);
 
-    // Batch-invalidate availability for every affected activity. Dedup happens
-    // inside invalidateMany; pipelined INCRs keep Redis round-trips bounded.
-    void this.availabilityCache.invalidateMany(staleBookings.map((b) => b.activityId));
+    this.logger.log({ event: 'CLEANUP_STALE_PENDING_CANCELLED', count: claimedBookingIds.length, scanned: staleBookings.length });
+
+    // Batch-invalidate availability only for activities we actually freed. Dedup
+    // happens inside invalidateMany; pipelined INCRs keep Redis round-trips bounded.
+    void this.availabilityCache.invalidateMany(claimedActivityIds);
 
     this.auditLogger.log({
       actorType: 'SYSTEM',
@@ -291,7 +304,7 @@ export class CleanupService {
       actorName: 'System Cron',
       action: 'AUTO_CANCEL_STALE_BOOKINGS',
       entity: 'Booking',
-      details: JSON.stringify({ count: staleBookings.length, bookingIds: staleBookings.map(b => b.id).slice(0, 20) }),
+      details: JSON.stringify({ count: claimedBookingIds.length, bookingIds: claimedBookingIds.slice(0, 20) }),
     });
   }
 
