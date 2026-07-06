@@ -1189,19 +1189,13 @@ export default function ActivityDetailClient({
                 <div className="mt-4 rounded-xl border border-jadwal-border-subtle bg-jadwal-surface-muted p-3 flex items-center justify-between">
                   <div>
                     <div className="text-[10px] text-jadwal-text-muted uppercase tracking-[0.4px]">
-                      {isHourly
-                        ? t('activity.tickets', { defaultValue: 'Tickets' })
-                        : t('activity.guests', { defaultValue: 'Guests' })}
+                      {t('activity.guests', { defaultValue: 'Guests' })}
                     </div>
                     <div className="text-sm font-semibold text-jadwal-text mt-0.5">
                       {guests}{' '}
-                      {isHourly
-                        ? guests === 1
-                          ? t('activity.ticket', { defaultValue: 'ticket' })
-                          : t('activity.tickets', { defaultValue: 'tickets' })
-                        : guests === 1
-                          ? t('activity.person')
-                          : t('activity.people')}
+                      {guests === 1
+                        ? t('activity.person')
+                        : t('activity.people')}
                     </div>
                   </div>
                   <Stepper

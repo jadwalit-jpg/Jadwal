@@ -126,7 +126,10 @@ function countNights(checkIn: string, checkOut: string): number {
 
 function formatDate(dateStr: string, locale: string): string {
   const d = new Date(dateStr + 'T00:00:00Z');
-  return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
+  // timeZone:'UTC' — dateStr is a plain calendar date tagged midnight-UTC; without
+  // this a non-UTC browser can render the day off by one (must match the times,
+  // which are already UTC-pinned across the app).
+  return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 function formatTime12h(time: string): string {
@@ -439,9 +442,15 @@ export default function BookActivityPage() {
   const slotHours = useMemo(() => {
     const baseline = activity?.durationValue ?? 0;
     if (!selectedSlot || !selectedSlotEnd || baseline <= 0) return baseline;
-    const startH = parseInt(selectedSlot.split(':')[0], 10);
-    const endH = parseInt(selectedSlotEnd.split(':')[0], 10);
-    const hours = endH - startH;
+    // Minute-accurate so a :30 start (KAN-12) is measured correctly. Booking
+    // lengths are whole hours (server + picker enforce span % 60 === 0), so this
+    // stays an integer that matches the server's hoursBooked exactly — the old
+    // `endH - startH` dropped minutes and mis-priced a half-hour-offset range.
+    const toMin = (t: string) => {
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + (m || 0);
+    };
+    const hours = (toMin(selectedSlotEnd) - toMin(selectedSlot)) / 60;
     const maxHours = MAX_SLOT_UNITS_CLIENT * baseline;
     return Math.max(baseline, Math.min(hours, maxHours));
   }, [selectedSlot, selectedSlotEnd, activity?.durationValue]);
@@ -598,14 +607,19 @@ export default function BookActivityPage() {
   const maxGuests = useMemo(() => {
     if (isHourly && selectedSlot && hourlySlots && activity?.durationValue) {
       const duration = activity.durationValue;
-      const startH = parseInt(selectedSlot.split(':')[0], 10);
-      const endHour = selectedSlotEnd
-        ? parseInt(selectedSlotEnd.split(':')[0], 10)
-        : startH + duration;
+      // Minute-based so a :30 start (KAN-12) matches the server's 30-min slot
+      // keys. Walk the tiled duration-long slots the range covers.
+      const toMin = (t: string) => {
+        const [h, m] = t.split(':').map(Number);
+        return h * 60 + (m || 0);
+      };
+      const fromMin = (mins: number) =>
+        `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+      const startMin = toMin(selectedSlot);
+      const endMin = selectedSlotEnd ? toMin(selectedSlotEnd) : startMin + duration * 60;
       let minAvail: number | null = null;
-      for (let h = startH; h < endHour; h += duration) {
-        const hh = `${String(h).padStart(2, '0')}:00`;
-        const slot = hourlySlots.slots.find((s) => s.slotStart === hh);
+      for (let mm = startMin; mm < endMin; mm += duration * 60) {
+        const slot = hourlySlots.slots.find((s) => s.slotStart === fromMin(mm));
         const a = slotAvailOf(slot);
         if (a === null) continue;
         minAvail = minAvail === null ? a : Math.min(minAvail, a);
@@ -1107,11 +1121,7 @@ export default function BookActivityPage() {
                     3
                   </span>
                 ) : null}
-                <span>
-                  {isHourly
-                    ? t('activity.tickets', { defaultValue: 'Tickets' })
-                    : t('activity.guests')}
-                </span>
+                <span>{t('activity.guests')}</span>
               </h2>
               <div className="rounded-xl border border-jadwal-border-subtle bg-jadwal-surface p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -1121,9 +1131,7 @@ export default function BookActivityPage() {
                   />
                   <div>
                     <p className="text-sm font-medium text-jadwal-text">
-                      {isHourly
-                        ? t('activity.tickets', { defaultValue: 'Tickets' })
-                        : t('activity.guests')}
+                      {t('activity.guests')}
                     </p>
                   </div>
                 </div>
@@ -1350,7 +1358,7 @@ export default function BookActivityPage() {
                       {isHourly
                         ? isPerUnit
                           ? `${effectivePrice.toFixed(0)} / ${t('activity.unit')}`
-                          : `${effectivePrice.toFixed(0)} × ${guests} ${guests > 1 ? t('activity.tickets') : t('activity.tickets')}`
+                          : `${effectivePrice.toFixed(0)} × ${guests} ${t('activity.guests')}`
                         : dailyMixedNightly
                           ? (dailyNightPrices.length <= 6
                               ? dailyNightPrices.map((p) => p.toFixed(0)).join(' + ')

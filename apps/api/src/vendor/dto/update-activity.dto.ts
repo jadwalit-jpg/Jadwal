@@ -88,12 +88,16 @@ export class UpdateActivityDto {
   @IsOptional()
   pricingModel?: PricingModel;
 
+  // Format only (any valid HH:MM). The 30-min-grid rule for HOURLY is enforced in
+  // assertHourlyTimesConsistent so DAILY check-in/out isn't over-restricted.
   @IsString()
   @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkInTime must be a valid time (HH:MM)' })
   checkInTime?: string;
 
   @IsString()
   @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkOutTime must be a valid time (HH:MM)' })
   checkOutTime?: string;
 
   @IsInt()

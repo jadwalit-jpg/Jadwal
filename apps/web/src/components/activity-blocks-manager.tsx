@@ -46,13 +46,18 @@ function toMin(hhmm: string): number {
 function fromMin(min: number): string {
   return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
-/** Bookable START slots — every 60 min from check-in while a full booking still
- *  fits before close. Mirrors the backend computeSlots. */
+// Slot-start granularity — MUST match the backend HOURLY_SLOT_GRANULARITY_MINUTES
+// (bookings.service.ts) so the vendor can lock exactly the slots a customer can
+// book. KAN-12 moved this from 60 → 30; a stale copy here would hide the :30
+// slots from the vendor's lock UI.
+const SLOT_GRANULARITY_MINUTES = 30;
+/** Bookable START slots — every SLOT_GRANULARITY_MINUTES from check-in while a
+ *  full booking still fits before close. Mirrors the backend computeSlots. */
 function computeSlots(checkIn: string, checkOut: string, duration: number): string[] {
   const start = toMin(checkIn), end = toMin(checkOut), dur = duration * 60;
   if (dur <= 0) return [];
   const out: string[] = [];
-  for (let tt = start; tt + dur <= end; tt += 60) out.push(fromMin(tt));
+  for (let tt = start; tt + dur <= end; tt += SLOT_GRANULARITY_MINUTES) out.push(fromMin(tt));
   return out;
 }
 function formatTime12h(hhmm: string): string {

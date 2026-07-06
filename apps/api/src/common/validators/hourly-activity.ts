@@ -44,6 +44,20 @@ export function assertHourlyTimesConsistent(next: {
 
   const startMins = toMinutes(next.checkInTime);
   const endMins = toMinutes(next.checkOutTime);
+
+  // HOURLY slots step on the :00/:30 grid (HOURLY_SLOT_GRANULARITY_MINUTES), so the
+  // operating-window bounds must align too — an off-grid checkInTime makes every
+  // generated slot off-grid and unbookable (the booking DTO only accepts :00/:30).
+  // Checked AFTER the format parse above so a genuinely malformed value still
+  // reports "Invalid time format". Enforced HERE, not in the DTO regex, so DAILY
+  // (early-returned above) keeps any valid HH:MM — a day boundary, not a slot grid.
+  const ALIGNED = /^([01]\d|2[0-3]):(00|30)$/;
+  if (!ALIGNED.test(next.checkInTime)) {
+    throw new BadRequestException('HOURLY checkInTime must be on the hour or half-hour (HH:00 or HH:30)');
+  }
+  if (!ALIGNED.test(next.checkOutTime)) {
+    throw new BadRequestException('HOURLY checkOutTime must be on the hour or half-hour (HH:00 or HH:30)');
+  }
   const durationMins = next.durationValue * 60;
 
   if (endMins <= startMins) {

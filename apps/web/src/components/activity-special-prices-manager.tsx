@@ -16,7 +16,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Tag, Trash2, Loader2, ChevronDown, ChevronLeft, ChevronRight, X, Lock } from 'lucide-react';
+import { Tag, Trash2, Loader2, ChevronDown, ChevronLeft, ChevronRight, X, Lock, LayoutGrid, Rows3 } from 'lucide-react';
 import api from '@/lib/api';
 import { type Block } from '@/lib/activity-blocks';
 import { cn } from '@/lib/utils';
@@ -93,6 +93,9 @@ export default function ActivitySpecialPricesManager({
 
   const now = useMemo(() => new Date(), []);
   const [open, setOpen] = useState(!collapsible);
+  // Selector layout — default 'horizontal' preserves the original 7-col week grid;
+  // 'vertical' stacks the same date cells into a single full-width column.
+  const [layout, setLayout] = useState<'horizontal' | 'vertical'>('horizontal');
   const [cursor, setCursor] = useState({ y: now.getUTCFullYear(), m: now.getUTCMonth() });
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
   const [lastClicked, setLastClicked] = useState<string | null>(null);
@@ -295,14 +298,49 @@ export default function ActivitySpecialPricesManager({
                   </button>
                 </div>
 
-                {/* Weekday header */}
-                <div className="grid grid-cols-7 gap-1 mb-1 text-center text-[11px] font-medium text-gray-400 dark:text-slate-500">
-                  {weekdayShort.map((w, i) => <div key={i}>{w}</div>)}
+                {/* Layout toggle — switches the day grid below between the horizontal
+                    (7-col week) view and a vertical (single-column, full-width) list. */}
+                <div className="flex items-center justify-end gap-1 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setLayout('horizontal')}
+                    aria-pressed={layout === 'horizontal'}
+                    title={t('vendor.activities.wizard.specialPrice.layoutHorizontal', 'Horizontal grid')}
+                    className={cn(
+                      'p-1.5 rounded-md border transition-colors',
+                      layout === 'horizontal'
+                        ? 'bg-[#1d4f35] border-[#1d4f35] text-white'
+                        : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800',
+                    )}
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLayout('vertical')}
+                    aria-pressed={layout === 'vertical'}
+                    title={t('vendor.activities.wizard.specialPrice.layoutVertical', 'Vertical list')}
+                    className={cn(
+                      'p-1.5 rounded-md border transition-colors',
+                      layout === 'vertical'
+                        ? 'bg-[#1d4f35] border-[#1d4f35] text-white'
+                        : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800',
+                    )}
+                  >
+                    <Rows3 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
 
+                {/* Weekday header — only meaningful for the 7-col week grid. */}
+                {layout === 'horizontal' && (
+                  <div className="grid grid-cols-7 gap-1 mb-1 text-center text-[11px] font-medium text-gray-400 dark:text-slate-500">
+                    {weekdayShort.map((w, i) => <div key={i}>{w}</div>)}
+                  </div>
+                )}
+
                 {/* Day grid */}
-                <div className="grid grid-cols-7 gap-1">
-                  {cells.map((dateStr, i) => {
+                <div className={cn('grid gap-1', layout === 'horizontal' ? 'grid-cols-7' : 'grid-cols-1')}>
+                  {(layout === 'horizontal' ? cells : cells.filter((c): c is string => c !== null)).map((dateStr, i) => {
                     if (!dateStr) return <div key={`b${i}`} />;
                     const day = Number(dateStr.slice(-2));
                     const isPast = dateStr < todayStr;
@@ -318,7 +356,10 @@ export default function ActivitySpecialPricesManager({
                         aria-pressed={isSel}
                         title={locked ? t('vendor.activities.wizard.specialPrice.lockedTitle', 'This date is locked (blocked) and cannot be booked') : undefined}
                         className={cn(
-                          'relative aspect-square rounded-lg flex flex-col items-center justify-center text-xs transition-all',
+                          'relative rounded-lg text-xs transition-all',
+                          layout === 'horizontal'
+                            ? 'aspect-square flex flex-col items-center justify-center'
+                            : 'w-full flex flex-row items-center justify-between ps-3 pe-3 py-2',
                           isPast
                             ? 'text-gray-300 dark:text-slate-700 cursor-not-allowed'
                             : locked
@@ -332,9 +373,9 @@ export default function ActivitySpecialPricesManager({
                       >
                         <span className={cn('font-semibold tabular-nums leading-none', locked && 'line-through')}>{day}</span>
                         {locked ? (
-                          <Lock className="mt-0.5 h-2.5 w-2.5 shrink-0" />
+                          <Lock className={cn('h-2.5 w-2.5 shrink-0', layout === 'horizontal' && 'mt-0.5')} />
                         ) : ov ? (
-                          <span className={cn('mt-0.5 text-[8px] font-bold leading-none tabular-nums', isSel ? 'text-white/90' : 'text-emerald-600 dark:text-emerald-400')}>
+                          <span className={cn('text-[8px] font-bold leading-none tabular-nums', layout === 'horizontal' && 'mt-0.5', isSel ? 'text-white/90' : 'text-emerald-600 dark:text-emerald-400')}>
                             {ov.price}
                           </span>
                         ) : null}
