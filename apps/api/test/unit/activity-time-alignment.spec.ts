@@ -68,3 +68,37 @@ describe('assertHourlyTimesConsistent — :30 grid enforced for HOURLY only', ()
     ).not.toThrow();
   });
 });
+
+// A legacy HOURLY activity created before the grid rule can hold off-grid times
+// (e.g. 09:15). The gridCheck param lets an UPDATE that doesn't touch the times
+// still validate (window/duration on merged state) WITHOUT re-checking the grid
+// on the stored value — otherwise the activity is locked out of every edit.
+describe('assertHourlyTimesConsistent — legacy off-grid activity stays editable (gridCheck)', () => {
+  const legacyMerged = { bookingType: 'HOURLY', checkInTime: '09:15', checkOutTime: '17:45', durationValue: 1 };
+
+  it('unrelated edit (no time supplied) does NOT re-check the grid on stored off-grid times', () => {
+    expect(() =>
+      assertHourlyTimesConsistent(legacyMerged, { checkIn: false, checkOut: false }),
+    ).not.toThrow();
+  });
+
+  it('but a NEWLY supplied off-grid checkInTime is still rejected', () => {
+    expect(() =>
+      assertHourlyTimesConsistent(legacyMerged, { checkIn: true, checkOut: false }),
+    ).toThrow(/on the hour or half-hour/i);
+  });
+
+  it('default (create path — no gridCheck arg) still enforces the grid on both', () => {
+    expect(() => assertHourlyTimesConsistent(legacyMerged)).toThrow(/on the hour or half-hour/i);
+  });
+
+  it('duration-window check still runs on the merged state even when the grid is skipped', () => {
+    // duration 10h cannot fit a 09:15→17:45 (8.5h) window — must still throw.
+    expect(() =>
+      assertHourlyTimesConsistent(
+        { bookingType: 'HOURLY', checkInTime: '09:15', checkOutTime: '17:45', durationValue: 10 },
+        { checkIn: false, checkOut: false },
+      ),
+    ).toThrow(/durationValue exceeds the operating window/i);
+  });
+});

@@ -725,6 +725,57 @@ describe('CleanupService.autoCompletePastBookings', () => {
     );
     expect(bal).toBeCloseTo(0.1, 2);
   });
+
+  // RACE: a vendor/admin cancel that commits between the cron's findMany and its
+  // bulk updateMany must NOT resurrect the booking CANCELLED→COMPLETED, and must
+  // award it no loyalty (which would sit on top of its refund). Simulated by
+  // cancelling the row inside a one-shot findMany spy, after the real fetch.
+  test('RACE: booking cancelled mid-tick is NOT resurrected to COMPLETED and earns NO points', async () => {
+    const seed = await seedReference(ctx.prisma); // Asia/Qatar (+3)
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', pointsPerQar: 0.01, qarPerPoint: 1, minRedemption: 1 },
+      update: { pointsPerQar: 0.01, qarPerPoint: 1, minRedemption: 1 },
+    });
+    const now = Date.now();
+    const b = await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-RACE-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR',
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        status: 'CONFIRMED',
+        startDatetime: new Date(now - 2 * 60 * 60 * 1000),
+        endDatetime: new Date(now + 60 * 60 * 1000), // tagged +1h = Qatar-local past → cron picks it
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+      },
+    });
+
+    const { svc } = makeCleanup();
+
+    // Cancel the row AFTER the cron's findMany returns but BEFORE its updateMany.
+    const realFindMany = (ctx.prisma.booking.findMany as any).bind(ctx.prisma.booking);
+    const spy = jest
+      .spyOn(ctx.prisma.booking as any, 'findMany')
+      .mockImplementationOnce(async (args: any) => {
+        const rows = await realFindMany(args);
+        await ctx.prisma.booking.update({ where: { id: b.id }, data: { status: 'CANCELLED' } });
+        return rows;
+      });
+
+    try {
+      await svc.autoCompletePastBookings();
+    } finally {
+      spy.mockRestore();
+    }
+
+    const after = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: b.id } });
+    expect(after.status).toBe('CANCELLED');   // NOT resurrected
+    expect(after.pointsAwarded).toBe(false);  // claim skipped
+    const bal = Number(
+      (await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id }, select: { loyaltyPoints: true } })).loyaltyPoints,
+    );
+    expect(bal).toBe(0); // no loyalty on top of the (separate) refund
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

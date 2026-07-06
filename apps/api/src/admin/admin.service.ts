@@ -2048,12 +2048,17 @@ export class AdminService {
 
     // HOURLY time config must remain internally consistent (duration ≤ window).
     // Merge DTO values with existing values so partial PATCHes still validate.
-    assertHourlyTimesConsistent({
-      bookingType: dto.bookingType ?? activity.bookingType,
-      checkInTime: dto.checkInTime ?? activity.checkInTime,
-      checkOutTime: dto.checkOutTime ?? activity.checkOutTime,
-      durationValue: dto.durationValue ?? activity.durationValue,
-    });
+    assertHourlyTimesConsistent(
+      {
+        bookingType: dto.bookingType ?? activity.bookingType,
+        checkInTime: dto.checkInTime ?? activity.checkInTime,
+        checkOutTime: dto.checkOutTime ?? activity.checkOutTime,
+        durationValue: dto.durationValue ?? activity.durationValue,
+      },
+      // Grid-check only the times THIS update sets — a legacy off-grid activity
+      // must stay editable on unrelated fields (window check still uses merged).
+      { checkIn: dto.checkInTime !== undefined, checkOut: dto.checkOutTime !== undefined },
+    );
 
     const { categoryId, subCategoryId, cityId, ...rest } = dto;
     const data: any = { ...rest };

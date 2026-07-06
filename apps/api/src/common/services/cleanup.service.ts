@@ -387,9 +387,13 @@ export class CleanupService {
 
     if (bookingsToComplete.length === 0) return;
 
-    // Mark all as COMPLETED in bulk
+    // Mark all as COMPLETED in bulk — but ONLY those still CONFIRMED. A vendor/
+    // admin cancel that commits between the findMany above and this updateMany
+    // must NOT be resurrected CANCELLED→COMPLETED (which would also let it earn
+    // loyalty on top of its refund). The status guard turns this into a
+    // conditional atomic update, closing that TOCTOU without a wrapping tx.
     await this.prisma.client.booking.updateMany({
-      where: { id: { in: bookingsToComplete.map(b => b.id) } },
+      where: { id: { in: bookingsToComplete.map(b => b.id) }, status: 'CONFIRMED' },
       data: { status: 'COMPLETED' },
     });
 
@@ -415,11 +419,14 @@ export class CleanupService {
         try {
           await this.prisma.client.$transaction(async (tx) => {
             // Atomic claim (replaces the old read-then-update TOCTOU): flip
-            // pointsAwarded false→true only if it is still false. If a manual
-            // vendor/admin complete — or a prior overlapping cron run — already
-            // awarded this booking, count is 0 and we skip, so it can't earn twice.
+            // pointsAwarded false→true only if it is still false AND the booking
+            // is actually COMPLETED. If a manual vendor/admin complete — or a
+            // prior overlapping cron run — already awarded it, count is 0 and we
+            // skip (no double-earn). The status:'COMPLETED' guard also blocks a
+            // booking cancelled in the completion window above (it stays
+            // CANCELLED) from earning points on top of its refund.
             const claim = await tx.booking.updateMany({
-              where: { id: booking.id, pointsAwarded: false },
+              where: { id: booking.id, status: 'COMPLETED', pointsAwarded: false },
               data: { pointsAwarded: true },
             });
             if (claim.count === 0) return;

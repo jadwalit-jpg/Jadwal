@@ -10,12 +10,21 @@ import { BadRequestException } from '@nestjs/common';
  *
  * Throws BadRequestException on any incompatibility. Never logs user input.
  */
-export function assertHourlyTimesConsistent(next: {
-  bookingType?: string | null;
-  checkInTime?: string | null;
-  checkOutTime?: string | null;
-  durationValue?: number | null;
-}): void {
+export function assertHourlyTimesConsistent(
+  next: {
+    bookingType?: string | null;
+    checkInTime?: string | null;
+    checkOutTime?: string | null;
+    durationValue?: number | null;
+  },
+  // Which time fields THIS request actually supplied. The window/duration checks
+  // always run on the merged next-state, but the :00/:30 grid check must only
+  // apply to a time the caller is SETTING now. Otherwise a legacy off-grid
+  // activity (created before the grid rule existed) would 400 on ANY unrelated
+  // edit, because its stored checkInTime/checkOutTime fails the grid. Defaults
+  // to both — the create path, where every value comes from the DTO.
+  gridCheck: { checkIn: boolean; checkOut: boolean } = { checkIn: true, checkOut: true },
+): void {
   if (next.bookingType !== 'HOURLY') return;
 
   // For HOURLY, ALL three time fields are mandatory. A PATCH that flips
@@ -52,10 +61,10 @@ export function assertHourlyTimesConsistent(next: {
   // reports "Invalid time format". Enforced HERE, not in the DTO regex, so DAILY
   // (early-returned above) keeps any valid HH:MM — a day boundary, not a slot grid.
   const ALIGNED = /^([01]\d|2[0-3]):(00|30)$/;
-  if (!ALIGNED.test(next.checkInTime)) {
+  if (gridCheck.checkIn && !ALIGNED.test(next.checkInTime)) {
     throw new BadRequestException('HOURLY checkInTime must be on the hour or half-hour (HH:00 or HH:30)');
   }
-  if (!ALIGNED.test(next.checkOutTime)) {
+  if (gridCheck.checkOut && !ALIGNED.test(next.checkOutTime)) {
     throw new BadRequestException('HOURLY checkOutTime must be on the hour or half-hour (HH:00 or HH:30)');
   }
   const durationMins = next.durationValue * 60;
