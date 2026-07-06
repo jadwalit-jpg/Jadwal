@@ -106,6 +106,12 @@ function CountriesTab() {
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // A country's timezone drives the booking cancel guard + availability clocks;
+    // it must never be blank (would default to UTC and break +offset countries).
+    if (!timezoneVal) {
+      toast('Please select a timezone', 'error');
+      return;
+    }
     const fd = new FormData(e.currentTarget);
     const payload: any = {
       nameEn: sanitize(fd.get('nameEn') as string),
