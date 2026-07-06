@@ -448,6 +448,46 @@ describe('VendorService.updateBookingStatus — Complete guard', () => {
     expect(ctx.prisma._client.booking.update).toHaveBeenCalled();
   });
 
+  // Timezone-DISCRIMINATING guard tests: the end-time check uses
+  // nowInTimezone(activity.country.defaultTimezone), NOT raw Date.now(). A
+  // booking whose tagged end is in the raw-UTC FUTURE but already PAST in the
+  // activity's own +3 timezone must complete; one still local-future must not.
+  // (Without a country these fall back to UTC, which is why the tests above
+  // don't catch a raw-now regression — these do.)
+  test('COMPLETED allowed for a Qatar booking whose end is raw-future but LOCAL-past', async () => {
+    const ctx = await buildSut();
+    (ctx.loyalty as any).earn = jest.fn().mockResolvedValue(undefined);
+    ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', ref: 'JDWL-QA', vendorId: 'v1', activityId: 'a1', customerId: 'c1', status: 'CONFIRMED',
+      totalPrice: 100, pointsRedeemed: 0, pointsDiscount: 0, pointsAwarded: false,
+      // +1h raw UTC, but ~2h in the PAST in Asia/Qatar (local now = +3h)
+      endDatetime: new Date(Date.now() + 60 * 60 * 1000),
+      activity: { titleEn: 'Tour', country: { defaultTimezone: 'Asia/Qatar' } },
+      payment: { id: 'p1', status: 'SUCCESS', amount: 100 },
+    });
+    ctx.prisma._client.booking.update.mockResolvedValueOnce({ id: 'b1', status: 'COMPLETED' });
+    ctx.prisma._client.loyaltyConfig.findUnique.mockResolvedValueOnce({ pointsPerQar: mockDecimal(1), qarPerPoint: mockDecimal(1) });
+
+    const res = await ctx.sut.updateBookingStatus('u1', 'b1', 'COMPLETED');
+    expect(res).toMatchObject({ status: 'COMPLETED' }); // raw-now regression would 403 here
+  });
+
+  test('COMPLETED rejected for a Qatar booking still LOCAL-future (control)', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', ref: 'JDWL-QA2', vendorId: 'v1', activityId: 'a1', customerId: 'c1', status: 'CONFIRMED',
+      totalPrice: 100, pointsRedeemed: 0, pointsDiscount: 0, pointsAwarded: false,
+      // +5h raw UTC = +2h in Asia/Qatar local → genuinely still in the future
+      endDatetime: new Date(Date.now() + 5 * 60 * 60 * 1000),
+      activity: { titleEn: 'Tour', country: { defaultTimezone: 'Asia/Qatar' } },
+      payment: { id: 'p1', status: 'SUCCESS', amount: 100 },
+    });
+
+    await expect(ctx.sut.updateBookingStatus('u1', 'b1', 'COMPLETED')).rejects.toThrow(ForbiddenException);
+  });
+
   test('CANCELLED is NOT gated by endDatetime (vendor can cancel future bookings)', async () => {
     const ctx = await buildSut();
     ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
