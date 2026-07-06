@@ -16,6 +16,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ACTIVITY_TITLE_REGEX, ACTIVITY_TITLE_MESSAGE } from '../../common/validators/name-allowlist';
+import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
 import { CreateActivityBlockDto } from './create-activity-block.dto';
 import { CreateSpecialPriceDto } from './create-special-price.dto';
 
@@ -73,9 +74,14 @@ export class CreateActivityDto {
   @Matches(ACTIVITY_TITLE_REGEX, { message: ACTIVITY_TITLE_MESSAGE })
   titleAr!: string;
 
+  // URL slug — same contract as the vendor slug: lowercase a-z/0-9/hyphen only,
+  // and not a reserved system word (admin, api, login, …). Prevents an activity
+  // slug from carrying spaces/unicode or squatting a reserved route name.
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)
+  @Matches(/^[a-z0-9-]+$/, { message: 'URL slug may only contain lowercase letters, numbers, and hyphens' })
+  @IsNotReservedSlug()
   slug!: string;
 
   @IsString()
