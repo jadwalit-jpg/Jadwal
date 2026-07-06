@@ -269,7 +269,7 @@ export default function VendorBookingsPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600 dark:text-slate-300">
-                        <p>{new Date(b.startDatetime).toLocaleDateString()}</p>
+                        <p>{new Date(b.startDatetime).toLocaleDateString(undefined, { timeZone: 'UTC' })}</p>
                         {(() => {
                           // Show the actual booked time range for HOURLY so
                           // the vendor sees when the customer is coming in
@@ -503,7 +503,9 @@ export default function VendorBookingsPage() {
               <div className="flex items-center justify-between py-2 border-b border-gray-50 dark:border-slate-800/50">
                 <span className="text-sm text-gray-500 dark:text-slate-400">{t('vendor.bookings.details.startDatetime')}</span>
                 <span className="text-sm font-medium text-gray-900 dark:text-white">
-                  {new Date(viewBooking.startDatetime).toLocaleString()}
+                  {/* timeZone:'UTC' — booking times are stored as local-wall-clock tagged UTC;
+                      must match the table row (and every other booking-time display). */}
+                  {new Date(viewBooking.startDatetime).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })}
                 </span>
               </div>
               {/* Guests */}

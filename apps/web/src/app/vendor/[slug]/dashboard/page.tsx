@@ -289,7 +289,7 @@ export default function VendorDashboardPage() {
                         <tr key={b.id} className="border-b border-gray-50 dark:border-slate-800/50 last:border-0 hover:bg-gray-50/50 dark:hover:bg-slate-800/20 transition-colors">
                           <td className="px-6 py-3 text-sm text-gray-900 dark:text-white">{b.customer?.fullName}</td>
                           <td className="px-6 py-3 text-xs text-gray-500 dark:text-slate-400 max-w-[100px] truncate">{localized(b.activity, 'title')}</td>
-                          <td className="px-6 py-3 text-xs text-gray-500 dark:text-slate-400">{new Date(b.startDatetime).toLocaleDateString()}</td>
+                          <td className="px-6 py-3 text-xs text-gray-500 dark:text-slate-400">{new Date(b.startDatetime).toLocaleDateString(undefined, { timeZone: 'UTC' })}</td>
                           <td className="px-6 py-3">
                             <div className="flex flex-col gap-0.5">
                               <span className="text-sm font-medium text-gray-900 dark:text-white">
