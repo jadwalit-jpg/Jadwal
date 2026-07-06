@@ -222,8 +222,12 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
     // Feed the cron the stale (PENDING) snapshot so it tries to reap the now-CONFIRMED booking.
     const spy = jest.spyOn(ctx.prisma.booking, 'findMany').mockResolvedValueOnce(staleSnapshot as never);
     const { svc } = makeCleanup();
-    await svc.autoCancelStalePendingBookings();
-    spy.mockRestore();
+    try {
+      await svc.autoCancelStalePendingBookings();
+    } finally {
+      // Restore even if the cron throws, so a stale mock can't contaminate later tests.
+      spy.mockRestore();
+    }
 
     // The atomic claim-delete matched 0 rows (booking is CONFIRMED) → refund SKIPPED.
     const user = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });

@@ -215,8 +215,9 @@ export class CleanupService {
     // blows past, Postgres rolls back cleanly and the next cron run
     // (5 min later) picks up the same set and retries. No per-tx SET
     // LOCAL override — repo enforces a hard no-raw-SQL gate.
-    await this.prisma.client.$transaction(async (tx) => {
+    const claimedBookingIds = await this.prisma.client.$transaction(async (tx) => {
       const paymentIds = staleBookings.map(b => b.paymentId).filter(Boolean) as string[];
+      const claimedIds: string[] = [];
 
       // Per-booking: CLAIM (hard-delete) each stale reservation, THEN refund what
       // the customer put in — but ONLY for a row we actually reaped. Claiming
@@ -232,10 +233,11 @@ export class CleanupService {
         // FK-owning side — leaves the soft-failed payment intact for §B2 recovery;
         // loyaltyLedger.bookingId is a soft pointer (no FK) so the refund ledger
         // written below stays valid after the row is gone.
-        const claimed = await tx.booking.deleteMany({
+        const del = await tx.booking.deleteMany({
           where: { id: b.id, status: 'PENDING' },
         });
-        if (claimed.count === 0) continue; // a late success CONFIRMED it → leave it (and its points) alone
+        if (del.count === 0) continue; // a late success CONFIRMED it → leave it (and its points) alone
+        claimedIds.push(b.id);
 
         // Refund coupon usage — createBooking incremented usedCount at reservation
         // time; an abandoned booking must return that increment so coupons stay accurate.
@@ -280,13 +282,21 @@ export class CleanupService {
           data: { status: 'FAILED' },
         });
       }
+
+      return claimedIds;
     });
 
-    this.logger.log({ event: 'CLEANUP_STALE_PENDING_CANCELLED', count: staleBookings.length });
+    // Report only the bookings we ACTUALLY reaped. A row a late PAY2M success
+    // confirmed between the scan and the transaction was skipped above, so counting
+    // all staleBookings here would over-report cancellations in the log + audit.
+    const claimedSet = new Set(claimedBookingIds);
+    const claimedActivityIds = staleBookings.filter((b) => claimedSet.has(b.id)).map((b) => b.activityId);
 
-    // Batch-invalidate availability for every affected activity. Dedup happens
-    // inside invalidateMany; pipelined INCRs keep Redis round-trips bounded.
-    void this.availabilityCache.invalidateMany(staleBookings.map((b) => b.activityId));
+    this.logger.log({ event: 'CLEANUP_STALE_PENDING_CANCELLED', count: claimedBookingIds.length, scanned: staleBookings.length });
+
+    // Batch-invalidate availability only for activities we actually freed. Dedup
+    // happens inside invalidateMany; pipelined INCRs keep Redis round-trips bounded.
+    void this.availabilityCache.invalidateMany(claimedActivityIds);
 
     this.auditLogger.log({
       actorType: 'SYSTEM',
@@ -294,7 +304,7 @@ export class CleanupService {
       actorName: 'System Cron',
       action: 'AUTO_CANCEL_STALE_BOOKINGS',
       entity: 'Booking',
-      details: JSON.stringify({ count: staleBookings.length, bookingIds: staleBookings.map(b => b.id).slice(0, 20) }),
+      details: JSON.stringify({ count: claimedBookingIds.length, bookingIds: claimedBookingIds.slice(0, 20) }),
     });
   }
 
