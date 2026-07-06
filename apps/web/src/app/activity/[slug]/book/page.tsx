@@ -126,7 +126,10 @@ function countNights(checkIn: string, checkOut: string): number {
 
 function formatDate(dateStr: string, locale: string): string {
   const d = new Date(dateStr + 'T00:00:00Z');
-  return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
+  // timeZone:'UTC' — dateStr is a plain calendar date tagged midnight-UTC; without
+  // this a non-UTC browser can render the day off by one (must match the times,
+  // which are already UTC-pinned across the app).
+  return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 function formatTime12h(time: string): string {
@@ -1355,7 +1358,7 @@ export default function BookActivityPage() {
                       {isHourly
                         ? isPerUnit
                           ? `${effectivePrice.toFixed(0)} / ${t('activity.unit')}`
-                          : `${effectivePrice.toFixed(0)} × ${guests} ${guests > 1 ? t('activity.tickets') : t('activity.tickets')}`
+                          : `${effectivePrice.toFixed(0)} × ${guests} ${t('activity.guests')}`
                         : dailyMixedNightly
                           ? (dailyNightPrices.length <= 6
                               ? dailyNightPrices.map((p) => p.toFixed(0)).join(' + ')
