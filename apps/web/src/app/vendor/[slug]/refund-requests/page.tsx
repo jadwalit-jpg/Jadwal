@@ -62,63 +62,36 @@ interface RefundRequest {
 
 function suggestedRefund(r: RefundRequest, t: TFunction): { amount: number; label: string; reason: string } {
   const paid = r.payment ? Number(r.payment.amount) : Number(r.totalPrice);
+  // Use the SERVER's suggestion — cancelBooking computed it at cancel time with the
+  // correct activity-TIMEZONE hours-before-start (nowInTimezone) and froze it on the
+  // payment row (payment.refundAmount). Recomputing here from
+  // `startDatetime − cancelledAt` was WRONG: startDatetime is local-wall-clock tagged
+  // UTC, so a client subtraction skewed the 24h-deadline decision by the country's
+  // UTC offset (±3h in the GCC) and mis-suggested the amount the vendor approves.
+  // A null refundAmount ⇒ the policy suggested no refund. Vendor can still override.
+  const amount = r.payment?.refundAmount != null ? Number(r.payment.refundAmount) : 0;
   const policy = r.activity.cancellationPolicy ?? 'FREE_CANCELLATION';
-  const deadline = 24;
-  if (!r.cancelledAt) {
-    return {
-      amount: paid,
-      label: t('vendor.refundRequests.suggested.labelFull', { defaultValue: 'Full refund' }),
-      reason: t('vendor.refundRequests.suggested.reasonNoCancelTs', { defaultValue: 'No cancel timestamp' }),
-    };
-  }
-  const hoursBeforeStart =
-    (new Date(r.startDatetime).getTime() - new Date(r.cancelledAt).getTime()) / (1000 * 60 * 60);
-  const ok = hoursBeforeStart >= deadline;
-  const hours = Math.floor(hoursBeforeStart);
-  if (policy === 'NON_REFUNDABLE') {
+  if (amount <= 0) {
     return {
       amount: 0,
       label: t('vendor.refundRequests.suggested.labelNone', { defaultValue: 'No refund' }),
-      reason: t('vendor.refundRequests.suggested.reasonNonRefundable', { defaultValue: 'Non-refundable activity' }),
+      reason: policy === 'NON_REFUNDABLE'
+        ? t('vendor.refundRequests.suggested.reasonNonRefundable', { defaultValue: 'Non-refundable activity' })
+        : t('vendor.refundRequests.suggested.reasonPolicy', { defaultValue: 'Per cancellation policy + timing' }),
     };
   }
-  if (policy === 'PARTIAL_REFUND') {
-    if (ok) {
-      return {
-        amount: Number((paid * 0.5).toFixed(2)),
-        label: t('vendor.refundRequests.suggested.labelHalf', { defaultValue: '50% refund' }),
-        reason: t('vendor.refundRequests.suggested.reasonPartialOk', {
-          hours,
-          defaultValue: `Cancelled ${hours}h before start`,
-        }),
-      };
-    }
-    return {
-      amount: 0,
-      label: t('vendor.refundRequests.suggested.labelNone', { defaultValue: 'No refund' }),
-      reason: t('vendor.refundRequests.suggested.reasonPartialLate', {
-        deadline,
-        defaultValue: `Cancelled less than ${deadline}h before start`,
-      }),
-    };
-  }
-  if (ok) {
+  if (amount >= paid) {
     return {
       amount: paid,
       label: t('vendor.refundRequests.suggested.labelFull', { defaultValue: 'Full refund' }),
-      reason: t('vendor.refundRequests.suggested.reasonFreeOk', {
-        hours,
-        defaultValue: `Cancelled ${hours}h before start`,
-      }),
+      reason: t('vendor.refundRequests.suggested.reasonPolicy', { defaultValue: 'Per cancellation policy + timing' }),
     };
   }
+  const pct = Math.round((amount / paid) * 100);
   return {
-    amount: 0,
-    label: t('vendor.refundRequests.suggested.labelNone', { defaultValue: 'No refund' }),
-    reason: t('vendor.refundRequests.suggested.reasonFreeLate', {
-      deadline,
-      defaultValue: `Cancelled less than ${deadline}h before start`,
-    }),
+    amount,
+    label: t('vendor.refundRequests.suggested.labelPercent', { pct, defaultValue: `${pct}% refund` }),
+    reason: t('vendor.refundRequests.suggested.reasonPolicy', { defaultValue: 'Per cancellation policy + timing' }),
   };
 }
 
