@@ -258,6 +258,42 @@ describe('LoyaltyService.adjust', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// reverseAwarded — clawing back points credited on a COMPLETED booking that is
+// later cancelled (admin/vendor). Must be a clean no-op when the customer has
+// already spent the balance to 0, NOT throw and roll back the cancel tx.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('LoyaltyService.reverseAwarded', () => {
+  test('ZERO balance → clean no-op (no -0 ledger throw, cancel tx survives)', async () => {
+    const { sut, tx } = await buildSut();
+    tx.user.findUniqueOrThrow.mockResolvedValueOnce({ loyaltyPoints: 0 });
+
+    const r = await sut.reverseAwarded(tx, {
+      userId: 'u1', amount: 2.5, bookingId: 'b1', actorType: 'ADMIN', actorId: 'a1', note: 'admin cancel of completed booking',
+    });
+
+    expect(r.appliedDelta).toBe(0);
+    expect(r.balanceAfter).toBe(0);
+    expect(tx.user.update).not.toHaveBeenCalled();        // nothing to debit
+    expect(tx.loyaltyLedger.create).not.toHaveBeenCalled(); // no row, no "must be non-zero" throw
+  });
+
+  test('with balance → debits the awarded amount (normal path unchanged)', async () => {
+    const { sut, tx } = await buildSut();
+    tx.user.findUniqueOrThrow.mockResolvedValueOnce({ loyaltyPoints: 10 });
+    tx.user.update.mockResolvedValueOnce({ loyaltyPoints: 7.5 });
+
+    const r = await sut.reverseAwarded(tx, {
+      userId: 'u1', amount: 2.5, bookingId: 'b1', actorType: 'ADMIN', actorId: 'a1', note: 'admin cancel',
+    });
+
+    expect(r.appliedDelta).toBe(-2.5);
+    expect(r.balanceAfter).toBe(7.5);
+    expect(tx.loyaltyLedger.create).toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // computeEarnedPoints — earn on CASH paid only; points-redeemed portion earns
 // 0 (closes the infinite-points loop). Single source of truth for the earn
 // amount across every award + reverse site.

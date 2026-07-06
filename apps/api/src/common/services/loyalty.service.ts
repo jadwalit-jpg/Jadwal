@@ -248,6 +248,15 @@ export class LoyaltyService {
     // user.loyaltyPoints column would otherwise reject the update).
     const currentBalance = this.toNum(current.loyaltyPoints);
     const actualDebit = this.round2(Math.min(requestedDebit, currentBalance));
+
+    // Nothing left to claw back — the customer already spent the awarded points
+    // down to (or below) zero. A -0 delta would make writeLedger throw ("must be
+    // non-zero") and roll back the ENTIRE cancel transaction. Treat as a clean
+    // no-op instead: the reversal simply has nothing to reverse.
+    if (actualDebit <= 0) {
+      return { balanceAfter: currentBalance, appliedDelta: 0 };
+    }
+
     const appliedDelta = -actualDebit;
 
     const clampNote =

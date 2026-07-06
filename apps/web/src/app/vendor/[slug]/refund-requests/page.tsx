@@ -104,9 +104,24 @@ function formatDateTime(iso: string | null, t: TFunction) {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-    // Booking times are stored as local-wall-clock tagged UTC — render in UTC to
-    // match every other booking-time display (else a non-UTC browser shows a shifted time).
+    // Booking START/END are stored as local-wall-clock tagged UTC — render in UTC
+    // so the shown time matches the activity's clock regardless of browser zone.
     timeZone: 'UTC',
+  });
+}
+
+// For TRUE INSTANTS (createdAt / cancelledAt / paidAt) — real points in time, NOT
+// wall-clock-tagged. Render in the viewer's LOCAL zone; forcing UTC on these would
+// show a ~offset-shifted (≈3h off in the GCC) WRONG absolute time.
+function formatInstant(iso: string | null, t: TFunction) {
+  if (!iso) return t('vendor.refundRequests.dash');
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
   });
 }
 
@@ -347,11 +362,11 @@ export default function VendorRefundRequestsPage() {
                         <div className="space-y-1">
                           <div>
                             <p className="text-[10px] text-gray-400 dark:text-slate-500">{t('vendor.refundRequests.timelineBooked')}</p>
-                            <p className="text-xs text-gray-700 dark:text-slate-300">{formatDateTime(r.createdAt, t)}</p>
+                            <p className="text-xs text-gray-700 dark:text-slate-300">{formatInstant(r.createdAt, t)}</p>
                           </div>
                           <div>
                             <p className="text-[10px] text-gray-400 dark:text-slate-500">{t('vendor.refundRequests.timelineCancelled')}</p>
-                            <p className="text-xs text-gray-700 dark:text-slate-300">{formatDateTime(r.cancelledAt, t)}</p>
+                            <p className="text-xs text-gray-700 dark:text-slate-300">{formatInstant(r.cancelledAt, t)}</p>
                           </div>
                         </div>
                       </div>
@@ -366,7 +381,7 @@ export default function VendorRefundRequestsPage() {
                         <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{r.payment?.method ?? t('vendor.refundRequests.na')}</p>
                         {r.payment?.paidAt && (
                           <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                            {t('vendor.refundRequests.paidAt', { datetime: formatDateTime(r.payment.paidAt, t) })}
+                            {t('vendor.refundRequests.paidAt', { datetime: formatInstant(r.payment.paidAt, t) })}
                           </p>
                         )}
                         {r.payment?.gatewayTxnId && (

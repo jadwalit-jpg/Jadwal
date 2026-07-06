@@ -337,12 +337,17 @@ export class VendorService {
     // HOURLY activities: duration must fit the operating window. Validated
     // against MERGED next-state fields so partial PATCHes are checked against
     // the current activity's values where the DTO omits them.
-    assertHourlyTimesConsistent({
-      bookingType: dto.bookingType ?? activity.bookingType,
-      checkInTime: dto.checkInTime ?? activity.checkInTime,
-      checkOutTime: dto.checkOutTime ?? activity.checkOutTime,
-      durationValue: dto.durationValue ?? activity.durationValue,
-    });
+    assertHourlyTimesConsistent(
+      {
+        bookingType: dto.bookingType ?? activity.bookingType,
+        checkInTime: dto.checkInTime ?? activity.checkInTime,
+        checkOutTime: dto.checkOutTime ?? activity.checkOutTime,
+        durationValue: dto.durationValue ?? activity.durationValue,
+      },
+      // Grid-check only the times THIS update sets — a legacy off-grid activity
+      // must stay editable on unrelated fields (window check still uses merged).
+      { checkIn: dto.checkInTime !== undefined, checkOut: dto.checkOutTime !== undefined },
+    );
 
     const { hasUnits, unitCount, unitCapacity, ...activityData } = dto;
 
