@@ -364,22 +364,21 @@ export class CleanupService {
 
         try {
           await this.prisma.client.$transaction(async (tx) => {
-            // Double-check to prevent race conditions
-            const fresh = await tx.booking.findUnique({
-              where: { id: booking.id },
-              select: { pointsAwarded: true, ref: true, totalPrice: true },
-            });
-            if (fresh?.pointsAwarded) return;
-
-            await tx.booking.update({
-              where: { id: booking.id },
+            // Atomic claim (replaces the old read-then-update TOCTOU): flip
+            // pointsAwarded false→true only if it is still false. If a manual
+            // vendor/admin complete — or a prior overlapping cron run — already
+            // awarded this booking, count is 0 and we skip, so it can't earn twice.
+            const claim = await tx.booking.updateMany({
+              where: { id: booking.id, pointsAwarded: false },
               data: { pointsAwarded: true },
             });
+            if (claim.count === 0) return;
+
             await this.loyalty.earn(tx, {
               userId: booking.customerId,
               amount: points,
               bookingId: booking.id,
-              note: `Earned on booking ${fresh?.ref ?? booking.id} (${Number(fresh?.totalPrice ?? 0)})`,
+              note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
             });
           });
           totalPointsAwarded += points;

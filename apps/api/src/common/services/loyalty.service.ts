@@ -182,6 +182,24 @@ export class LoyaltyService {
   }
 
   /**
+   * The EXACT number of points credited on a booking's completion — the
+   * BOOKING_EARN ledger row's delta, or 0 if none (points-paid booking, or never
+   * completed). This is the AUTHORITATIVE amount to reverse on a later cancel:
+   * reversing a fresh `computeEarnedPoints` recompute would be WRONG if an admin
+   * changed the earn rate between the award and the cancel (it would debit the
+   * new-rate amount, or 0, leaving the customer free residual points). Reversal
+   * paths MUST use this, not a recompute.
+   */
+  async getEarnedPoints(tx: Tx, bookingId: string): Promise<number> {
+    const row = await tx.loyaltyLedger.findFirst({
+      where: { bookingId, source: 'BOOKING_EARN' },
+      select: { delta: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return row ? this.toNum(row.delta) : 0;
+  }
+
+  /**
    * Points earned on a completed booking. SINGLE SOURCE OF TRUTH for the earn
    * amount — every award AND reverse site computes through here so the
    * cancel-debit always equals the earn-credit.

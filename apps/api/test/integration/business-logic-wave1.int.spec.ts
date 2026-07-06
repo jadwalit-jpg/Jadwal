@@ -337,6 +337,16 @@ describe('B3 — admin cancel of COMPLETED booking debits previously-awarded poi
         reservedUntil: new Date(Date.now() - 60_000),
       },
     });
+    // A completed+awarded booking ALWAYS has a BOOKING_EARN ledger row in prod
+    // (the earn writes it). Seed it so the cancel reverses the EXACT credited
+    // amount via the ledger (getEarnedPoints), not a current-rate recompute.
+    await ctx.prisma.loyaltyLedger.create({
+      data: {
+        userId: seed.customer.id, delta: 100, balanceAfter: 100,
+        source: 'BOOKING_EARN', bookingId: booking.id,
+        actorType: 'SYSTEM', actorId: null, reason: 'test earn',
+      },
+    });
 
     const adminSvc = makeAdminService();
     await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED');
@@ -361,6 +371,54 @@ describe('B3 — admin cancel of COMPLETED booking debits previously-awarded poi
     // pointsAwarded flag cleared on the booking
     const after = await ctx.prisma.booking.findUnique({ where: { id: booking.id } });
     expect(after?.pointsAwarded).toBe(false);
+  });
+
+  it('reverses the EXACT points credited even after the earn rate changed (ledger, not recompute)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = await ctx.prisma.user.create({
+      data: { fullName: 'Admin2', email: 'admin2@test.com', password: 'x', role: 'ADMIN', emailVerified: true },
+    });
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', pointsPerQar: 1, qarPerPoint: 1 },
+      update: { pointsPerQar: 1, qarPerPoint: 1 },
+    });
+    await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 100 } });
+    const payment = await ctx.prisma.payment.create({
+      data: { amount: 100, currency: 'QAR', status: 'SUCCESS', payoutStatus: 'UNPAID', method: 'PAY2M', paidAt: new Date() },
+    });
+    const booking = await ctx.prisma.booking.create({
+      data: {
+        ref: 'JDWL-RATE', customerId: seed.customer.id, vendorId: seed.vendor.id, activityId: seed.activity.id,
+        guests: 1, bookingPhone: '+97455123456', guestBreakdown: {},
+        startDatetime: new Date(Date.now() - 26 * 3600_000), endDatetime: new Date(Date.now() - 24 * 3600_000),
+        totalPrice: 100, currencyCode: 'QAR', commissionPct: 10, commissionAmount: 10, serviceFee: 5,
+        status: 'COMPLETED', pointsAwarded: true, paymentId: payment.id,
+        reservedUntil: new Date(Date.now() - 60_000),
+      },
+    });
+    // Earned 100 points at the rate in force AT completion (BOOKING_EARN delta 100).
+    await ctx.prisma.loyaltyLedger.create({
+      data: {
+        userId: seed.customer.id, delta: 100, balanceAfter: 100,
+        source: 'BOOKING_EARN', bookingId: booking.id, actorType: 'SYSTEM', actorId: null, reason: 'earn @ rate 1',
+      },
+    });
+    // Admin DOUBLES the earn rate AFTER the award, BEFORE the cancel.
+    await ctx.prisma.loyaltyConfig.update({ where: { id: 'singleton' }, data: { pointsPerQar: 2 } });
+
+    const adminSvc = makeAdminService();
+    await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED');
+
+    // Reversal debits the ORIGINAL 100 (from the ledger), NOT 200 (recompute at
+    // the new rate). Before this fix it recomputed with the current rate — which
+    // over-debits here and, worse, could UNDER-reverse or skip entirely if the
+    // rate had dropped, leaving the customer free residual points.
+    const reverseRow = await ctx.prisma.loyaltyLedger.findFirst({
+      where: { userId: seed.customer.id, source: 'CANCEL_REVERSE_AWARDED' },
+    });
+    expect(reverseRow).not.toBeNull();
+    expect(Number(reverseRow!.delta)).toBe(-100);
   });
 });
 

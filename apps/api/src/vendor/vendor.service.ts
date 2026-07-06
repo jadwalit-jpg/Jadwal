@@ -627,14 +627,13 @@ export class VendorService {
         // debit so it can't double-reverse. reverseAwarded clamps to the current
         // balance so it never drives the balance negative.
         if (result.pointsAwarded === true) {
-          let cfg = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
-          if (!cfg) cfg = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
-          const pointsPerQar = cfg.pointsPerQar.toNumber();
-          const awardedPoints = this.loyalty.computeEarnedPoints(
-            Number(result.totalPrice),
-            Number(result.pointsDiscount),
-            pointsPerQar,
-          );
+          // Reverse the EXACT points credited on this booking (its BOOKING_EARN
+          // ledger row), NOT a recompute with the CURRENT earn rate — an admin
+          // rate change between award and cancel would otherwise debit the wrong
+          // amount (or 0, leaving free residual points). 0 → nothing to reverse
+          // (points-paid booking earned 0). pointsAwarded → false so a re-cancel
+          // can't double-reverse.
+          const awardedPoints = await this.loyalty.getEarnedPoints(tx, bookingId);
           if (awardedPoints > 0) {
             await this.loyalty.reverseAwarded(tx, {
               userId: result.customerId,
@@ -674,24 +673,32 @@ export class VendorService {
           config.pointsPerQar.toNumber(),
         );
         if (points > 0) {
-          await tx.booking.update({
-            where: { id: bookingId },
+          // Atomically CLAIM the award: flip pointsAwarded false→true only if it
+          // is still false. The status→COMPLETED update above is NOT a claim, so
+          // two concurrent completes (double-click / two tabs) both pass the stale
+          // pre-tx `!booking.pointsAwarded` check and reach here; only ONE wins
+          // this claim → only one earns. (Previously the double-earn was stopped
+          // solely by the conditional, not-in-schema unique ledger index.)
+          const claim = await tx.booking.updateMany({
+            where: { id: bookingId, pointsAwarded: false },
             data: { pointsAwarded: true },
           });
-          await this.loyalty.earn(tx, {
-            userId: booking.customerId,
-            amount: points,
-            bookingId,
-            note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
-          });
-          // Notify customer (fire-and-forget, after transaction)
-          this.notificationService.send({
-            userId: booking.customerId,
-            type: 'SYSTEM' as any,
-            title: 'Points Earned!',
-            message: `You earned ${points} WANASA points for booking ${booking.ref}`,
-            link: '/bookings',
-          });
+          if (claim.count === 1) {
+            await this.loyalty.earn(tx, {
+              userId: booking.customerId,
+              amount: points,
+              bookingId,
+              note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
+            });
+            // Notify customer (fire-and-forget, after transaction)
+            this.notificationService.send({
+              userId: booking.customerId,
+              type: 'SYSTEM' as any,
+              title: 'Points Earned!',
+              message: `You earned ${points} WANASA points for booking ${booking.ref}`,
+              link: '/bookings',
+            });
+          }
         }
       }
 
