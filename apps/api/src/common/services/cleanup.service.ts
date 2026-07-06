@@ -7,6 +7,7 @@ import { LoyaltyService } from './loyalty.service';
 import { AvailabilityCacheService } from '../../redis/availability-cache.service';
 import { RedisLockService } from '../../redis/redis-lock.service';
 import { refundCouponUsage } from '../../bookings/bookings.service';
+import { nowInTimezone } from '../validators/timezone';
 
 /**
  * Scheduled jobs for data hygiene + business logic automation.
@@ -348,11 +349,21 @@ export class CleanupService {
   private async runAutoCompletePastBookings() {
     const now = new Date();
 
-    // Fetch individual bookings so we can award points per-booking
-    const bookingsToComplete = await this.prisma.client.booking.findMany({
+    // endDatetime is stored as local-wall-clock tagged-UTC (buildDatetime), so a
+    // booking has truly ended when NOW IN THE ACTIVITY'S TIMEZONE has passed it —
+    // NOT when raw-UTC now has. A raw `endDatetime < now` compare fires an activity
+    // country's UTC offset LATE (Qatar +3 → the tagged 18:00Z end isn't "past" in
+    // UTC until 21:00 Qatar), which delayed both completion and the loyalty-points
+    // award by ~3h. Fix: coarse-fetch by a widened window (tagged end can be up to
+    // the max UTC offset ahead of raw now), then gate each booking EXACTLY with
+    // nowInTimezone(its own tz). Mirrors the cancel guard in bookings.service.ts.
+    const MAX_TZ_OFFSET_MS = 14 * 60 * 60 * 1000; // widest real IANA offset (+14)
+    const coarseCutoff = new Date(now.getTime() + MAX_TZ_OFFSET_MS);
+
+    const candidates = await this.prisma.client.booking.findMany({
       where: {
         status: 'CONFIRMED',
-        endDatetime: { lt: now },
+        endDatetime: { lt: coarseCutoff },
       },
       select: {
         id: true,
@@ -361,7 +372,17 @@ export class CleanupService {
         totalPrice: true,
         pointsDiscount: true,
         pointsAwarded: true,
+        endDatetime: true,
+        activity: { select: { country: { select: { defaultTimezone: true } } } },
       },
+    });
+
+    // Exact per-timezone gate: complete only bookings whose end has passed in
+    // their OWN activity timezone. Everything the coarse window over-fetched
+    // (ends still in the future locally) is filtered out here.
+    const bookingsToComplete = candidates.filter((b) => {
+      const tz = b.activity?.country?.defaultTimezone ?? 'UTC';
+      return b.endDatetime.getTime() <= nowInTimezone(tz).getTime();
     });
 
     if (bookingsToComplete.length === 0) return;

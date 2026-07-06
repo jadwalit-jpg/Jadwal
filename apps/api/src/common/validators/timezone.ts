@@ -35,6 +35,33 @@ export function isValidIanaTimezone(value: unknown): boolean {
   }
 }
 
+/**
+ * "Now" as it reads on the wall clock IN `tz`, returned as a Date whose UTC
+ * fields hold that local wall-clock time (i.e. the same "local-wall-clock
+ * tagged-UTC" frame that `buildDatetime` stores start/end datetimes in). This
+ * is the ONLY correct thing to compare a stored startDatetime/endDatetime
+ * against: a raw `new Date()` compare is wrong by the country's UTC offset —
+ * e.g. in Qatar (UTC+3) it lets a customer cancel for ~3h into an activity that
+ * has really started, and it delays booking auto-completion (and the loyalty
+ * points award) by that same offset.
+ *
+ * Uses `hourCycle: 'h23'` so midnight is "00", not "24". Invalid tz → real UTC
+ * now (a UTC activity has no offset, so raw now is already correct).
+ */
+export function nowInTimezone(tz: string): Date {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(new Date());
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+    return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}.000Z`);
+  } catch {
+    return new Date(); // invalid tz → real now (UTC activity has zero offset anyway)
+  }
+}
+
 @ValidatorConstraint({ name: 'isIanaTimezone', async: false })
 export class IsIanaTimezoneConstraint implements ValidatorConstraintInterface {
   validate(value: unknown): boolean {

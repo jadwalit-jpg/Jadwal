@@ -671,6 +671,60 @@ describe('CleanupService.autoCompletePastBookings', () => {
     expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: cancelled.id } })).status)
       .toBe('CANCELLED');
   });
+
+  // ── TIMEZONE regression ────────────────────────────────────────────────────
+  // endDatetime is local-wall-clock tagged-UTC. seedReference's country is
+  // Asia/Qatar (+3), so "now" in Qatar reads as raw-UTC-now + 3h. A booking
+  // tagged now+1h has ALREADY ended locally (1h < 3h) even though it's still in
+  // the FUTURE vs raw UTC — the exact case the OLD `endDatetime < Date.now()`
+  // compare wrongly skipped for the +3h offset, delaying completion AND the
+  // loyalty-points award (the "10 QAR booking gets no points" report). The fix
+  // gates on nowInTimezone(activity tz), so it completes ~when the LOCAL end
+  // passes and awards the fractional 0.10 pt immediately.
+  test('TIMEZONE: a +3 (Qatar) booking completes when its LOCAL end passes (not offset-hours late) and awards 10 QAR → 0.10 pt', async () => {
+    const seed = await seedReference(ctx.prisma); // country defaultTimezone = Asia/Qatar (+3)
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', pointsPerQar: 0.01, qarPerPoint: 1, minRedemption: 1 },
+      update: { pointsPerQar: 0.01, qarPerPoint: 1, minRedemption: 1 },
+    });
+    const now = Date.now();
+    // tagged end now+1h → 2h in the PAST in Qatar local (now+3h) → must complete
+    const endedLocally = await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-TZ-DONE-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR',
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 10, serviceFee: 1, commissionAmount: 1,
+        status: 'CONFIRMED',
+        startDatetime: new Date(now - 60 * 60 * 1000),
+        endDatetime: new Date(now + 60 * 60 * 1000),
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+      },
+    });
+    // tagged end now+5h → still 2h in the FUTURE in Qatar local → must stay CONFIRMED
+    const notYetLocally = await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-TZ-FUT-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR',
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 10, serviceFee: 1, commissionAmount: 1,
+        status: 'CONFIRMED',
+        startDatetime: new Date(now + 4 * 60 * 60 * 1000),
+        endDatetime: new Date(now + 5 * 60 * 60 * 1000),
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+      },
+    });
+
+    const { svc } = makeCleanup();
+    await svc.autoCompletePastBookings();
+
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: endedLocally.id } })).status).toBe('COMPLETED');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: notYetLocally.id } })).status).toBe('CONFIRMED');
+    // 10 QAR × 1% = 0.10 pt — fractional, not floored, not skipped, credited now (not +3h late)
+    const bal = Number(
+      (await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id }, select: { loyaltyPoints: true } })).loyaltyPoints,
+    );
+    expect(bal).toBeCloseTo(0.1, 2);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
