@@ -44,7 +44,9 @@ function isBlockOverlapViolation(e: unknown): boolean {
  *   - bust the availability cache after this resolves.
  *
  * Blocks are always stamped with the activity's owning `vendorId`. Enforcement
- * (start-match for HOURLY, overlap for DAILY) lives in BookingsService.
+ * lives in BookingsService and is RANGE-OVERLAP for both HOURLY and DAILY — a
+ * lock rejects any booking whose [start,end) crosses the locked window, not just
+ * one that starts exactly at the locked time.
  */
 export async function createActivityBlockCore(
   // Prisma client (or a transaction client) — typed loosely; the concrete
@@ -128,7 +130,10 @@ export async function createActivityBlockCore(
   }
 
   // ── Specific start-time slot locks (HOURLY only) ──
-  // Each picked time becomes a [t, t+1h) row. Enforcement is START-MATCH.
+  // Each picked time becomes a [t, t+1h) row. Enforcement (in BookingsService)
+  // is RANGE-OVERLAP: a booking is rejected if its [start,end) crosses this
+  // window — NOT only one that starts exactly at t. So on a >1h activity a single
+  // lock blocks any session that touches that hour.
   if (dto.slotTimes?.length) {
     if (activity.bookingType !== 'HOURLY') {
       throw new BadRequestException('Specific time slots can only be locked on an hourly activity');
