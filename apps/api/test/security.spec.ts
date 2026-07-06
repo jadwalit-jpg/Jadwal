@@ -823,18 +823,10 @@ describe('REGRESSION: Upload — magic-byte sniffing', () => {
 // Prevents the slot/capacity math from regressing when activity durations change.
 // ═══════════════════════════════════════════════════════════════════════════
 
-function toMinutes(t: string) { const [h, m] = t.split(':').map(Number); return h * 60 + m; }
-function fromMinutes(n: number) { return `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`; }
-function computeSlots(checkIn: string, checkOut: string, duration: number) {
-  const sMin = toMinutes(checkIn), eMin = toMinutes(checkOut), dMin = duration * 60;
-  if (dMin <= 0) return [];
-  const out: string[] = [];
-  for (let t = sMin; t + dMin <= eMin; t += 60) {
-    out.push(fromMinutes(t));
-    if (out.length >= 48) break;
-  }
-  return out;
-}
+// NOTE: a local computeSlots copy used to live here but stepped +60 min — stale
+// after KAN-12 (30-min slots) and misleading. The REAL generator is now tested
+// directly (imported from bookings.service) in test/unit/booking-slots.spec.ts.
+// maxConcurrent below stays — it's the capacity-math regression guard.
 function maxConcurrent(
   bookings: Array<{ startDatetime: Date; endDatetime: Date; guests: number }>,
   wStart: Date, wEnd: Date,
@@ -852,40 +844,6 @@ function maxConcurrent(
   for (const ev of events) { cur += ev.delta; if (cur > peak) peak = cur; }
   return peak;
 }
-
-describe('REGRESSION: Hourly flex slots — computeSlots', () => {
-  test('duration=2h, 08:00-16:00 → 8,9,10,11,12,13,14 (last slot 14-16)', () => {
-    expect(computeSlots('08:00', '16:00', 2)).toEqual([
-      '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00',
-    ]);
-  });
-
-  test('duration=3h, 08:00-16:00 → 8,9,10,11,12,13 (last slot 13-16)', () => {
-    expect(computeSlots('08:00', '16:00', 3)).toEqual([
-      '08:00', '09:00', '10:00', '11:00', '12:00', '13:00',
-    ]);
-  });
-
-  test('duration=1h, 10:00-14:00 → 10,11,12,13', () => {
-    expect(computeSlots('10:00', '14:00', 1)).toEqual(['10:00', '11:00', '12:00', '13:00']);
-  });
-
-  test('duration exactly fills window → single slot', () => {
-    expect(computeSlots('09:00', '11:00', 2)).toEqual(['09:00']);
-  });
-
-  test('duration > window → empty', () => {
-    expect(computeSlots('09:00', '10:00', 2)).toEqual([]);
-  });
-
-  test('duration = 0 → empty (no infinite loop)', () => {
-    expect(computeSlots('09:00', '17:00', 0)).toEqual([]);
-  });
-
-  test('slot count capped at 48 for pathological configs', () => {
-    expect(computeSlots('00:00', '23:59', 1).length).toBeLessThanOrEqual(48);
-  });
-});
 
 describe('REGRESSION: Hourly flex slots — maxConcurrentInWindow', () => {
   const d = (h: number) => new Date(Date.UTC(2026, 5, 1, h, 0, 0));

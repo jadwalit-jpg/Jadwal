@@ -113,18 +113,18 @@ export class CreateActivityDto {
   @IsOptional()
   pricingModel?: PricingModel;
 
-  // HOURLY: activity start/end time ("14:00"); DAILY: check-in/check-out time.
-  // Must align to the 30-min booking-slot grid (:00 or :30). An off-grid time
-  // (e.g. 08:15) makes every generated hourly slot off-grid, and the booking
-  // DTO's :00/:30 slot regex then rejects all of them → activity unbookable.
+  // HOURLY: activity start/end time; DAILY: check-in/check-out time. Format only
+  // here (any valid HH:MM). The 30-min-grid rule for HOURLY (:00/:30) is enforced
+  // in assertHourlyTimesConsistent, so DAILY (a day boundary, not a slot grid) can
+  // use any minute without being blocked.
   @IsString()
   @IsOptional()
-  @Matches(/^([01]\d|2[0-3]):(00|30)$/, { message: 'checkInTime must be on the hour or half-hour (HH:00 or HH:30)' })
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkInTime must be a valid time (HH:MM)' })
   checkInTime?: string;
 
   @IsString()
   @IsOptional()
-  @Matches(/^([01]\d|2[0-3]):(00|30)$/, { message: 'checkOutTime must be on the hour or half-hour (HH:00 or HH:30)' })
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkOutTime must be a valid time (HH:MM)' })
   checkOutTime?: string;
 
   @IsInt()
