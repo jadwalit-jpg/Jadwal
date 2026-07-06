@@ -22,6 +22,7 @@ import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { ReferenceDataCacheService } from '../redis/reference-data-cache.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
+import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
 
 @Injectable()
@@ -1026,11 +1027,24 @@ export class AdminService {
     const db = this.prisma.client;
     const CASCADE_MAX = 1000;
 
+    // Only cancel bookings that have NOT yet started. startDatetime is local-
+    // wall-clock tagged-UTC, so "started" must be judged in the activity's OWN
+    // timezone — a raw `gte: new Date()` would treat an in-progress booking (up
+    // to the country's +offset, ~3h GCC) as "future" and cancel + 100% refund a
+    // customer who is currently attending. This is a single activity, so it has
+    // exactly one timezone (no multi-tz aggregate concern). nowInTimezone('UTC')
+    // === raw now, so UTC-country activities are unchanged.
+    const act = await db.activity.findUnique({
+      where: { id: activityId },
+      select: { country: { select: { defaultTimezone: true } } },
+    });
+    const activityTz = act?.country?.defaultTimezone ?? 'UTC';
+
     const bookings = await db.booking.findMany({
       where: {
         activityId,
         status: { in: ['PENDING', 'CONFIRMED'] },
-        startDatetime: { gte: new Date() },
+        startDatetime: { gte: nowInTimezone(activityTz) },
       },
       select: {
         id: true,

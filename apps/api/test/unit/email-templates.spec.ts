@@ -183,15 +183,17 @@ describe('bilingual email templates', () => {
       guests: 2, totalAmount: '200', currency: 'QAR', bookingId: 'JDWL-1',
     };
 
-    test('shows the earn-after-completion reward line, 2 dp (EN + AR) when pointsToEarn > 0', () => {
-      // Points are QAR-denominated (1 pt = 1 QAR) and fractional → rendered to 2 dp.
+    test('shows the earn-after-activity reward badge, 2 dp (EN + AR) when pointsToEarn > 0', () => {
+      // Points are QAR-denominated (1 pt = 1 QAR) and fractional → rendered to 2 dp
+      // in a "+X.XX points" badge, with copy that they land AFTER the activity ends.
       const en = bookingConfirmationTemplate({ ...base, pointsToEarn: 2.5 }, 'EN');
-      expect(en.html).toMatch(/2\.50 Wanasa points/i);
-      expect(en.html).toMatch(/completed/i);
-      expect(en.text).toMatch(/2\.50 Wanasa points/i);
+      expect(en.html).toMatch(/\+2\.50/);                   // badge value
+      expect(en.html).toMatch(/Wanasa points/i);            // "Wanasa points on the way"
+      expect(en.html).toMatch(/after your activity ends/i); // credited-after-event copy
+      expect(en.text).toMatch(/\+2\.50 points/i);
       const ar = bookingConfirmationTemplate({ ...base, pointsToEarn: 2.5 }, 'AR');
-      expect(ar.html).toContain('نقطة ونسة');
-      expect(ar.text).toContain('نقطة ونسة');
+      expect(ar.html).toContain('نقاط ونسة');
+      expect(ar.text).toContain('نقاط ونسة');
     });
 
     test('hides the reward line when pointsToEarn is 0 or absent (points-paid booking earns nothing)', () => {

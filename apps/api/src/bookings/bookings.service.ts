@@ -23,6 +23,7 @@ import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { EmailService } from '../email/email.service';
 import { EmailQuotaService } from '../email/email-quota.service';
 import { envNumber } from '../common/env';
+import { nowInTimezone } from '../common/validators/timezone';
 import { ConfigService } from '@nestjs/config';
 import { CreateBookingDto } from './dto/create-booking.dto';
 
@@ -368,32 +369,11 @@ function todayInTimezone(tz: string): string {
   }
 }
 
-/**
- * "Now" expressed in the activity's LOCAL wall-clock, then tagged as UTC — the
- * SAME frame `buildDatetime()` puts stored booking datetimes in (a local time
- * string tagged with `Z`). Booking `startDatetime`/`endDatetime` are therefore
- * NOT true instants; they are local wall-clock tagged UTC. So any comparison of
- * a stored booking datetime against "now" MUST use this (never the raw
- * `Date.now()` / `new Date()`), otherwise the comparison is off by the activity
- * country's UTC offset — e.g. in Qatar (UTC+3) a raw compare lets a customer
- * cancel for ~3h into an activity that has really already started.
- *
- * Uses `hourCycle: 'h23'` so midnight is "00", not "24". Invalid tz → real UTC
- * now (matches todayInTimezone's UTC fallback; a UTC activity has no offset).
- */
-export function nowInTimezone(tz: string): Date {
-  try {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz, hourCycle: 'h23',
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-    }).formatToParts(new Date());
-    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
-    return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}.000Z`);
-  } catch {
-    return new Date(); // invalid tz → real now (UTC activity has zero offset anyway)
-  }
-}
+// `nowInTimezone` now lives in ../common/validators/timezone (a leaf module) so
+// the cleanup cron + vendor complete guard can share the SAME implementation
+// without a circular import through this service (imported at the top). Re-
+// exported here so existing importers (and the unit spec) keep their path.
+export { nowInTimezone };
 
 // ─── Active booking filter ────────────────────────────────────────────────────
 //

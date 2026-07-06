@@ -15,6 +15,7 @@ import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { EmailService } from '../email/email.service';
 import { CircuitBreaker, CircuitBreakerOpenError, withTimeout } from '../common/utils/circuit-breaker';
+import { nowInTimezone } from '../common/validators/timezone';
 import * as crypto from 'crypto';
 
 interface Pay2mTokenResponse {
@@ -1412,13 +1413,11 @@ export class PaymentService {
     // detection runs INSIDE the Serializable tx below.
     const startDt = new Date(snapshot.startDatetime);
     const endDt = new Date(snapshot.endDatetime);
-    const now = new Date();
-
-    if (endDt < now) {
-      // Activity already ended — not deliverable. Refund.
-      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'ACTIVITY_ALREADY_ENDED');
-      return;
-    }
+    // NOTE: the "activity already ended" gate is applied AFTER the activity is
+    // loaded below — it needs the activity's timezone. endDatetime is local-
+    // wall-clock tagged-UTC, so a raw `endDt < new Date()` compare is wrong by
+    // the country's UTC offset (Qatar +3 → would recreate a booking for an
+    // activity that already ended, for ~3h). See the tz-correct check below.
 
     // §B9 follow-up — customer may have been soft-deleted between the
     // PENDING booking creation and PAY2M's success callback (the
@@ -1438,10 +1437,19 @@ export class PaymentService {
 
     const activity = await db.activity.findUnique({
       where: { id: snapshot.activityId },
-      select: { id: true, status: true, vendor: { select: { id: true, status: true } } },
+      select: { id: true, status: true, vendor: { select: { id: true, status: true } }, country: { select: { defaultTimezone: true } } },
     });
     if (!activity) {
       await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'ACTIVITY_DELETED');
+      return;
+    }
+
+    // Activity already ended (in ITS timezone) — not deliverable → refund.
+    // endDatetime is tagged-UTC, so compare against nowInTimezone(activity tz),
+    // NOT raw now (which would be off by the country's offset and recreate a
+    // booking for a consumed activity). Matches the completion guards in #463.
+    if (endDt.getTime() <= nowInTimezone(activity.country?.defaultTimezone ?? 'UTC').getTime()) {
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'ACTIVITY_ALREADY_ENDED');
       return;
     }
     // Vendor suspended/inactive: still recreate the booking (customer paid in
@@ -1643,6 +1651,7 @@ export class PaymentService {
       select: {
         id: true, activityId: true, unitNumber: true, guests: true,
         startDatetime: true, endDatetime: true, status: true, cancelledBy: true,
+        activity: { select: { country: { select: { defaultTimezone: true } } } },
       },
     });
     if (!booking) {
@@ -1659,7 +1668,10 @@ export class PaymentService {
       // Concurrent recovery already un-cancelled it. Nothing to do.
       return;
     }
-    if (booking.endDatetime < new Date()) {
+    // endDatetime is tagged-UTC → compare against nowInTimezone(activity tz),
+    // not raw now (off by the country offset — would un-cancel a booking for an
+    // already-ended activity for ~3h in the GCC). Matches the #463 completion guards.
+    if (booking.endDatetime.getTime() <= nowInTimezone(booking.activity?.country?.defaultTimezone ?? 'UTC').getTime()) {
       const fresh = await db.payment.findUnique({
         where: { id: paymentId },
         select: { amount: true, currency: true },

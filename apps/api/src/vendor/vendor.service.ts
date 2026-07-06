@@ -11,6 +11,7 @@ import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
+import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
 import { createActivityBlockCore } from './activity-blocks.logic';
 import { createSpecialPriceCore, bulkCreateSpecialPricesCore } from './activity-special-prices.logic';
@@ -485,7 +486,7 @@ export class VendorService {
       where: { id: bookingId, vendorId: vendor.id },
       select: {
         id: true, ref: true, vendorId: true, activityId: true, customerId: true, status: true, totalPrice: true, pointsRedeemed: true, pointsDiscount: true, pointsAwarded: true, endDatetime: true, couponCode: true,
-        activity: { select: { titleEn: true } },
+        activity: { select: { titleEn: true, country: { select: { defaultTimezone: true } } } },
         payment: { select: { id: true, status: true, amount: true } },
       },
     });
@@ -499,11 +500,13 @@ export class VendorService {
     // Guard: COMPLETED means "the event has occurred". Reject the transition
     // if the booking's end time is still in the future — otherwise a vendor
     // clicking Complete early awards loyalty points prematurely AND notifies
-    // the customer their event finished before it actually did. The 1 AM
-    // auto-complete cron (CleanupService.autoCompletePastBookings) enforces
-    // the same constraint for scheduled closures; this mirrors it on the
-    // manual path so backend and cron agree on what "complete" means.
-    if (newStatus === 'COMPLETED' && booking.endDatetime.getTime() > Date.now()) {
+    // the customer their event finished before it actually did. endDatetime is
+    // local-wall-clock tagged-UTC, so we compare against nowInTimezone(activity
+    // tz) — NOT raw Date.now(), which in a +offset country (Qatar +3) would
+    // reject a genuinely-finished booking for ~3h. Matches the auto-complete
+    // cron (CleanupService.autoCompletePastBookings) so backend + cron agree.
+    const completeTz = booking.activity?.country?.defaultTimezone ?? 'UTC';
+    if (newStatus === 'COMPLETED' && booking.endDatetime.getTime() > nowInTimezone(completeTz).getTime()) {
       throw new ForbiddenException(
         'Cannot complete a booking before its end time has passed',
       );
