@@ -277,7 +277,7 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).not.toBeNull();
   });
 
-  test('PENDING + PAY2M session in-flight (< 30 min old, has basketId) → booking stays', async () => {
+  test('PENDING + PAY2M session in-flight (within the grace, has basketId) → booking stays', async () => {
     const seed = await seedReference(ctx.prisma);
     // Reservation expired, but PAY2M session is in-flight — service must keep
     // waiting for PAY2M callback to avoid orphaning a paid booking.
@@ -285,7 +285,7 @@ describe('CleanupService.autoCancelStalePendingBookings', () => {
       seed,
       reservedUntil: new Date(Date.now() - 10_000), // reservedUntil expired
       paymentBasketId: 'BSK-inflight',               // but basket exists
-      createdAt: new Date(Date.now() - 10 * 60 * 1000), // 10 min ago (< 30 min)
+      createdAt: new Date(Date.now() - 10 * 60 * 1000), // 10 min ago (well within the 2h grace)
     });
 
     const { svc } = makeCleanup();

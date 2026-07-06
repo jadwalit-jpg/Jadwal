@@ -80,10 +80,11 @@ export class CleanupService {
     this.PENDING_BOOKING_FALLBACK_HOURS = Number(
       this.configService.get('PENDING_BOOKING_FALLBACK_HOURS', '4'),
     );
-    // Default 120 min (2h). Clamp to a positive integer so a bad SSM value can't
-    // turn the cutoff into an Invalid Date or reap in-flight payments early.
+    // Default 120 min (2h). Clamp to a sane positive integer (1..1440 min) so a bad
+    // SSM value can't reap in-flight payments early, and an absurd one can't push
+    // the cutoff past JS's Date range into an Invalid Date (cron would throw).
     const grace = Number(this.configService.get('PAY2M_PENDING_GRACE_MINUTES', '120'));
-    this.PAY2M_PENDING_GRACE_MINUTES = Number.isInteger(grace) && grace > 0 ? grace : 120;
+    this.PAY2M_PENDING_GRACE_MINUTES = Number.isInteger(grace) && grace > 0 && grace <= 1440 ? grace : 120;
   }
 
   // ─── Daily Cleanup (3 AM) — purge stale data ─────────────────────────────

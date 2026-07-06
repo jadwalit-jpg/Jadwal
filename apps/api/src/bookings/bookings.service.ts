@@ -1154,14 +1154,18 @@ export class BookingsService {
       throw new BadRequestException('This date/time is not available for booking');
     }
 
-    // FIX #12: Prevent duplicate bookings (same user, same activity, same time)
+    // FIX #12: Prevent duplicate bookings (same user, same activity, same time).
+    // Uses activeBookingFilter so an EXPIRED PENDING (reservedUntil passed) does
+    // NOT count — an abandoned checkout whose slot is already free must not block
+    // the owner from re-booking it (the stale row is reaped by the cleanup cron).
+    // This decouples the re-book UX from the cron's grace window entirely.
     const existingBooking = await db.booking.findFirst({
       where: {
         customerId: userId,
         activityId: dto.activityId,
-        status: { notIn: ['CANCELLED'] },
         startDatetime,
         endDatetime,
+        ...activeBookingFilter(new Date()),
       },
     });
     if (existingBooking) {

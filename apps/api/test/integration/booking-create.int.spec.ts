@@ -944,3 +944,62 @@ describe('BookingsService.createBooking — HOURLY 30-minute slots (KAN-12)', ()
     expect(b.endDatetime.getUTCMinutes()).toBe(30);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX #12 — an EXPIRED pending booking (abandoned checkout; slot already free)
+// must NOT block the same customer from re-booking that slot. Regression for the
+// widened cleanup grace: without this the owner would be locked out of their own
+// slot for the whole grace window. A still-active PENDING must still block.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('BookingsService.createBooking — expired PENDING must not block re-booking (FIX #12)', () => {
+  test('same customer can re-book the exact slot when their prior PENDING has expired', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+    const checkInDate = futureDate(7);
+    const start = new Date(`${checkInDate}T10:00:00.000Z`);
+    const end = new Date(start.getTime() + 2 * 3600_000);
+
+    const abandoned = await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-ABAND-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456',
+        totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        status: 'PENDING', startDatetime: start, endDatetime: end,
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+        reservedUntil: new Date(Date.now() - 60 * 60 * 1000), // expired 1h ago → slot already free
+      },
+    });
+
+    const res = await svc.createBooking(seed.customer.id, {
+      activityId: seed.activity.id, checkInDate, slotTime: '10:00', guests: 1, bookingPhone: '+97455123456',
+    });
+    expect(res.booking).toBeDefined();
+    expect(res.booking.id).not.toBe(abandoned.id); // a NEW booking, not the abandoned one
+  });
+
+  test('a still-active PENDING for the same slot still blocks a duplicate (guard intact)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+    const checkInDate = futureDate(7);
+    const start = new Date(`${checkInDate}T10:00:00.000Z`);
+    const end = new Date(start.getTime() + 2 * 3600_000);
+
+    await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-ACTIVE-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456',
+        totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        status: 'PENDING', startDatetime: start, endDatetime: end,
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+        reservedUntil: new Date(Date.now() + 30 * 60 * 1000), // still held (future)
+      },
+    });
+
+    await expect(
+      svc.createBooking(seed.customer.id, {
+        activityId: seed.activity.id, checkInDate, slotTime: '10:00', guests: 1, bookingPhone: '+97455123456',
+      }),
+    ).rejects.toThrow(/already have a booking/i);
+  });
+});
