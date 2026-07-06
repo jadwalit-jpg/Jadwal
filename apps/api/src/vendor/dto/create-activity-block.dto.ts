@@ -33,8 +33,9 @@ export class CreateActivityBlockDto {
   endDate?: string;
 
   // Specific start-time slots to lock (HOURLY only), e.g. ["12:00","15:00"].
-  // Each becomes a 1-hour [t, t+60min) row; only a booking STARTING at t is
-  // rejected. Mutually exclusive with whole-day / repeatWeekly.
+  // Each becomes a 1-hour [t, t+60min) row; booking-create rejects any booking
+  // whose time range OVERLAPS that window (not only one starting at t).
+  // Mutually exclusive with whole-day / repeatWeekly.
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(48)
