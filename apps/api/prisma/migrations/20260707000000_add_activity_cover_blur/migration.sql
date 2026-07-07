@@ -1,0 +1,11 @@
+-- Blur-up placeholder for activity cover images.
+--
+-- Adds a nullable column holding a tiny (~16px) WebP data URI used as the
+-- next/image `blurDataURL`. Generated server-side at activity save time from
+-- our OWN CDN asset (best-effort) — never client-supplied.
+--
+-- Safe/additive: a nullable column with no default is a metadata-only change
+-- in Postgres (no table rewrite, no lock beyond a brief catalog update).
+-- Existing rows get NULL → the UI renders exactly as today (no blur). Nothing
+-- is reprocessed; an optional one-off backfill can populate old rows later.
+ALTER TABLE "activities" ADD COLUMN "coverBlur" TEXT;

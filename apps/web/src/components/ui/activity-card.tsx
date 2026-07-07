@@ -26,6 +26,7 @@ export interface ActivityCardActivity {
     businessNameAr?: string | null;
   } | null;
   coverImage?: string | null;
+  coverBlur?: string | null;
   gallery?: string[];
   avgRating?: number | null;
   reviewCount?: number;
@@ -177,6 +178,9 @@ export function ActivityCard({
               // the S3/CDN URLs are public and full AVIF/WebP negotiation
               // + responsive srcset run normally.
               unoptimized={process.env.NODE_ENV !== 'production'}
+              // Blur-up placeholder when the server generated one for this
+              // cover (absent → renders as before, no blur). See Activity.coverBlur.
+              {...(activity.coverBlur ? { placeholder: 'blur' as const, blurDataURL: activity.coverBlur } : {})}
               className="object-cover transition-transform duration-500 group-hover:scale-105"
             />
           ) : (

@@ -310,6 +310,10 @@ model Activity {
   cityId            String
   city              City               @relation(fields: [cityId], references: [id], onDelete: Restrict)
   coverImage        String?
+  // Tiny (~16px) WebP blur-up placeholder data URI for coverImage, generated
+  // server-side at save time from our own CDN asset (best-effort; NULL when
+  // absent → the UI just renders without a blur). Never client-supplied.
+  coverBlur         String?
   gallery           String[]
   bookingType       BookingType        @default(HOURLY)
   pricingModel      PricingModel       @default(PER_PERSON)

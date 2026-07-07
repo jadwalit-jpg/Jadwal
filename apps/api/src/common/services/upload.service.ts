@@ -117,6 +117,61 @@ export class UploadService {
   }
 
   /**
+   * Whether `host` is one of OUR configured asset hosts (CDN / S3 bucket / API
+   * origin). Used to gate the blur fetch below — the SSRF guard.
+   */
+  private isOwnAssetHost(host: string): boolean {
+    const allowed = new Set<string>();
+    const add = (u?: string) => { if (u) { try { allowed.add(new URL(u).host); } catch { /* ignore */ } } };
+    add(this.cdnUrl);
+    add(this.apiUrl);
+    if (this.s3Bucket) {
+      allowed.add(`${this.s3Bucket}.s3.amazonaws.com`);
+      if (this.s3Region) allowed.add(`${this.s3Bucket}.s3.${this.s3Region}.amazonaws.com`);
+    }
+    return allowed.has(host);
+  }
+
+  /**
+   * Generate a tiny (~16px) WebP blur-up placeholder DATA URI for an image at
+   * `imageUrl`, for use as next/image `blurDataURL`.
+   *
+   * BEST-EFFORT by design: returns null on ANY problem (unknown host, fetch
+   * failure, timeout, non-image, decode error) so it can NEVER break the
+   * caller's save path — a missing blur just means the card renders as it does
+   * today.
+   *
+   * SSRF guard: only fetches URLs whose host is one of OUR asset hosts
+   * (isOwnAssetHost). A client-supplied coverImage pointing anywhere else
+   * (internal IP, metadata endpoint, arbitrary site) returns null WITHOUT any
+   * network request.
+   */
+  async generateBlurFromUrl(imageUrl: string | null | undefined): Promise<string | null> {
+    if (!imageUrl) return null;
+    let host: string;
+    try { host = new URL(imageUrl).host; } catch { return null; }
+    if (!this.isOwnAssetHost(host)) return null;
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000); // never hang the save
+      let buf: Buffer;
+      try {
+        const res = await fetch(imageUrl, { signal: controller.signal });
+        if (!res.ok) return null;
+        buf = Buffer.from(await res.arrayBuffer());
+      } finally {
+        clearTimeout(timer);
+      }
+      if (buf.byteLength > 8 * 1024 * 1024) return null; // defensive cap (our assets are far smaller)
+      const tiny = await sharp(buf).resize(16).webp({ quality: 40 }).toBuffer();
+      return `data:image/webp;base64,${tiny.toString('base64')}`;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Process image through sharp:
    * - Detect real file type via `file-type` (magic-byte inspection) —
    *   blocks polyglot files that lie about their `Content-Type`. The

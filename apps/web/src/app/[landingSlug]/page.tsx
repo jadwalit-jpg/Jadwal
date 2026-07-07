@@ -94,6 +94,7 @@ function toCard(a: Awaited<ReturnType<typeof fetchActivities>>['data'][number]):
     city: a.city ?? null,
     vendor: a.vendor ?? null,
     coverImage: a.coverImage,
+    coverBlur: (a as { coverBlur?: string | null }).coverBlur ?? null,
     avgRating: a.avgRating ?? null,
     reviewCount: a.reviewCount ?? 0,
     bookingType: a.bookingType,

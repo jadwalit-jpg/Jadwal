@@ -2062,6 +2062,10 @@ export class AdminService {
 
     const { categoryId, subCategoryId, cityId, ...rest } = dto;
     const data: any = { ...rest };
+    // If an admin changes the cover image, drop the vendor-generated blur (it
+    // would otherwise be a STALE blur of the OLD image). Degrades to no-blur;
+    // the vendor's next save regenerates it. Admin doesn't generate blurs here.
+    if (dto.coverImage !== undefined) data.coverBlur = null;
     if (categoryId) data.category = { connect: { id: categoryId } };
     if (subCategoryId !== undefined) data.subCategoryId = subCategoryId || null;
     if (cityId) data.city = { connect: { id: cityId } };

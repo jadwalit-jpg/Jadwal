@@ -104,6 +104,54 @@ function fakeMulter(overrides: Partial<Express.Multer.File> = {}): Express.Multe
   } as any;
 }
 
+describe('UploadService.generateBlurFromUrl — SSRF guard + best-effort', () => {
+  const cfg = makeConfig({ CDN_URL: 'https://cdn.jadwal.test' });
+
+  test('null / empty input → null (no work)', async () => {
+    const svc = new UploadService(cfg as any);
+    expect(await svc.generateBlurFromUrl(null)).toBeNull();
+    expect(await svc.generateBlurFromUrl('')).toBeNull();
+  });
+
+  test('SSRF: a NON-own host (metadata endpoint / arbitrary site) → null WITHOUT any fetch', async () => {
+    const svc = new UploadService(cfg as any);
+    const fetchSpy = jest
+      .spyOn(global as any, 'fetch')
+      .mockResolvedValue({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as any);
+    try {
+      expect(await svc.generateBlurFromUrl('http://169.254.169.254/latest/meta-data')).toBeNull();
+      expect(await svc.generateBlurFromUrl('https://evil.example.com/x.webp')).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled(); // the host guard blocks BEFORE the network
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test('own CDN host → fetches + returns a webp data URI', async () => {
+    const svc = new UploadService(cfg as any);
+    const fetchSpy = jest
+      .spyOn(global as any, 'fetch')
+      .mockResolvedValue({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as any);
+    try {
+      const uri = await svc.generateBlurFromUrl('https://cdn.jadwal.test/activities/x.webp');
+      expect(fetchSpy).toHaveBeenCalled();
+      expect(uri).toMatch(/^data:image\/webp;base64,/);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test('fetch failure → null (best-effort, never throws)', async () => {
+    const svc = new UploadService(cfg as any);
+    const fetchSpy = jest.spyOn(global as any, 'fetch').mockRejectedValue(new Error('network'));
+    try {
+      expect(await svc.generateBlurFromUrl('https://cdn.jadwal.test/x.webp')).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
 describe('UploadService — construction', () => {
   const ORIG = process.env.NODE_ENV;
   afterEach(() => { process.env.NODE_ENV = ORIG; });

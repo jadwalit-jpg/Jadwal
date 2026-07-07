@@ -9,6 +9,7 @@ import { VendorPaginationDto } from './dto/vendor-query.dto';
 import { Prisma } from '@prisma/client';
 import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
+import { UploadService } from '../common/services/upload.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { nowInTimezone } from '../common/validators/timezone';
@@ -26,6 +27,7 @@ export class VendorService {
     private notificationService: NotificationService,
     private loyalty: LoyaltyService,
     private availabilityCache: AvailabilityCacheService,
+    private uploadService: UploadService,
   ) {}
 
   /** Resolve vendorId from userId — throws if not found or not ACTIVE */
@@ -260,6 +262,11 @@ export class VendorService {
     // out here so they don't leak into activity.create, then create them below.
     const { capacity: _cap, extraServices, blocks, specialPrices, ...restData } = activityData;
 
+    // Best-effort blur-up placeholder for the cover — server-derived from our
+    // own CDN asset (SSRF-guarded in generateBlurFromUrl), NULL on any failure
+    // so it can never block the create. Computed OUTSIDE the tx below.
+    const coverBlur = await this.uploadService.generateBlurFromUrl(dto.coverImage);
+
     // Create the activity AND its initial locks + special prices atomically, so
     // "set them while creating" behaves exactly like every other field — all or
     // nothing. The blocks/prices run through the SAME core logic the live
@@ -275,6 +282,7 @@ export class VendorService {
           countryId: vendor.countryId,
           status: 'PENDING',
           gallery: dto.gallery ?? [],
+          coverBlur,
           capacity: capacity ?? null,
           hasUnits: hasUnits ?? false,
           unitCount: hasUnits ? (unitCount ?? 0) : 0,
@@ -374,10 +382,19 @@ export class VendorService {
     // Strip DTO-only fields before spreading into Prisma update
     const { capacity: _c, categoryId, cityId, extraServices, ...restUpdateData } = activityData;
 
+    // Regenerate the cover blur ONLY when the cover is being set to a new value
+    // (or the stored blur is missing) — avoids a redundant CDN fetch on edits
+    // that don't touch the cover. Best-effort (null on failure).
+    const coverBlurUpdate =
+      dto.coverImage !== undefined && (dto.coverImage !== activity.coverImage || !activity.coverBlur)
+        ? { coverBlur: await this.uploadService.generateBlurFromUrl(dto.coverImage) }
+        : {};
+
     return db.activity.update({
       where: { id: activityId },
       data: {
         ...restUpdateData,
+        ...coverBlurUpdate,
         ...(extraServices !== undefined ? { extraServices: JSON.parse(JSON.stringify(extraServices)) } : {}),
         ...(categoryId ? { category: { connect: { id: categoryId } } } : {}),
         ...(cityId ? { city: { connect: { id: cityId } } } : {}),
