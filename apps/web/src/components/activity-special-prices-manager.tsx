@@ -16,7 +16,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Tag, Trash2, Loader2, ChevronDown, ChevronLeft, ChevronRight, X, Lock, LayoutGrid, Rows3 } from 'lucide-react';
+import { Tag, Trash2, Loader2, ChevronDown, ChevronLeft, ChevronRight, X, Lock } from 'lucide-react';
 import api from '@/lib/api';
 import { type Block } from '@/lib/activity-blocks';
 import { cn } from '@/lib/utils';
@@ -93,9 +93,6 @@ export default function ActivitySpecialPricesManager({
 
   const now = useMemo(() => new Date(), []);
   const [open, setOpen] = useState(!collapsible);
-  // Selector layout — default 'horizontal' preserves the original 7-col week grid;
-  // 'vertical' stacks the same date cells into a single full-width column.
-  const [layout, setLayout] = useState<'horizontal' | 'vertical'>('horizontal');
   const [cursor, setCursor] = useState({ y: now.getUTCFullYear(), m: now.getUTCMonth() });
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
   const [lastClicked, setLastClicked] = useState<string | null>(null);
@@ -195,6 +192,39 @@ export default function ActivitySpecialPricesManager({
     }
   };
 
+  // Select (or clear) an entire weekday COLUMN — e.g. tapping the "Mon" header
+  // grabs every Monday shown in the current month. `colIndex` is the grid column
+  // 0–6 (Sun–Sat), matching how `cells` is laid out. Past + locked days are
+  // skipped; if the whole (selectable) column is already selected, tapping it
+  // again clears that column. Works with a single tap — no Shift, mobile-safe.
+  const toggleColumn = (colIndex: number) => {
+    const colDates: string[] = [];
+    for (let j = colIndex; j < cells.length; j += 7) {
+      const d = cells[j];
+      if (d && d >= todayStr && !isLocked(d)) colDates.push(d);
+    }
+    if (colDates.length === 0) return;
+    const next = new Set(selectedDates);
+    const allSelected = colDates.every((d) => next.has(d));
+    if (allSelected) {
+      colDates.forEach((d) => next.delete(d));
+    } else {
+      colDates.forEach((d) => next.add(d));
+    }
+    if (next.size > MAX_BULK_DATES) {
+      toast(t('vendor.activities.wizard.specialPrice.maxDates', { defaultValue: 'You can price up to {{max}} dates at once.', max: MAX_BULK_DATES }), 'error');
+      return;
+    }
+    setSelectedDates(next);
+    setLastClicked(colDates[colDates.length - 1] ?? null);
+    if (next.size === 1) {
+      const ex = byDate.get([...next][0]);
+      setPriceInput(ex ? String(ex.price) : '');
+    } else if (next.size === 0) {
+      setPriceInput('');
+    }
+  };
+
   const priceNum = Number(priceInput);
   const priceValid = priceInput.trim() !== '' && Number.isFinite(priceNum) && priceNum > 0 && priceNum <= MAX_PRICE;
   const selectedCount = selectedDates.size;
@@ -242,6 +272,9 @@ export default function ActivitySpecialPricesManager({
   const monthLabel = new Date(Date.UTC(cursor.y, cursor.m, 1)).toLocaleDateString(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' });
   const weekdayFmt = new Intl.DateTimeFormat(locale, { weekday: 'narrow', timeZone: 'UTC' });
   const weekdayShort = Array.from({ length: 7 }, (_, i) => weekdayFmt.format(new Date(Date.UTC(2023, 0, 1 + i))));
+  // Full weekday names (Sun–Sat), used for the column-select tooltips/labels.
+  const weekdayLongFmt = new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone: 'UTC' });
+  const weekdayLong = Array.from({ length: 7 }, (_, i) => weekdayLongFmt.format(new Date(Date.UTC(2023, 0, 1 + i))));
 
   const shift = (delta: number) =>
     setCursor((c) => {
@@ -298,49 +331,27 @@ export default function ActivitySpecialPricesManager({
                   </button>
                 </div>
 
-                {/* Layout toggle — switches the day grid below between the horizontal
-                    (7-col week) view and a vertical (single-column, full-width) list. */}
-                <div className="flex items-center justify-end gap-1 mb-2">
-                  <button
-                    type="button"
-                    onClick={() => setLayout('horizontal')}
-                    aria-pressed={layout === 'horizontal'}
-                    title={t('vendor.activities.wizard.specialPrice.layoutHorizontal', 'Horizontal grid')}
-                    className={cn(
-                      'p-1.5 rounded-md border transition-colors',
-                      layout === 'horizontal'
-                        ? 'bg-[#1d4f35] border-[#1d4f35] text-white'
-                        : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800',
-                    )}
-                  >
-                    <LayoutGrid className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLayout('vertical')}
-                    aria-pressed={layout === 'vertical'}
-                    title={t('vendor.activities.wizard.specialPrice.layoutVertical', 'Vertical list')}
-                    className={cn(
-                      'p-1.5 rounded-md border transition-colors',
-                      layout === 'vertical'
-                        ? 'bg-[#1d4f35] border-[#1d4f35] text-white'
-                        : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800',
-                    )}
-                  >
-                    <Rows3 className="h-3.5 w-3.5" />
-                  </button>
+                {/* Weekday header — tap a weekday to select (or clear) that whole
+                    column, e.g. every Monday in the visible month. One tap, no
+                    Shift needed, so it works the same on mobile and desktop. */}
+                <div className="grid grid-cols-7 gap-1 mb-1">
+                  {weekdayShort.map((w, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => toggleColumn(i)}
+                      title={t('vendor.activities.wizard.specialPrice.selectColumn', { defaultValue: 'Select every {{day}}', day: weekdayLong[i] })}
+                      aria-label={t('vendor.activities.wizard.specialPrice.selectColumn', { defaultValue: 'Select every {{day}}', day: weekdayLong[i] })}
+                      className="rounded-md py-1 text-center text-[11px] font-medium text-gray-400 dark:text-slate-500 hover:bg-[#1d4f35]/10 hover:text-[#1d4f35] dark:hover:text-emerald-300 transition-colors cursor-pointer"
+                    >
+                      {w}
+                    </button>
+                  ))}
                 </div>
 
-                {/* Weekday header — only meaningful for the 7-col week grid. */}
-                {layout === 'horizontal' && (
-                  <div className="grid grid-cols-7 gap-1 mb-1 text-center text-[11px] font-medium text-gray-400 dark:text-slate-500">
-                    {weekdayShort.map((w, i) => <div key={i}>{w}</div>)}
-                  </div>
-                )}
-
                 {/* Day grid */}
-                <div className={cn('grid gap-1', layout === 'horizontal' ? 'grid-cols-7' : 'grid-cols-1')}>
-                  {(layout === 'horizontal' ? cells : cells.filter((c): c is string => c !== null)).map((dateStr, i) => {
+                <div className="grid grid-cols-7 gap-1">
+                  {cells.map((dateStr, i) => {
                     if (!dateStr) return <div key={`b${i}`} />;
                     const day = Number(dateStr.slice(-2));
                     const isPast = dateStr < todayStr;
@@ -357,9 +368,7 @@ export default function ActivitySpecialPricesManager({
                         title={locked ? t('vendor.activities.wizard.specialPrice.lockedTitle', 'This date is locked (blocked) and cannot be booked') : undefined}
                         className={cn(
                           'relative rounded-lg text-xs transition-all',
-                          layout === 'horizontal'
-                            ? 'aspect-square flex flex-col items-center justify-center'
-                            : 'w-full flex flex-row items-center justify-between ps-3 pe-3 py-2',
+                          'aspect-square flex flex-col items-center justify-center',
                           isPast
                             ? 'text-gray-300 dark:text-slate-700 cursor-not-allowed'
                             : locked
@@ -373,9 +382,9 @@ export default function ActivitySpecialPricesManager({
                       >
                         <span className={cn('font-semibold tabular-nums leading-none', locked && 'line-through')}>{day}</span>
                         {locked ? (
-                          <Lock className={cn('h-2.5 w-2.5 shrink-0', layout === 'horizontal' && 'mt-0.5')} />
+                          <Lock className="h-2.5 w-2.5 shrink-0 mt-0.5" />
                         ) : ov ? (
-                          <span className={cn('text-[8px] font-bold leading-none tabular-nums', layout === 'horizontal' && 'mt-0.5', isSel ? 'text-white/90' : 'text-emerald-600 dark:text-emerald-400')}>
+                          <span className={cn('text-[8px] font-bold leading-none tabular-nums mt-0.5', isSel ? 'text-white/90' : 'text-emerald-600 dark:text-emerald-400')}>
                             {ov.price}
                           </span>
                         ) : null}
