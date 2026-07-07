@@ -2,7 +2,7 @@
 
 import { LocaleLink as Link } from '@/components/locale-link';
 import Image from 'next/image';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Search, MapPin, Star, Clock, Users, ChevronLeft, ChevronRight, SlidersHorizontal, X } from 'lucide-react';
 import { useEffect, useState, useMemo, useCallback, Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -95,6 +95,8 @@ function ExploreContent({
   initialActivities: ActivitiesResponse | null;
 }) {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const { t } = useTranslation();
 
   const [search, setSearch] = useState(searchParams.get('search') ?? '');
@@ -130,6 +132,23 @@ function ExploreContent({
       setGeoApplied(true);
     }
   }, [geoCountry?.id, selectedCountry, geoApplied, searchParams]);
+
+  // Keep the current page in the URL so returning to /explore (e.g. Back from an
+  // activity detail page) restores the page the user was on — not page 1. `page`
+  // is initialised from ?page= on mount (above); this writes it back on change.
+  // router.replace (not push) keeps browser history clean; the guard makes it a
+  // no-op once the URL already matches, preventing a re-render loop. scroll:false
+  // so a page change / this sync never jumps the scroll position.
+  useEffect(() => {
+    const currentPageParam = searchParams.get('page') ?? '';
+    const desired = page > 1 ? String(page) : '';
+    if (currentPageParam === desired) return;
+    const params = new URLSearchParams(Array.from(searchParams.entries()));
+    if (page > 1) params.set('page', String(page));
+    else params.delete('page');
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [page, pathname, router, searchParams]);
 
   // Debounce search input (300ms per performance rules)
   const debounceTimeout = useMemo(() => ({ id: null as ReturnType<typeof setTimeout> | null }), []);
