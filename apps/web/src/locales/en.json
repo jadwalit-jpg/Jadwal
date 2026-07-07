@@ -1088,7 +1088,7 @@
           "remove": "Remove",
           "cancel": "Cancel",
           "invalid": "Enter a price greater than 0.",
-          "helpMulti": "Tap dates to select them — tap a selected date again to remove it. Tap a weekday name at the top (e.g. Mon) to select, or clear, that whole column — every Monday in the month at once. On a computer you can also Shift-click two dates to select the range between them. One price applies to all selected dates; locked (blocked) dates can’t be priced.",
+          "helpMulti": "Press a day to select it. Press a weekday to select the whole column. Shift-click for a range.",
           "selectColumn": "Select every {{day}}",
           "priceForN": "Special price for {{count}} selected dates",
           "saveN": "Save {{count}} dates",
