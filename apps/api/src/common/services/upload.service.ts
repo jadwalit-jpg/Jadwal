@@ -157,7 +157,12 @@ export class UploadService {
       const timer = setTimeout(() => controller.abort(), 3000); // never hang the save
       let buf: Buffer;
       try {
-        const res = await fetch(imageUrl, { signal: controller.signal });
+        // redirect:'error' is essential: isOwnAssetHost() only vets the INITIAL
+        // host. Without this, an allowlisted host returning a 3xx could redirect
+        // the fetch to an arbitrary/internal target (SSRF bypass). A redirect now
+        // throws → caught below → null (best-effort). Our CDN/S3 serve objects
+        // directly, so a redirect is anomalous anyway.
+        const res = await fetch(imageUrl, { signal: controller.signal, redirect: 'error' });
         if (!res.ok) return null;
         buf = Buffer.from(await res.arrayBuffer());
       } finally {

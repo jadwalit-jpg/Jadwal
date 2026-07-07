@@ -150,6 +150,19 @@ describe('UploadService.generateBlurFromUrl — SSRF guard + best-effort', () =>
       fetchSpy.mockRestore();
     }
   });
+
+  test('fetch uses redirect:"error" (an allowlisted host cannot 3xx-redirect to an off-host target)', async () => {
+    const svc = new UploadService(cfg as any);
+    const fetchSpy = jest
+      .spyOn(global as any, 'fetch')
+      .mockResolvedValue({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as any);
+    try {
+      await svc.generateBlurFromUrl('https://cdn.jadwal.test/x.webp');
+      expect(fetchSpy).toHaveBeenCalledWith('https://cdn.jadwal.test/x.webp', expect.objectContaining({ redirect: 'error' }));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 });
 
 describe('UploadService — construction', () => {
