@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException, ConflictException, BadRequestException, Optional } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateActivityDto } from './dto/create-activity.dto';
@@ -27,7 +27,10 @@ export class VendorService {
     private notificationService: NotificationService,
     private loyalty: LoyaltyService,
     private availabilityCache: AvailabilityCacheService,
-    private uploadService: UploadService,
+    // @Optional so unit/integration tests that construct VendorService without
+    // it still work; in prod it's always injected from the @Global CommonModule.
+    // When absent, cover-blur generation is simply skipped (best-effort feature).
+    @Optional() private uploadService?: UploadService,
   ) {}
 
   /** Resolve vendorId from userId — throws if not found or not ACTIVE */
@@ -265,7 +268,7 @@ export class VendorService {
     // Best-effort blur-up placeholder for the cover — server-derived from our
     // own CDN asset (SSRF-guarded in generateBlurFromUrl), NULL on any failure
     // so it can never block the create. Computed OUTSIDE the tx below.
-    const coverBlur = await this.uploadService.generateBlurFromUrl(dto.coverImage);
+    const coverBlur = (await this.uploadService?.generateBlurFromUrl(dto.coverImage)) ?? null;
 
     // Create the activity AND its initial locks + special prices atomically, so
     // "set them while creating" behaves exactly like every other field — all or
@@ -387,7 +390,7 @@ export class VendorService {
     // that don't touch the cover. Best-effort (null on failure).
     const coverBlurUpdate =
       dto.coverImage !== undefined && (dto.coverImage !== activity.coverImage || !activity.coverBlur)
-        ? { coverBlur: await this.uploadService.generateBlurFromUrl(dto.coverImage) }
+        ? { coverBlur: (await this.uploadService?.generateBlurFromUrl(dto.coverImage)) ?? null }
         : {};
 
     return db.activity.update({
