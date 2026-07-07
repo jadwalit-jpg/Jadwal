@@ -10,7 +10,7 @@ import api from '@/lib/api';
 import { localized } from '@/lib/localize';
 import Link from 'next/link';
 import { Building2, CheckCircle, LogIn, UserPlus } from 'lucide-react';
-import { sanitize, sanitizeObject, validateEmail, validatePassword, validateFullName, validatePhone, validateSlug } from '@/lib/validation';
+import { sanitize, sanitizeObject, validateEmail, validatePassword, validateFullName, validatePhone, validateSlug, validateBusinessNameEn, validateBusinessNameAr } from '@/lib/validation';
 import { getApiError } from '@/lib/api-error';
 import CustomSelect from '@/components/custom-select';
 import PasswordStrengthMeter from '@/components/password-strength-meter';
@@ -157,8 +157,10 @@ function VendorAuthContent() {
       if (!phoneCheck.valid) errs.phone = (phoneCheck as { error: string }).error;
     }
 
-    if (!businessNameEn.trim()) errs.businessNameEn = 'Business name (English) is required';
-    if (!businessNameAr.trim()) errs.businessNameAr = 'Business name (Arabic) is required';
+    const bizEnCheck = validateBusinessNameEn(businessNameEn);
+    if (!bizEnCheck.valid) errs.businessNameEn = (bizEnCheck as { error: string }).error;
+    const bizArCheck = validateBusinessNameAr(businessNameAr);
+    if (!bizArCheck.valid) errs.businessNameAr = (bizArCheck as { error: string }).error;
     if (!businessId.trim()) errs.businessId = 'Business ID is required';
 
     const slugCheck = validateSlug(slug);
