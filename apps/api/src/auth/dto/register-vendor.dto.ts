@@ -3,6 +3,10 @@ import { Transform } from 'class-transformer';
 import { IsStrongPassword } from '../../common/validators/password-strength';
 import { IsNotDisposableEmail } from '../../common/validators/disposable-email';
 import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
+import {
+  BUSINESS_NAME_EN_REGEX, BUSINESS_NAME_EN_MESSAGE,
+  BUSINESS_NAME_AR_REGEX, BUSINESS_NAME_AR_MESSAGE,
+} from '../../common/validators/name-allowlist';
 
 export class RegisterVendorDto {
   @IsString()
@@ -39,11 +43,15 @@ export class RegisterVendorDto {
   @IsString()
   @IsNotEmpty({ message: 'Business name (English) is required' })
   @MaxLength(200, { message: 'Business name is too long' })
+  @Matches(BUSINESS_NAME_EN_REGEX, { message: BUSINESS_NAME_EN_MESSAGE })
+  @Transform(({ value }) => typeof value === 'string' ? value.replace(/[<>]/g, '').trim() : value)
   businessNameEn!: string;
 
   @IsString()
   @IsNotEmpty({ message: 'Business name (Arabic) is required' })
   @MaxLength(200, { message: 'Business name is too long' })
+  @Matches(BUSINESS_NAME_AR_REGEX, { message: BUSINESS_NAME_AR_MESSAGE })
+  @Transform(({ value }) => typeof value === 'string' ? value.replace(/[<>]/g, '').trim() : value)
   businessNameAr!: string;
 
   @IsString()

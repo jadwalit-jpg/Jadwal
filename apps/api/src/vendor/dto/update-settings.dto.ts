@@ -1,5 +1,9 @@
 import { IsString, IsOptional, MaxLength, ValidateNested, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
+import {
+  BUSINESS_NAME_EN_REGEX, BUSINESS_NAME_EN_MESSAGE,
+  BUSINESS_NAME_AR_REGEX, BUSINESS_NAME_AR_MESSAGE,
+} from '../../common/validators/name-allowlist';
 
 export class BankDetailsDto {
   @IsString()
@@ -20,11 +24,13 @@ export class UpdateVendorSettingsDto {
   @IsString()
   @IsOptional()
   @MaxLength(200)
+  @Matches(BUSINESS_NAME_EN_REGEX, { message: BUSINESS_NAME_EN_MESSAGE })
   businessNameEn?: string;
 
   @IsString()
   @IsOptional()
   @MaxLength(200)
+  @Matches(BUSINESS_NAME_AR_REGEX, { message: BUSINESS_NAME_AR_MESSAGE })
   businessNameAr?: string;
 
   @IsString()
