@@ -1088,7 +1088,7 @@
           "remove": "Remove",
           "cancel": "Cancel",
           "invalid": "Enter a price greater than 0.",
-          "helpMulti": "Tap dates to select them — Shift-click to pick a whole range. One price applies to all selected dates. Locked (blocked) dates can’t be priced.",
+          "helpMulti": "Tap any dates to select them — tap a selected date again to remove it. You can pick any days in any pattern (e.g. every Monday), not just a row. On a computer you can also Shift-click to grab a whole range. One price applies to all selected dates; locked (blocked) dates can’t be priced.",
           "priceForN": "Special price for {{count}} selected dates",
           "saveN": "Save {{count}} dates",
           "savedN": "Saved {{count}} special price(s)",

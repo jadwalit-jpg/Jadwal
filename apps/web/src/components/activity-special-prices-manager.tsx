@@ -389,7 +389,7 @@ export default function ActivitySpecialPricesManager({
                   <span className="inline-flex items-center gap-1.5"><Lock className="h-2.5 w-2.5 text-rose-400" />{t('vendor.activities.wizard.specialPrice.legendLocked', 'Locked')}</span>
                 </div>
                 <p className="text-xs text-gray-400 dark:text-slate-500 mt-1.5 text-start">
-                  {t('vendor.activities.wizard.specialPrice.helpMulti', 'Tap dates to select them — Shift-click to pick a whole range. One price applies to all selected dates. Locked (blocked) dates can’t be priced.')}
+                  {t('vendor.activities.wizard.specialPrice.helpMulti', 'Tap any dates to select them — tap a selected date again to remove it. You can pick any days in any pattern (e.g. every Monday), not just a row. On a computer you can also Shift-click to grab a whole range. One price applies to all selected dates; locked (blocked) dates can’t be priced.')}
                 </p>
 
                 {/* Inline price form for the selected date(s) */}
