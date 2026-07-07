@@ -73,6 +73,14 @@ const IMG_HOSTS = [
   // Meta Pixel image beacons (fbevents.js posts tracking to facebook.com/tr).
   // The pixel loads ONLY after cookie consent — see components/meta-pixel.tsx.
   'https://www.facebook.com',
+  // Google Ads (gtag.js) conversion + remarketing image beacons. gtag.js is
+  // loaded via 'strict-dynamic' (no script-src entry needed); only its beacon
+  // hosts need allowlisting. Loads under the SAME opt-out cookie consent as the
+  // Meta Pixel — see components/google-ads.tsx.
+  'https://www.googletagmanager.com',
+  'https://www.google.com',
+  'https://www.googleadservices.com',
+  'https://googleads.g.doubleclick.net',
   // Build-time CDN host (NEXT_PUBLIC_CDN_URL). Add to the allowlist ONLY if
   // it differs from the hardcoded production fallback above — prevents the
   // duplicate `cdn.jadwal.qa cdn.jadwal.qa` entry that the live CSP header
@@ -122,7 +130,9 @@ function buildCsp(nonce: string, isProd: boolean): string {
     `img-src ${IMG_HOSTS.join(' ')}`,
     // Meta Pixel: fbevents.js is fetched from connect.facebook.net and beacons
     // to www.facebook.com (only after cookie consent — see MetaPixel).
-    `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org https://www.facebook.com https://connect.facebook.net${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
+    // Google Ads: gtag.js (googletagmanager.com) beacons conversions to
+    // google.com / googleadservices.com / doubleclick — same opt-out consent.
+    `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org https://www.facebook.com https://connect.facebook.net https://www.googletagmanager.com https://www.google.com https://www.googleadservices.com https://googleads.g.doubleclick.net${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
     `font-src 'self' data:`,
     `frame-src ${FRAME_HOSTS.join(' ')}`,
     `frame-ancestors 'none'`,

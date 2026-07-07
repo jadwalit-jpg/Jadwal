@@ -11,6 +11,7 @@ import { ToastProvider } from "@/components/toast";
 import { CookieConsentProvider } from "@/context/cookie-consent";
 import CookieConsentBanner from "@/components/cookie-consent-banner";
 import MetaPixel from "@/components/meta-pixel";
+import GoogleAds from "@/components/google-ads";
 import { Suspense } from "react";
 // CustomerShell conditionally wraps children with GeoProvider + LazyPrompts
 // based on pathname. Staff (admin / vendor) and auth routes skip both —
@@ -227,12 +228,14 @@ export default async function RootLayout({
                           pre-feature accounts, Terms version bumps). Renders null
                           unless the logged-in customer/vendor must accept. */}
                       <TermsConsentGate />
-                      {/* Cookie-consent banner + Meta Pixel. The pixel loads only
-                          after Accept. Suspense wraps it because it reads
-                          useSearchParams (route-change PageView tracking). */}
+                      {/* Cookie-consent banner + ad platforms (Meta Pixel +
+                          Google Ads). Both load under the SAME opt-out consent
+                          and skip staff routes. Suspense wraps them because they
+                          read useSearchParams (route-change page-view tracking). */}
                       <CookieConsentBanner />
                       <Suspense fallback={null}>
                         <MetaPixel />
+                        <GoogleAds />
                       </Suspense>
                     </ToastProvider>
                   </AuthProvider>
