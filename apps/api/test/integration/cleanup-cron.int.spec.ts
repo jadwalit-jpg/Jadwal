@@ -568,47 +568,98 @@ describe('CleanupService.autoCompletePastBookings', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Proves the timing the test-team questioned: points are NOT granted at
-  // booking/payment (CONFIRMED), only after the event completes.
+  // NEW BEHAVIOUR (LOYALTY_AWARD_DELAY_MINUTES): points are granted ~5 min after
+  // the activity STARTS — while still CONFIRMED, BEFORE it ends — because the
+  // customer can no longer cancel once it has started. Still NOT granted at
+  // booking time or before the start.
   // ─────────────────────────────────────────────────────────────────────────
-  test('points are NOT awarded at booking/payment (CONFIRMED) — only after the event completes', async () => {
-    const seed = await seedReference(ctx.prisma);
-    // Default earn rate (pointsPerQar=0.01, qarPerPoint=1 → 1 pt = 1 QAR) → 100 QAR = 1.00 pt.
-    await ctx.prisma.loyaltyConfig.upsert({ where: { id: 'singleton' }, create: { id: 'singleton' }, update: {} });
+  test('points awarded ~5 min after the activity STARTS (while still CONFIRMED), not at booking time', async () => {
+    const seed = await seedReference(ctx.prisma); // Asia/Qatar (+3)
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', pointsPerQar: 0.01, qarPerPoint: 1, minRedemption: 1 },
+      update: { pointsPerQar: 0.01, qarPerPoint: 1, minRedemption: 1 },
+    });
     await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 0 } });
+    const now = Date.now();
 
-    // A paid + CONFIRMED booking whose event is still in the FUTURE.
+    // Event has NOT started yet (start +4h ahead — future even in +3 local) → NO award.
     const booking = await ctx.prisma.booking.create({
       data: {
-        ref: `JDWL-CONF-${crypto.randomUUID().slice(0, 6)}`,
-        currencyCode: 'QAR', guests: 2, bookingPhone: '+97455123456',
+        ref: `JDWL-STARTAWARD-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456',
         totalPrice: 100, serviceFee: 5, commissionAmount: 10,
         status: 'CONFIRMED',
-        startDatetime: new Date('2030-01-01T10:00:00Z'),
-        endDatetime:   new Date('2030-01-01T12:00:00Z'),
+        startDatetime: new Date(now + 4 * 60 * 60 * 1000),
+        endDatetime:   new Date(now + 6 * 60 * 60 * 1000),
         activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
       },
     });
 
     const { svc } = makeCleanup();
 
-    // STEP 1 — just booked + paid (CONFIRMED, event upcoming): NO points, NO earn row.
-    await svc.autoCompletePastBookings(); // future booking is not eligible
+    // STEP 1 — event upcoming: NO points, NO earn row, stays CONFIRMED.
+    await svc.autoCompletePastBookings();
     expect(
       await ctx.prisma.loyaltyLedger.findMany({ where: { userId: seed.customer.id, source: 'BOOKING_EARN' } }),
     ).toHaveLength(0);
     expect(Number((await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } })).loyaltyPoints)).toBe(0);
-    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).pointsAwarded).toBe(false);
+    let row = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: booking.id } });
+    expect(row.pointsAwarded).toBe(false);
+    expect(row.status).toBe('CONFIRMED');
 
-    // STEP 2 — event happens (endDatetime now in the past) → auto-complete awards.
-    await ctx.prisma.booking.update({ where: { id: booking.id }, data: { endDatetime: new Date('2020-01-01T12:00:00Z') } });
+    // STEP 2 — event has now STARTED (>5 min ago) but has NOT ended → award WHILE
+    // CONFIRMED. start 10 min ago; end still +4h ahead (future even in +3 local).
+    await ctx.prisma.booking.update({
+      where: { id: booking.id },
+      data: {
+        startDatetime: new Date(now - 10 * 60 * 1000),
+        endDatetime:   new Date(now + 4 * 60 * 60 * 1000),
+      },
+    });
     await svc.autoCompletePastBookings();
 
     const earn = await ctx.prisma.loyaltyLedger.findMany({ where: { userId: seed.customer.id, source: 'BOOKING_EARN' } });
     expect(earn).toHaveLength(1);
     expect(Number(earn[0].delta)).toBe(1); // 100 QAR × pointsPerQar(0.01) = 1.00
+    row = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: booking.id } });
+    expect(row.pointsAwarded).toBe(true);
+    expect(row.status).toBe('CONFIRMED'); // awarded at START — NOT yet completed (end still future)
     expect(Number((await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } })).loyaltyPoints)).toBe(1);
-    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).status).toBe('COMPLETED');
+  });
+
+  test('points NOT awarded until LOYALTY_AWARD_DELAY_MINUTES after start (within the delay → still nothing)', async () => {
+    const seed = await seedReference(ctx.prisma); // +3
+    await ctx.prisma.loyaltyConfig.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', pointsPerQar: 0.01, qarPerPoint: 1, minRedemption: 1 },
+      update: { pointsPerQar: 0.01, qarPerPoint: 1, minRedemption: 1 },
+    });
+    await ctx.prisma.user.update({ where: { id: seed.customer.id }, data: { loyaltyPoints: 0 } });
+    const now = Date.now();
+
+    // A big delay (600 min) so a booking that started only "3h ago in local" (i.e.
+    // start = now raw; +3 local ⇒ 3h into the event) is still WITHIN the delay →
+    // no award yet. Proves the delay gate actually holds, not just "any past start".
+    const booking = await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-DELAY-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456',
+        totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        status: 'CONFIRMED',
+        startDatetime: new Date(now),                       // +3 local ⇒ 3h ago
+        endDatetime:   new Date(now + 10 * 60 * 60 * 1000), // far future
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+      },
+    });
+
+    const { svc } = makeCleanup({ LOYALTY_AWARD_DELAY_MINUTES: '600' }); // 10h delay > 3h elapsed
+    await svc.autoCompletePastBookings();
+
+    expect(
+      await ctx.prisma.loyaltyLedger.findMany({ where: { userId: seed.customer.id, source: 'BOOKING_EARN' } }),
+    ).toHaveLength(0);
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).pointsAwarded).toBe(false);
   });
 
   // ─────────────────────────────────────────────────────────────────────────
