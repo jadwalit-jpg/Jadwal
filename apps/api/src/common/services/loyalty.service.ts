@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, ConflictException, BadRequestException, Logger } from '@nestjs/common';
 import { Prisma, LoyaltyLedgerSource, LoyaltyActorType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -82,6 +82,8 @@ export interface AdjustArgs {
  */
 @Injectable()
 export class LoyaltyService {
+  private readonly logger = new Logger(LoyaltyService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -248,6 +250,23 @@ export class LoyaltyService {
     // user.loyaltyPoints column would otherwise reject the update).
     const currentBalance = this.toNum(current.loyaltyPoints);
     const actualDebit = this.round2(Math.min(requestedDebit, currentBalance));
+
+    // Clamp = the awarded points can't be fully clawed back because the customer
+    // already spent some. Points are awarded ~5 min after the activity STARTS and
+    // are spendable immediately, yet an admin/vendor can still cancel after that —
+    // so this is the accepted, bounded points "leak". Log it (WARN) so it's
+    // visible/alertable in CloudWatch instead of silently swallowed by the clamp.
+    if (actualDebit < requestedDebit) {
+      this.logger.warn({
+        event: 'LOYALTY_REVERSE_CLAMPED',
+        bookingId: args.bookingId,
+        userId: args.userId,
+        requested: requestedDebit,
+        applied: actualDebit,
+        leaked: this.round2(requestedDebit - actualDebit),
+        balanceWas: currentBalance,
+      });
+    }
 
     // Nothing left to claw back — the customer already spent the awarded points
     // down to (or below) zero. A -0 delta would make writeLedger throw ("must be
