@@ -61,7 +61,7 @@ const nextConfig: NextConfig = {
   // also: it's been removed from the always-loaded navbar/notification-bell/
   // custom-select/animated-counter so it's no longer in the shared chunk.)
   experimental: {
-    optimizePackageImports: ["framer-motion", "lucide-react", "date-fns"],
+    optimizePackageImports: ["framer-motion", "lucide-react"],
   },
   // Strip `X-Powered-By: Next.js` header. ZAP baseline flagged it as a
   // low-risk software-version disclosure; removing it makes drive-by
