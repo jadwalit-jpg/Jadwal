@@ -30,7 +30,6 @@ module.exports = {
     // Leaflet + framer-motion + recharts break in jsdom; stub them out when
     // imported by a unit-under-test. Lighter than trying to polyfill canvas.
     '^leaflet$': '<rootDir>/test/__mocks__/leaflet.ts',
-    '^react-leaflet$': '<rootDir>/test/__mocks__/react-leaflet.tsx',
     '^framer-motion$': '<rootDir>/test/__mocks__/framer-motion.tsx',
     '^next/link$': '<rootDir>/test/__mocks__/next-link.tsx',
     '^next/image$': '<rootDir>/test/__mocks__/next-image.tsx',
