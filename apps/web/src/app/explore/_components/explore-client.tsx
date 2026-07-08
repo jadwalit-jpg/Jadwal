@@ -104,18 +104,18 @@ function ExploreContent({
   const [page, setPage] = useState(Number(searchParams.get('page')) || 1);
   const { country: geoCountry, location, locationStatus, requestLocation } = useGeo();
   const [selectedCountry, setSelectedCountry] = useState(searchParams.get('countryId') ?? '');
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState(searchParams.get('categoryId') ?? '');
   const [categorySlugFromUrl] = useState(searchParams.get('category') ?? '');
   const [selectedCity, setSelectedCity] = useState(searchParams.get('cityId') ?? '');
   const [showFilters, setShowFilters] = useState(false);
 
   // Advanced filter state
-  const [minPrice, setMinPrice] = useState('');
-  const [maxPrice, setMaxPrice] = useState('');
-  const [minPriceDebounced, setMinPriceDebounced] = useState('');
-  const [maxPriceDebounced, setMaxPriceDebounced] = useState('');
-  const [bookingType, setBookingType] = useState('');
-  const [ratingFilter, setRatingFilter] = useState('');
+  const [minPrice, setMinPrice] = useState(searchParams.get('minPrice') ?? '');
+  const [maxPrice, setMaxPrice] = useState(searchParams.get('maxPrice') ?? '');
+  const [minPriceDebounced, setMinPriceDebounced] = useState(searchParams.get('minPrice') ?? '');
+  const [maxPriceDebounced, setMaxPriceDebounced] = useState(searchParams.get('maxPrice') ?? '');
+  const [bookingType, setBookingType] = useState(searchParams.get('bookingType') ?? '');
+  const [ratingFilter, setRatingFilter] = useState(searchParams.get('rating') ?? '');
 
   // Auto-set country from geo detection if no URL param provided.
   // Must be in an effect — setState during render triggers a warning and can
@@ -132,23 +132,6 @@ function ExploreContent({
       setGeoApplied(true);
     }
   }, [geoCountry?.id, selectedCountry, geoApplied, searchParams]);
-
-  // Keep the current page in the URL so returning to /explore (e.g. Back from an
-  // activity detail page) restores the page the user was on — not page 1. `page`
-  // is initialised from ?page= on mount (above); this writes it back on change.
-  // router.replace (not push) keeps browser history clean; the guard makes it a
-  // no-op once the URL already matches, preventing a re-render loop. scroll:false
-  // so a page change / this sync never jumps the scroll position.
-  useEffect(() => {
-    const currentPageParam = searchParams.get('page') ?? '';
-    const desired = page > 1 ? String(page) : '';
-    if (currentPageParam === desired) return;
-    const params = new URLSearchParams(Array.from(searchParams.entries()));
-    if (page > 1) params.set('page', String(page));
-    else params.delete('page');
-    const qs = params.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [page, pathname, router, searchParams]);
 
   // Debounce search input (300ms per performance rules)
   const debounceTimeout = useMemo(() => ({ id: null as ReturnType<typeof setTimeout> | null }), []);
@@ -215,6 +198,35 @@ function ExploreContent({
 
   // Resolve: dropdown uses categoryId (UUID), homepage link uses category slug
   const activeCategorySlug = selectedCategory ? '' : categorySlugFromUrl;
+
+  // Mirror the applied filter state into the URL so returning to /explore (Back
+  // from an activity page) restores the exact view — page AND all filters — and
+  // so any filtered view is a shareable link. Every value here is read back from
+  // the URL on mount (above). We write the DEBOUNCED search/price (the applied
+  // values, not each keystroke), PRESERVE any unrelated params (utm_*, gclid, …),
+  // and use router.replace + a sorted-equality guard so it never adds history or
+  // loops. scroll:false so it never jumps. Placed after activeCategorySlug so its
+  // dependency is initialised (avoids a TDZ in the deps array).
+  useEffect(() => {
+    const MANAGED = ['page', 'search', 'countryId', 'categoryId', 'category', 'cityId', 'minPrice', 'maxPrice', 'bookingType', 'rating'];
+    const params = new URLSearchParams(Array.from(searchParams.entries()));
+    MANAGED.forEach((k) => params.delete(k));
+    if (page > 1) params.set('page', String(page));
+    if (searchDebounced) params.set('search', searchDebounced);
+    if (selectedCountry) params.set('countryId', selectedCountry);
+    if (selectedCategory) params.set('categoryId', selectedCategory);
+    else if (activeCategorySlug) params.set('category', activeCategorySlug);
+    if (selectedCity) params.set('cityId', selectedCity);
+    if (minPriceDebounced) params.set('minPrice', minPriceDebounced);
+    if (maxPriceDebounced) params.set('maxPrice', maxPriceDebounced);
+    if (bookingType) params.set('bookingType', bookingType);
+    if (ratingFilter) params.set('rating', ratingFilter);
+    const serialize = (sp: URLSearchParams) =>
+      Array.from(sp.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join('&');
+    if (serialize(params) === serialize(new URLSearchParams(Array.from(searchParams.entries())))) return;
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [page, searchDebounced, selectedCountry, selectedCategory, activeCategorySlug, selectedCity, minPriceDebounced, maxPriceDebounced, bookingType, ratingFilter, pathname, router, searchParams]);
 
   // The server-seeded `initialActivities` is the DEFAULT page-1 unfiltered list,
   // so it may seed the query ONLY when the CURRENT state is exactly that default
