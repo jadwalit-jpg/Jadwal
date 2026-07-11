@@ -94,9 +94,21 @@ export default function HomeBelowFold() {
   const scrollTrendingByCard = (direction: 'prev' | 'next') => {
     const el = trendingScrollRef.current;
     if (!el) return;
-    // ~one card + gap; clamps itself at the ends, so no bounds math needed.
+    // ~one card + gap.
     const amount = Math.round(el.clientWidth * 0.85);
-    el.scrollBy({ left: direction === 'next' ? amount : -amount, behavior: 'smooth' });
+    // Infinite loop: at the last card, `next` wraps to the first; at the first,
+    // `prev` wraps to the last. `scrollLeft` magnitude works in both LTR and RTL
+    // (0 → maxScroll); and scrollBy(±scrollWidth) honors content direction and
+    // clamps at the far end, so a huge shift reliably lands on first/last.
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    const pos = Math.abs(el.scrollLeft);
+    if (direction === 'next' && pos >= maxScroll - 4) {
+      el.scrollBy({ left: -el.scrollWidth, behavior: 'smooth' }); // → first
+    } else if (direction === 'prev' && pos <= 4) {
+      el.scrollBy({ left: el.scrollWidth, behavior: 'smooth' }); // → last
+    } else {
+      el.scrollBy({ left: direction === 'next' ? amount : -amount, behavior: 'smooth' });
+    }
   };
 
   // Same queryKeys as home-client → shared TanStack cache, no duplicate request.
