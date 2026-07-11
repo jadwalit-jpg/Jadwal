@@ -93,6 +93,8 @@ production).
 
 ## Architecture at a glance
 
+> Full technical deep-dive: **[`ARCHITECTURE.md`](ARCHITECTURE.md)**.
+
 - **Backend** — a NestJS application organised into feature modules (auth, bookings,
   payment, catalog, vendor, admin, email, loyalty, notifications). Every route is
   auth-guarded by default, with role- and ownership-based authorization, strict DTO
