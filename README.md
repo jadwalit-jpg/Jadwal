@@ -1,6 +1,6 @@
 <div align="center">
 
-# Jadwal · الجدول
+# AL Jadwal · الجدول
 
 **A GCC-focused event & experience booking marketplace.**
 
@@ -15,7 +15,7 @@ Bilingual (English / Arabic, RTL) · Qatar-first, built to expand across the GCC
 
 ## Overview
 
-Jadwal is a three-sided marketplace:
+AL Jadwal is a three-sided marketplace:
 
 - **Customers** browse and book activities, pay online, earn loyalty points, and manage bookings.
 - **Vendors** list activities, set availability, pricing, and special-date overrides, manage bookings, and request payouts.
