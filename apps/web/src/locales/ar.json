@@ -419,6 +419,8 @@
     "emailLabel": "البريد الإلكتروني",
     "phoneLabel": "الهاتف",
     "instagramLabel": "إنستغرام",
+    "whatsappLabel": "واتساب",
+    "whatsappGreeting": "مرحبًا، لدي سؤال بخصوص الجدول",
     "addressLabel": "العنوان",
     "addressValue": "الجدول · شقة 18، الطابق 1، مبنى 60، شارع 840، منطقة 39، الدوحة، قطر"
   },
