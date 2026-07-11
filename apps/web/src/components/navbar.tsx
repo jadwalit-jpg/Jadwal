@@ -214,15 +214,17 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
         )}
 
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Desktop language toggle — `EN` / `ع` button, same as `<Navbar/>`.
-              On mobile this lives in the hamburger menu below (keeps the mobile
-              header uncluttered). */}
+          {/* Language toggle — `EN` / `ع`. Shown on the header at EVERY
+              breakpoint (mobile included, alongside the theme toggle) so
+              switching language is a one-tap action that doesn't require
+              opening the hamburger menu. Also mirrored as a labelled row inside
+              the mobile menu below. */}
           <button
             type="button"
             onClick={toggleLanguage}
             aria-label={!mounted ? 'Switch language' : isAr ? 'Switch to English' : 'التبديل إلى العربية'}
             title={!mounted ? '' : isAr ? 'English' : 'العربية'}
-            className={`hidden md:flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${iconBtnCls}`}
+            className={`flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${iconBtnCls}`}
           >
             <span className="text-xs font-bold leading-none">
               {!mounted ? '' : isAr ? 'EN' : 'ع'}
