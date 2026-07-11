@@ -49,8 +49,11 @@ export function HeroSearchBar() {
       {/* No `backdrop-blur-xl`: the bar is 95% opaque, so the blur contributes
           ~5% of the visible colour — imperceptible, but it still forces the GPU
           to rasterize-and-blur everything behind it. Dropped (zero visual change). */}
-      <div className="flex items-center bg-white/95 dark:bg-jadwal-surface/95 border border-white/60 dark:border-jadwal-border-subtle rounded-2xl shadow-[0_20px_60px_-20px_rgba(0,0,0,0.4)] overflow-hidden">
-        <div className="hidden sm:block border-e border-jadwal-border-subtle min-w-[180px]">
+      <div className="flex flex-col sm:flex-row sm:items-center bg-white/95 dark:bg-jadwal-surface/95 border border-white/60 dark:border-jadwal-border-subtle rounded-2xl shadow-[0_20px_60px_-20px_rgba(0,0,0,0.4)] overflow-hidden">
+        {/* Category filter — full-width row above the input on mobile (it used to
+            be hidden below `sm`, so mobile users couldn't filter by category);
+            a left segment on desktop. */}
+        <div className="border-b sm:border-b-0 sm:border-e border-jadwal-border-subtle sm:min-w-[180px]">
           <CustomSelect
             options={[
               { value: '', label: t('home.allCategories') },
@@ -66,37 +69,35 @@ export function HeroSearchBar() {
             seamless
           />
         </div>
-        <div className="flex-1 flex items-center gap-3 px-5">
-          <Search
-            className="h-5 w-5 text-jadwal-text-muted shrink-0"
-            aria-hidden="true"
-          />
+        {/* Search input + submit. Single search icon — it lives in the button
+            only (the previous left-of-input icon was a duplicate). */}
+        <div className="flex items-center flex-1">
           <input
             type="text"
             placeholder={t('home.searchPlaceholder')}
-            className="w-full py-4 bg-transparent text-sm text-jadwal-text placeholder:text-jadwal-text-muted outline-none"
+            className="w-full py-4 ps-5 bg-transparent text-sm text-jadwal-text placeholder:text-jadwal-text-muted outline-none"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             aria-label={t('home.searchPlaceholder')}
           />
+          <button
+            type="button"
+            onClick={handleSearch}
+            className="hidden sm:flex items-center gap-2 m-2 px-6 py-3 shrink-0 bg-jadwal-primary hover:bg-jadwal-primary-hover text-jadwal-on-primary text-sm font-semibold rounded-xl transition-colors"
+          >
+            <Search className="h-4 w-4" aria-hidden="true" />
+            {t('home.search')}
+          </button>
+          <button
+            type="button"
+            onClick={handleSearch}
+            aria-label={t('home.search')}
+            className="sm:hidden inline-grid place-items-center m-2 h-10 w-10 shrink-0 bg-jadwal-primary hover:bg-jadwal-primary-hover text-jadwal-on-primary rounded-xl transition-colors"
+          >
+            <Search className="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={handleSearch}
-          className="hidden sm:flex items-center gap-2 m-2 px-6 py-3 bg-jadwal-primary hover:bg-jadwal-primary-hover text-jadwal-on-primary text-sm font-semibold rounded-xl transition-colors"
-        >
-          <Search className="h-4 w-4" aria-hidden="true" />
-          {t('home.search')}
-        </button>
-        <button
-          type="button"
-          onClick={handleSearch}
-          aria-label={t('home.search')}
-          className="sm:hidden inline-grid place-items-center m-2 h-10 w-10 bg-jadwal-primary hover:bg-jadwal-primary-hover text-jadwal-on-primary rounded-xl transition-colors"
-        >
-          <Search className="h-4 w-4" aria-hidden="true" />
-        </button>
       </div>
     </div>
   );

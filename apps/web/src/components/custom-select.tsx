@@ -85,7 +85,11 @@ export default function CustomSelect({
     setOpen(o => !o);
   }, [disabled, updatePosition]);
 
-  // Close on outside click or scroll
+  // Close on outside click; on scroll/resize REPOSITION (don't close). Closing
+  // on scroll surprised users who opened the list then scrolled to browse it —
+  // the dropdown just vanished. Since it's position:fixed it must be re-aligned
+  // to the trigger as the page moves; rAF-throttled so a fast scroll doesn't
+  // thrash getBoundingClientRect.
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
@@ -95,18 +99,23 @@ export default function CustomSelect({
       ) return;
       setOpen(false);
     };
-    const closeOnScroll = (e: Event) => {
-      // Don't close if scrolling inside the dropdown itself
-      if (dropdownRef.current?.contains(e.target as Node)) return;
-      setOpen(false);
+    let raf = 0;
+    const reposition = (e: Event) => {
+      // Scrolling inside the dropdown's own list doesn't move the trigger.
+      if (e.type === 'scroll' && dropdownRef.current?.contains(e.target as Node)) return;
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; updatePosition(); });
     };
     document.addEventListener('mousedown', close);
-    window.addEventListener('scroll', closeOnScroll, true);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
     return () => {
       document.removeEventListener('mousedown', close);
-      window.removeEventListener('scroll', closeOnScroll, true);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+      if (raf) cancelAnimationFrame(raf);
     };
-  }, [open]);
+  }, [open, updatePosition]);
 
   const selectedLabel = useMemo(
     () => options.find(o => o.value === value)?.label ?? '',
