@@ -196,9 +196,12 @@ export default function RegisterForm() {
   return (
     <>
       <div className="flex justify-center mb-8">
-        <Link href="/" className="flex items-center gap-1 font-bold">
-          <span className="text-2xl text-white">AL Jadwal</span>
-          <span className="text-2xl text-blue-400">الجدول</span>
+        <Link
+          href="/"
+          aria-label="AL Jadwal"
+          className="text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent"
+        >
+          AL Jadwal الجدول
         </Link>
       </div>
 
@@ -230,7 +233,7 @@ export default function RegisterForm() {
         )}
 
         <div className="space-y-1.5">
-          <label htmlFor="register-full-name" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.fullName')}</label>
+          <label htmlFor="register-full-name" className="text-sm font-medium text-white/70 ms-0.5">{t('auth.fullName')}</label>
           <input
             id="register-full-name"
             name="fullName"
@@ -241,12 +244,12 @@ export default function RegisterForm() {
             placeholder="John Doe"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="register-email" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.emailAddress')}</label>
+          <label htmlFor="register-email" className="text-sm font-medium text-white/70 ms-0.5">{t('auth.emailAddress')}</label>
           <input
             id="register-email"
             name="email"
@@ -257,12 +260,12 @@ export default function RegisterForm() {
             placeholder="name@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="register-password" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.password')}</label>
+          <label htmlFor="register-password" className="text-sm font-medium text-white/70 ms-0.5">{t('auth.password')}</label>
           <input
             id="register-password"
             name="password"
@@ -274,13 +277,13 @@ export default function RegisterForm() {
             placeholder={t('auth.passwordHint')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
           {password && <PasswordStrengthMeter password={password} identityParts={[email, fullName, phone]} />}
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="register-confirm-password" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.confirmPassword')}</label>
+          <label htmlFor="register-confirm-password" className="text-sm font-medium text-white/70 ms-0.5">{t('auth.confirmPassword')}</label>
           <input
             id="register-confirm-password"
             name="confirmPassword"
@@ -292,12 +295,12 @@ export default function RegisterForm() {
             placeholder={t('auth.confirmPassword')}
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="register-phone" className="text-sm font-medium text-white/50 ms-0.5">
+          <label htmlFor="register-phone" className="text-sm font-medium text-white/70 ms-0.5">
             {t('auth.phone')} <span className="text-white/20">({t('auth.optional')})</span>
           </label>
           <input
@@ -309,7 +312,7 @@ export default function RegisterForm() {
             placeholder="+974 1234 5678"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
         </div>
 
@@ -332,12 +335,12 @@ export default function RegisterForm() {
 
         {/* Explicit Terms + Privacy consent — required; gates the submit button.
             Accepting also confirms the user is 18+ (stated in the Terms). */}
-        <label className="flex items-start gap-2.5 text-xs text-white/40 cursor-pointer select-none">
+        <label className="flex items-start gap-2.5 text-xs text-white/60 cursor-pointer select-none">
           <input
             type="checkbox"
             checked={termsAccepted}
             onChange={(e) => setTermsAccepted(e.target.checked)}
-            className="mt-0.5 h-4 w-4 shrink-0 rounded border-white/20 bg-white/5 accent-blue-600"
+            className="mt-0.5 h-5 w-5 shrink-0 rounded border border-white/40 bg-white/10 accent-blue-600"
           />
           <span>
             {t('auth.agreeTermsCheckbox', 'I agree to the')}{' '}
@@ -348,10 +351,12 @@ export default function RegisterForm() {
           </span>
         </label>
 
+        {/* Disabled state is a clearly-inactive grey (not a dimmed blue) so the
+            button doesn't read as clickable while the consent box is unchecked. */}
         <button
           type="submit"
           disabled={isSubmitting || !termsAccepted}
-          className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-600/25"
+          className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl transition-all active:scale-[0.98] shadow-lg shadow-blue-600/25 disabled:bg-white/10 disabled:text-white/40 disabled:shadow-none disabled:cursor-not-allowed disabled:active:scale-100"
         >
           {isSubmitting ? t('auth.creatingAccount') : t('auth.createAccountBtn')}
         </button>
@@ -362,13 +367,6 @@ export default function RegisterForm() {
         <Link href="/login" className="text-blue-400 font-semibold hover:text-blue-300 transition-colors">
           {t('auth.signInLink')}
         </Link>
-      </p>
-
-      <p className="mt-4 text-center text-xs text-white/20">
-        {t('auth.agreeTerms')}{' '}
-        <Link href="/terms" className="underline hover:text-white/40">{t('terms.title')}</Link>
-        {' '}{t('auth.and')}{' '}
-        <Link href="/privacy" className="underline hover:text-white/40">{t('privacy.title')}</Link>
       </p>
     </>
   );
