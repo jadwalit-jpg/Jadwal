@@ -166,9 +166,12 @@ function LoginFormContent() {
   return (
     <>
       <div className="flex justify-center mb-8">
-        <Link href="/" className="flex items-center gap-1 font-bold">
-          <span className="text-2xl text-white">AL Jadwal</span>
-          <span className="text-2xl text-blue-400">الجدول</span>
+        <Link
+          href="/"
+          aria-label="AL Jadwal"
+          className="text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent"
+        >
+          AL Jadwal الجدول
         </Link>
       </div>
 
@@ -229,7 +232,7 @@ function LoginFormContent() {
         )}
 
         <div className="space-y-1.5">
-          <label htmlFor="login-email" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.emailAddress')}</label>
+          <label htmlFor="login-email" className="text-sm font-medium text-white/70 ms-0.5">{t('auth.emailAddress')}</label>
           <input
             id="login-email"
             name="email"
@@ -240,13 +243,13 @@ function LoginFormContent() {
             placeholder="name@example.com"
             value={email}
             onChange={(e) => { setEmail(e.target.value); setUnverifiedEmail(''); setResendDone(false); setResendError(false); }}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
         </div>
 
         <div className="space-y-1.5">
           <div className="flex justify-between items-center ms-0.5">
-            <label htmlFor="login-password" className="text-sm font-medium text-white/50">{t('auth.password')}</label>
+            <label htmlFor="login-password" className="text-sm font-medium text-white/70">{t('auth.password')}</label>
             <Link href="/forgot-password" className="text-xs text-blue-400/70 hover:text-blue-400 transition-colors">
               {t('auth.forgotPassword')}
             </Link>
@@ -261,7 +264,7 @@ function LoginFormContent() {
             placeholder="••••••••"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
         </div>
 
