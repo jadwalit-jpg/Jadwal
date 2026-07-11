@@ -107,7 +107,16 @@ function ExploreContent({
   const [selectedCategory, setSelectedCategory] = useState(searchParams.get('categoryId') ?? '');
   const [categorySlugFromUrl] = useState(searchParams.get('category') ?? '');
   const [selectedCity, setSelectedCity] = useState(searchParams.get('cityId') ?? '');
-  const [showFilters, setShowFilters] = useState(false);
+  // Open the filters panel by default when arriving at a *bare* /explore — the
+  // "All Activities" / Explore-nav landing with no filter in the URL — so
+  // browsers see the refine options immediately. Arrivals that already carry a
+  // filter (a category pill, a shared filtered link, Back from an activity)
+  // keep the panel collapsed since the list is already narrowed. SSR-safe: the
+  // initializer only reads the URL params (no `window`), so it renders the same
+  // on server and client.
+  const [showFilters, setShowFilters] = useState(
+    () => !['search', 'countryId', 'categoryId', 'category', 'cityId', 'minPrice', 'maxPrice', 'bookingType', 'rating'].some((k) => searchParams.get(k)),
+  );
 
   // Advanced filter state
   const [minPrice, setMinPrice] = useState(searchParams.get('minPrice') ?? '');
