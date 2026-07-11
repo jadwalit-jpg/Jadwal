@@ -419,6 +419,8 @@
     "emailLabel": "Email",
     "phoneLabel": "Phone",
     "instagramLabel": "Instagram",
+    "whatsappLabel": "WhatsApp",
+    "whatsappGreeting": "Hi, I have a question about AL Jadwal",
     "addressLabel": "Office",
     "addressValue": "AL Jadwal · Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar"
   },
