@@ -37,6 +37,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the TEMPLATE must be committed — a new developer needs it to configure
+# the web app. Without this negation `.env*` swallowed it and it never reached
+# the repo, so the README pointed people at the wrong (root) template instead.
+!.env.example
 
 # vercel
 .vercel
