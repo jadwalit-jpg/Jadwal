@@ -66,9 +66,9 @@ jadwal/
 # 1. Install workspace dependencies (also generates the Prisma client)
 npm install
 
-# 2. Create env files from the template (fill in your own local values)
-cp .env.example apps/api/.env      # then edit
-cp .env.example apps/web/.env      # then edit
+# 2. Create env files from the per-app templates (defaults work out of the box)
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env
 
 # 3. Start the full stack (Postgres, Redis, API, Web)
 npm run docker:up          # → web on :3000, api on :4000
@@ -87,9 +87,11 @@ cd apps/api && npm run test:int # backend integration tests
 cd apps/web && npm run test:e2e # Playwright end-to-end
 ```
 
-See [`.env.example`](.env.example) for the required environment variables. Secrets are
-never committed — they're supplied via your local env files (and a secrets manager in
-production).
+See [`apps/api/.env.example`](apps/api/.env.example) and
+[`apps/web/.env.example`](apps/web/.env.example) for the full list of environment
+variables. The defaults are dev-ready — optional integrations (Google OAuth, payments,
+email) stay disabled until you supply real credentials. Secrets are never committed; in
+production they come from a managed secret store.
 
 ## Architecture at a glance
 
