@@ -1,8 +1,9 @@
 # Architecture
 
 A technical overview of the AL Jadwal platform for contributors. For setup and a quick
-tour, start with the [README](README.md); for the booking domain rules, see
-[`BOOKING_LOGIC.md`](BOOKING_LOGIC.md) (local reference).
+tour, start with the [README](README.md). The booking domain rules (hourly vs daily
+models, capacity/unit conflict handling) are summarised in
+[§2 — Key domain flows](#key-domain-flows).
 
 > This document describes the application architecture. It deliberately omits
 > environment-specific values, infrastructure identifiers, and secrets — those live only
