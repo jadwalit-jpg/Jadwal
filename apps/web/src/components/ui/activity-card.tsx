@@ -13,7 +13,7 @@ import { Rating } from './rating';
 // Neutral soft-gradient blur-up placeholder shown while a card image loads —
 // replaces the hard grey box with a gentle reveal. Generic (not per-image) so
 // there is ZERO backend/fetch surface: a tiny (~20×13) WebP, ~99 bytes, inlined.
-const CARD_IMG_BLUR =
+export const CARD_IMG_BLUR =
   'data:image/webp;base64,UklGRjAAAABXRUJQVlA4ICQAAACwAgCdASoUAA0APt1cpkyopSOiMAgBEBuJaQAAeyAA/vKhAAA=';
 
 type Size = 'sm' | 'md' | 'lg' | 'fill';
