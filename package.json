@@ -17,7 +17,7 @@
     "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true"
   },
   "devDependencies": {
-    "turbo": "2.9.14"
+    "turbo": "2.10.4"
   },
   "overrides": {
     "react": "19.0.0",
