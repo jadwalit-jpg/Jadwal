@@ -148,6 +148,37 @@ body {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   Pointer cursor on interactive controls
+   Tailwind v4 REMOVED `cursor: pointer` from <button> in its preflight
+   (v3 set it). Browsers default <button> to the arrow cursor, so every
+   button in the app looked unclickable unless someone remembered to add
+   `cursor-pointer` — roughly half of them had it, half didn't. Links
+   (<a>/<Link>) were unaffected because the pointer cursor on links is a
+   browser default, which is why the navbar felt right and the carousel
+   arrows didn't.
+
+   Restoring it here (once) fixes every existing control AND every future
+   one, instead of sprinkling `cursor-pointer` across ~89 files and having
+   the next new button regress. `:not(:disabled)` keeps disabled controls
+   from advertising themselves as clickable — components that opt into
+   `disabled:cursor-not-allowed` still win, since utilities layer above base.
+   ────────────────────────────────────────────────────────────── */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  label[for],
+  input[type="button"]:not(:disabled),
+  input[type="submit"]:not(:disabled),
+  input[type="reset"]:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  ::file-selector-button {
+    cursor: pointer;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────
    Arabic / RTL typography
    When the page is in RTL mode, use Tajawal as the primary font
    family (not just the Unicode fallback). This gives the Arabic UI
