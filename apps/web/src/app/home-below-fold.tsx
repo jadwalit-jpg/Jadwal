@@ -41,6 +41,7 @@ import { useGeo } from '@/context/geo-context';
 import {
   ActivityCard,
   ActivityCardSkeleton,
+  CARD_IMG_BLUR,
   type ActivityCardActivity,
   PatternDivider,
   SectionHeader,
@@ -91,8 +92,13 @@ export default function HomeBelowFold() {
   // that affordance. `scrollBy` honors the element's content direction, so a
   // positive `left` advances in reading order in both LTR and RTL.
   const trendingScrollRef = useRef<HTMLDivElement>(null);
-  const scrollTrendingByCard = (direction: 'prev' | 'next') => {
-    const el = trendingScrollRef.current;
+  const featuredScrollRef = useRef<HTMLDivElement>(null);
+  // Shared by the Trending and Featured rows — same behaviour, one implementation.
+  const scrollRowByCard = (
+    ref: React.RefObject<HTMLDivElement | null>,
+    direction: 'prev' | 'next',
+  ) => {
+    const el = ref.current;
     if (!el) return;
     // ~one card + gap.
     const amount = Math.round(el.clientWidth * 0.85);
@@ -126,7 +132,9 @@ export default function HomeBelowFold() {
     enabled: !isDetecting,
   });
 
-  const featuredParams = new URLSearchParams({ limit: '6', featured: 'true' });
+  // 20 = the catalog endpoint's hard ceiling (it clamps `limit` to 20 as DoS
+  // protection). Was 6; the row scrolls now, so show everything the API will give.
+  const featuredParams = new URLSearchParams({ limit: '20', featured: 'true' });
   if (country?.id) featuredParams.set('countryId', country.id);
 
   const { data: featuredActivitiesData, isLoading: featuredLoading } = useQuery<{ data: HomeActivity[] }>({
@@ -186,6 +194,12 @@ export default function HomeBelowFold() {
                         fill
                         sizes="(max-width: 640px) 280px, 320px"
                         loading="lazy"
+                        // Blur-up: the image fades in from a tiny inlined
+                        // placeholder instead of popping in from a grey box, so
+                        // the row *feels* loaded immediately. Same ~99-byte WebP
+                        // the activity cards already use — no extra request.
+                        placeholder="blur"
+                        blurDataURL={CARD_IMG_BLUR}
                         // In dev the API serves uploads from a private
                         // hostname the in-container Next.js image
                         // optimizer cannot reach, so we bypass it. In
@@ -267,7 +281,7 @@ export default function HomeBelowFold() {
                   defaultValue kept as a belt-and-braces fallback. */}
               <button
                 type="button"
-                onClick={() => scrollTrendingByCard('prev')}
+                onClick={() => scrollRowByCard(trendingScrollRef, 'prev')}
                 aria-label={t('common.prev', { defaultValue: 'Previous' })}
                 className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-s-0 -ms-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
               >
@@ -279,7 +293,7 @@ export default function HomeBelowFold() {
               </button>
               <button
                 type="button"
-                onClick={() => scrollTrendingByCard('next')}
+                onClick={() => scrollRowByCard(trendingScrollRef, 'next')}
                 aria-label={t('common.next', { defaultValue: 'Next' })}
                 className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-e-0 -me-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
               >
@@ -317,23 +331,60 @@ export default function HomeBelowFold() {
             title={t('home.featured')}
             rtl={isRtl}
           />
-          {/* Mobile: horizontal snap-scroll row (like Trending). sm+: grid.
-              No "View all" — the whole set scrolls instead. */}
+          {/* Horizontal snap-scroll row at EVERY breakpoint — same as Trending.
+              It used to become a 2/3-column grid at sm+, which stacked the cards
+              into rows and capped how many were worth fetching. Scrolling instead
+              lets the whole featured set live in one row on any screen size. */}
           {featuredActivities.length > 0 ? (
-            <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-2 -mx-4 px-4 [&::-webkit-scrollbar]:hidden [scrollbar-width:none] sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:mx-0 sm:px-0 lg:grid-cols-3 md:gap-5">
-              {featuredActivities.map((activity) => (
-                <div key={activity.id} className="shrink-0 w-[78vw] max-w-[300px] snap-start sm:w-auto sm:max-w-none">
-                  <ActivityCard activity={activity} size="fill" />
-                </div>
-              ))}
+            <div className="relative">
+              <div
+                ref={featuredScrollRef}
+                className="flex gap-4 md:gap-5 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 pe-4 sm:pe-6 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+              >
+                {featuredActivities.map((activity) => (
+                  <div
+                    key={activity.id}
+                    className="shrink-0 snap-start w-[78vw] max-w-[300px] sm:w-[300px] md:w-[320px] sm:max-w-none"
+                  >
+                    <ActivityCard activity={activity} size="fill" />
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop scroll affordance — mirrors Trending (hidden on mobile,
+                  where swiping is natural). Logical inset-s/inset-e so they flip
+                  in RTL, and the chevron follows reading direction. */}
+              <button
+                type="button"
+                onClick={() => scrollRowByCard(featuredScrollRef, 'prev')}
+                aria-label={t('common.prev', { defaultValue: 'Previous' })}
+                className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-s-0 -ms-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
+              >
+                {isRtl ? (
+                  <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                ) : (
+                  <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollRowByCard(featuredScrollRef, 'next')}
+                aria-label={t('common.next', { defaultValue: 'Next' })}
+                className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-e-0 -me-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
+              >
+                {isRtl ? (
+                  <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                ) : (
+                  <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                )}
+              </button>
             </div>
           ) : isDetecting || featuredLoading ? (
-            // Skeleton row (not a short text placeholder) so the section height
-            // stays ~constant when the real cards arrive — avoids the CLS jump.
-            // Same mobile-scroll / desktop-grid shape as the live cards above.
-            <div className="flex gap-4 overflow-x-auto pb-2 -mx-4 px-4 [&::-webkit-scrollbar]:hidden [scrollbar-width:none] sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:mx-0 sm:px-0 lg:grid-cols-3 md:gap-5">
+            // Skeleton row in the SAME shape as the live row, so the section
+            // height stays ~constant when the real cards arrive (no CLS jump).
+            <div className="flex gap-4 md:gap-5 overflow-x-auto pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
               {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="shrink-0 w-[78vw] max-w-[300px] sm:w-auto sm:max-w-none">
+                <div key={i} className="shrink-0 w-[78vw] max-w-[300px] sm:w-[300px] md:w-[320px] sm:max-w-none">
                   <ActivityCardSkeleton />
                 </div>
               ))}
@@ -352,10 +403,13 @@ export default function HomeBelowFold() {
           <div className="flex items-end justify-between mb-5 gap-3 flex-wrap">
             <div>
               <h2 className="font-display text-[22px] sm:text-[26px] font-semibold tracking-[-0.6px] sm:tracking-[-0.8px] text-jadwal-text m-0 leading-[1.15]">
+                {/* Reads as a sentence — "Near You in Doha" — instead of the
+                    em-dash label ("Near You — Doha"). `nearYouIn` carries the
+                    preposition so Arabic can order it correctly. */}
                 {city
-                  ? `${t('home.nearYou')} — ${localized(city, 'name')}`
+                  ? `${t('home.nearYouIn')} ${localized(city, 'name')}`
                   : country
-                    ? `${t('home.nearYou')} — ${localized(country, 'name')}`
+                    ? `${t('home.nearYouIn')} ${localized(country, 'name')}`
                     : t('home.nearYou')}
               </h2>
               <p className="mt-1.5 text-sm text-jadwal-text-muted">
