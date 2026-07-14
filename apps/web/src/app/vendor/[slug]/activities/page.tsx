@@ -169,7 +169,7 @@ export default function VendorActivitiesPage() {
               <p className="text-gray-400 dark:text-slate-500 text-sm mt-1">{t('vendor.activities.list.emptySubtitle')}</p>
             </div>
           ) : (
-            <table className="w-full">
+            <div className="overflow-x-auto"><table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-slate-800">
                   <th className="text-start px-6 py-4 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
@@ -552,7 +552,7 @@ export default function VendorActivitiesPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
           )}
 
           {totalPages > 1 && (
