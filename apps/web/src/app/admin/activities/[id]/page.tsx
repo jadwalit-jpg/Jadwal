@@ -83,7 +83,17 @@ function CoverImageUploader({ value, onChange, error }: { value: string; onChang
     try {
       const compressed = await compressCoverImage(file);
       const fd = new FormData(); fd.append('file', compressed);
-      const { data } = await api.post('/upload/image', fd);
+      // `/upload/image` NEVER EXISTED — every admin cover upload 404'd, hit the
+      // catch below, and surfaced as "Upload failed", so an admin could not
+      // change an activity's cover image at all. The real endpoint is
+      // /vendor/upload-image, which explicitly allows ADMIN (see the @Roles on
+      // VendorController.uploadImage) precisely so the admin panel can upload
+      // activity images while moderating. It's what the gallery uploader
+      // (components/image-uploader.tsx) has always used.
+      const { data } = await api.post('/vendor/upload-image', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setPreview(data.url);
       onChange(data.url);
       URL.revokeObjectURL(objectUrl);
     } catch { setUploadError('Upload failed. Try again.'); setPreview(value); }
@@ -94,16 +104,32 @@ function CoverImageUploader({ value, onChange, error }: { value: string; onChang
     <div>
       {preview ? (
         <div className="relative rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700 max-w-[480px]">
-          <NextImage
-            src={preview}
-            alt="Cover"
-            width={480}
-            height={224}
-            unoptimized={process.env.NODE_ENV !== 'production'}
-            className="w-full h-56 object-cover"
-          />
+          {/* Click the image itself to REPLACE it. Before, the only control on an
+              existing cover was the X (remove) — there was no way to swap it
+              directly, so an admin had to delete the cover first (and with the
+              404'ing endpoint above, that dead-ended entirely). */}
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            aria-label="Change cover image"
+            className="group block w-full"
+          >
+            <NextImage
+              src={preview}
+              alt="Cover"
+              width={480}
+              height={224}
+              unoptimized={process.env.NODE_ENV !== 'production'}
+              className="w-full h-56 object-cover"
+            />
+            <span className="absolute inset-0 hidden group-hover:flex items-center justify-center gap-2 bg-black/45 text-white text-sm font-medium">
+              <ImagePlus className="h-5 w-5" aria-hidden="true" />
+              Change cover image
+            </span>
+          </button>
           {uploading && <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><Loader2 className="h-6 w-6 text-white animate-spin" /></div>}
-          <button type="button" onClick={() => { setPreview(''); onChange(''); }} className="absolute top-2 end-2 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition cursor-pointer"><X className="h-4 w-4" /></button>
+          <button type="button" onClick={() => { setPreview(''); onChange(''); }} aria-label="Remove cover image" className="absolute top-2 inset-e-2 z-10 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition"><X className="h-4 w-4" /></button>
         </div>
       ) : (
         <button type="button" onClick={() => inputRef.current?.click()}

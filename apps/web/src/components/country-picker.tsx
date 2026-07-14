@@ -148,7 +148,7 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
   const chevronCls = isOpaque ? 'text-gray-400 dark:text-slate-500' : 'text-white/60';
 
   return (
-    <div ref={wrapperRef} className="relative hidden md:block">
+    <div ref={wrapperRef} className="relative hidden lg:block">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
