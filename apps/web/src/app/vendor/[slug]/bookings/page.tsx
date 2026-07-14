@@ -144,7 +144,7 @@ export default function VendorBookingsPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="md:ms-64 p-4 md:p-10 overflow-x-hidden">
+      <main className="md:ms-64 p-4 max-md:pt-16 md:p-10 overflow-x-hidden">
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight">{t('vendor.bookings.title')}</h1>
           <p className="text-gray-500 dark:text-slate-400 mt-1">{t('vendor.bookings.subtitle')}</p>
@@ -228,7 +228,7 @@ export default function VendorBookingsPage() {
               )}
             </div>
           ) : (
-            <table className="w-full">
+            <div className="overflow-x-auto"><table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-slate-800">
                   <th className="text-start px-6 py-4 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">{t('vendor.bookings.thRef')}</th>
@@ -378,7 +378,7 @@ export default function VendorBookingsPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
           )}
 
           {totalPages > 1 && (

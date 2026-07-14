@@ -102,15 +102,19 @@ export default function VendorDashboardPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="md:ms-64 p-4 md:p-10 overflow-x-hidden">
-        <header className="flex justify-between items-center mb-10">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
+      <main className="md:ms-64 p-4 max-md:pt-16 md:p-10 overflow-x-hidden">
+        {/* Stacks on mobile. It was `flex justify-between` with no wrap, so a long
+            business name and the New Activity button were forced onto one row and
+            collided (reported on iPhone). `min-w-0` lets the heading actually
+            shrink instead of pushing the buttons off-screen. */}
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-10">
+          <div className="min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-white break-words">
               {t('vendor.dashboard.welcomeBack', { name: (user?.vendor ? localized(user.vendor, 'businessName') : '') || user?.fullName })}
             </h1>
             <p className="text-gray-500 dark:text-slate-400 mt-1">{t('vendor.dashboard.manageListings')}</p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 shrink-0">
             <button
               onClick={() => router.push(`/vendor/${slug}/activities/new`)}
               className="flex items-center gap-2 px-5 py-2.5 bg-linear-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white rounded-xl font-semibold transition-all shadow-lg shadow-teal-600/20 dark:shadow-teal-900/40 cursor-pointer"
