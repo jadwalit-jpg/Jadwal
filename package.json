@@ -14,6 +14,7 @@
     "docker:logs": "docker-compose logs -f",
     "db:migrate": "npm run migrate:dev --workspace api",
     "db:studio": "npx prisma studio --schema apps/api/prisma/schema.prisma",
+    "check:api-contract": "node scripts/check-api-contract.mjs",
     "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true"
   },
   "devDependencies": {
