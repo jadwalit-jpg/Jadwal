@@ -61,7 +61,20 @@ function makePaymentService(configOverrides: Record<string, string> = {}) {
     acquire: jest.fn().mockResolvedValue('lock-token'),
     release: jest.fn().mockResolvedValue(undefined),
   } as any;
-  const auditLogger = { log: jest.fn().mockResolvedValue(undefined) } as any;
+  // Persist to the real auditLog table (as the production AuditLoggerService does
+  // — it awaits the create) AND record the call, so tests can both count calls and
+  // exercise code that READS audit rows back (e.g. the duplicate-capture dedup).
+  const auditLogger = {
+    log: jest.fn(async (p: any) => {
+      await ctx.prisma.auditLog.create({
+        data: {
+          actorType: p.actorType, actorId: p.actorId, actorName: p.actorName,
+          action: p.action, entity: p.entity, entityId: p.entityId ?? null,
+          details: p.details ?? null, actionCategory: p.actionCategory ?? 'OPERATIONAL',
+        },
+      });
+    }),
+  } as any;
   const notificationService = {
     send: jest.fn().mockResolvedValue(undefined),
     notifyAdmins: jest.fn().mockResolvedValue(undefined),
@@ -571,21 +584,45 @@ describe('PaymentService.handleCallback — idempotency', () => {
     });
     expect(auditLogger.log.mock.calls.length).toBe(auditsAfterFirst); // no new audit
 
-    // A genuine SECOND CAPTURE (DIFFERENT txn id) is the duplicate-charge case —
-    // it must be recorded as FINANCIAL and paged to admin, not discarded.
+    // Only the duplicate-capture ALERT is the concern here; the normal success flow
+    // may notify admins for its own reasons, so we assert on DELTAS not absolutes.
+    const dupAudits = () =>
+      auditLogger.log.mock.calls.map((c: any[]) => c[0]).filter((a: any) => a.action === 'PAYMENT_DUPLICATE_CAPTURE');
+    const dupNotifies = () =>
+      (notificationService.notifyAdmins as jest.Mock).mock.calls.filter((c: any[]) => /duplicate charge/i.test(c[0]?.title ?? ''));
+
+    // An UNSIGNED second capture (forged/garbage Response_Key) must NOT raise an
+    // alarm — the duplicate-charge alert fires only for an AUTHENTICATED success,
+    // otherwise anyone hitting /payment/callback could spam admins.
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'FORGED', Response_Key: 'deadbeef'.repeat(8), // wrong hash
+    });
+    expect(dupAudits()).toHaveLength(0);
+    expect(dupNotifies()).toHaveLength(0);
+
+    // A genuine SECOND CAPTURE (DIFFERENT, correctly-signed txn) is the
+    // duplicate-charge case — recorded FINANCIAL + paged to admin, not discarded.
     const res = await svc.handleCallback({
       err_code: '00', basket_id: basketId,
       transaction_id: 'CAP-2', Response_Key: signCallback(basketId, amountStr, '00'),
     });
     expect(res.status).toBe('success'); // still idempotent to the gateway
 
-    const dupAudit = auditLogger.log.mock.calls
-      .map((c: any[]) => c[0])
-      .find((a: any) => a.action === 'PAYMENT_DUPLICATE_CAPTURE');
-    expect(dupAudit).toBeDefined();
-    expect(dupAudit.actionCategory).toBe('FINANCIAL');
-    expect(dupAudit.entityId).toBe(paymentId);
-    expect(notificationService.notifyAdmins).toHaveBeenCalled();
+    expect(dupAudits()).toHaveLength(1);
+    expect(dupAudits()[0].actionCategory).toBe('FINANCIAL');
+    expect(dupAudits()[0].entityId).toBe(paymentId);
+    expect(dupNotifies()).toHaveLength(1);
+
+    // REPLAY of the same second capture (CAP-2 again) must be idempotent — no new
+    // audit row, no second admin page. (PAY2M can re-deliver; a browser redirect
+    // can be re-hit.)
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'CAP-2', Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+    expect(dupAudits()).toHaveLength(1); // still one
+    expect(dupNotifies()).toHaveLength(1); // still one
 
     // The recorded capture is unchanged — we never overwrite CAP-1 with CAP-2.
     expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).gatewayTxnId).toBe('CAP-1');

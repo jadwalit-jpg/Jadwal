@@ -820,34 +820,65 @@ export class PaymentService {
     if (payment.status === 'SUCCESS') {
       const incomingTxn = (params.transaction_id ?? '').trim();
       const recordedTxn = (payment.gatewayTxnId ?? '').trim();
+
+      // Only a DIFFERENT txn id can indicate a real second charge (same id = replay).
       if (incomingTxn && recordedTxn && incomingTxn !== recordedTxn) {
-        this.logger.error({
-          event: 'PAY2M_DUPLICATE_CAPTURE',
-          paymentId: payment.id,
-          basketId: params.basket_id,
-        });
-        await this.auditLogger.log({
-          actorType: 'SYSTEM',
-          actorId: 'pay2m-callback',
-          actorName: 'PAY2M Gateway',
-          action: 'PAYMENT_DUPLICATE_CAPTURE',
-          entity: 'Payment',
-          entityId: payment.id,
-          details:
-            `SECOND capture on an already-SUCCESS payment — the customer was likely charged twice. ` +
-            `basket: ${params.basket_id} | recorded txn: ${recordedTxn} | new txn: ${incomingTxn} | ` +
-            `amount on file: ${Number(payment.amount).toFixed(2)} ${payment.currency}. ` +
-            `Verify in the PAY2M dashboard and refund the duplicate.`,
-          actionCategory: 'FINANCIAL',
-        });
-        void this.notificationService.notifyAdmins({
-          type: 'SYSTEM',
-          title: 'Duplicate charge detected',
-          message:
-            `Payment ${payment.id.slice(0, 8)} received a SECOND capture (txn ${incomingTxn}) — ` +
-            `the customer may have been charged twice. Check PAY2M and refund the duplicate.`,
-          link: '/admin',
-        }).catch(() => undefined);
+        // AUTHENTICITY GATE — never raise a duplicate-charge alarm from an
+        // UNVERIFIED callback. Without this, anyone who can reach /payment/callback
+        // and knows a basket id could POST a made-up transaction_id and spam admins
+        // with financial audit rows. A real capture is either a hash-signed browser
+        // success or a source-IP-trusted IPN; nothing else is trusted here. (This
+        // mirrors the verification the non-idempotent path does further down.)
+        const amount = Number(payment.amount).toFixed(2);
+        const authenticSuccess =
+          opts?.via === 'ipn'
+            ? !!opts.trustedCapture && ['00', '000', '0000'].includes((params.err_code ?? '').trim())
+            : (() => {
+                const r = this.resolveSignedErrCode(params.basket_id, amount, params.err_code, params.Response_Key);
+                return r !== null && (r.errCode === '00' || r.errCode === '000');
+              })();
+
+        if (authenticSuccess) {
+          // IDEMPOTENT ALERT — PAY2M can re-deliver the same capture (and our 200
+          // stops IPN retries, but a browser redirect can be replayed by the user).
+          // Record/alert a given (payment, incoming txn) pair ONCE; a replay of the
+          // same second capture must not pile up audit rows or re-page admins.
+          // Dedup per DISTINCT secondary txn (a later, third distinct capture SHOULD
+          // alert again). The trailing " |" delimiter avoids CAP-2 matching CAP-20.
+          const already = await this.prisma.client.auditLog.findFirst({
+            where: { action: 'PAYMENT_DUPLICATE_CAPTURE', entityId: payment.id, details: { contains: `new txn: ${incomingTxn} |` } },
+            select: { id: true },
+          });
+          if (!already) {
+            this.logger.error({
+              event: 'PAY2M_DUPLICATE_CAPTURE',
+              paymentId: payment.id,
+              basketId: params.basket_id,
+            });
+            await this.auditLogger.log({
+              actorType: 'SYSTEM',
+              actorId: 'pay2m-callback',
+              actorName: 'PAY2M Gateway',
+              action: 'PAYMENT_DUPLICATE_CAPTURE',
+              entity: 'Payment',
+              entityId: payment.id,
+              details:
+                `SECOND capture on an already-SUCCESS payment — the customer was likely charged twice. ` +
+                `basket: ${params.basket_id} | recorded txn: ${recordedTxn} | new txn: ${incomingTxn} | ` +
+                `amount on file: ${amount} ${payment.currency}. ` +
+                `Verify in the PAY2M dashboard and refund the duplicate.`,
+              actionCategory: 'FINANCIAL',
+            });
+            void this.notificationService.notifyAdmins({
+              type: 'SYSTEM',
+              title: 'Duplicate charge detected',
+              message:
+                `Payment ${payment.id.slice(0, 8)} received a SECOND capture (txn ${incomingTxn}) — ` +
+                `the customer may have been charged twice. Check PAY2M and refund the duplicate.`,
+              link: '/admin',
+            }).catch(() => undefined);
+          }
+        }
       }
       return { bookingId: payment.bookingId!, status: 'success' };
     }
