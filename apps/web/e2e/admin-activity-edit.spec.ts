@@ -56,12 +56,21 @@ test.describe('Admin activity edit', () => {
     await page.goto(`/admin/activities/${activityId}`);
     await page.waitForLoadState('networkidle');
 
-    // Fail fast with a readable message if the form never rendered (stale admin
-    // session / unseeded DB) rather than hanging inside setInputFiles.
+    // The edit form is a 6-step wizard and the cover uploader lives on step 5
+    // ("Media") — it simply is not in the DOM on step 1. Jump there via the step
+    // indicator; handleStepClick allows moving forward as long as the earlier
+    // steps validate, which they do for an already-saved (valid) activity.
+    await page.getByRole('button', { name: /media/i }).first().click();
+    await expect(
+      page.getByText(/cover image/i).first(),
+      'did not reach the Media step — an earlier step failed validation',
+    ).toBeVisible({ timeout: 15_000 });
+
+    // Fail fast with a readable message rather than hanging inside setInputFiles.
     const fileInput = page.locator('input[type="file"]').first();
     await expect(
       fileInput,
-      'cover file input not found — the admin edit form did not render',
+      'cover file input not found on the Media step',
     ).toBeAttached({ timeout: 15_000 });
 
     // The upload POST — this is what 404'd.
