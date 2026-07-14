@@ -117,6 +117,20 @@ async function dismissConsent(page: Page) {
   }
 }
 
+/**
+ * Guard against a VACUOUS pass. If auth fails, the app redirects to a login
+ * page — which is itself perfectly responsive — so the audit would happily pass
+ * while never having seen the page under test. Assert we actually landed.
+ */
+async function assertOnPage(page: Page, expectedPath: string) {
+  const url = new URL(page.url());
+  expect(
+    url.pathname,
+    `expected to be on ${expectedPath} but landed on ${url.pathname} ` +
+      `(auth redirect?) — this test would otherwise pass vacuously`,
+  ).toContain(expectedPath);
+}
+
 async function expectResponsive(page: Page, label: string) {
   // Measure only once the page has actually rendered. Auditing mid-render gave
   // false positives (skeletons / half-laid-out grids briefly overflow).
@@ -175,6 +189,7 @@ test.describe('responsive: vendor', () => {
       test.skip(!slug, 'no vendor slug — seed data unavailable');
 
       await page.goto(`/vendor/${slug}/${p}`);
+      await assertOnPage(page, `/vendor/${slug}/${p}`);
       await expectResponsive(page, `vendor /${p}`);
     });
   }
@@ -183,10 +198,33 @@ test.describe('responsive: vendor', () => {
 /* ── Admin surface ─────────────────────────────────────────────────────── */
 
 test.describe('responsive: admin', () => {
-  for (const p of ['dashboard', 'activities', 'bookings']) {
+  // Every admin route (login is excluded — it has no sidebar/shell).
+  const PAGES = [
+    'dashboard',
+    'activities',
+    'bookings',
+    'vendors',
+    'users',
+    'coupons',
+    'payouts',
+    'payout-requests',
+    'refunds',
+    'reviews',
+    'loyalty',
+    'categories',
+    'cities',
+    'trending',
+    'audit-logs',
+    'email-suppressions',
+    'settings',
+    'profile',
+  ];
+
+  for (const p of PAGES) {
     test(`responsive: admin /${p}`, async ({ page }) => {
       await loginAsAdmin(page);
       await page.goto(`/admin/${p}`);
+      await assertOnPage(page, `/admin/${p}`);
       await expectResponsive(page, `admin /${p}`);
     });
   }
