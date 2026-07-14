@@ -117,7 +117,7 @@ export default function VendorActivitiesPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="md:ms-64 p-4 md:p-10 overflow-x-hidden">
+      <main className="md:ms-64 p-4 max-md:pt-16 md:p-10 overflow-x-hidden">
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{t('vendor.activities.list.title')}</h1>

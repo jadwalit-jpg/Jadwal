@@ -253,7 +253,7 @@ export default function VendorRefundRequestsPage() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
       <VendorSidebar />
-      <main className="ps-64">
+      <main className="md:ps-64 max-md:pt-16">
         <div className="max-w-6xl mx-auto px-6 sm:px-8 lg:px-10 py-10">
           <div className="mb-8">
             <div className="flex items-center gap-3 mb-2">

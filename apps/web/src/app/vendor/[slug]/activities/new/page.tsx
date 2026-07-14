@@ -520,7 +520,7 @@ export default function CreateActivityPage() {
       />
       <VendorSidebar />
 
-      <main className="md:ms-64 min-h-screen overflow-x-hidden">
+      <main className="md:ms-64 max-md:pt-16 min-h-screen overflow-x-hidden">
         {/* Top bar */}
         <div className="flex items-center justify-between px-10 py-6 border-b border-stone-200 dark:border-slate-800 bg-stone-50 dark:bg-slate-950">
           <div>
