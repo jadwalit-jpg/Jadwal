@@ -452,7 +452,7 @@ describe('PaymentService.handleCallback — tamper detection', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('PaymentService.handleCallback — FAILURE path', () => {
-  test('err_code non-00 → booking + payment rows deleted (slot freed)', async () => {
+  test('err_code non-00 → booking deleted (slot freed), payment KEPT as FAILED', async () => {
     const { svc } = makePaymentService();
     const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(200);
 
@@ -462,8 +462,20 @@ describe('PaymentService.handleCallback — FAILURE path', () => {
     });
 
     expect(res.status).toBe('failed');
-    expect(await ctx.prisma.payment.findUnique({ where: { id: paymentId } })).toBeNull();
+
+    // The unpaid booking is removed so the slot is freed.
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+
+    // But the payment row is NOT hard-deleted (was the H2 bug). It is flipped to
+    // FAILED and retained: (1) the codebase invariant is "payments are never
+    // hard-deleted" (7-year FINANCIAL retention); (2) keeping gatewayBasketId +
+    // bookingSnapshot is what lets §B2 orphan-recovery re-create the booking or
+    // queue a refund if PAY2M later reports a genuine capture for this basket
+    // (browser callbacks can carry non-terminal codes like 002/001).
+    const kept = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(kept).not.toBeNull();
+    expect(kept!.status).toBe('FAILED');
+    expect(kept!.gatewayBasketId).toBe(basketId); // recovery anchor preserved
   });
 
   test('availabilityCache invalidate called for the deleted booking\'s activity', async () => {
@@ -517,24 +529,66 @@ describe('PaymentService.handleCallback — idempotency', () => {
     expect(auditLogger.log.mock.calls.length).toBe(auditCallsAfter1);
   });
 
-  test('duplicate FAILURE callback → 2nd returns failed without throwing; no booking/payment resurrected', async () => {
+  test('duplicate FAILURE callback → 2nd returns failed idempotently; no booking resurrected', async () => {
     const { svc } = makePaymentService();
-    const { basketId, amountStr } = await seedPendingPayment(200);
+    const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(200);
 
     await svc.handleCallback({
       err_code: '01', basket_id: basketId,
       Response_Key: signCallback(basketId, amountStr, '01'),
     });
 
-    // Second call now hits "unknown basket" because the payment row is gone —
-    // that is the expected post-failure behaviour (idempotent from the
-    // customer's point of view because their money is already back).
-    await expect(
-      svc.handleCallback({
-        err_code: '01', basket_id: basketId,
-        Response_Key: signCallback(basketId, amountStr, '01'),
-      }),
-    ).rejects.toThrow('Payment not found');
+    // The payment row is now KEPT as FAILED (H2 fix) rather than hard-deleted, so
+    // the second callback no longer throws "Payment not found". It finds the
+    // FAILED row, the `updateMany WHERE status:'PENDING'` matches nothing, and it
+    // returns a clean idempotent "failed" — a strictly better outcome than the old
+    // throw, and the booking is NOT resurrected.
+    const res2 = await svc.handleCallback({
+      err_code: '01', basket_id: basketId,
+      Response_Key: signCallback(basketId, amountStr, '01'),
+    });
+    expect(res2.status).toBe('failed');
+
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('FAILED');
+    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+  });
+
+  test('SECOND CAPTURE (different txn id on an already-SUCCESS payment) → flagged, not swallowed', async () => {
+    const { svc, auditLogger, notificationService } = makePaymentService();
+    const { basketId, paymentId, amountStr } = await seedPendingPayment(200);
+
+    // First capture → SUCCESS, records txn 'CAP-1'.
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'CAP-1', Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+    const auditsAfterFirst = auditLogger.log.mock.calls.length;
+
+    // A REPLAY of the same capture (same txn id) must stay a silent no-op.
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'CAP-1', Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+    expect(auditLogger.log.mock.calls.length).toBe(auditsAfterFirst); // no new audit
+
+    // A genuine SECOND CAPTURE (DIFFERENT txn id) is the duplicate-charge case —
+    // it must be recorded as FINANCIAL and paged to admin, not discarded.
+    const res = await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'CAP-2', Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+    expect(res.status).toBe('success'); // still idempotent to the gateway
+
+    const dupAudit = auditLogger.log.mock.calls
+      .map((c: any[]) => c[0])
+      .find((a: any) => a.action === 'PAYMENT_DUPLICATE_CAPTURE');
+    expect(dupAudit).toBeDefined();
+    expect(dupAudit.actionCategory).toBe('FINANCIAL');
+    expect(dupAudit.entityId).toBe(paymentId);
+    expect(notificationService.notifyAdmins).toHaveBeenCalled();
+
+    // The recorded capture is unchanged — we never overwrite CAP-1 with CAP-2.
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).gatewayTxnId).toBe('CAP-1');
   });
 });
 
@@ -680,7 +734,7 @@ describe('PaymentService.handleCallback — NAPS rail (err+amount order)', () =>
     expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
   });
 
-  test('verified NAPS FAILURE (901 customer-cancel) → booking + payment deleted, slot freed', async () => {
+  test('verified NAPS FAILURE (901 customer-cancel) → booking deleted, payment KEPT as FAILED, slot freed', async () => {
     const { svc, availabilityCache } = makePaymentService();
     const { basketId, paymentId, bookingId, seed } = await seedPendingPayment(200);
 
@@ -690,8 +744,11 @@ describe('PaymentService.handleCallback — NAPS rail (err+amount order)', () =>
     });
 
     expect(res.status).toBe('failed');
-    expect(await ctx.prisma.payment.findUnique({ where: { id: paymentId } })).toBeNull();
+    // Booking gone (slot freed); payment retained as FAILED (never hard-deleted).
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+    const kept = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(kept).not.toBeNull();
+    expect(kept!.status).toBe('FAILED');
     expect(availabilityCache.invalidate).toHaveBeenCalledWith(seed.activity.id);
   });
 
