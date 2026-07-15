@@ -622,15 +622,18 @@ describe('PaymentService.handleCallback — idempotency', () => {
     expect(dupAudits()[0].entityId).toBe(paymentId);
     expect(dupNotifies()).toHaveLength(1);
 
-    // REPLAY of the same second capture (CAP-2 again) must be idempotent — no new
-    // audit row, no second admin page. (PAY2M can re-deliver; a browser redirect
-    // can be re-hit.)
+    // REPLAY of the same second capture (CAP-2 again). The admin PAGE is deduped
+    // (atomic Redis marker) — admins are paged exactly ONCE. The FINANCIAL audit
+    // row, however, is written unconditionally each time BY DESIGN: durability of
+    // the authoritative record must not hinge on a best-effort marker, so a
+    // duplicate (harmless, append-only) row is the deliberate trade. (PAY2M can
+    // re-deliver; a browser redirect can be re-hit.)
     await svc.handleCallback({
       err_code: '00', basket_id: basketId,
       transaction_id: 'CAP-2', Response_Key: signCallback(basketId, amountStr, '00'),
     });
-    expect(dupAudits()).toHaveLength(1); // still one
-    expect(dupNotifies()).toHaveLength(1); // still one
+    expect(dupNotifies()).toHaveLength(1); // page deduped — still ONE (the guarantee that matters)
+    expect(dupAudits()).toHaveLength(2); // audit written every time — durable, not gated on the marker
 
     // The recorded capture is unchanged — we never overwrite CAP-1 with CAP-2.
     expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).gatewayTxnId).toBe('CAP-1');
