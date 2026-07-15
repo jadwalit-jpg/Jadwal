@@ -239,7 +239,8 @@ describe('AuthController — sessions (vendor/admin only)', () => {
     prisma._client.refreshToken.findUnique.mockResolvedValueOnce({ userId: 'u1', familyId: 'fam-s1' });
     const r = await ctrl.revokeSession({ id: 'u1', role: 'VENDOR' } as any, 's1');
     expect(denylist.denylistSession).toHaveBeenCalledWith('fam-s1');
-    expect(prisma._client.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { familyId: 'fam-s1' } });
+    // Destructive delete is scoped by BOTH familyId AND userId (tenant isolation).
+    expect(prisma._client.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { familyId: 'fam-s1', userId: 'u1' } });
     expect(r).toEqual({ message: 'Session revoked' });
   });
 
@@ -258,9 +259,11 @@ describe('AuthController — sessions (vendor/admin only)', () => {
     expect(denylist.denylistSession).toHaveBeenCalledWith('fam-a');
     expect(denylist.denylistSession).toHaveBeenCalledWith('fam-b');
     expect(denylist.denylistSession).not.toHaveBeenCalledWith('fam-current');
-    // Delete every OTHER family's rows; keep the current family.
+    // Delete ONLY the denylisted families (familyId: { in: [...] }) — NOT a broad
+    // `not: current` — so a concurrently-created session can't be deleted without
+    // also being denylisted (no ghost token). Keeps the current family too.
     expect(prisma._client.refreshToken.deleteMany).toHaveBeenCalledWith({
-      where: { userId: 'u1', familyId: { not: 'fam-current' } },
+      where: { userId: 'u1', familyId: { in: ['fam-a', 'fam-b'] } },
     });
     // Count is DISTINCT families, not rows.
     expect(r.message).toContain('2 session');

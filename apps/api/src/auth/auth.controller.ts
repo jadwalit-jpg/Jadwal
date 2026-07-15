@@ -199,9 +199,13 @@ export class AuthController {
 
     // Denylist the family so the revoked device's outstanding ACCESS token dies
     // immediately (M5), then delete the whole family (active token + tombstones)
-    // so the session is fully gone.
+    // so the session is fully gone. Scope the destructive delete by BOTH familyId
+    // AND userId (defence-in-depth tenant isolation — even though familyId is a
+    // globally-unique uuid, a destructive query should never rely on that alone).
     await this.sessionDenylist.denylistSession(session.familyId);
-    await this.prisma.client.refreshToken.deleteMany({ where: { familyId: session.familyId } });
+    await this.prisma.client.refreshToken.deleteMany({
+      where: { familyId: session.familyId, userId: user.id },
+    });
     return { message: 'Session revoked' };
   }
 
@@ -229,8 +233,8 @@ export class AuthController {
       : null;
 
     // Distinct OTHER active families = the "other sessions". Denylist each so
-    // its outstanding ACCESS token dies immediately (M5), THEN delete every
-    // token row of those families (active + tombstones). Count distinct
+    // its outstanding ACCESS token dies immediately (M5), THEN delete every token
+    // row of EXACTLY those families (active + tombstones). Count distinct
     // families, not rows — a rotated session has many tombstone rows.
     const otherFamilies = await this.prisma.client.refreshToken.findMany({
       where: {
@@ -241,17 +245,21 @@ export class AuthController {
       select: { familyId: true },
       distinct: ['familyId'],
     });
-    await Promise.all(
-      otherFamilies.map((f) => this.sessionDenylist.denylistSession(f.familyId)),
-    );
-    await this.prisma.client.refreshToken.deleteMany({
-      where: {
-        userId: user.id,
-        ...(currentFamilyId ? { familyId: { not: currentFamilyId } } : {}),
-      },
-    });
+    const familyIds = otherFamilies.map((f) => f.familyId);
+    await Promise.all(familyIds.map((fid) => this.sessionDenylist.denylistSession(fid)));
+    // Delete ONLY the families we just denylisted — NOT a broad `familyId: { not:
+    // current }`. Otherwise a session created concurrently (a new login between
+    // the findMany above and this delete) would have its refresh token deleted
+    // here but its family never denylisted → a ≤JWT_EXPIRATION "ghost" access
+    // token that evades revocation. Matching the delete-set to the denylist-set
+    // closes that TOCTOU and correctly leaves a brand-new session untouched.
+    if (familyIds.length > 0) {
+      await this.prisma.client.refreshToken.deleteMany({
+        where: { userId: user.id, familyId: { in: familyIds } },
+      });
+    }
 
-    return { message: `${otherFamilies.length} session(s) revoked` };
+    return { message: `${familyIds.length} session(s) revoked` };
   }
 
   // ─── W.127 PDPL / GDPR self-service account management ──────────────────
