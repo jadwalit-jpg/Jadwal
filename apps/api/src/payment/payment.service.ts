@@ -25,6 +25,12 @@ interface Pay2mTokenResponse {
   GENERATED_DATE_TIME: string;
 }
 
+// How long a "we already alerted for this (payment, secondary txn)" marker lives
+// in Redis. A duplicate capture re-delivered within this window is deduped; a
+// re-delivery after it (astronomically unlikely for a payment callback) would
+// re-page — harmless. 30 days comfortably covers any realistic gateway retry.
+const DUP_CAPTURE_DEDUP_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
@@ -720,14 +726,16 @@ export class PaymentService {
     if (recordedTxn === incomingTxn) return; // replay of the SAME capture — no-op
 
     const amount = Number(payment.amount).toFixed(2);
-    // Dedup per DISTINCT secondary txn (a later, third distinct capture SHOULD
-    // alert again). The trailing " |" delimiter avoids CAP-2 matching CAP-20.
-    const already = await this.prisma.client.auditLog.findFirst({
-      where: { action: 'PAYMENT_DUPLICATE_CAPTURE', entityId: payment.id, details: { contains: `new txn: ${incomingTxn} |` } },
-      select: { id: true },
-    });
-    if (already) return;
 
+    // 1. Record the authoritative FINANCIAL row FIRST and UNCONDITIONALLY.
+    // Durability must NOT depend on a best-effort dedup marker. The previous
+    // auditLog-based dedup was self-healing precisely because the row WAS the
+    // marker: a failed write left no marker, so the retry re-attempted. If we set
+    // a marker first and this write then fails (auditLogger.log swallows its own
+    // errors), the retry finds the marker and skips — LOSING the record of a real
+    // double charge. `audit_logs` is append-only and this path is rare, so a
+    // duplicate row on a concurrent/replayed delivery is forensically harmless; a
+    // lost row is not.
     this.logger.error({ event: 'PAY2M_DUPLICATE_CAPTURE', paymentId: payment.id, basketId });
     await this.auditLogger.log({
       actorType: 'SYSTEM',
@@ -743,14 +751,30 @@ export class PaymentService {
         `Verify in the PAY2M dashboard and refund the duplicate.`,
       actionCategory: 'FINANCIAL',
     });
-    void this.notificationService.notifyAdmins({
-      type: 'SYSTEM',
-      title: 'Duplicate charge detected',
-      message:
-        `Payment ${payment.id.slice(0, 8)} received a SECOND capture (txn ${incomingTxn}) — ` +
-        `the customer may have been charged twice. Check PAY2M and refund the duplicate.`,
-      link: '/admin',
-    }).catch(() => undefined);
+
+    // 2. Gate ONLY the admin PAGE on an atomic marker (SET NX), so concurrent or
+    // replayed deliveries of the SAME second capture page admins exactly once
+    // (the double-page this addresses). This replaces an unindexed `details LIKE
+    // '%…%'` audit scan. `acquire()` is fail-open BY DESIGN — it returns a token
+    // on a Redis error (see its own ADR-0001 doc) — so a Redis outage pages
+    // rather than silently dropping the alert; the local catch is belt-and-braces.
+    const dedupKey = `pay2m:dupcap:${payment.id}:${incomingTxn}`;
+    let pageAdmins: boolean;
+    try {
+      pageAdmins = (await this.redisLock.acquire(dedupKey, DUP_CAPTURE_DEDUP_TTL_MS)) !== null;
+    } catch {
+      pageAdmins = true; // fail-open on an unexpected throw — page rather than go silent
+    }
+    if (pageAdmins) {
+      void this.notificationService.notifyAdmins({
+        type: 'SYSTEM',
+        title: 'Duplicate charge detected',
+        message:
+          `Payment ${payment.id.slice(0, 8)} received a SECOND capture (txn ${incomingTxn}) — ` +
+          `the customer may have been charged twice. Check PAY2M and refund the duplicate.`,
+        link: '/admin',
+      }).catch(() => undefined);
+    }
   }
 
   /**
