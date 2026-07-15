@@ -679,6 +679,81 @@ export class PaymentService {
   }
 
   /**
+   * Duplicate-capture detector. Given an AUTHENTICATED success callback that
+   * landed on an already-SUCCESS payment, decide whether it is a harmless replay
+   * of the recorded capture (same transaction id) or a genuine SECOND CAPTURE
+   * (a DIFFERENT transaction id → the customer was charged twice), and in the
+   * latter case record it FINANCIAL + page admins (once per distinct txn).
+   *
+   * The CALLER is responsible for the authenticity gate — this is only ever
+   * invoked for a verified capture. It re-reads gatewayTxnId itself so it can be
+   * called from BOTH the entry-time already-SUCCESS branch AND the optimistic-
+   * lock-loss path (a CONCURRENT second capture that read PENDING at entry but
+   * lost the confirm race — that path returns success without re-entering the
+   * SUCCESS branch, so without this call the concurrent double-charge — the exact
+   * "two tabs / slow-gateway retry" case — would go undetected).
+   *
+   * Never auto-refunds and never overwrites the recorded txn — refunds are a
+   * deliberate admin action.
+   */
+  private async flagDuplicateCaptureIfDifferentTxn(
+    payment: { id: string; amount: unknown; currency: string },
+    basketId: string,
+    incomingTxnRaw: string | undefined | null,
+  ): Promise<void> {
+    const incomingTxn = (incomingTxnRaw ?? '').trim();
+    if (!incomingTxn) return; // this capture carries no txn id → nothing to compare
+
+    const fresh = await this.prisma.client.payment.findUnique({
+      where: { id: payment.id },
+      select: { gatewayTxnId: true },
+    });
+    const recordedTxn = (fresh?.gatewayTxnId ?? '').trim();
+
+    if (!recordedTxn) {
+      // The first capture recorded no txn id, so we cannot tell a replay from a
+      // second charge. Do NOT page (a legit replay would false-alarm), but leave
+      // an observable signal so reconciliation can spot it.
+      this.logger.warn({ event: 'PAY2M_DUPLICATE_CAPTURE_UNVERIFIABLE', paymentId: payment.id, basketId });
+      return;
+    }
+    if (recordedTxn === incomingTxn) return; // replay of the SAME capture — no-op
+
+    const amount = Number(payment.amount).toFixed(2);
+    // Dedup per DISTINCT secondary txn (a later, third distinct capture SHOULD
+    // alert again). The trailing " |" delimiter avoids CAP-2 matching CAP-20.
+    const already = await this.prisma.client.auditLog.findFirst({
+      where: { action: 'PAYMENT_DUPLICATE_CAPTURE', entityId: payment.id, details: { contains: `new txn: ${incomingTxn} |` } },
+      select: { id: true },
+    });
+    if (already) return;
+
+    this.logger.error({ event: 'PAY2M_DUPLICATE_CAPTURE', paymentId: payment.id, basketId });
+    await this.auditLogger.log({
+      actorType: 'SYSTEM',
+      actorId: 'pay2m-callback',
+      actorName: 'PAY2M Gateway',
+      action: 'PAYMENT_DUPLICATE_CAPTURE',
+      entity: 'Payment',
+      entityId: payment.id,
+      details:
+        `SECOND capture on an already-SUCCESS payment — the customer was likely charged twice. ` +
+        `basket: ${basketId} | recorded txn: ${recordedTxn} | new txn: ${incomingTxn} | ` +
+        `amount on file: ${amount} ${payment.currency}. ` +
+        `Verify in the PAY2M dashboard and refund the duplicate.`,
+      actionCategory: 'FINANCIAL',
+    });
+    void this.notificationService.notifyAdmins({
+      type: 'SYSTEM',
+      title: 'Duplicate charge detected',
+      message:
+        `Payment ${payment.id.slice(0, 8)} received a SECOND capture (txn ${incomingTxn}) — ` +
+        `the customer may have been charged twice. Check PAY2M and refund the duplicate.`,
+      link: '/admin',
+    }).catch(() => undefined);
+  }
+
+  /**
    * Read-only lookup of a payment's status + booking by basket id. Used ONLY by
    * the browser-callback handler to decide whether an UNVERIFIABLE callback (the
    * NAPS rail, whose hash we can't verify) should show the "processing" screen —
@@ -818,67 +893,25 @@ export class PaymentService {
     // auto-refund: the refund rail is a manual/admin decision elsewhere in this
     // service, and guessing wrong with real money is worse than raising a flag.
     if (payment.status === 'SUCCESS') {
-      const incomingTxn = (params.transaction_id ?? '').trim();
-      const recordedTxn = (payment.gatewayTxnId ?? '').trim();
-
-      // Only a DIFFERENT txn id can indicate a real second charge (same id = replay).
-      if (incomingTxn && recordedTxn && incomingTxn !== recordedTxn) {
-        // AUTHENTICITY GATE — never raise a duplicate-charge alarm from an
-        // UNVERIFIED callback. Without this, anyone who can reach /payment/callback
-        // and knows a basket id could POST a made-up transaction_id and spam admins
-        // with financial audit rows. A real capture is either a hash-signed browser
-        // success or a source-IP-trusted IPN; nothing else is trusted here. (This
-        // mirrors the verification the non-idempotent path does further down.)
-        const amount = Number(payment.amount).toFixed(2);
-        const authenticSuccess =
-          opts?.via === 'ipn'
-            ? !!opts.trustedCapture && ['00', '000', '0000'].includes((params.err_code ?? '').trim())
-            : (() => {
-                const r = this.resolveSignedErrCode(params.basket_id, amount, params.err_code, params.Response_Key);
-                return r !== null && (r.errCode === '00' || r.errCode === '000');
-              })();
-
-        if (authenticSuccess) {
-          // IDEMPOTENT ALERT — PAY2M can re-deliver the same capture (and our 200
-          // stops IPN retries, but a browser redirect can be replayed by the user).
-          // Record/alert a given (payment, incoming txn) pair ONCE; a replay of the
-          // same second capture must not pile up audit rows or re-page admins.
-          // Dedup per DISTINCT secondary txn (a later, third distinct capture SHOULD
-          // alert again). The trailing " |" delimiter avoids CAP-2 matching CAP-20.
-          const already = await this.prisma.client.auditLog.findFirst({
-            where: { action: 'PAYMENT_DUPLICATE_CAPTURE', entityId: payment.id, details: { contains: `new txn: ${incomingTxn} |` } },
-            select: { id: true },
-          });
-          if (!already) {
-            this.logger.error({
-              event: 'PAY2M_DUPLICATE_CAPTURE',
-              paymentId: payment.id,
-              basketId: params.basket_id,
-            });
-            await this.auditLogger.log({
-              actorType: 'SYSTEM',
-              actorId: 'pay2m-callback',
-              actorName: 'PAY2M Gateway',
-              action: 'PAYMENT_DUPLICATE_CAPTURE',
-              entity: 'Payment',
-              entityId: payment.id,
-              details:
-                `SECOND capture on an already-SUCCESS payment — the customer was likely charged twice. ` +
-                `basket: ${params.basket_id} | recorded txn: ${recordedTxn} | new txn: ${incomingTxn} | ` +
-                `amount on file: ${amount} ${payment.currency}. ` +
-                `Verify in the PAY2M dashboard and refund the duplicate.`,
-              actionCategory: 'FINANCIAL',
-            });
-            void this.notificationService.notifyAdmins({
-              type: 'SYSTEM',
-              title: 'Duplicate charge detected',
-              message:
-                `Payment ${payment.id.slice(0, 8)} received a SECOND capture (txn ${incomingTxn}) — ` +
-                `the customer may have been charged twice. Check PAY2M and refund the duplicate.`,
-              link: '/admin',
-            }).catch(() => undefined);
-          }
-        }
+      // AUTHENTICITY GATE — never raise a duplicate-charge alarm from an UNVERIFIED
+      // callback. A real capture is either a hash-signed browser success or a
+      // source-IP-trusted IPN; nothing else is trusted here. (Mirrors the
+      // verification the non-idempotent path does further down.)
+      const amount = Number(payment.amount).toFixed(2);
+      const authenticSuccess =
+        opts?.via === 'ipn'
+          ? !!opts.trustedCapture && ['00', '000', '0000'].includes((params.err_code ?? '').trim())
+          : (() => {
+              // Require the CARD rail: a NAPS-rail browser success is authentic
+              // but capture-AMBIGUOUS (its capture is confirmed via the IPN, not
+              // the redirect — see isSuccess below, which is likewise card-only).
+              // A NAPS double capture arrives via the IPN path, which is handled
+              // by the `via==='ipn'` branch above, so this misses nothing.
+              const r = this.resolveSignedErrCode(params.basket_id, amount, params.err_code, params.Response_Key);
+              return r !== null && r.rail === 'card' && (r.errCode === '00' || r.errCode === '000');
+            })();
+      if (authenticSuccess) {
+        await this.flagDuplicateCaptureIfDifferentTxn(payment, params.basket_id, params.transaction_id);
       }
       return { bookingId: payment.bookingId!, status: 'success' };
     }
@@ -1134,7 +1167,13 @@ export class PaymentService {
         // Verify still PENDING before deleting
         const result = await tx.payment.updateMany({
           where: { id: payment.id, status: 'PENDING' },
-          data: { status: 'FAILED' }, // Mark first, then delete — prevents race
+          // Mark first, then delete — prevents race. Also RELEASE the idempotency
+          // key: the retained FAILED row keeps its @unique idempotencyKey, and the
+          // customer's retry is a NEW payment. It's NULL today (the web client
+          // doesn't send a key to /payment/initiate), so this is a no-op now — but
+          // the old code deleted the row and freed the key, so a future client that
+          // DOES send one would otherwise hit a P2002 409 and be unable to retry.
+          data: { status: 'FAILED', idempotencyKey: null },
         });
         if (result.count === 0) return false; // Already processed
         // Payment failed/cancelled — delete the unpaid booking entirely (no trace)
@@ -1203,7 +1242,20 @@ export class PaymentService {
     // If optimistic lock failed, another callback already processed this — return idempotent response
     if (!updated) {
       const current = await db.payment.findUnique({ where: { id: payment.id }, select: { status: true } });
-      if (current?.status === 'SUCCESS') return { bookingId: savedBookingId!, status: 'success' as const };
+      if (current?.status === 'SUCCESS') {
+        // CONCURRENT double-capture: THIS callback is an authenticated success
+        // (it passed hash verification above / is a trusted IPN) that read PENDING
+        // at entry but lost the confirm race to another capture. It never re-enters
+        // the entry-SUCCESS branch, so detect the duplicate HERE too — otherwise a
+        // genuine second charge that arrives concurrently (two tabs / a retry
+        // racing a slow gateway) is confirmed by the winner and silently dropped
+        // by the loser, with no alert. Gated on isSuccess so only a real capture
+        // (not a decline that lost a race) is compared.
+        if (isSuccess) {
+          await this.flagDuplicateCaptureIfDifferentTxn(payment, params.basket_id, params.transaction_id);
+        }
+        return { bookingId: savedBookingId!, status: 'success' as const };
+      }
       return { bookingId: savedBookingId ?? '', status: 'failed' as const, error: 'Payment was previously processed' };
     }
 
