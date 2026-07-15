@@ -88,7 +88,13 @@ export class AuthService {
     // re-presented WITHIN this window is treated as a benign client race (two
     // tabs / a retry), not a stolen-token replay, so we don't nuke the session.
     // Beyond it, re-presentation is a genuine reuse → revoke the whole family.
-    this.refreshReuseGraceMs = Number(this.configService.get('REFRESH_REUSE_GRACE_MS', '30000'));
+    // Guard against a misconfigured value silently disabling M6 reuse detection:
+    // a non-numeric/negative env → NaN, and `sinceRotationMs > NaN` is ALWAYS
+    // false, so every replayed (stolen) token would be treated as a benign
+    // within-grace race and never revoke the family. Fall back to the 30s default
+    // if the configured value isn't a finite, non-negative number.
+    const graceRaw = Number(this.configService.get('REFRESH_REUSE_GRACE_MS', '30000'));
+    this.refreshReuseGraceMs = Number.isFinite(graceRaw) && graceRaw >= 0 ? graceRaw : 30000;
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -1650,9 +1656,15 @@ export class AuthService {
       );
     }
 
-    // Account is being torn down — kill every live session's ACCESS token too
-    // (M5), captured before the tx deletes the refresh rows.
-    await this.denylistAllUserSessions(userId);
+    // Snapshot live session families BEFORE the tx so we can denylist them AFTER
+    // it commits: reading here still sees the rows, and deferring the denylist to
+    // post-commit means a tx ROLLBACK strands no markers (which would otherwise
+    // self-lock the reused family id for the TTL). Mirrors resetPassword.
+    const liveFamilies = await db.refreshToken.findMany({
+      where: { userId, rotatedAt: null },
+      select: { familyId: true },
+      distinct: ['familyId'],
+    });
 
     // Anonymise + revoke in a single transaction. Pattern mirrors
     // AdminService.deleteUser:455-483 — keep them in sync if you change
@@ -1683,6 +1695,10 @@ export class AuthService {
         },
       });
     });
+
+    // Account torn down — kill every session's outstanding ACCESS token too (M5),
+    // AFTER the tx commits (rollback then leaves no stranded denylist markers).
+    await Promise.all(liveFamilies.map((f) => this.denylistSession(f.familyId)));
 
     this.clearAllCookies(response);
 
