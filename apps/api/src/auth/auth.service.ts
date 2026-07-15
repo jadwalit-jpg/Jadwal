@@ -37,6 +37,12 @@ export class AuthService {
   private readonly globalLoginThreshold: number;
   private readonly globalLoginWindowSec: number;
   private readonly forgotPasswordCooldownSec: number;
+  // Timing-equalisation hash for "user not found" / OAuth-only / locked branches.
+  // MUST be computed at the SAME bcrypt cost as real passwords — a hardcoded
+  // literal at a lower cost makes the not-found branch measurably faster than a
+  // real bcrypt.compare, turning the timing-equaliser into an email-enumeration
+  // oracle. Computed once at boot (hashSync is fine here — startup only).
+  private readonly dummyHash: string;
 
   constructor(
     private usersService: UsersService,
@@ -61,6 +67,9 @@ export class AuthService {
     this.sessionMaxDays = Number(this.configService.get('SESSION_MAX_DAYS', '7'));
     this.lockoutThreshold = Number(this.configService.get('LOCKOUT_THRESHOLD', '5'));
     this.lockoutDuration = Number(this.configService.get('LOCKOUT_DURATION_MINUTES', '15'));
+    // Same cost as real password hashing (users.service uses BCRYPT_ROUNDS||12),
+    // so bcrypt.compare against it takes the same time as against a real hash.
+    this.dummyHash = bcrypt.hashSync('timing-equalizer', Number(process.env.BCRYPT_ROUNDS || 12));
     // G1 — multi-IP credential-stuffing defence. Counts ALL login attempts
     // on a given email across ALL source IPs. Above this in N seconds → 429.
     // Closes the gap where per-IP throttle (3/min) and per-account DB
@@ -237,9 +246,6 @@ export class AuthService {
 
     const db = this.prisma.client;
 
-    // Dummy hash for timing-safe responses when user not found
-    const DUMMY_HASH = '$2b$10$dummyhashfortimingequaliz0000000000000000000000000';
-
     // 1. Find user — only select fields needed for auth flow
     const user = await db.user.findUnique({
       where: { email },
@@ -249,21 +255,33 @@ export class AuthService {
       },
     });
     if (!user) {
-      await bcrypt.compare(password, DUMMY_HASH); // equalize timing
+      await bcrypt.compare(password, this.dummyHash); // equalize timing (same cost as a real hash)
       await this.securityLogger.log({ event: 'LOGIN_FAILED', email, ip, userAgent, details: 'User not found' });
       throw new UnauthorizedException('Invalid credentials');
     }
 
     // 2. Check lockout — return generic message to prevent account enumeration
     if (user.lockedUntil && user.lockedUntil > new Date()) {
-      await bcrypt.compare(password, user.password || DUMMY_HASH); // equalize timing
+      await bcrypt.compare(password, user.password || this.dummyHash); // equalize timing
       await this.securityLogger.log({ event: 'LOGIN_FAILED', userId: user.id, email, ip, userAgent, details: 'Account locked' });
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    // 2b. Lock has EXPIRED (lockedUntil is set but not in the future, per the
+    // check above). Reset the attempt budget to zero so the account gets a fresh
+    // N attempts this cycle. Without this, failedLoginAttempts still holds
+    // ≥threshold, so the very next wrong password re-locks immediately — letting
+    // an attacker keep a victim permanently locked out with one attempt every
+    // lock-duration (well under any rate limit). One-time write per lock cycle.
+    if (user.lockedUntil) {
+      await db.user.update({ where: { id: user.id }, data: { failedLoginAttempts: 0, lockedUntil: null } });
+      user.failedLoginAttempts = 0;
+      user.lockedUntil = null;
+    }
+
     // 3. Verify password (null password = OAuth-only account)
     if (!user.password) {
-      await bcrypt.compare(password, DUMMY_HASH); // equalize timing
+      await bcrypt.compare(password, this.dummyHash); // equalize timing
       throw new UnauthorizedException('Invalid credentials');
     }
     const validPassword = await bcrypt.compare(password, user.password);

@@ -532,6 +532,23 @@ export class VendorService {
       // twice and the customer is credited their refund points twice. Mirrors
       // the customer cancelBooking guard (bookings.service.ts).
       if (newStatus === 'CANCELLED') {
+        // M9 — a vendor must NOT self-cancel a booking whose payout has already
+        // been PAID. Payout only happens AFTER the activity's end date, so there
+        // is no legitimate reason for a vendor to cancel a completed, paid-out
+        // booking; doing so refunds the customer (points) while the vendor keeps
+        // the cash — a platform double-loss and a collusion vector. Route it
+        // through admin, who can coordinate the clawback. Checked BEFORE the
+        // CANCELLED claim so nothing is mutated on rejection.
+        const paidOut = await tx.booking.findUnique({
+          where: { id: bookingId },
+          select: { payment: { select: { payoutStatus: true } } },
+        });
+        if (paidOut?.payment?.payoutStatus === 'PAID') {
+          throw new ForbiddenException(
+            'This booking has already been paid out and can no longer be cancelled here. Please contact support to arrange it.',
+          );
+        }
+
         const claim = await tx.booking.updateMany({
           where: { id: bookingId, status: { not: 'CANCELLED' } },
           data: {

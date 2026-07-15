@@ -44,6 +44,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Session expired — please log in again');
     }
 
-    return { id: payload.sub, email: payload.email, role: payload.role, fullName: user.fullName };
+    // Use the DB role, NOT payload.role. The access token is stateless, so if an
+    // admin demotes a user, the old role lives in every already-issued token until
+    // it expires. We already fetched the current role above — trust it, so a
+    // demotion takes effect on the very next request instead of ≤JWT_EXPIRATION
+    // later. (admin.service.ts deletes refresh tokens on demotion, which stops
+    // RENEWAL but cannot revoke a still-valid access token — this closes that gap.)
+    return { id: payload.sub, email: payload.email, role: user.role, fullName: user.fullName };
   }
 }
