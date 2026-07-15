@@ -1,3 +1,5 @@
+// Anti-enum constant-time floor off in tests (behaviour verified by inspection; timing is flaky).
+process.env.REGISTER_MIN_RESPONSE_MS = '0';
 /**
  * AuthService end-to-end account flows against real Postgres.
  *
@@ -76,18 +78,32 @@ describe('AuthService.registerAndLogin', () => {
     expect(emailMock.sendEmailVerification).toHaveBeenCalled();
   });
 
-  test('duplicate email → ConflictException', async () => {
+  test('M3: duplicate email → generic {pending} response (no enumeration) + notifies the owner', async () => {
     await seedReference(ctx.prisma);
-    const { svc } = makeAuth();
+    const emailMock = makeEmailMock();
+    const { svc } = makeAuth(emailMock);
 
-    await svc.registerAndLogin({
-      fullName: 'U1', email: 'dupe@t.com', password: 'P@ssw0rd123',
+    // Seed the existing owner DIRECTLY (not via a first registerAndLogin, whose
+    // fire-and-forget verification email would race this test's assertions).
+    await ctx.prisma.user.create({
+      data: { fullName: 'U1', email: 'dupe@t.com', password: 'x', role: 'CUSTOMER', emailVerified: true },
     });
-    await expect(
-      svc.registerAndLogin({
-        fullName: 'U2', email: 'dupe@t.com', password: 'Other!Pass9',
-      }),
-    ).rejects.toThrow(/already registered/i);
+
+    // Registering with the SAME email must NOT throw "already registered" (that's
+    // an existence oracle). It returns the identical generic response a fresh
+    // signup returns, so the two are indistinguishable to the caller.
+    const res = await svc.registerAndLogin({
+      fullName: 'U2', email: 'dupe@t.com', password: 'Other!Pass9',
+    });
+    expect(res).toEqual({ pending: true, email: 'dupe@t.com' });
+
+    // No SECOND account created, and NO verification email (the account exists) —
+    // instead the OWNER is told they already have one.
+    expect(await ctx.prisma.user.count({ where: { email: 'dupe@t.com' } })).toBe(1);
+    expect(emailMock.sendEmailVerification).not.toHaveBeenCalled();
+    expect(emailMock.sendAccountExistsNotification).toHaveBeenCalledWith(
+      'dupe@t.com', expect.objectContaining({ userName: 'U1' }), expect.anything(),
+    );
   });
 
   test('duplicate phone → ConflictException with neutral message (anti-enumeration)', async () => {

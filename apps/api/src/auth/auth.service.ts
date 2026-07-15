@@ -18,7 +18,7 @@ import { UsersService } from '../users/users.service';
 import { User } from '@prisma/client';
 import { TokenPayload } from './interfaces/token-payload.interface';
 import { RegisterVendorDto } from './dto/register-vendor.dto';
-import { resolveLanguageFromRequest } from '../common/utils/locale';
+import { resolveLanguageFromRequest, type EmailLanguage } from '../common/utils/locale';
 import { TERMS_VERSION } from '../common/terms';
 import { SecurityLoggerService } from '../common/services/security-logger.service';
 import { AuditLoggerService } from '../common/services/audit-logger.service';
@@ -508,8 +508,28 @@ export class AuthService {
 
   // ─── Register (customer) — sends verification email, does NOT issue cookies ─
 
+  /**
+   * Anti-enumeration constant-time floor for /auth/register. The fresh-signup
+   * path awaits DB writes + (previously) a network email send that the
+   * already-registered path skips, so response TIME leaked whether an email
+   * exists — a bigger oracle than the response body, which is already identical.
+   * Padding every branch up to a fixed floor makes all outcomes return at the
+   * same time. Pair this with a bcrypt equaliser (CPU cost) and a fire-and-forget
+   * email send (removes the variable network delay) so the natural time of every
+   * branch stays UNDER the floor. Env-tunable; default comfortably above the
+   * slowest branch (~1 bcrypt + a couple of writes).
+   */
+  private async padRegisterConstantTime(startedAt: number): Promise<void> {
+    const floorMs = Number(process.env.REGISTER_MIN_RESPONSE_MS || 600);
+    const elapsed = Date.now() - startedAt;
+    if (elapsed < floorMs) {
+      await new Promise((r) => setTimeout(r, floorMs - elapsed));
+    }
+  }
+
   async registerAndLogin(data: { fullName: string; email: string; password: string; phone?: string; website?: string }, req?: Request) {
     const db = this.prisma.client;
+    const startedAt = Date.now();
 
     // Honeypot trip — `website` is a hidden CSS-offscreen field (see
     // register-form.tsx). Real users never see or fill it. A non-empty
@@ -525,12 +545,42 @@ export class AuthService {
         ip: botIp,
         details: 'Honeypot tripped on /auth/register',
       });
+      await this.padRegisterConstantTime(startedAt);
       return { pending: true, email: data.email };
     }
 
-    // Pre-check email uniqueness → clean 409 instead of raw Prisma P2002
-    const existingEmail = await db.user.findUnique({ where: { email: data.email }, select: { id: true } });
-    if (existingEmail) throw new ConflictException('Email already registered');
+    // M3 — ANTI-ENUMERATION on an already-registered email. Do NOT throw
+    // "Email already registered" (a direct existence oracle). Return the SAME
+    // generic {pending,email} response a fresh signup returns, and email the
+    // OWNER "you already have an account" so a legitimate person who forgot is
+    // guided back in (log in / reset) rather than left with a verification mail
+    // that never comes. This mirrors the anti-enumeration already used by
+    // forgot-password / resend-verification. The honeypot path above returns the
+    // exact same response.
+    const existingEmail = await db.user.findUnique({
+      where: { email: data.email },
+      select: { id: true, fullName: true, preferredLanguage: true },
+    });
+    if (existingEmail) {
+      // Burn ~one bcrypt so this branch isn't measurably faster than the
+      // fresh-signup path (which hashes the password) — closes the timing side
+      // channel the response-shape match leaves open. dummyHash is cost-matched.
+      await bcrypt.compare('timing-equalizer', this.dummyHash).catch(() => undefined);
+      void this.emailService
+        .sendAccountExistsNotification(
+          data.email,
+          { userName: existingEmail.fullName || '' },
+          (existingEmail.preferredLanguage as EmailLanguage) || undefined,
+        )
+        .catch(() => undefined);
+      await this.securityLogger.log({
+        event: 'LOGIN_FAILED',
+        email: data.email,
+        details: 'Register attempt on an already-registered email',
+      });
+      await this.padRegisterConstantTime(startedAt);
+      return { pending: true, email: data.email };
+    }
 
     // Phone is @unique in the schema. Pre-check gives a clean 409 instead of
     // a raw Prisma P2002. Use a NEUTRAL message (not "phone already registered")
@@ -557,6 +607,10 @@ export class AuthService {
     });
 
     const { ip: regIp } = this.extractClientInfo(req);
+    // Still awaited so the token is persisted + quota is checked before we
+    // respond — but the actual network SEND inside is fire-and-forget (see
+    // sendVerificationEmail), so the variable Resend round-trip no longer extends
+    // the response and can't re-open the enumeration oracle by timing.
     await this.sendVerificationEmail(db, user.id, user.email, user.fullName, regIp);
 
     await this.securityLogger.log({ event: 'LOGIN_SUCCESS', userId: user.id, email: user.email, details: 'Customer registered, pending verification' });
@@ -574,6 +628,7 @@ export class AuthService {
       details: 'New customer account, pending email verification',
     });
 
+    await this.padRegisterConstantTime(startedAt);
     return { pending: true, email: user.email };
   }
 
@@ -760,7 +815,14 @@ export class AuthService {
     const ipAllowed = await this.emailQuota.tryConsumePerIp(ip);
     if (!ipAllowed) return;
 
-    await this.emailService.sendEmailVerification(email, { userName: fullName, verificationLink });
+    // Fire-and-forget the network SEND: awaiting the Resend round-trip here made
+    // the fresh-signup path measurably slower than the already-registered path,
+    // re-opening the email-enumeration oracle by timing. The token is already
+    // persisted above; a failed send is recoverable via /auth/resend-verification.
+    // (The call is still INVOKED synchronously — only its result isn't awaited —
+    // so callers/tests observing "was a verification email dispatched?" are
+    // unaffected.)
+    void this.emailService.sendEmailVerification(email, { userName: fullName, verificationLink }).catch(() => undefined);
   }
 
   // ─── Register vendor ───────────────────────────────────────────────────────

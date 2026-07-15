@@ -1,3 +1,5 @@
+// Anti-enum constant-time floor off in tests (behaviour verified by inspection; timing is flaky).
+process.env.REGISTER_MIN_RESPONSE_MS = '0';
 /**
  * AuthService unit tests — critical money/identity paths.
  *
@@ -551,10 +553,12 @@ describe('AuthService.registerAndLogin', () => {
     expect(ctx.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'CUSTOMER_REGISTER' }));
   });
 
-  test('duplicate email → 409', async () => {
-    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({ id: 'existing' });
-    await expect(ctx.sut.registerAndLogin({ fullName: 'X', email: 'taken@b.com', password: 'pw' }))
-      .rejects.toThrow(ConflictException);
+  test('M3: duplicate email → generic {pending} (no 409 enumeration oracle)', async () => {
+    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({ id: 'existing', fullName: 'Owner', preferredLanguage: 'EN' });
+    // No throw — returns the same generic response a fresh signup would, so a
+    // caller cannot tell the email is already registered.
+    const res = await ctx.sut.registerAndLogin({ fullName: 'X', email: 'taken@b.com', password: 'pw' });
+    expect(res).toEqual({ pending: true, email: 'taken@b.com' });
   });
 
   test('duplicate phone → 409 with NEUTRAL message (anti-enumeration)', async () => {
