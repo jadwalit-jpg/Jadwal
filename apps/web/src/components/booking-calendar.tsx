@@ -157,10 +157,11 @@ function MonthGrid({
         {monthLabel(month, locale)}
       </h3>
 
-      {/* Weekday headers */}
+      {/* Weekday headers — min-w-0 + truncate so a wide localized name (Arabic)
+          can never overflow its grid track into the neighbouring column. */}
       <div className="grid grid-cols-7 gap-0 mb-1">
         {weekdays.map((wd, i) => (
-          <div key={i} className="text-center text-[11px] font-medium text-gray-400 dark:text-slate-500 py-1">
+          <div key={i} className="min-w-0 truncate text-center text-[10px] sm:text-[11px] font-medium text-gray-400 dark:text-slate-500 py-1">
             {wd}
           </div>
         ))}
@@ -367,8 +368,11 @@ export default function BookingCalendar({
         </button>
       </div>
 
-      {/* Two-month grid */}
-      <div className="flex gap-4 sm:gap-8">
+      {/* Two-month grid — stacked on mobile (each month full-width so the 7 weekday
+          columns have room; critical for Arabic, whose day names are wider than
+          the English abbreviations and overlap when two months share a narrow
+          phone screen), side-by-side from sm up. */}
+      <div className="flex flex-col sm:flex-row gap-6 sm:gap-8">
         <MonthGrid
           month={month}
           days={daysLeft}
