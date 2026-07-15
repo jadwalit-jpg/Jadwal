@@ -6,6 +6,7 @@ import { bookingCancellationTemplate } from './templates/booking-cancellation';
 import { passwordResetTemplate } from './templates/password-reset';
 import { passwordChangedTemplate } from './templates/password-changed';
 import { emailVerificationTemplate } from './templates/email-verification';
+import { accountExistsTemplate } from './templates/account-exists';
 import { bookingOtpTemplate } from './templates/booking-otp';
 import {
   vendorBookingNotificationTemplate,
@@ -237,6 +238,20 @@ export class EmailService {
     return this.send(to, 'password-changed', data, locale);
   }
 
+  /**
+   * Sent to the OWNER of an already-registered email when someone attempts to
+   * sign up with it again. The register endpoint returns the generic
+   * fresh-signup response (anti-enumeration), so this is what tells a legitimate
+   * owner "you already have an account" instead of leaving them confused.
+   */
+  async sendAccountExistsNotification(
+    to: string,
+    data: { userName: string },
+    locale?: EmailLanguage,
+  ) {
+    return this.send(to, 'account-exists', data, locale);
+  }
+
   // ─── Admin Notifications ─────────────────────────────────────────────────
 
   /** Per-key value cap — long values get truncated with a trailing ellipsis. */
@@ -342,6 +357,9 @@ export class EmailService {
         break;
       case 'email-verification':
         rendered = emailVerificationTemplate(data as any, locale);
+        break;
+      case 'account-exists':
+        rendered = accountExistsTemplate(data as any, locale);
         break;
       case 'booking-otp':
         rendered = bookingOtpTemplate(data as any, locale);

@@ -60,6 +60,7 @@ export function makeEmailMock() {
     sendBookingCancellation:      jest.fn().mockResolvedValue(undefined),
     sendVendorWelcome:            jest.fn().mockResolvedValue(undefined),
     sendPasswordChangedNotification: jest.fn().mockResolvedValue(undefined),
+    sendAccountExistsNotification: jest.fn().mockResolvedValue(undefined),
   };
 }
 

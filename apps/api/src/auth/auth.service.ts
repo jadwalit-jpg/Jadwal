@@ -18,7 +18,7 @@ import { UsersService } from '../users/users.service';
 import { User } from '@prisma/client';
 import { TokenPayload } from './interfaces/token-payload.interface';
 import { RegisterVendorDto } from './dto/register-vendor.dto';
-import { resolveLanguageFromRequest } from '../common/utils/locale';
+import { resolveLanguageFromRequest, type EmailLanguage } from '../common/utils/locale';
 import { TERMS_VERSION } from '../common/terms';
 import { SecurityLoggerService } from '../common/services/security-logger.service';
 import { AuditLoggerService } from '../common/services/audit-logger.service';
@@ -528,9 +528,37 @@ export class AuthService {
       return { pending: true, email: data.email };
     }
 
-    // Pre-check email uniqueness → clean 409 instead of raw Prisma P2002
-    const existingEmail = await db.user.findUnique({ where: { email: data.email }, select: { id: true } });
-    if (existingEmail) throw new ConflictException('Email already registered');
+    // M3 — ANTI-ENUMERATION on an already-registered email. Do NOT throw
+    // "Email already registered" (a direct existence oracle). Return the SAME
+    // generic {pending,email} response a fresh signup returns, and email the
+    // OWNER "you already have an account" so a legitimate person who forgot is
+    // guided back in (log in / reset) rather than left with a verification mail
+    // that never comes. This mirrors the anti-enumeration already used by
+    // forgot-password / resend-verification. The honeypot path above returns the
+    // exact same response.
+    const existingEmail = await db.user.findUnique({
+      where: { email: data.email },
+      select: { id: true, fullName: true, preferredLanguage: true },
+    });
+    if (existingEmail) {
+      // Burn ~one bcrypt so this branch isn't measurably faster than the
+      // fresh-signup path (which hashes the password) — closes the timing side
+      // channel the response-shape match leaves open. dummyHash is cost-matched.
+      await bcrypt.compare('timing-equalizer', this.dummyHash).catch(() => undefined);
+      void this.emailService
+        .sendAccountExistsNotification(
+          data.email,
+          { userName: existingEmail.fullName || '' },
+          (existingEmail.preferredLanguage as EmailLanguage) || undefined,
+        )
+        .catch(() => undefined);
+      await this.securityLogger.log({
+        event: 'LOGIN_FAILED',
+        email: data.email,
+        details: 'Register attempt on an already-registered email',
+      });
+      return { pending: true, email: data.email };
+    }
 
     // Phone is @unique in the schema. Pre-check gives a clean 409 instead of
     // a raw Prisma P2002. Use a NEUTRAL message (not "phone already registered")
