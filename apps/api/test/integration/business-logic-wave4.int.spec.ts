@@ -19,6 +19,7 @@ import { AdminService } from '../../src/admin/admin.service';
 import { VendorService } from '../../src/vendor/vendor.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import * as crypto from 'crypto';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -39,8 +40,8 @@ function makeServices() {
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
   return {
-    admin: new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any),
-    vendor: new VendorService(prismaSvc, notificationService, loyalty, availabilityCache),
+    admin: new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any, makeSessionDenylistMock() as any),
+    vendor: new VendorService(prismaSvc, notificationService, loyalty, availabilityCache, makeSessionDenylistMock() as any),
   };
 }
 

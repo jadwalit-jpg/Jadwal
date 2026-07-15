@@ -15,6 +15,7 @@ import { GoogleAuthGuard } from '../../src/auth/guards/google-auth.guard';
 import { Reflector } from '@nestjs/core';
 import { UnauthorizedException } from '@nestjs/common';
 import { ROLES_KEY } from '../../src/auth/decorators/roles.decorator';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 function makeConfig(overrides: Record<string, string> = {}) {
   const defaults: Record<string, string> = {
@@ -48,7 +49,7 @@ function makePrisma(userRow: any) {
 describe('JwtStrategy', () => {
   test('missing JWT_SECRET → constructor throws (FATAL)', () => {
     const prisma = makePrisma({}) as any;
-    expect(() => new JwtStrategy(makeConfig({ JWT_SECRET: '' }) as any, prisma))
+    expect(() => new JwtStrategy(makeConfig({ JWT_SECRET: '' }) as any, prisma, makeSessionDenylistMock() as any))
       .toThrow(/FATAL.*JWT_SECRET/);
   });
 
@@ -56,7 +57,7 @@ describe('JwtStrategy', () => {
     const prisma = makePrisma({
       id: 'u1', isDeactivated: false, role: 'CUSTOMER', fullName: 'Alice',
     }) as any;
-    const svc = new JwtStrategy(makeConfig() as any, prisma);
+    const svc = new JwtStrategy(makeConfig() as any, prisma, makeSessionDenylistMock() as any);
     const out = await svc.validate({ sub: 'u1', email: 'alice@t.com', role: 'CUSTOMER' });
     expect(out).toEqual({ id: 'u1', email: 'alice@t.com', role: 'CUSTOMER', fullName: 'Alice' });
   });
@@ -69,7 +70,7 @@ describe('JwtStrategy', () => {
     const prisma = makePrisma({
       id: 'u1', isDeactivated: false, role: 'CUSTOMER', fullName: 'Alice',
     }) as any;
-    const svc = new JwtStrategy(makeConfig() as any, prisma);
+    const svc = new JwtStrategy(makeConfig() as any, prisma, makeSessionDenylistMock() as any);
     const out = await svc.validate({ sub: 'u1', email: 'alice@t.com', role: 'VENDOR' });
     expect(out.role).toBe('CUSTOMER'); // DB wins, not the token's 'VENDOR'
   });
@@ -78,14 +79,14 @@ describe('JwtStrategy', () => {
     const prisma = makePrisma({
       id: 'u1', isDeactivated: true, role: 'CUSTOMER', fullName: 'Alice',
     }) as any;
-    const svc = new JwtStrategy(makeConfig() as any, prisma);
+    const svc = new JwtStrategy(makeConfig() as any, prisma, makeSessionDenylistMock() as any);
     await expect(svc.validate({ sub: 'u1', email: 'alice@t.com', role: 'CUSTOMER' }))
       .rejects.toThrow(UnauthorizedException);
   });
 
   test('validate(): unknown user id → UnauthorizedException', async () => {
     const prisma = makePrisma(null) as any;
-    const svc = new JwtStrategy(makeConfig() as any, prisma);
+    const svc = new JwtStrategy(makeConfig() as any, prisma, makeSessionDenylistMock() as any);
     await expect(svc.validate({ sub: 'ghost', email: 'x@t.com', role: 'CUSTOMER' }))
       .rejects.toThrow(UnauthorizedException);
   });

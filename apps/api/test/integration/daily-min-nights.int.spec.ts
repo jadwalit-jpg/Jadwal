@@ -11,6 +11,7 @@ import { getTestContext, seedReference } from './_setup';
 import { VendorService } from '../../src/vendor/vendor.service';
 import { BookingsService } from '../../src/bookings/bookings.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -39,7 +40,7 @@ function makeServices() {
   } as any;
   const auditLogger = { log: jest.fn().mockResolvedValue(undefined) } as any;
 
-  const vendor = new VendorService(prismaSvc, notificationService, loyalty, availabilityCache);
+  const vendor = new VendorService(prismaSvc, notificationService, loyalty, availabilityCache, makeSessionDenylistMock() as any);
   const bookings = new BookingsService(
     prismaSvc, auditLogger, notificationService, redisLock,
     configService, loyalty, availabilityCache,

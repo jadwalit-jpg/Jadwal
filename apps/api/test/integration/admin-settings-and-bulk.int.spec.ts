@@ -13,6 +13,7 @@ import { AdminService } from '../../src/admin/admin.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -29,6 +30,7 @@ function makeAdmin() {
     loyalty,
     { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any,
     { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any,
+    makeSessionDenylistMock() as any,
   );
 }
 

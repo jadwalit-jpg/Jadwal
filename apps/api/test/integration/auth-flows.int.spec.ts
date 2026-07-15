@@ -19,7 +19,7 @@ import { UsersService } from '../../src/users/users.service';
 import {
   makeJwtMock, makeConfigMock, makeSecurityLoggerMock, makeAuditLoggerMock,
   makeEmailMock, makeEmailQuotaMock, makeNotificationMock, makeRedisMock,
-  makeResponseMock, makeRequestMock,
+  makeResponseMock, makeRequestMock, makeSessionDenylistMock,
 } from '../mocks/auth-deps.mock';
 import * as bcrypt from 'bcrypt';
 
@@ -43,6 +43,7 @@ function makeAuth(emailMock = makeEmailMock()) {
     makeEmailQuotaMock() as any,    // EmailQuotaService — mock returns true (no quota gating in tests)
     makeNotificationMock() as any,
     makeRedisMock() as any,         // RedisService — in-memory stub for rate-limit / lock state
+    makeSessionDenylistMock() as any,
   );
   return { svc, emailMock };
 }

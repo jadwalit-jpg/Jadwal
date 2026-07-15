@@ -104,10 +104,23 @@ model RefreshToken {
   ipAddress   String?  // IP address at login time
   lastUsedAt  DateTime @default(now()) // Updated on each token refresh
 
+  // Stable session identity, carried across every rotation of this session's
+  // refresh token (like sessionStartedAt). Lets us (a) revoke a whole session on
+  // logout / stolen-token reuse, and (b) put the session on a short-lived Redis
+  // denylist so an already-issued ACCESS token stops working the moment the user
+  // logs out (M5). DB default so pre-migration rows each become their own family.
+  familyId    String   @default(uuid())
+
+  // Set when this refresh token is ROTATED (single-use consumed). A token
+  // presented AGAIN after this is set is a REUSE (a stolen, already-rotated
+  // token replayed) → revoke the entire family (M6). NULL = not yet used.
+  rotatedAt   DateTime?
+
   // tokenHash is @unique — no separate @@index needed
   @@index([userId])
   @@index([expiresAt])
   @@index([userId, createdAt])
+  @@index([familyId])
   @@map("refresh_tokens")
 }
 
