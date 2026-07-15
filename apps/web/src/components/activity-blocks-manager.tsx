@@ -320,6 +320,44 @@ export default function ActivityBlocksManager({ activityId, bookingType, checkIn
       toast(getApiError(err, t('vendor.activities.wizard.blocked.addFailed', 'Could not add block')), 'error'),
   });
 
+  // Convenience (slot mode): block the ENTIRE active date as a whole day without
+  // picking each slot. Reuses the standard whole-day path (POST { date }); if the
+  // day already has specific slot locks the server returns a 409 overlap, shown
+  // as a toast. Mirrors the top "Block the whole day" checkbox, scoped to the
+  // currently-open day.
+  const wholeDayFromSlotMut = useMutation({
+    mutationFn: async () => {
+      const res = await api.post(`${apiBase}/activities/${activityId}/blocks`, { date: activeDate });
+      return { affected: (res.data?.affectedBookings as number) ?? 0 };
+    },
+    onSuccess: ({ affected }) => {
+      const base = t('vendor.activities.wizard.blocked.added', 'Dates blocked');
+      toast(
+        affected > 0
+          ? `${base} — ${affected} ${t('vendor.activities.wizard.blocked.affectedNote', 'existing booking(s) in this period are not cancelled')}`
+          : base,
+        'success',
+      );
+      qc.invalidateQueries({ queryKey });
+      setSelectedSlots(new Set());
+      setActiveDate(''); // day is fully blocked now → drop back to the calendar
+    },
+    onError: (err) =>
+      toast(getApiError(err, t('vendor.activities.wizard.blocked.addFailed', 'Could not add block')), 'error'),
+  });
+
+  // Block the whole active day (draft: append a whole-day request; live: mutate).
+  const blockActiveWholeDay = () => {
+    if (!activeDate) return;
+    if (draft) {
+      onChange?.([...(value ?? []), { date: activeDate }]);
+      setSelectedSlots(new Set());
+      setActiveDate('');
+    } else {
+      wholeDayFromSlotMut.mutate();
+    }
+  };
+
   const deleteMut = useMutation({
     mutationFn: (id: string) =>
       api.delete(`${apiBase}/activities/${activityId}/blocks/${id}`).then((r) => r.data),
@@ -484,13 +522,23 @@ export default function ActivityBlocksManager({ activityId, bookingType, checkIn
       {(slotMode ? !!activeDate : true) && (
         <div className="mt-3 rounded-xl bg-stone-50 dark:bg-slate-800/50 p-4 border border-stone-200 dark:border-slate-700">
           {slotMode ? (
-            <button type="button" disabled={selectedSlots.size === 0 || (!draft && lockSlotsMut.isPending)}
-              onClick={() => draft ? draftLockSlots() : lockSlotsMut.mutate()}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ backgroundColor: BRAND }}>
-              {!draft && lockSlotsMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
-              {t('vendor.activities.wizard.blocked.lock', 'Lock')} {selectedSlots.size > 0 ? selectedSlots.size : ''} {t('vendor.activities.wizard.blocked.timesWord', 'time(s)')}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" disabled={selectedSlots.size === 0 || (!draft && lockSlotsMut.isPending)}
+                onClick={() => draft ? draftLockSlots() : lockSlotsMut.mutate()}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: BRAND }}>
+                {!draft && lockSlotsMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+                {t('vendor.activities.wizard.blocked.lock', 'Lock')} {selectedSlots.size > 0 ? selectedSlots.size : ''} {t('vendor.activities.wizard.blocked.timesWord', 'time(s)')}
+              </button>
+              {/* Additional convenience: block the WHOLE selected day, right beside
+                  the Lock-times action (the top-of-calendar checkbox still exists). */}
+              <button type="button" disabled={!draft && wholeDayFromSlotMut.isPending}
+                onClick={blockActiveWholeDay}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-rose-500 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+                {!draft && wholeDayFromSlotMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+                {t('vendor.activities.wizard.blocked.wholeDay', 'Block the whole day')}
+              </button>
+            </div>
           ) : (
             <button type="button" disabled={selectedDates.size === 0 || (!draft && lockMut.isPending)}
               onClick={() => draft ? draftLockWholeDays() : lockMut.mutate()}

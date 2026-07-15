@@ -1380,7 +1380,7 @@ export default function BookActivityPage() {
                         <span className="text-emerald-600 dark:text-emerald-400">{t('booking.couponCode')} ({appliedCoupon.code})</span>
                         <button type="button" onClick={handleRemoveCoupon} className="text-xs text-gray-400 hover:text-red-500 transition-colors">{t('booking.remove')}</button>
                       </div>
-                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">-{currency} {appliedCoupon.discount.toFixed(0)}</span>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">-{currency} {appliedCoupon.discount.toFixed(2)}</span>
                     </div>
                   )}
                   {/* Voucher discount */}
@@ -1390,7 +1390,7 @@ export default function BookActivityPage() {
                         <span className="text-purple-600 dark:text-purple-400">{t('booking.useVoucher')}</span>
                         <button type="button" onClick={() => setSelectedVoucher(null)} className="text-xs text-gray-400 hover:text-red-500 transition-colors">{t('booking.remove')}</button>
                       </div>
-                      <span className="text-purple-600 dark:text-purple-400 font-medium">-{currency} {selectedVoucher.discount.toFixed(0)}</span>
+                      <span className="text-purple-600 dark:text-purple-400 font-medium">-{currency} {selectedVoucher.discount.toFixed(2)}</span>
                     </div>
                   )}
                 </div>
@@ -1467,7 +1467,7 @@ export default function BookActivityPage() {
                             {label}
                           </span>
                           <span className={`text-xs ${isSelected ? 'text-purple-600 dark:text-purple-400 font-semibold' : 'text-gray-400 dark:text-slate-500'}`}>
-                            {isSelected ? `-${vDiscount.toFixed(0)} QAR` : tooLow ? `Min. ${v.minOrderAmount}` : t('booking.apply')}
+                            {isSelected ? `-${vDiscount.toFixed(2)} QAR` : tooLow ? `Min. ${v.minOrderAmount}` : t('booking.apply')}
                           </span>
                         </button>
                       );

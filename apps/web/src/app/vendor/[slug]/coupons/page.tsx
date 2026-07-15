@@ -414,7 +414,12 @@ export default function VendorCouponsPage() {
                 </label>
                 <input
                   type="number"
-                  min={1}
+                  // step + min allow fractional values (e.g. 0.10 QAR). Without
+                  // step, type=number defaults to step="1" and the browser rejects
+                  // decimals; min=1 also blocked sub-1 amounts. 0.01 matches the
+                  // server DTO (@Min(0.01)).
+                  step="0.01"
+                  min={0.01}
                   max={form.discountType === 'PERCENTAGE' ? 100 : undefined}
                   value={form.discountValue}
                   onChange={(e) => setForm((p) => ({ ...p, discountValue: e.target.value }))}
