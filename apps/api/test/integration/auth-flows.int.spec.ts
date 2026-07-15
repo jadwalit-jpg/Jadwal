@@ -83,21 +83,22 @@ describe('AuthService.registerAndLogin', () => {
     const emailMock = makeEmailMock();
     const { svc } = makeAuth(emailMock);
 
-    await svc.registerAndLogin({
-      fullName: 'U1', email: 'dupe@t.com', password: 'P@ssw0rd123',
+    // Seed the existing owner DIRECTLY (not via a first registerAndLogin, whose
+    // fire-and-forget verification email would race this test's assertions).
+    await ctx.prisma.user.create({
+      data: { fullName: 'U1', email: 'dupe@t.com', password: 'x', role: 'CUSTOMER', emailVerified: true },
     });
-    emailMock.sendEmailVerification.mockClear();
 
-    // Registering again with the SAME email must NOT throw "already registered"
-    // (that's an existence oracle). It returns the identical generic response a
-    // fresh signup returns, so the two are indistinguishable to the caller.
+    // Registering with the SAME email must NOT throw "already registered" (that's
+    // an existence oracle). It returns the identical generic response a fresh
+    // signup returns, so the two are indistinguishable to the caller.
     const res = await svc.registerAndLogin({
       fullName: 'U2', email: 'dupe@t.com', password: 'Other!Pass9',
     });
     expect(res).toEqual({ pending: true, email: 'dupe@t.com' });
 
-    // No SECOND account was created, and no verification email was sent (the
-    // account already exists) — instead the OWNER is told they already have one.
+    // No SECOND account created, and NO verification email (the account exists) —
+    // instead the OWNER is told they already have one.
     expect(await ctx.prisma.user.count({ where: { email: 'dupe@t.com' } })).toBe(1);
     expect(emailMock.sendEmailVerification).not.toHaveBeenCalled();
     expect(emailMock.sendAccountExistsNotification).toHaveBeenCalledWith(

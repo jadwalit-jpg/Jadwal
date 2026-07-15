@@ -607,15 +607,11 @@ export class AuthService {
     });
 
     const { ip: regIp } = this.extractClientInfo(req);
-    // Fire-and-forget the verification email — do NOT await the (variable,
-    // network-bound) Resend send before responding. Awaiting it made the
-    // fresh-signup path measurably SLOWER than the already-registered path (which
-    // fire-and-forgets its notify email), re-opening the enumeration oracle by
-    // timing. The token IS persisted inside sendVerificationEmail (a fast DB
-    // write that completes well before any user clicks the link), and a failed
-    // send is recoverable via /auth/resend-verification. The constant-time floor
-    // below equalises the remaining branch-time delta.
-    void this.sendVerificationEmail(db, user.id, user.email, user.fullName, regIp).catch(() => undefined);
+    // Still awaited so the token is persisted + quota is checked before we
+    // respond — but the actual network SEND inside is fire-and-forget (see
+    // sendVerificationEmail), so the variable Resend round-trip no longer extends
+    // the response and can't re-open the enumeration oracle by timing.
+    await this.sendVerificationEmail(db, user.id, user.email, user.fullName, regIp);
 
     await this.securityLogger.log({ event: 'LOGIN_SUCCESS', userId: user.id, email: user.email, details: 'Customer registered, pending verification' });
 
@@ -819,7 +815,14 @@ export class AuthService {
     const ipAllowed = await this.emailQuota.tryConsumePerIp(ip);
     if (!ipAllowed) return;
 
-    await this.emailService.sendEmailVerification(email, { userName: fullName, verificationLink });
+    // Fire-and-forget the network SEND: awaiting the Resend round-trip here made
+    // the fresh-signup path measurably slower than the already-registered path,
+    // re-opening the email-enumeration oracle by timing. The token is already
+    // persisted above; a failed send is recoverable via /auth/resend-verification.
+    // (The call is still INVOKED synchronously — only its result isn't awaited —
+    // so callers/tests observing "was a verification email dispatched?" are
+    // unaffected.)
+    void this.emailService.sendEmailVerification(email, { userName: fullName, verificationLink }).catch(() => undefined);
   }
 
   // ─── Register vendor ───────────────────────────────────────────────────────
