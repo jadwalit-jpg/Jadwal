@@ -21,6 +21,7 @@ import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { ReferenceDataCacheService } from '../redis/reference-data-cache.service';
+import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
@@ -35,6 +36,7 @@ export class AdminService {
     private loyalty: LoyaltyService,
     private availabilityCache: AvailabilityCacheService,
     private refCache: ReferenceDataCacheService,
+    private sessionDenylist: SessionDenylistService,
   ) {}
 
   // ─── Admin Profile ──────────────────────────────────────────
@@ -69,6 +71,9 @@ export class AdminService {
     if (!valid) throw new ForbiddenException('Current password is incorrect');
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hash = await bcrypt.hash(newPassword, bcryptRounds);
+    // M5 — denylist every live session BEFORE the tx deletes the refresh rows,
+    // so outstanding access tokens die immediately too (not just at renewal).
+    await this.sessionDenylist.denylistAllUserSessions(userId);
     // Interactive transaction (function form) — preferred over the array form
     // with Prisma 7 driver adapters.
     await db.$transaction(async (tx) => {
@@ -338,7 +343,10 @@ export class AdminService {
       data: { role },
       select: { id: true, fullName: true, email: true, role: true },
     });
-    // Invalidate all sessions so the user gets a new JWT with the updated role
+    // Invalidate all sessions so the user gets a new JWT with the updated role.
+    // Denylist FIRST (M5) so any already-issued access token carrying the OLD
+    // role is rejected immediately, not ≤JWT_EXPIRATION later.
+    await this.sessionDenylist.denylistAllUserSessions(userId);
     await db.refreshToken.deleteMany({ where: { userId } });
     return result;
   }
@@ -357,6 +365,7 @@ export class AdminService {
     });
     // When deactivating, kill all sessions so the user is immediately logged out
     if (isDeactivated) {
+      await this.sessionDenylist.denylistAllUserSessions(userId);
       await db.refreshToken.deleteMany({ where: { userId } });
     }
     return result;
@@ -424,6 +433,10 @@ export class AdminService {
         `Cannot delete user: ${totalBlocking} unresolved booking(s) (${asCustomer} as customer, ${asVendor} as vendor). Cancel or refund them first.`,
       );
     }
+
+    // M5 — denylist every live session BEFORE the tx deletes the refresh rows,
+    // so the soft-deleted account's outstanding access tokens die immediately.
+    await this.sessionDenylist.denylistAllUserSessions(userId);
 
     const affectedActivityIds = await db.$transaction(async (tx: any) => {
       let activityIdsTouched: string[] = [];
@@ -589,8 +602,10 @@ export class AdminService {
       // 404s because vendor pages are namespaced under /vendor/[slug]/*.
       include: { user: { select: { id: true, fullName: true, email: true } } },
     });
-    // When suspending a vendor, kill all their sessions immediately
+    // When suspending a vendor, kill all their sessions immediately —
+    // denylist FIRST (M5) so any outstanding access token dies at once.
     if (status === 'SUSPENDED') {
+      await this.sessionDenylist.denylistAllUserSessions(vendor.user.id);
       await db.refreshToken.deleteMany({ where: { userId: vendor.user.id } });
     }
 
@@ -732,6 +747,10 @@ export class AdminService {
         `Cannot delete vendor: ${blockingPayoutRequests} payout request(s) still in flight. Approve / reject / complete those first, then delete.`,
       );
     }
+
+    // M5 — denylist the vendor's live sessions BEFORE the tx deletes the
+    // refresh rows, so the soft-deleted account's access tokens die at once.
+    await this.sessionDenylist.denylistAllUserSessions(vendor.userId);
 
     const activityIdsTouched = await db.$transaction(async (tx: any) => {
       // Soft-delete every active activity, freeing each slug.

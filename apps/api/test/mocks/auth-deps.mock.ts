@@ -91,10 +91,10 @@ export function makeNotificationMock() {
 // previously set" + counter-from-zero so tests don't trip rate limits or
 // cooldown unless they explicitly want to exercise those branches.
 export function makeRedisMock() {
-  const store = new Map<string, number>();
+  const store = new Map<string, string | number>();
   const client = {
     incr: jest.fn(async (key: string) => {
-      const next = (store.get(key) ?? 0) + 1;
+      const next = Number(store.get(key) ?? 0) + 1;
       store.set(key, next);
       return next;
     }),
@@ -103,19 +103,41 @@ export function makeRedisMock() {
     // for the key and trust call sites pass the canonical pattern.
     // Mirrors the real ioredis eval signature: (script, numKeys, ...keysThenArgs).
     eval: jest.fn(async (_script: string, _numKeys: number, key: string, _ttlSec: string) => {
-      const next = (store.get(key) ?? 0) + 1;
+      const next = Number(store.get(key) ?? 0) + 1;
       store.set(key, next);
       return next;
     }),
     expire: jest.fn().mockResolvedValue(1),
     del:    jest.fn(async (key: string) => { store.delete(key); return 1; }),
-    set:    jest.fn().mockResolvedValue('OK'),
+    // Store the value so SET/GET round-trips (M5 denylist markers rely on this).
+    // TTL args (PX/EX …) are accepted and ignored — tests don't need real expiry.
+    set:    jest.fn(async (key: string, value: string | number) => { store.set(key, value); return 'OK'; }),
     get:    jest.fn(async (key: string) => store.get(key)?.toString() ?? null),
     _store: store, // exposed so tests can prime state if needed
   };
   return {
     getClient: jest.fn(() => client as unknown),
     _client:   client,
+  };
+}
+
+// M5/M6 session-family denylist. Functional in-memory stub: denylistSession
+// records the family so isDenied() reflects it (lets a test assert an access
+// token is rejected right after that session is revoked). denylistAllUserSessions
+// / denylistUserSessionsExcept are no-ops here (their "kill all sessions" effect
+// is asserted at the DB level by the existing suites); the dedicated
+// session-family spec builds a REAL SessionDenylistService when it needs the
+// full DB-backed behaviour. `_denied` is exposed so tests can prime/inspect.
+export function makeSessionDenylistMock() {
+  const denied = new Set<string>();
+  return {
+    _denied: denied,
+    denylistSession: jest.fn(async (familyId?: string | null) => {
+      if (familyId) denied.add(familyId);
+    }),
+    denylistAllUserSessions: jest.fn().mockResolvedValue(undefined),
+    denylistUserSessionsExcept: jest.fn().mockResolvedValue(undefined),
+    isDenied: jest.fn(async (familyId?: string | null) => !!familyId && denied.has(familyId)),
   };
 }
 

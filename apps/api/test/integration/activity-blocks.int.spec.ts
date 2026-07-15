@@ -22,6 +22,7 @@ import { BookingsService } from '../../src/bookings/bookings.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -53,7 +54,7 @@ function makeServices() {
   } as any;
   const auditLogger = { log: jest.fn().mockResolvedValue(undefined) } as any;
 
-  const vendor = new VendorService(prismaSvc, notificationService, loyalty, availabilityCache);
+  const vendor = new VendorService(prismaSvc, notificationService, loyalty, availabilityCache, makeSessionDenylistMock() as any);
   const bookings = new BookingsService(
     prismaSvc, auditLogger, notificationService, redisLock,
     configService, loyalty, availabilityCache,
@@ -242,7 +243,7 @@ function makeAdmin() {
   const loyalty = new LoyaltyService(prismaSvc);
   const noop = { send: jest.fn().mockResolvedValue(undefined), notifyAdmins: jest.fn().mockResolvedValue(undefined), sendToMany: jest.fn().mockResolvedValue(undefined) } as any;
   const cache = { get: jest.fn().mockResolvedValue(null), set: jest.fn().mockResolvedValue(undefined), invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any;
-  return new AdminService(prismaSvc, noop, loyalty, cache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any);
+  return new AdminService(prismaSvc, noop, loyalty, cache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any, makeSessionDenylistMock() as any);
 }
 
 describe('admin block management (any activity)', () => {

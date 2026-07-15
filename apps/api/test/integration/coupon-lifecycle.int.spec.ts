@@ -21,6 +21,7 @@ import { BookingsService, refundCouponUsage } from '../../src/bookings/bookings.
 import { OffersController } from '../../src/catalog/offers.controller';
 import { BadRequestException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -44,8 +45,8 @@ function makeServices() {
     acquire: jest.fn().mockResolvedValue('tok'),
     release: jest.fn().mockResolvedValue(undefined),
   } as any;
-  const admin = new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any);
-  const vendor = new VendorService(prismaSvc, notificationService, loyalty, availabilityCache);
+  const admin = new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any, makeSessionDenylistMock() as any);
+  const vendor = new VendorService(prismaSvc, notificationService, loyalty, availabilityCache, makeSessionDenylistMock() as any);
   const bookings = new BookingsService(
     prismaSvc,
     { log: jest.fn().mockResolvedValue(undefined) } as any,

@@ -10,6 +10,7 @@ import { Prisma } from '@prisma/client';
 import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
+import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
@@ -26,6 +27,7 @@ export class VendorService {
     private notificationService: NotificationService,
     private loyalty: LoyaltyService,
     private availabilityCache: AvailabilityCacheService,
+    private sessionDenylist: SessionDenylistService,
   ) {}
 
   /** Resolve vendorId from userId — throws if not found or not ACTIVE */
@@ -1178,6 +1180,9 @@ export class VendorService {
     if (!valid) throw new ForbiddenException('Current password is incorrect');
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hash = await bcrypt.hash(newPassword, bcryptRounds);
+    // M5 — denylist every live session BEFORE the tx deletes the refresh rows,
+    // so outstanding access tokens die immediately (not just at renewal).
+    await this.sessionDenylist.denylistAllUserSessions(userId);
     // Interactive transaction (function form) — preferred over the array form
     // with Prisma 7 driver adapters; consistent with the rest of the codebase.
     await db.$transaction(async (tx) => {

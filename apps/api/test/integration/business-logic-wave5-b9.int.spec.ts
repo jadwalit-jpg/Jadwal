@@ -21,6 +21,7 @@ import { getTestContext, seedReference } from './_setup';
 import { AdminService } from '../../src/admin/admin.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import * as crypto from 'crypto';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -40,7 +41,7 @@ function makeAdmin() {
     invalidate: jest.fn().mockResolvedValue(undefined),
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
-  return new AdminService(prismaSvc, notif, loyalty, cache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any);
+  return new AdminService(prismaSvc, notif, loyalty, cache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any, makeSessionDenylistMock() as any);
 }
 
 async function seedCustomerWithHistory() {

@@ -12,6 +12,7 @@ import { getTestContext, seedReference } from './_setup';
 import { VendorService } from '../../src/vendor/vendor.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import * as crypto from 'crypto';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -32,7 +33,7 @@ function makeVendorService() {
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
   return {
-    vendor: new VendorService(prismaSvc, notificationService, loyalty, availabilityCache),
+    vendor: new VendorService(prismaSvc, notificationService, loyalty, availabilityCache, makeSessionDenylistMock() as any),
     notificationService,
   };
 }
