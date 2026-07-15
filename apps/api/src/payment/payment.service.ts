@@ -902,8 +902,13 @@ export class PaymentService {
         opts?.via === 'ipn'
           ? !!opts.trustedCapture && ['00', '000', '0000'].includes((params.err_code ?? '').trim())
           : (() => {
+              // Require the CARD rail: a NAPS-rail browser success is authentic
+              // but capture-AMBIGUOUS (its capture is confirmed via the IPN, not
+              // the redirect — see isSuccess below, which is likewise card-only).
+              // A NAPS double capture arrives via the IPN path, which is handled
+              // by the `via==='ipn'` branch above, so this misses nothing.
               const r = this.resolveSignedErrCode(params.basket_id, amount, params.err_code, params.Response_Key);
-              return r !== null && (r.errCode === '00' || r.errCode === '000');
+              return r !== null && r.rail === 'card' && (r.errCode === '00' || r.errCode === '000');
             })();
       if (authenticSuccess) {
         await this.flagDuplicateCaptureIfDifferentTxn(payment, params.basket_id, params.transaction_id);
