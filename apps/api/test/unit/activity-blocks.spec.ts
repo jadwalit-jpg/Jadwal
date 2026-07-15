@@ -25,8 +25,9 @@ import { EmailService } from '../../src/email/email.service';
 import { EmailQuotaService } from '../../src/email/email-quota.service';
 import { SecurityLoggerService } from '../../src/common/services/security-logger.service';
 import { ConfigService } from '@nestjs/config';
+import { SessionDenylistService } from '../../src/redis/session-denylist.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
-import { makeConfigMock } from '../mocks/auth-deps.mock';
+import { makeConfigMock, makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 import {
   makeAuditLoggerMock, makeNotificationMock, makeLoyaltyMock,
   makeRedisLockMock, makeAvailabilityCacheMock,
@@ -46,6 +47,7 @@ async function buildVendorSut() {
       { provide: NotificationService,      useValue: makeNotificationMock() },
       { provide: LoyaltyService,           useValue: makeLoyaltyMock() },
       { provide: AvailabilityCacheService, useValue: cache },
+      { provide: SessionDenylistService,   useValue: makeSessionDenylistMock() },
     ],
   }).compile();
   return { sut: mod.get(VendorService), prisma, cache };

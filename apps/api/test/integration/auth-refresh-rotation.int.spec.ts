@@ -20,7 +20,7 @@ import {
   makeJwtMock, makeConfigMock, makeUsersMock, makeSecurityLoggerMock,
   makeAuditLoggerMock, makeEmailMock, makeEmailQuotaMock,
   makeNotificationMock, makeRedisMock,
-  makeResponseMock, makeRequestMock,
+  makeResponseMock, makeRequestMock, makeSessionDenylistMock,
 } from '../mocks/auth-deps.mock';
 import { UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
@@ -44,6 +44,7 @@ function makeAuth() {
     makeEmailQuotaMock() as any,
     makeNotificationMock() as any,
     makeRedisMock() as any,
+    makeSessionDenylistMock() as any,
   );
   return svc;
 }
@@ -76,29 +77,32 @@ async function issueForUser(
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('AuthService.refreshTokens — happy path', () => {
-  test('first rotation: old row deleted, new row created with different hash', async () => {
+  test('first rotation: old row kept as a rotated tombstone, one new ACTIVE row', async () => {
     const seed = await seedReference(ctx.prisma);
     const svc = makeAuth();
     const { raw: oldRaw, hash: oldHash } = await issueForUser(svc, seed.customer);
 
-    // Sanity: old row exists
-    expect(await ctx.prisma.refreshToken.findUnique({ where: { tokenHash: oldHash } }))
-      .not.toBeNull();
+    // Sanity: old row exists and is active (not yet rotated)
+    const before = await ctx.prisma.refreshToken.findUnique({ where: { tokenHash: oldHash } });
+    expect(before).not.toBeNull();
+    expect(before!.rotatedAt).toBeNull();
 
     const res = makeResponseMock();
     const req = makeRequestMock();
     await svc.refreshTokens(oldRaw, res as any, req as any);
 
-    // Old hash is gone
-    expect(await ctx.prisma.refreshToken.findUnique({ where: { tokenHash: oldHash } }))
-      .toBeNull();
+    // M6: the old hash is KEPT as a reuse-detection tombstone (rotatedAt set),
+    // NOT deleted — it self-expires at its original expiresAt.
+    const tomb = await ctx.prisma.refreshToken.findUnique({ where: { tokenHash: oldHash } });
+    expect(tomb).not.toBeNull();
+    expect(tomb!.rotatedAt).not.toBeNull();
 
-    // Exactly one refresh token for this user
-    const tokens = await ctx.prisma.refreshToken.findMany({
-      where: { userId: seed.customer.id },
+    // Exactly one ACTIVE (rotatedAt=null) token for this user, with a new hash.
+    const active = await ctx.prisma.refreshToken.findMany({
+      where: { userId: seed.customer.id, rotatedAt: null },
     });
-    expect(tokens).toHaveLength(1);
-    expect(tokens[0].tokenHash).not.toBe(oldHash);
+    expect(active).toHaveLength(1);
+    expect(active[0].tokenHash).not.toBe(oldHash);
   });
 
   test('new cookie is set and differs from the old one', async () => {
@@ -141,7 +145,8 @@ describe('AuthService.refreshTokens — reuse detection', () => {
     // Successful first rotation
     await svc.refreshTokens(oldRaw, makeResponseMock() as any, makeRequestMock() as any);
 
-    // Replay the same raw token — should fail (token already deleted)
+    // Replay the same raw token — should fail. The token is now a rotated
+    // tombstone (M6); presenting it again is rejected with the generic 401.
     await expect(
       svc.refreshTokens(oldRaw, makeResponseMock() as any, makeRequestMock() as any),
     ).rejects.toThrow(UnauthorizedException);
@@ -156,27 +161,30 @@ describe('AuthService.refreshTokens — reuse detection', () => {
     ).rejects.toThrow(UnauthorizedException);
   });
 
-  test('other active tokens for the same user remain intact after a replay attempt', async () => {
-    // The bare replay (token-not-found branch) must NOT revoke the whole family.
-    // Only deactivated-user / suspended-vendor branches do that.
+  test('a WITHIN-GRACE replay of one session does NOT revoke the other session', async () => {
+    // A replay inside the reuse grace window is treated as a benign client race,
+    // not a stolen-token attack — so it must NOT touch OTHER sessions. (A
+    // beyond-grace reuse revokes only the REPLAYED token's family, still leaving
+    // other families intact — covered in auth-session-family.int.spec.ts.)
     const seed = await seedReference(ctx.prisma);
     const svc = makeAuth();
 
-    // Two legitimate sessions
+    // Two legitimate sessions (each its own family)
     const { raw: rawA } = await issueForUser(svc, seed.customer);
     await issueForUser(svc, seed.customer);
-    expect(await ctx.prisma.refreshToken.count({ where: { userId: seed.customer.id } })).toBe(2);
+    expect(await ctx.prisma.refreshToken.count({ where: { userId: seed.customer.id, rotatedAt: null } })).toBe(2);
 
-    // Use rawA successfully
+    // Use rawA successfully → rawA becomes a tombstone, a new active token for A.
     await svc.refreshTokens(rawA, makeResponseMock() as any, makeRequestMock() as any);
 
-    // Replay rawA — should throw but leave the second session alive
+    // Immediately replay rawA (within the default grace) — throws, but benign:
+    // no family gets revoked.
     await expect(
       svc.refreshTokens(rawA, makeResponseMock() as any, makeRequestMock() as any),
     ).rejects.toThrow(UnauthorizedException);
 
-    // Two tokens should still exist: session-B + the new token from rawA's rotation.
-    expect(await ctx.prisma.refreshToken.count({ where: { userId: seed.customer.id } })).toBe(2);
+    // Both sessions still have exactly one ACTIVE token each (A's rotated one + B).
+    expect(await ctx.prisma.refreshToken.count({ where: { userId: seed.customer.id, rotatedAt: null } })).toBe(2);
   });
 });
 
@@ -326,9 +334,11 @@ describe('AuthService.issueTokens — session cap', () => {
 
 describe('AuthService.refreshTokens — concurrent race', () => {
   test('two simultaneous rotations of the same raw token → exactly one succeeds', async () => {
-    // Proves single-use is enforced even under race: the 2nd rotate sees the
-    // row already deleted. A wider race window could let both past the DELETE,
-    // but Postgres single-row DELETE is atomic so only one wins.
+    // Proves single-use is enforced even under race. Rotation is now an atomic
+    // conditional `updateMany({ where: { rotatedAt: null } })`: Postgres row-locks
+    // serialise the two, exactly one sees rotatedAt=null (count 1 → wins), the
+    // other re-evaluates post-commit (count 0 → 401). Replaces the old
+    // delete-throws-P2025 gate while keeping the tombstone.
     const seed = await seedReference(ctx.prisma);
     const svc = makeAuth();
     const { raw } = await issueForUser(svc, seed.customer);
@@ -343,7 +353,8 @@ describe('AuthService.refreshTokens — concurrent race', () => {
     expect(fulfilled).toBe(1);
     expect(rejected).toBe(1);
 
-    // Database is in a clean state: exactly one token (the new one) for this user
-    expect(await ctx.prisma.refreshToken.count({ where: { userId: seed.customer.id } })).toBe(1);
+    // Exactly ONE active token (the winner's new one); the consumed original is
+    // kept as a single tombstone → 2 rows total, 1 active.
+    expect(await ctx.prisma.refreshToken.count({ where: { userId: seed.customer.id, rotatedAt: null } })).toBe(1);
   });
 });

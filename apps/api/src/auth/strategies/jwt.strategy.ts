@@ -5,12 +5,14 @@ import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { TokenPayload } from '../interfaces/token-payload.interface';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SessionDenylistService } from '../../redis/session-denylist.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     configService: ConfigService,
     private prisma: PrismaService,
+    private sessionDenylist: SessionDenylistService,
   ) {
     const secret = configService.get<string>('JWT_SECRET');
     if (!secret) {
@@ -28,6 +30,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: TokenPayload) {
+    // M5/M6 — session-family denylist. On logout / stolen-token-reuse /
+    // password rotation, AuthService puts the session's family id on a short
+    // Redis denylist (TTL = access-token lifetime + slack). Reject any still-
+    // unexpired access token whose `sid` is denylisted — this is what makes
+    // logout revoke the ACCESS token immediately, not just the refresh token.
+    // FAIL-OPEN (handled inside the service): if Redis is unreachable we do NOT
+    // lock everyone out — the ≤JWT_EXPIRATION natural expiry still bounds
+    // exposure; availability wins over the short denylist window. Tokens minted
+    // before this rollout have no `sid` and simply skip the check (backward-
+    // compatible).
+    if (payload.sid && (await this.sessionDenylist.isDenied(payload.sid))) {
+      throw new UnauthorizedException('Session expired — please log in again');
+    }
+
     // §B9 — soft-deleted users have `deletedAt` set + `isDeactivated=true`.
     // Either guard rejects a stale token from before the delete; checking
     // both is defence in depth so a future bug toggling isDeactivated
