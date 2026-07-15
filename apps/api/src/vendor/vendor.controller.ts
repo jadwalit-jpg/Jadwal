@@ -34,7 +34,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateVendorCouponDto } from './dto/create-coupon.dto';
 import { VendorUpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { ReplyReviewDto } from './dto/reply-review.dto';
-import { Throttle } from '@nestjs/throttler';
+import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { RATE_LIMIT_VENDOR, RATE_LIMIT_WRITE, RATE_LIMIT_CALLBACK, RATE_LIMIT_STRICT, RATE_LIMIT_READ } from '../common/throttle-config';
 import { VendorAuditInterceptor } from './interceptors/vendor-audit.interceptor';
 
@@ -42,6 +42,11 @@ import { VendorAuditInterceptor } from './interceptors/vendor-audit.interceptor'
 @UseGuards(JwtAuthGuard, RolesGuard)
 @UseInterceptors(VendorAuditInterceptor)
 @Roles('VENDOR' as any)
+// Skip the global `long` (100/10min) + `availability` (30/min) named tiers so the
+// intended 60/min VENDOR limit applies — otherwise the 30/min availability floor
+// (for PUBLIC endpoints) silently caps authenticated vendor dashboard reads to
+// ~30/min. Per-method @Throttle overrides on mutations (WRITE/STRICT) still apply.
+@SkipThrottle({ long: true, availability: true })
 @Throttle(RATE_LIMIT_VENDOR)
 export class VendorController {
   constructor(

@@ -54,7 +54,7 @@ import { UpdateAdminProfileDto, ChangeAdminPasswordDto } from './dto/admin-profi
 import { UpdateLoyaltyConfigDto, AdjustUserPointsDto } from './dto/loyalty.dto';
 import { LoyaltyUserQueryDto } from './dto/loyalty-user-query.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { Throttle } from '@nestjs/throttler';
+import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { RATE_LIMIT_ADMIN, RATE_LIMIT_WRITE, RATE_LIMIT_CALLBACK, RATE_LIMIT_AUTH, RATE_LIMIT_STRICT, RATE_LIMIT_MINIMAL, RATE_LIMIT_READ } from '../common/throttle-config';
 import { AdminAuditInterceptor } from './interceptors/audit.interceptor';
 
@@ -62,6 +62,13 @@ import { AdminAuditInterceptor } from './interceptors/audit.interceptor';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN')
 @UseInterceptors(AdminAuditInterceptor)
+// Skip the global `long` (100/10min) + `availability` (30/min) named tiers so the
+// intended 120/min ADMIN limit actually applies. Without this, those two global
+// tiers still evaluate on every admin route and the 30/min availability floor —
+// meant for PUBLIC unauthenticated endpoints — silently caps authenticated admin
+// dashboard reads to ~30/min, causing spurious 429s. Per-method @Throttle
+// overrides on mutations (WRITE/STRICT) remain stricter and unaffected.
+@SkipThrottle({ long: true, availability: true })
 @Throttle(RATE_LIMIT_ADMIN) // generous for admin reads, overridden on mutations
 export class AdminController {
   constructor(
