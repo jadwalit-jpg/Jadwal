@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { NoFilesInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
-import { Throttle } from '@nestjs/throttler';
+import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { RATE_LIMIT_AUTH, RATE_LIMIT_CALLBACK, RATE_LIMIT_READ, RATE_LIMIT_IPN } from '../common/throttle-config';
 import { ConfigService } from '@nestjs/config';
 import { PaymentService } from './payment.service';
@@ -175,6 +175,12 @@ export class PaymentController {
   // from PAY2M's single source IP, so on a shared tier they'd all key to one
   // bucket and a burst would 429 real booking confirmations. Trust is the
   // source-IP allow-list + hash + idempotency, not the throttler. (M10)
+  //
+  // The global throttler applies ALL tiers unless skipped by name, so without
+  // skipping long (100/10min) + availability (30/min) the real ceiling would be
+  // min(300, 30, 100/10min) = 30/min — a near no-op that still 429s a legit IPN
+  // burst. Skip them so only the 300/min short tier applies.
+  @SkipThrottle({ long: true, availability: true })
   @Throttle(RATE_LIMIT_IPN)
   @UseInterceptors(
     NoFilesInterceptor({

@@ -67,11 +67,16 @@ export class AppController {
    */
   @Public()
   @Get('health/ready')
-  // NOT @SkipThrottle: unlike /health this does a real DB + Redis check, so an
-  // unauthenticated flood could exhaust the Prisma pool. A generous per-IP tier
-  // (120/min) caps a single-IP flood with ~15× headroom over the ALB probe
-  // (~8/min at ≤4 tasks / 30 s interval), so it never marks targets unhealthy.
-  // Distributed floods still need a Cloudflare edge rule on /api/health*. (M8)
+  // Unlike /health this does a real DB + Redis check, so an unauthenticated flood
+  // could exhaust the Prisma pool — hence a cap instead of the old @SkipThrottle().
+  // CRITICAL: the global throttler applies ALL tiers (short + long + availability)
+  // unless each is skipped BY NAME. We must skip long (100/10min) + availability
+  // (30/min) here — otherwise the ALB readiness probe would be bound by the 10-min
+  // long tier and, at a short probe interval, 429 → targets marked unhealthy →
+  // OUTAGE. With those skipped, only the short tier (120/min) applies: ~15× over
+  // the ALB probe (~8/min at ≤4 tasks) so it can't trip, while capping a single-IP
+  // flood. Distributed floods still want a Cloudflare edge rule on /api/health*. (M8)
+  @SkipThrottle({ long: true, availability: true })
   @Throttle(RATE_LIMIT_HEALTH)
   @HttpCode(200)
   async getReady(): Promise<{ status: 'ok'; db: 'up'; redis: 'up' }> {
