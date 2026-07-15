@@ -1,3 +1,5 @@
+// Anti-enum constant-time floor off in tests (behaviour verified by inspection; timing is flaky).
+process.env.REGISTER_MIN_RESPONSE_MS = '0';
 /**
  * AuthService end-to-end account flows against real Postgres.
  *

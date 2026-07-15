@@ -508,8 +508,28 @@ export class AuthService {
 
   // ─── Register (customer) — sends verification email, does NOT issue cookies ─
 
+  /**
+   * Anti-enumeration constant-time floor for /auth/register. The fresh-signup
+   * path awaits DB writes + (previously) a network email send that the
+   * already-registered path skips, so response TIME leaked whether an email
+   * exists — a bigger oracle than the response body, which is already identical.
+   * Padding every branch up to a fixed floor makes all outcomes return at the
+   * same time. Pair this with a bcrypt equaliser (CPU cost) and a fire-and-forget
+   * email send (removes the variable network delay) so the natural time of every
+   * branch stays UNDER the floor. Env-tunable; default comfortably above the
+   * slowest branch (~1 bcrypt + a couple of writes).
+   */
+  private async padRegisterConstantTime(startedAt: number): Promise<void> {
+    const floorMs = Number(process.env.REGISTER_MIN_RESPONSE_MS || 600);
+    const elapsed = Date.now() - startedAt;
+    if (elapsed < floorMs) {
+      await new Promise((r) => setTimeout(r, floorMs - elapsed));
+    }
+  }
+
   async registerAndLogin(data: { fullName: string; email: string; password: string; phone?: string; website?: string }, req?: Request) {
     const db = this.prisma.client;
+    const startedAt = Date.now();
 
     // Honeypot trip — `website` is a hidden CSS-offscreen field (see
     // register-form.tsx). Real users never see or fill it. A non-empty
@@ -525,6 +545,7 @@ export class AuthService {
         ip: botIp,
         details: 'Honeypot tripped on /auth/register',
       });
+      await this.padRegisterConstantTime(startedAt);
       return { pending: true, email: data.email };
     }
 
@@ -557,6 +578,7 @@ export class AuthService {
         email: data.email,
         details: 'Register attempt on an already-registered email',
       });
+      await this.padRegisterConstantTime(startedAt);
       return { pending: true, email: data.email };
     }
 
@@ -585,7 +607,15 @@ export class AuthService {
     });
 
     const { ip: regIp } = this.extractClientInfo(req);
-    await this.sendVerificationEmail(db, user.id, user.email, user.fullName, regIp);
+    // Fire-and-forget the verification email — do NOT await the (variable,
+    // network-bound) Resend send before responding. Awaiting it made the
+    // fresh-signup path measurably SLOWER than the already-registered path (which
+    // fire-and-forgets its notify email), re-opening the enumeration oracle by
+    // timing. The token IS persisted inside sendVerificationEmail (a fast DB
+    // write that completes well before any user clicks the link), and a failed
+    // send is recoverable via /auth/resend-verification. The constant-time floor
+    // below equalises the remaining branch-time delta.
+    void this.sendVerificationEmail(db, user.id, user.email, user.fullName, regIp).catch(() => undefined);
 
     await this.securityLogger.log({ event: 'LOGIN_SUCCESS', userId: user.id, email: user.email, details: 'Customer registered, pending verification' });
 
@@ -602,6 +632,7 @@ export class AuthService {
       details: 'New customer account, pending email verification',
     });
 
+    await this.padRegisterConstantTime(startedAt);
     return { pending: true, email: user.email };
   }
 

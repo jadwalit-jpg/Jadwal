@@ -66,37 +66,37 @@ test.describe('Customer signup — golden path', () => {
     // test intentionally stops at "verification requested" confirmation.
   });
 
-  test('register with duplicate email → shows "already registered"', async ({ page }) => {
+  test('register with duplicate email → SAME "check your email" screen (M3 anti-enumeration)', async ({ page }) => {
     const duplicateEmail = `e2e-dup-${Date.now()}@jadwal-test.local`;
     const password = 'S3cure!Pass1';
 
-    // First registration creates the user.
-    await page.goto('/register');
-    await page.getByLabel(/full name|الاسم/i).fill('Duplicate Attempt');
-    await page.getByLabel(/email|البريد/i).fill(duplicateEmail);
-    await page.getByLabel(/^password$|كلمة المرور/i).fill(password);
+    const doRegister = async (name: string) => {
+      await page.goto('/register');
+      await page.getByLabel(/full name|الاسم/i).fill(name);
+      await page.getByLabel(/email|البريد/i).fill(duplicateEmail);
+      await page.getByLabel(/^password$|كلمة المرور/i).fill(password);
+      const confirmPasswordField = page.getByLabel(/confirm password|تأكيد/i);
+      if (await confirmPasswordField.isVisible()) {
+        await confirmPasswordField.fill(password);
+      }
+      await page.getByRole('checkbox').first().check();
+      await page.getByRole('button', { name: /register|sign up|create account|إنشاء|تسجيل/i }).click();
+    };
 
-    const confirmPasswordField = page.getByLabel(/confirm password|تأكيد/i);
-    if (await confirmPasswordField.isVisible()) {
-      await confirmPasswordField.fill(password);
-    }
-    await page.getByRole('checkbox').first().check();
-    await page.getByRole('button', { name: /register|sign up|create account|إنشاء|تسجيل/i }).click();
+    // First registration creates the user → "check your inbox" confirmation.
+    await doRegister('Duplicate Attempt');
     await expect(page.getByText(/check.*inbox|verification.*sent|تحقق|تم إرسال/i)).toBeVisible({ timeout: 10_000 });
 
-    // Second registration with the same email should fail.
-    await page.goto('/register');
-    await page.getByLabel(/full name|الاسم/i).fill('Duplicate Attempt Again');
-    await page.getByLabel(/email|البريد/i).fill(duplicateEmail);
-    await page.getByLabel(/^password$|كلمة المرور/i).fill(password);
-    if (await confirmPasswordField.isVisible()) {
-      await confirmPasswordField.fill(password);
-    }
-    await page.getByRole('checkbox').first().check();
-    await page.getByRole('button', { name: /register|sign up|create account|إنشاء|تسجيل/i }).click();
+    // Second registration with the SAME email must show the IDENTICAL confirmation
+    // screen — NOT an "already registered" error. Revealing that the email exists
+    // is an account-enumeration oracle (M3); the response is deliberately
+    // indistinguishable from a fresh signup, and the owner is notified by email.
+    await doRegister('Duplicate Attempt Again');
+    await expect(page.getByText(/check.*inbox|verification.*sent|تحقق|تم إرسال/i)).toBeVisible({ timeout: 10_000 });
 
+    // And it must NOT surface an existence-revealing error.
     await expect(
       page.getByText(/already registered|email.*exists|already.*use|مستخدم مسبق|موجود/i),
-    ).toBeVisible({ timeout: 10_000 });
+    ).toHaveCount(0);
   });
 });
