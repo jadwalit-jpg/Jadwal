@@ -57,9 +57,17 @@ function configShim(overrides: Record<string, string> = {}) {
 
 function makePaymentService(configOverrides: Record<string, string> = {}) {
   const prismaSvc = { client: ctx.prisma } as any;
+  // Faithful SET NX PX semantics: first acquire of a key wins (returns a token),
+  // a second acquire of a still-held key returns null. This matters for the
+  // duplicate-capture dedup, which relies on an atomic Redis marker.
+  const heldLocks = new Set<string>();
   const redisLock = {
-    acquire: jest.fn().mockResolvedValue('lock-token'),
-    release: jest.fn().mockResolvedValue(undefined),
+    acquire: jest.fn(async (key: string) => {
+      if (heldLocks.has(key)) return null;
+      heldLocks.add(key);
+      return 'lock-token';
+    }),
+    release: jest.fn(async (key: string) => { heldLocks.delete(key); }),
   } as any;
   // Persist to the real auditLog table (as the production AuditLoggerService does
   // — it awaits the create) AND record the call, so tests can both count calls and

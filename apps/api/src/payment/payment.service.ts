@@ -25,6 +25,12 @@ interface Pay2mTokenResponse {
   GENERATED_DATE_TIME: string;
 }
 
+// How long a "we already alerted for this (payment, secondary txn)" marker lives
+// in Redis. A duplicate capture re-delivered within this window is deduped; a
+// re-delivery after it (astronomically unlikely for a payment callback) would
+// re-page — harmless. 30 days comfortably covers any realistic gateway retry.
+const DUP_CAPTURE_DEDUP_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
@@ -720,13 +726,24 @@ export class PaymentService {
     if (recordedTxn === incomingTxn) return; // replay of the SAME capture — no-op
 
     const amount = Number(payment.amount).toFixed(2);
-    // Dedup per DISTINCT secondary txn (a later, third distinct capture SHOULD
-    // alert again). The trailing " |" delimiter avoids CAP-2 matching CAP-20.
-    const already = await this.prisma.client.auditLog.findFirst({
-      where: { action: 'PAYMENT_DUPLICATE_CAPTURE', entityId: payment.id, details: { contains: `new txn: ${incomingTxn} |` } },
-      select: { id: true },
-    });
-    if (already) return;
+
+    // Dedup per DISTINCT secondary txn — record/page a given (payment, txn) ONCE
+    // (a later, THIRD distinct capture still alerts, since its key differs).
+    // We use an ATOMIC Redis marker (SET NX) rather than an auditLog `findFirst`
+    // + write: (1) the findFirst→write was a non-atomic check-then-act, so two
+    // truly concurrent replays of the SAME second capture could both pass the
+    // read and double-page; SET NX collapses that to one winner. (2) the old
+    // read was an unindexed `details LIKE '%…%'` scan on an append-only table.
+    // FAIL-OPEN: if Redis is unavailable we PROCEED to alert — missing a real
+    // double-charge alert is far worse than an occasional duplicate one.
+    const dedupKey = `pay2m:dupcap:${payment.id}:${incomingTxn}`;
+    let firstToAlert = true;
+    try {
+      firstToAlert = (await this.redisLock.acquire(dedupKey, DUP_CAPTURE_DEDUP_TTL_MS)) !== null;
+    } catch {
+      firstToAlert = true; // Redis hiccup → alert anyway
+    }
+    if (!firstToAlert) return; // another delivery of this exact second capture already alerted
 
     this.logger.error({ event: 'PAY2M_DUPLICATE_CAPTURE', paymentId: payment.id, basketId });
     await this.auditLogger.log({
