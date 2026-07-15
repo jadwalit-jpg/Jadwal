@@ -627,6 +627,58 @@ describe('PaymentService.handleCallback — idempotency', () => {
     // The recorded capture is unchanged — we never overwrite CAP-1 with CAP-2.
     expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).gatewayTxnId).toBe('CAP-1');
   });
+
+  test('CONCURRENT second capture (loser of the confirm race) → still flagged', async () => {
+    // The dangerous case: two captures arrive so close that BOTH read PENDING at
+    // entry. The winner confirms (records CAP-1); the loser's confirm updateMany
+    // matches 0 rows (already SUCCESS) and returns success through the optimistic-
+    // lock-loss path — WITHOUT re-entering the entry-SUCCESS branch. Without the
+    // loss-path detection this genuine double charge is silently dropped.
+    //
+    // We drive the loser deterministically: force ONLY the entry read (by basket
+    // id) to report PENDING, while the real row is already SUCCESS with CAP-1 —
+    // exactly the state the loser observes.
+    const { svc, auditLogger, notificationService } = makePaymentService();
+    const { basketId, paymentId, amountStr } = await seedPendingPayment(200);
+
+    // Winner confirms first.
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'CAP-1',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    const realFindUnique = ctx.prisma.payment.findUnique.bind(ctx.prisma.payment);
+    const spy = (jest.spyOn(ctx.prisma.payment, 'findUnique') as any).mockImplementation(async (args: any) => {
+      const row = await realFindUnique(args);
+      // Only the entry lookup (by gatewayBasketId) sees the stale PENDING; the
+      // by-id refetch + the helper's re-read see the true SUCCESS + CAP-1.
+      if (args?.where?.gatewayBasketId && row) return { ...row, status: 'PENDING' };
+      return row;
+    });
+
+    let res;
+    try {
+      res = await svc.handleCallback({
+        err_code: '00', basket_id: basketId, transaction_id: 'CAP-2-CONCURRENT',
+        Response_Key: signCallback(basketId, amountStr, '00'),
+      });
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(res!.status).toBe('success'); // idempotent to the gateway
+
+    const dup = auditLogger.log.mock.calls
+      .map((c: any[]) => c[0])
+      .filter((a: any) => a.action === 'PAYMENT_DUPLICATE_CAPTURE' && /CAP-2-CONCURRENT/.test(a.details ?? ''));
+    expect(dup).toHaveLength(1); // the loser flagged the duplicate
+    expect(dup[0].actionCategory).toBe('FINANCIAL');
+    expect(
+      (notificationService.notifyAdmins as jest.Mock).mock.calls.filter((c: any[]) => /duplicate charge/i.test(c[0]?.title ?? '')),
+    ).toHaveLength(1);
+    // Winner's txn preserved.
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).gatewayTxnId).toBe('CAP-1');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
