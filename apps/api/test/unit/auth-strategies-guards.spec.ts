@@ -61,6 +61,19 @@ describe('JwtStrategy', () => {
     expect(out).toEqual({ id: 'u1', email: 'alice@t.com', role: 'CUSTOMER', fullName: 'Alice' });
   });
 
+  test('M1: validate() uses the DB role, NOT the (possibly stale) token role', async () => {
+    // The user was a VENDOR when the still-valid access token was minted, but an
+    // admin has since demoted them to CUSTOMER in the DB. validate() must return
+    // the CURRENT (DB) role, so the demotion takes effect on the next request —
+    // otherwise a demoted user keeps VENDOR access until the token expires.
+    const prisma = makePrisma({
+      id: 'u1', isDeactivated: false, role: 'CUSTOMER', fullName: 'Alice',
+    }) as any;
+    const svc = new JwtStrategy(makeConfig() as any, prisma);
+    const out = await svc.validate({ sub: 'u1', email: 'alice@t.com', role: 'VENDOR' });
+    expect(out.role).toBe('CUSTOMER'); // DB wins, not the token's 'VENDOR'
+  });
+
   test('validate(): deactivated user → UnauthorizedException', async () => {
     const prisma = makePrisma({
       id: 'u1', isDeactivated: true, role: 'CUSTOMER', fullName: 'Alice',

@@ -445,6 +445,35 @@ describe('AuthService.loginWithCheck — lockout', () => {
     expect(after.lockedUntil).toBeNull();
   }, 30_000);
 
+  test('M4: after the lock EXPIRES, a single wrong password does NOT permanently re-lock', async () => {
+    await seedReference(ctx.prisma);
+    const { svc } = makeAuth();
+    const { user } = await mkVerifiedCustomer('expiry@t.com');
+
+    // Lock it (5 wrong), then simulate the lock window having elapsed.
+    for (let i = 0; i < 5; i++) {
+      await svc.loginWithCheck(user.email, 'WRONG!', makeResponseMock() as any, makeRequestMock() as any).catch(() => {});
+    }
+    await ctx.prisma.user.update({
+      where: { id: user.id },
+      data: { lockedUntil: new Date(Date.now() - 60_000) }, // lock expired 1 min ago (attempts still ≥5)
+    });
+
+    // ONE wrong password after expiry. Before the fix, failedLoginAttempts was
+    // still ≥5, so this single failure incremented to ≥6 and re-locked instantly
+    // → an attacker could keep the victim locked forever at 1 attempt / window.
+    await svc.loginWithCheck(user.email, 'WRONG!', makeResponseMock() as any, makeRequestMock() as any).catch(() => {});
+
+    const afterOneFail = await ctx.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(afterOneFail.lockedUntil).toBeNull();          // NOT re-locked
+    expect(afterOneFail.failedLoginAttempts).toBe(1);     // fresh budget: this is attempt #1, not #6
+
+    // And the correct password still works (the account is usable again).
+    await expect(
+      svc.loginWithCheck(user.email, 'Correct!Pass1', makeResponseMock() as any, makeRequestMock() as any),
+    ).resolves.toBeDefined();
+  }, 30_000);
+
   test('unverified customer → login rejected with EMAIL_NOT_VERIFIED signal', async () => {
     await seedReference(ctx.prisma);
     const { svc } = makeAuth();

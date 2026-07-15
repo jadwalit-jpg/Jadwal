@@ -427,6 +427,29 @@ describe('VendorService.updateBookingStatus — Complete guard', () => {
     expect((ctx.loyalty as any).earn).not.toHaveBeenCalled();
   });
 
+  test('M9: rejects CANCELLED when the payout was already PAID (no mutation)', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.vendor.findUnique.mockResolvedValueOnce(vendorRow);
+    // Pre-tx booking read (findFirst) — a normal cancellable booking.
+    ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+      id: 'b1', ref: 'JDWL-PAID', vendorId: 'v1', activityId: 'a1',
+      customerId: 'c1', status: 'COMPLETED',
+      totalPrice: 100, pointsRedeemed: 0, pointsAwarded: false,
+      endDatetime: new Date(Date.now() - 60_000),
+      activity: { titleEn: 'Tour' },
+      payment: { id: 'p1', status: 'SUCCESS', amount: 100 },
+    });
+    // The M9 guard's in-tx read: this booking's payout has already been PAID.
+    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({ payment: { payoutStatus: 'PAID' } });
+
+    await expect(ctx.sut.updateBookingStatus('u1', 'b1', 'CANCELLED'))
+      .rejects.toThrow(ForbiddenException);
+
+    // Nothing mutated — the claim + refund never ran (checked BEFORE the claim).
+    expect(ctx.prisma._client.booking.updateMany).not.toHaveBeenCalled();
+    expect(ctx.prisma._client.payment.update).not.toHaveBeenCalled();
+  });
+
   test('allows COMPLETED when booking.endDatetime has passed', async () => {
     const ctx = await buildSut();
     (ctx.loyalty as any).earn = jest.fn().mockResolvedValue(undefined);

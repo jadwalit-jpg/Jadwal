@@ -44,9 +44,13 @@ describe('Login & Authentication Security', () => {
   const authService = readSrc('src/auth/auth.service.ts');
 
   test('CRITICAL: dummy bcrypt on user-not-found (timing attack prevention)', () => {
-    // Without this, response time leaks whether an email exists
-    expect(authService).toContain('DUMMY_HASH');
-    expect(authService).toMatch(/user not found.*bcrypt\.compare.*DUMMY_HASH/is);
+    // Without this, response time leaks whether an email exists. The dummy hash
+    // is now a field (this.dummyHash) computed AT BOOT with the real bcrypt cost
+    // — a hardcoded lower-cost literal made the not-found branch measurably
+    // faster than a real compare, inverting the equaliser into an enumeration
+    // oracle (M2). Assert the field is used AND computed at the real cost.
+    expect(authService).toMatch(/this\.dummyHash\s*=\s*bcrypt\.hashSync\([^)]*BCRYPT_ROUNDS/);
+    expect(authService).toMatch(/bcrypt\.compare\(password,\s*this\.dummyHash\)/);
   });
 
   test('CRITICAL: all login failures return generic "Invalid credentials"', () => {

@@ -16,7 +16,7 @@ import {
 import { NoFilesInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
-import { RATE_LIMIT_AUTH, RATE_LIMIT_CALLBACK, RATE_LIMIT_READ } from '../common/throttle-config';
+import { RATE_LIMIT_AUTH, RATE_LIMIT_CALLBACK, RATE_LIMIT_READ, RATE_LIMIT_IPN } from '../common/throttle-config';
 import { ConfigService } from '@nestjs/config';
 import { PaymentService } from './payment.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -171,7 +171,11 @@ export class PaymentController {
    */
   @Public()
   @Post('callback/ipn')
-  @Throttle(RATE_LIMIT_CALLBACK)
+  // Dedicated high tier, NOT the shared 20/min CALLBACK bucket: every IPN comes
+  // from PAY2M's single source IP, so on a shared tier they'd all key to one
+  // bucket and a burst would 429 real booking confirmations. Trust is the
+  // source-IP allow-list + hash + idempotency, not the throttler. (M10)
+  @Throttle(RATE_LIMIT_IPN)
   @UseInterceptors(
     NoFilesInterceptor({
       limits: { fields: 30, fieldSize: 8 * 1024, fieldNameSize: 100, parts: 30 },
