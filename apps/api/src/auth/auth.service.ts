@@ -520,7 +520,15 @@ export class AuthService {
    * slowest branch (~1 bcrypt + a couple of writes).
    */
   private async padRegisterConstantTime(startedAt: number): Promise<void> {
-    const floorMs = Number(process.env.REGISTER_MIN_RESPONSE_MS || 600);
+    // Floor raised 600 → 1000: the equaliser only hides the "email exists" oracle
+    // while EVERY branch's natural time stays UNDER the floor. The fresh-signup
+    // branch (bcrypt + user insert + verification-token insert + quota + logs) is
+    // heavier than the existing-email branch (bcrypt + one log) and, under DB/CPU
+    // load, its p99 can approach/exceed 600ms — at which point it returns late
+    // while the light branch pads to the floor, re-opening the timing delta.
+    // 1000ms keeps the heavy branch comfortably under the floor at realistic load;
+    // raise REGISTER_MIN_RESPONSE_MS further if prod p99 ever approaches it.
+    const floorMs = Number(process.env.REGISTER_MIN_RESPONSE_MS || 1000);
     const elapsed = Date.now() - startedAt;
     if (elapsed < floorMs) {
       await new Promise((r) => setTimeout(r, floorMs - elapsed));
