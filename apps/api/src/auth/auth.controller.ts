@@ -21,6 +21,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { hasAcceptedCurrentTerms } from '../common/terms';
+import { SessionDenylistService } from '../redis/session-denylist.service';
 
 @Controller('auth')
 export class AuthController {
@@ -28,6 +29,7 @@ export class AuthController {
     private authService: AuthService,
     private prisma: PrismaService,
     private configService: ConfigService,
+    private sessionDenylist: SessionDenylistService,
   ) {}
 
   @Public()
@@ -148,7 +150,10 @@ export class AuthController {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
     const sessions = await this.prisma.client.refreshToken.findMany({
-      where: { userId: user.id },
+      // Only ACTIVE sessions. M6 keeps rotated tokens as reuse-detection
+      // tombstones (rotatedAt set); those are historical, not live devices, and
+      // must not surface here as phantom sessions.
+      where: { userId: user.id, rotatedAt: null },
       select: {
         id: true,
         userAgent: true,
@@ -186,13 +191,17 @@ export class AuthController {
     // Only allow revoking own sessions (prevent cross-user access)
     const session = await this.prisma.client.refreshToken.findUnique({
       where: { id: sessionId },
-      select: { userId: true },
+      select: { userId: true, familyId: true },
     });
     if (!session || session.userId !== user.id) {
       throw new ForbiddenException('Cannot revoke this session');
     }
 
-    await this.prisma.client.refreshToken.delete({ where: { id: sessionId } });
+    // Denylist the family so the revoked device's outstanding ACCESS token dies
+    // immediately (M5), then delete the whole family (active token + tombstones)
+    // so the session is fully gone.
+    await this.sessionDenylist.denylistSession(session.familyId);
+    await this.prisma.client.refreshToken.deleteMany({ where: { familyId: session.familyId } });
     return { message: 'Session revoked' };
   }
 
@@ -208,15 +217,41 @@ export class AuthController {
       ? this.authService.getTokenHash(req.cookies.RefreshToken)
       : null;
 
-    // Delete all sessions EXCEPT the current one
-    const { count } = await this.prisma.client.refreshToken.deleteMany({
+    // Resolve the current session's family so we KEEP it (this device stays
+    // logged in) and revoke every OTHER family.
+    const currentFamilyId = currentTokenHash
+      ? (
+          await this.prisma.client.refreshToken.findUnique({
+            where: { tokenHash: currentTokenHash },
+            select: { familyId: true },
+          })
+        )?.familyId ?? null
+      : null;
+
+    // Distinct OTHER active families = the "other sessions". Denylist each so
+    // its outstanding ACCESS token dies immediately (M5), THEN delete every
+    // token row of those families (active + tombstones). Count distinct
+    // families, not rows — a rotated session has many tombstone rows.
+    const otherFamilies = await this.prisma.client.refreshToken.findMany({
       where: {
         userId: user.id,
-        ...(currentTokenHash ? { tokenHash: { not: currentTokenHash } } : {}),
+        rotatedAt: null,
+        ...(currentFamilyId ? { familyId: { not: currentFamilyId } } : {}),
+      },
+      select: { familyId: true },
+      distinct: ['familyId'],
+    });
+    await Promise.all(
+      otherFamilies.map((f) => this.sessionDenylist.denylistSession(f.familyId)),
+    );
+    await this.prisma.client.refreshToken.deleteMany({
+      where: {
+        userId: user.id,
+        ...(currentFamilyId ? { familyId: { not: currentFamilyId } } : {}),
       },
     });
 
-    return { message: `${count} session(s) revoked` };
+    return { message: `${otherFamilies.length} session(s) revoked` };
   }
 
   // ─── W.127 PDPL / GDPR self-service account management ──────────────────

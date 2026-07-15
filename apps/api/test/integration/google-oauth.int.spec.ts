@@ -11,7 +11,7 @@ import { UsersService } from '../../src/users/users.service';
 import {
   makeJwtMock, makeConfigMock, makeSecurityLoggerMock, makeAuditLoggerMock,
   makeEmailMock, makeEmailQuotaMock, makeNotificationMock, makeRedisMock,
-  makeResponseMock, makeRequestMock,
+  makeResponseMock, makeRequestMock, makeSessionDenylistMock,
 } from '../mocks/auth-deps.mock';
 import { ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
@@ -35,6 +35,7 @@ function makeAuth() {
     makeEmailQuotaMock() as any,
     makeNotificationMock() as any,
     makeRedisMock() as any,
+    makeSessionDenylistMock() as any,
   );
 }
 

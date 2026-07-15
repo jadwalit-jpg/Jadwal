@@ -18,8 +18,9 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { RolesGuard } from '../../src/auth/guards/roles.guard';
 import { Reflector } from '@nestjs/core';
+import { SessionDenylistService } from '../../src/redis/session-denylist.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
-import { makeConfigMock, makeResponseMock, makeRequestMock } from '../mocks/auth-deps.mock';
+import { makeConfigMock, makeResponseMock, makeRequestMock, makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 function makeAuthSvcMock() {
   return {
@@ -42,15 +43,17 @@ async function buildCtrl() {
   const authSvc = makeAuthSvcMock();
   const prisma  = makePrismaMock();
   const config  = makeConfigMock();
+  const denylist = makeSessionDenylistMock();
   const mod = await Test.createTestingModule({
     controllers: [AuthController],
     providers: [
-      { provide: AuthService,    useValue: authSvc },
-      { provide: PrismaService,  useValue: prisma },
-      { provide: ConfigService,  useValue: config },
+      { provide: AuthService,             useValue: authSvc },
+      { provide: PrismaService,           useValue: prisma },
+      { provide: ConfigService,           useValue: config },
+      { provide: SessionDenylistService,  useValue: denylist },
     ],
   }).compile();
-  return { ctrl: mod.get(AuthController), authSvc, prisma, config };
+  return { ctrl: mod.get(AuthController), authSvc, prisma, config, denylist };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -220,34 +223,47 @@ describe('AuthController — sessions (vendor/admin only)', () => {
   });
 
   test('DELETE /auth/sessions/:id → 403 when session belongs to another user (IDOR)', async () => {
-    const { ctrl, prisma } = await buildCtrl();
-    prisma._client.refreshToken.findUnique.mockResolvedValueOnce({ userId: 'SOMEONE_ELSE' });
+    const { ctrl, prisma, denylist } = await buildCtrl();
+    prisma._client.refreshToken.findUnique.mockResolvedValueOnce({ userId: 'SOMEONE_ELSE', familyId: 'fam-x' });
     await expect(ctrl.revokeSession({ id: 'u1', role: 'VENDOR' } as any, 's1'))
       .rejects.toThrow(ForbiddenException);
-    // Crucially, no delete is issued
-    expect(prisma._client.refreshToken.delete).not.toHaveBeenCalled();
+    // Crucially, NOTHING is revoked for a session the caller doesn't own.
+    expect(prisma._client.refreshToken.deleteMany).not.toHaveBeenCalled();
+    expect(denylist.denylistSession).not.toHaveBeenCalled();
   });
 
-  test('DELETE /auth/sessions/:id → deletes and returns message when owned', async () => {
-    const { ctrl, prisma } = await buildCtrl();
-    prisma._client.refreshToken.findUnique.mockResolvedValueOnce({ userId: 'u1' });
+  test('DELETE /auth/sessions/:id → denylists the family + deletes it, returns message when owned', async () => {
+    const { ctrl, prisma, denylist } = await buildCtrl();
+    // M5: the whole family (active + tombstones) is deleted and denylisted so the
+    // revoked device's access token dies immediately — not just its refresh token.
+    prisma._client.refreshToken.findUnique.mockResolvedValueOnce({ userId: 'u1', familyId: 'fam-s1' });
     const r = await ctrl.revokeSession({ id: 'u1', role: 'VENDOR' } as any, 's1');
-    expect(prisma._client.refreshToken.delete).toHaveBeenCalledWith({ where: { id: 's1' } });
+    expect(denylist.denylistSession).toHaveBeenCalledWith('fam-s1');
+    expect(prisma._client.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { familyId: 'fam-s1' } });
     expect(r).toEqual({ message: 'Session revoked' });
   });
 
-  test('DELETE /auth/sessions (revoke-all-others) excludes current-session hash', async () => {
-    const { ctrl, prisma } = await buildCtrl();
-    prisma._client.refreshToken.deleteMany.mockResolvedValueOnce({ count: 3 });
+  test('DELETE /auth/sessions (revoke-all-others) → denylists + deletes OTHER families, keeps current', async () => {
+    const { ctrl, prisma, denylist } = await buildCtrl();
+    // 1st lookup resolves the CURRENT token → its family (kept alive).
+    prisma._client.refreshToken.findUnique.mockResolvedValueOnce({ familyId: 'fam-current' });
+    // Then the distinct OTHER active families to revoke.
+    prisma._client.refreshToken.findMany.mockResolvedValueOnce([{ familyId: 'fam-a' }, { familyId: 'fam-b' }]);
     const req = makeRequestMock() as any;
     req.cookies = { RefreshToken: 'rtoken' };
 
     const r = await ctrl.revokeAllOtherSessions({ id: 'u1', role: 'VENDOR' } as any, req);
 
+    // Each OTHER family denylisted (access tokens die now); current one is NOT.
+    expect(denylist.denylistSession).toHaveBeenCalledWith('fam-a');
+    expect(denylist.denylistSession).toHaveBeenCalledWith('fam-b');
+    expect(denylist.denylistSession).not.toHaveBeenCalledWith('fam-current');
+    // Delete every OTHER family's rows; keep the current family.
     expect(prisma._client.refreshToken.deleteMany).toHaveBeenCalledWith({
-      where: { userId: 'u1', tokenHash: { not: 'hash(rtoken)' } },
+      where: { userId: 'u1', familyId: { not: 'fam-current' } },
     });
-    expect(r.message).toContain('3 session');
+    // Count is DISTINCT families, not rows.
+    expect(r.message).toContain('2 session');
   });
 });
 

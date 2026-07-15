@@ -14,6 +14,7 @@ import { BookingsService } from '../../src/bookings/bookings.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -43,8 +44,8 @@ function makeServices() {
   } as any;
   const auditLogger = { log: jest.fn().mockResolvedValue(undefined) } as any;
 
-  const vendor = new VendorService(prismaSvc, notificationService, loyalty, availabilityCache);
-  const admin = new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, refCache);
+  const vendor = new VendorService(prismaSvc, notificationService, loyalty, availabilityCache, makeSessionDenylistMock() as any);
+  const admin = new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, refCache, makeSessionDenylistMock() as any);
   const bookings = new BookingsService(
     prismaSvc, auditLogger, notificationService, redisLock,
     configService, loyalty, availabilityCache,

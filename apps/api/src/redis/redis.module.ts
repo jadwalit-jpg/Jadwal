@@ -4,6 +4,7 @@ import { RedisThrottlerStorage } from './redis-throttler.storage';
 import { RedisLockService } from './redis-lock.service';
 import { AvailabilityCacheService } from './availability-cache.service';
 import { ReferenceDataCacheService } from './reference-data-cache.service';
+import { SessionDenylistService } from './session-denylist.service';
 
 @Global()
 @Module({
@@ -13,6 +14,7 @@ import { ReferenceDataCacheService } from './reference-data-cache.service';
     RedisLockService,
     AvailabilityCacheService,
     ReferenceDataCacheService,
+    SessionDenylistService,
   ],
   exports: [
     RedisService,
@@ -20,6 +22,7 @@ import { ReferenceDataCacheService } from './reference-data-cache.service';
     RedisLockService,
     AvailabilityCacheService,
     ReferenceDataCacheService,
+    SessionDenylistService,
   ],
 })
 export class RedisModule {}
