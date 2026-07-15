@@ -95,6 +95,10 @@ describe('AdminAuditInterceptor — HTTP method filtering', () => {
       params: {},
     });
 
+    // The interceptor writes the audit row FIRE-AND-FORGET, so a direct findMany
+    // here races the write (intermittent "Received length: 0"). Poll until it
+    // lands, THEN read the set — the length-1 assertion still catches extras.
+    await waitForAuditRow();
     const rows = await ctx.prisma.auditLog.findMany();
     expect(rows).toHaveLength(1);
     expect(rows[0].actorType).toBe('ADMIN');
