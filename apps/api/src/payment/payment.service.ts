@@ -759,11 +759,11 @@ export class PaymentService {
     // on a Redis error (see its own ADR-0001 doc) — so a Redis outage pages
     // rather than silently dropping the alert; the local catch is belt-and-braces.
     const dedupKey = `pay2m:dupcap:${payment.id}:${incomingTxn}`;
-    let pageAdmins = true;
+    let pageAdmins: boolean;
     try {
       pageAdmins = (await this.redisLock.acquire(dedupKey, DUP_CAPTURE_DEDUP_TTL_MS)) !== null;
     } catch {
-      pageAdmins = true;
+      pageAdmins = true; // fail-open on an unexpected throw — page rather than go silent
     }
     if (pageAdmins) {
       void this.notificationService.notifyAdmins({
