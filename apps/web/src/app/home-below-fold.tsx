@@ -30,12 +30,15 @@ import {
   ChevronLeft,
   ChevronRight,
   Gift,
+  LayoutGrid,
   MapPin,
   ShieldCheck,
+  X,
   Zap,
 } from 'lucide-react';
 
 import api from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { localized } from '@/lib/localize';
 import { useGeo } from '@/context/geo-context';
 import {
@@ -84,6 +87,11 @@ export default function HomeBelowFold() {
   // Keeping the state at this level (rather than per-card) means only one
   // modal is mounted at a time and we don't have N <dialog>s in the DOM.
   const [openTrendingEvent, setOpenTrendingEvent] = useState<TrendingEvent | null>(null);
+
+  // Trending "View all" toggle: collapsed = the horizontal snap-scroll row (with
+  // desktop arrows); expanded = a responsive grid showing every trending event.
+  // A "Show less" control collapses it back to the row.
+  const [trendingExpanded, setTrendingExpanded] = useState(false);
 
   // Desktop prev/next arrows for the horizontally-scrolling trending row.
   // The row scrolls fine via swipe/trackpad, but its scrollbar is hidden
@@ -172,6 +180,31 @@ export default function HomeBelowFold() {
                 : t('home.trending')
             }
             rtl={isRtl}
+            action={
+              // Only worth a "View all" toggle once there are more cards than the
+              // row shows at a glance. Collapsed → the snap-scroll row (+ arrows);
+              // expanded → a grid of all events with a "Show less" control.
+              !isDetecting && !trendingLoading && trendingEvents.length > 4 ? (
+                <button
+                  type="button"
+                  onClick={() => setTrendingExpanded((v) => !v)}
+                  aria-expanded={trendingExpanded}
+                  className="inline-flex items-center gap-1.5 shrink-0 text-sm font-medium text-jadwal-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent rounded"
+                >
+                  {trendingExpanded ? (
+                    <>
+                      {t('home.showLess', { defaultValue: 'Show less' })}
+                      <X className="h-[14px] w-[14px]" aria-hidden="true" />
+                    </>
+                  ) : (
+                    <>
+                      {t('home.viewAll', { defaultValue: 'View all' })}
+                      <LayoutGrid className="h-[14px] w-[14px]" aria-hidden="true" />
+                    </>
+                  )}
+                </button>
+              ) : undefined
+            }
           />
           {isDetecting || trendingLoading ? (
             <TrendingRowSkeleton />
@@ -179,12 +212,22 @@ export default function HomeBelowFold() {
             <div className="relative">
               <div
                 ref={trendingScrollRef}
-                className="flex gap-4 md:gap-5 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 pe-4 sm:pe-6 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+                className={cn(
+                  trendingExpanded
+                    // Expanded: responsive grid of every event (no snap-scroll).
+                    ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-5'
+                    // Collapsed: the horizontal snap-scroll row (with hidden scrollbar).
+                    : 'flex gap-4 md:gap-5 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 pe-4 sm:pe-6 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]',
+                )}
               >
               {trendingEvents.map((event) => (
                 <article
                   key={event.id}
-                  className="group w-[280px] sm:w-[320px] shrink-0 snap-start flex flex-col overflow-hidden rounded-[20px] border border-jadwal-border-subtle bg-jadwal-surface shadow-jadwal transition-shadow hover:shadow-jadwal-lg"
+                  className={cn(
+                    'group flex flex-col overflow-hidden rounded-[20px] border border-jadwal-border-subtle bg-jadwal-surface shadow-jadwal transition-shadow hover:shadow-jadwal-lg',
+                    // Fixed-width snap card in the row; full grid-cell width when expanded.
+                    trendingExpanded ? 'w-full' : 'w-[280px] sm:w-[320px] shrink-0 snap-start',
+                  )}
                 >
                   {event.image ? (
                     <div className="relative h-[200px] overflow-hidden">
@@ -272,37 +315,43 @@ export default function HomeBelowFold() {
               ))}
               </div>
 
-              {/* Desktop scroll affordance. Hidden on mobile (touch swipe is
-                  natural there). Positioned with logical start/end so they
-                  flip in RTL; the chevron icon flips with reading direction.
-                  No Framer Motion: this homepage chunk deliberately excludes
-                  it (see docstring) — plain Tailwind transitions instead. */}
+              {/* Desktop scroll affordance — ONLY in the collapsed scroll row.
+                  Hidden on mobile (touch swipe is natural there). Positioned with
+                  logical start/end so they flip in RTL; the chevron icon flips
+                  with reading direction. No Framer Motion: this homepage chunk
+                  deliberately excludes it (see docstring) — plain Tailwind
+                  transitions instead. When expanded to the grid there's nothing
+                  to scroll, so the arrows are removed. */}
               {/* aria-labels use common.{prev,next} (translated EN + AR);
                   defaultValue kept as a belt-and-braces fallback. */}
-              <button
-                type="button"
-                onClick={() => scrollRowByCard(trendingScrollRef, 'prev')}
-                aria-label={t('common.prev', { defaultValue: 'Previous' })}
-                className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-s-0 -ms-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
-              >
-                {isRtl ? (
-                  <ChevronRight className="h-5 w-5" aria-hidden="true" />
-                ) : (
-                  <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => scrollRowByCard(trendingScrollRef, 'next')}
-                aria-label={t('common.next', { defaultValue: 'Next' })}
-                className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-e-0 -me-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
-              >
-                {isRtl ? (
-                  <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-                ) : (
-                  <ChevronRight className="h-5 w-5" aria-hidden="true" />
-                )}
-              </button>
+              {!trendingExpanded && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => scrollRowByCard(trendingScrollRef, 'prev')}
+                    aria-label={t('common.prev', { defaultValue: 'Previous' })}
+                    className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-s-0 -ms-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
+                  >
+                    {isRtl ? (
+                      <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                    ) : (
+                      <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => scrollRowByCard(trendingScrollRef, 'next')}
+                    aria-label={t('common.next', { defaultValue: 'Next' })}
+                    className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-e-0 -me-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
+                  >
+                    {isRtl ? (
+                      <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                    ) : (
+                      <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                    )}
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="text-center py-12 text-jadwal-text-faint text-sm">
