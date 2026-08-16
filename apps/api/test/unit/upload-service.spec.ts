@@ -15,7 +15,6 @@
 jest.mock('file-type', () => ({
   fileTypeFromBuffer: jest.fn(),
 }));
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { fileTypeFromBuffer } = require('file-type') as { fileTypeFromBuffer: jest.Mock };
 
 // sharp — chainable pipeline that ends in toBuffer().
@@ -41,7 +40,6 @@ jest.mock('fs/promises', () => ({
   writeFile: jest.fn().mockResolvedValue(undefined),
   unlink: jest.fn().mockResolvedValue(undefined),
 }));
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const fsp = require('fs/promises') as any;
 
 // fs — stub sync helpers so disk IO never touches the test runner
@@ -61,7 +59,6 @@ jest.mock(
   },
   { virtual: true },
 );
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const s3Mocks = require('@aws-sdk/client-s3') as any;
 
 import { UploadService } from '../../src/common/services/upload.service';

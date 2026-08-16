@@ -1561,7 +1561,7 @@ export class BookingsService {
         }
 
         // Apply coupon discount to totalPrice (discount reduces vendor share, not service fee)
-        let afterCouponPrice = Math.round((totalPrice - couponDiscount) * 100) / 100;
+        const afterCouponPrice = Math.round((totalPrice - couponDiscount) * 100) / 100;
 
         // 6e. Loyalty points redemption — ATOMIC, covers vendor share + service fee
         //

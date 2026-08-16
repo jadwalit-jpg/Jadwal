@@ -296,7 +296,6 @@ export class PaymentService {
     const chunks: Uint8Array[] = [];
     let totalBytes = 0;
     try {
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;

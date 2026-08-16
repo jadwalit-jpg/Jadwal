@@ -57,7 +57,6 @@ jest.mock('fs', () => ({
 }));
 
 // Lazy import after mocks are registered
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { PrismaService } = require('../../src/prisma/prisma.service');
 
 const REAL_SECRET_JSON = JSON.stringify({ username: 'jadwaladmin', password: 'pw-with-/at@:reserved!' });
@@ -91,7 +90,6 @@ describe('PrismaService — Secrets Manager + P1000 reconnect', () => {
     expect(sendMock).toHaveBeenCalledTimes(1);
     // Confirm Pool was constructed with a URL containing URL-encoded credentials
     // — the test password has reserved chars (/@:!) that must be escaped.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Pool } = require('pg');
     const callArg = (Pool as jest.Mock).mock.calls[0][0];
     expect(callArg.connectionString).toContain('jadwaladmin');
@@ -112,7 +110,6 @@ describe('PrismaService — Secrets Manager + P1000 reconnect', () => {
     // No SDK call.
     expect(sendMock).not.toHaveBeenCalled();
     // SSL must be OFF for localhost (LOCAL_DEV_DB_HOSTS allowlist).
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Pool } = require('pg');
     const callArg = (Pool as jest.Mock).mock.calls[0][0];
     expect(callArg.connectionString).toBe('postgresql://u:p@localhost:5432/jadwal');

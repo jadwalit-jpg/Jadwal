@@ -15,7 +15,6 @@ jest.mock('web-push', () => ({
   setVapidDetails: jest.fn(),
   sendNotification: jest.fn(),
 }));
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const webpush = require('web-push') as { setVapidDetails: jest.Mock; sendNotification: jest.Mock };
 
 import { WebPushService } from '../../src/common/services/web-push.service';

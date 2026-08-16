@@ -860,7 +860,7 @@ describe('BookingsService.createBooking — activeDays restriction', () => {
     });
 
     // Find the next non-Monday date
-    let candidate = new Date();
+    const candidate = new Date();
     candidate.setUTCDate(candidate.getUTCDate() + 7);
     while (candidate.getUTCDay() === 1) {
       candidate.setUTCDate(candidate.getUTCDate() + 1);

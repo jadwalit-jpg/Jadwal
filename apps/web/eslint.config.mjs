@@ -1,27 +1,19 @@
 import { defineConfig, globalIgnores } from "eslint/config";
-import { FlatCompat } from "@eslint/eslintrc";
-import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
+import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
+import nextTypescript from "eslint-config-next/typescript";
 
-// `eslint-config-next` ships in legacy (eslintrc-format) only — its
-// default export is `{ extends: [...] }`, not a flat-config array.
-// Trying to spread it directly works on some Node versions and
-// silently produces `undefined` on others (notably the Linux Node 22
-// in CI). FlatCompat is the canonical migration shim — it loads the
-// legacy config and emits flat-config-shaped objects we can spread.
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const compat = new FlatCompat({ baseDirectory: __dirname });
-
+// eslint-config-next 16 ships native flat-config arrays (no more legacy
+// eslintrc `{ extends: [...] }` shape), so they're imported and spread
+// directly — no FlatCompat shim needed anymore.
 const eslintConfig = defineConfig([
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...nextCoreWebVitals,
+  ...nextTypescript,
   // Downgrade the noisier `next/typescript` rules from error -> warn.
   // The codebase has ~3 k legitimate uses of `any` / require() that
   // would all need rewrites, and turning the lint job into a wall of
   // errors blocks every PR for a v1 launch concern that's lower
   // priority than functional CI gates. Security-critical rules
-  // (no-restricted-syntax block below, react-hooks, next-image) stay
-  // at error.
+  // (no-restricted-syntax block below, next-image) stay at error.
   {
     files: ["**/*.{ts,tsx,js,jsx}"],
     rules: {
@@ -40,6 +32,19 @@ const eslintConfig = defineConfig([
       "react-hooks/exhaustive-deps": "warn",
       "@next/next/no-img-element": "warn",
       "react/no-unescaped-entities": "warn",
+      // eslint-plugin-react-hooks 7 (bundled with eslint-config-next 16)
+      // adds a new "React Compiler" rule set (set-state-in-effect, purity,
+      // immutability, refs, preserve-manual-memoization, static-components)
+      // that the codebase predates and was never written against — ~40
+      // pre-existing violations across 25+ files. Downgraded to warn for
+      // the same reason as the block above: not a regression, just a
+      // stricter default the app hasn't been audited against yet.
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/refs": "warn",
+      "react-hooks/preserve-manual-memoization": "warn",
+      "react-hooks/static-components": "warn",
       "prefer-const": "warn",
     },
   },

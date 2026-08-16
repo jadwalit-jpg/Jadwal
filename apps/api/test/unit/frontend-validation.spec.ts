@@ -12,7 +12,6 @@
  * web workspace sits next to api), the resolver returns the real module.
  */
 
-/* eslint-disable @typescript-eslint/no-require-imports */
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -20,7 +19,6 @@ const WEB_VALIDATION_PATH = path.join(__dirname, '..', '..', '..', 'web', 'src',
 const WEB_AVAILABLE = fs.existsSync(WEB_VALIDATION_PATH);
 // Only require when the file exists. Dynamic `require` keeps static ts-jest
 // resolution happy without a top-level import that would fail at load.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const validation: any = WEB_AVAILABLE ? require('../../../web/src/lib/validation') : {};
 const webDescribe = WEB_AVAILABLE ? describe : describe.skip;
 

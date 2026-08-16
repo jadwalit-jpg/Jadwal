@@ -33,7 +33,6 @@ import {
 // first password change attempt). The TS `import = require` form below
 // produces `zxcvbn_1(...)` directly and is the canonical way to consume a
 // function-export CJS module without esModuleInterop.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 import zxcvbn = require('zxcvbn');
 
 const MIN_SCORE = 3; // 0..4 zxcvbn scale; 3 = "very strong"

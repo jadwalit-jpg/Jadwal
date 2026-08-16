@@ -94,7 +94,6 @@ describe('@IsNotDisposableEmail — EMAIL_DOMAIN_ALLOWLIST escape hatch', () => 
       // and would let assertions run after the test exits, masking
       // failures.
       await jest.isolateModulesAsync(async () => {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const mod = require('../../src/common/validators/disposable-email');
         const Decorator = mod.IsNotDisposableEmail;
         class LocalDto { email!: string; }

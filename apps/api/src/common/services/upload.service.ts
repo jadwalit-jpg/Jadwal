@@ -5,7 +5,18 @@ import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { readFile, unlink, writeFile } from 'fs/promises';
 import * as crypto from 'crypto';
-import * as sharp from 'sharp';
+// sharp ships dual type declarations: the new ESM one (`dist/index.d.mts`,
+// `export default sharp`) resolves here since our tsconfig has no
+// esModuleInterop — but its actual CJS runtime export is still a directly
+// callable function (`module.exports = sharp`, unchanged since 0.34). A
+// default import compiles to a `.default` property access that doesn't
+// exist at runtime ("sharp_1.default is not a function"); a plain namespace
+// import type-errors against the new default-export-only types. Import as a
+// namespace (matches the real runtime shape) and assert the callable type
+// for type-checking — no tsconfig-wide esModuleInterop needed (that breaks
+// other files' namespace imports, e.g. main.ts's cookie-parser).
+import * as sharpNamespace from 'sharp';
+const sharp = sharpNamespace as unknown as typeof import('sharp').default;
 
 // `file-type` v19 is ESM-only. Our tsconfig is CommonJS, so a static
 // `import { fileTypeFromBuffer } from 'file-type'` compiles to `require()`,
@@ -30,7 +41,6 @@ const importEsm: <T = unknown>(specifier: string) => Promise<T> = new Function(
 ) as never;
 async function loadFileType(): Promise<FileTypeModule> {
   if (IS_JEST) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     return require('file-type') as FileTypeModule;
   }
   return importEsm<FileTypeModule>('file-type');
@@ -86,7 +96,6 @@ export class UploadService {
    */
   private async getS3Client() {
     if (this.s3Client) return this.s3Client;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { S3Client } = require('@aws-sdk/client-s3');
     // Adaptive retry (3 attempts) — SDK retries only retryable error types
     // (network errors pre-request, throttling). PutObject is idempotent on
@@ -186,7 +195,6 @@ export class UploadService {
   // ─── S3 (production) ──────────────────────────────────────────────────
 
   private async uploadToS3(buffer: Buffer, file: Express.Multer.File, folder: string): Promise<string> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { PutObjectCommand } = require('@aws-sdk/client-s3');
     const client = await this.getS3Client();
 

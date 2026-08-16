@@ -11,7 +11,6 @@ import { getTestContext, seedReference } from './_setup';
 import { NotificationService } from '../../src/common/services/notification.service';
 import { WebPushService } from '../../src/common/services/web-push.service';
 import * as crypto from 'crypto';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const webpush = require('web-push');
 
 const ctx = getTestContext();
