@@ -355,3 +355,45 @@ describe('SanitizePipe', () => {
     expect(r).toEqual({ n: 42, b: true, x: null });
   });
 });
+
+// P1000 (database authentication failed) responds 503 and RETURNS before
+// mapError, so it needs its own alert — otherwise the single most important
+// production database failure is the one nobody is paged for. RDS_SECRET_ARN
+// is required in prod, so usingRotatingCreds is always true there and every
+// credential/rotation outage lands on that branch.
+describe('PrismaExceptionFilter — P1000 credential outage is alertable', () => {
+  const mkP1000 = () =>
+    new Prisma.PrismaClientKnownRequestError('auth failed', {
+      code: 'P1000', clientVersion: '5.0.0', meta: {},
+    });
+
+  test('emits PRISMA_ERROR_5XX on the 503 early-return path', () => {
+    const prev = process.env.RDS_SECRET_ARN;
+    process.env.RDS_SECRET_ARN = 'arn:aws:secretsmanager:eu-central-1:1:secret:x';
+    try {
+      const prisma = { refreshOnAuthError: jest.fn().mockResolvedValue(undefined) } as any;
+      const filter = new PrismaExceptionFilter(prisma);
+      // The 503 path chains .header('Retry-After'); the shared makeRes() helper
+      // only stubs status/json, so extend it locally rather than changing a
+      // helper every other filter test depends on.
+      const res: any = makeRes();
+      res.header = jest.fn().mockReturnValue(res);
+      res.status = jest.fn().mockReturnValue(res);
+      const errSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      filter.catch(mkP1000(), makeHost({ path: '/bookings', method: 'POST' }, res));
+
+      expect(res.status).toHaveBeenCalledWith(503);
+      const alert = errSpy.mock.calls
+        .map((c) => c[0])
+        .find((a) => typeof a === 'object' && a !== null && (a as any).event === 'PRISMA_ERROR_5XX');
+      expect(alert).toEqual(expect.objectContaining({ prismaCode: 'P1000', status: 503 }));
+      // The recovery path still runs — alerting must not replace it.
+      expect(prisma.refreshOnAuthError).toHaveBeenCalled();
+      errSpy.mockRestore();
+    } finally {
+      if (prev === undefined) delete process.env.RDS_SECRET_ARN;
+      else process.env.RDS_SECRET_ARN = prev;
+    }
+  });
+});
