@@ -109,9 +109,9 @@ jobs:
         run: npm ci
       - name: Verify package integrity signatures
         run: npm audit signatures
-      - name: API audit (production deps)
-        working-directory: apps/api
-        run: npm audit --omit=dev --audit-level=high
-      - name: Web audit (production deps)
-        working-directory: apps/web
-        run: npm audit --omit=dev --audit-level=high
+      # See scripts/audit-gate.mjs — fails on any high/critical production
+      # advisory that is not explicitly waived (with a reason + expiry) in
+      # .audit-allowlist.json, so newly introduced vulnerabilities still block
+      # while known-unfixable-upstream ones don't freeze the whole repo.
+      - name: Production audit (allowlist-aware)
+        run: node scripts/audit-gate.mjs apps/api apps/web

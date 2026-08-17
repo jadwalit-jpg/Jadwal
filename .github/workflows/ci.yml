@@ -69,13 +69,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: npm audit (API)
-        working-directory: apps/api
-        run: npm audit --omit=dev --audit-level=high
-
-      - name: npm audit (Web)
-        working-directory: apps/web
-        run: npm audit --omit=dev --audit-level=high
+      # Fails on any high/critical advisory in PRODUCTION deps that is not
+      # explicitly waived in .audit-allowlist.json. A bare `npm audit
+      # --audit-level=high` also fails on advisories with NO upstream fix,
+      # which made this gate unsatisfiable and blocked every unrelated PR
+      # (including security fixes). The allowlist is keyed by GHSA id and each
+      # entry expires, so a NEW vulnerability still blocks the merge.
+      - name: npm audit (production deps, allowlist-aware)
+        run: node scripts/audit-gate.mjs apps/api apps/web
 
   # ─── Stage 3: Secret Detection ──────────────────────────────────
   secrets:

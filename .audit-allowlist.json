@@ -1,0 +1,48 @@
+{
+  "$comment": [
+    "Known-unfixable production advisories. The audit gate (scripts/audit-gate.mjs)",
+    "fails on ANY high/critical advisory that is NOT listed here, so a NEWLY",
+    "introduced vulnerability still blocks the merge. Entries are keyed by GHSA id,",
+    "never by package name, so a FUTURE different advisory in the same package is",
+    "still caught.",
+    "",
+    "RULES:",
+    "  - Every entry MUST have a reason and a reviewBy date (YYYY-MM-DD).",
+    "  - An entry past its reviewBy date FAILS the gate. That is intentional: it",
+    "    forces a re-check instead of a silent permanent exception.",
+    "  - Remove an entry as soon as an upstream fix ships. The gate warns when an",
+    "    entry no longer matches anything (stale) so it gets cleaned up.",
+    "  - Adding an entry is a security decision and needs review, like any other",
+    "    change to a merge gate."
+  ],
+  "allow": [
+    {
+      "id": "GHSA-ggr8-5vv4-36mx",
+      "package": "deepmerge-ts",
+      "reason": "Reached only via prisma -> @prisma/config -> deepmerge-ts. NO patched prisma release exists: latest stable is 7.9.1 and the advisory's vulnerable range extends past it, so there is nothing to upgrade to. Not reachable from untrusted input (prisma config is loaded from our own repo at build/CLI time, not from user data).",
+      "reviewBy": "2026-09-30",
+      "trackedBy": "monitor prisma releases for >7.10.0 stable, then drop this entry"
+    },
+    {
+      "id": "GHSA-f88m-g3jw-g9cj",
+      "package": "sharp",
+      "reason": "Fix requires sharp >=0.35.0, but next pins sharp@^0.34.3, so bumping only apps/api creates a DUPLICATE sharp (0.35.x nested + 0.34.5 hoisted) and leaves the vulnerable copy in the tree. A forced root override is required and sharp is the package behind past deploy failures, so it needs its own PR with a build test.",
+      "reviewBy": "2026-09-30",
+      "trackedBy": "resolved by the next 15->16 upgrade (next 16 allows sharp 0.35) or a reviewed root override"
+    },
+    {
+      "id": "GHSA-6g55-p6wh-862q",
+      "package": "postcss",
+      "reason": "postcss arrives transitively through next. Fix requires next 16.3.1 (major 15->16 upgrade), which needs its own tested PR.",
+      "reviewBy": "2026-09-30",
+      "trackedBy": "next 15->16 upgrade PR"
+    },
+    {
+      "id": "GHSA-r28c-9q8g-f849",
+      "package": "postcss",
+      "reason": "postcss arrives transitively through next. Fix requires next 16.3.1 (major 15->16 upgrade), which needs its own tested PR.",
+      "reviewBy": "2026-09-30",
+      "trackedBy": "next 15->16 upgrade PR"
+    }
+  ]
+}
