@@ -190,9 +190,16 @@ describe('BookingsService.cancelBooking', () => {
       payment: { id: 'p1', status: 'PENDING', amount: 100, gatewayBasketId: 'JDWL-abc123def456' },
     };
 
+    // The shared prisma mock defaults updateMany to { count: 0 }, which now
+    // (correctly) trips the optimistic-lock abort — so the happy-path tests
+    // must simulate a payment row that was genuinely still PENDING.
+    const wonTheRace = (ctx: any) =>
+      ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
+
     test('does NOT delete the payment row', async () => {
       const ctx = await buildSut();
       ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      wonTheRace(ctx);
       const res = await ctx.sut.cancelBooking('u1', 'b1');
 
       expect(ctx.prisma._client.payment.delete).not.toHaveBeenCalled();
@@ -203,6 +210,7 @@ describe('BookingsService.cancelBooking', () => {
     test('flips the payment to FAILED only while it is still PENDING', async () => {
       const ctx = await buildSut();
       ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      wonTheRace(ctx);
       await ctx.sut.cancelBooking('u1', 'b1');
 
       // The status guard is what stops us clobbering a capture that won the race.
@@ -217,6 +225,7 @@ describe('BookingsService.cancelBooking', () => {
     test('marks the booking CANCELLED by CUSTOMER so a late capture refunds instead of resurrecting', async () => {
       const ctx = await buildSut();
       ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      wonTheRace(ctx);
       await ctx.sut.cancelBooking('u1', 'b1');
 
       expect(ctx.prisma._client.booking.update).toHaveBeenCalledWith(
@@ -225,6 +234,27 @@ describe('BookingsService.cancelBooking', () => {
           data: expect.objectContaining({ status: 'CANCELLED', cancelledBy: 'CUSTOMER' }),
         }),
       );
+    });
+
+    // THE race this whole branch exists for, and the one the first version of
+    // this fix did not cover: the PAY2M capture commits between our read and
+    // our write. The payment updateMany then matches 0 rows. Without an abort
+    // we would still flip the booking to CANCELLED and hand back the coupon +
+    // points on a booking the callback just CONFIRMED and charged — leaving no
+    // REFUND_PENDING row, so recordRefundDecision (which requires
+    // REFUND_PENDING) could never refund it.
+    test('ABORTS when a concurrent capture already flipped the payment to SUCCESS', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      // 0 rows matched → the callback won the race.
+      ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(ctx.sut.cancelBooking('u1', 'b1')).rejects.toThrow(/payment completed while cancelling/i);
+
+      // Must NOT cancel the booking the callback just confirmed…
+      expect(ctx.prisma._client.booking.update).not.toHaveBeenCalled();
+      // …and must NOT hand back the redeemed points for a paid booking.
+      expect((ctx.loyalty as any).refund ?? ctx.loyalty.refundPoints).not.toHaveBeenCalled();
     });
 
     test('still hard-deletes when NO gateway session was ever opened (behaviour preserved)', async () => {
