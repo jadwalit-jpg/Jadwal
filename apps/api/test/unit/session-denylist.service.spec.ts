@@ -189,3 +189,15 @@ describe('SessionDenylistService — fail-open visibility', () => {
     spy.mockRestore();
   });
 });
+
+// Telemetry must never outrank the fail-open contract: isDenied runs on every
+// authenticated request, so a throw inside the counter would leave the promise
+// pending and HANG the request instead of failing open.
+describe('SessionDenylistService — fail-open survives broken telemetry', () => {
+  test('still resolves false when the counter itself throws', async () => {
+    const { svc } = make(async () => { throw new Error('redis down'); });
+    jest.spyOn(svc as any, 'noteFailOpen').mockImplementation(() => { throw new Error('logger exploded'); });
+
+    await expect(svc.isDenied('fam')).resolves.toBe(false);
+  });
+});

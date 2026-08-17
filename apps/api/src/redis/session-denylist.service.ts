@@ -125,8 +125,16 @@ export class SessionDenylistService {
       };
       const failOpen = () => {
         if (settled) return;
-        this.noteFailOpen();
+        // Settle FIRST. This runs on the auth hot path (every request), and a
+        // throw here would escape the setTimeout callback uncaught and leave
+        // the promise pending forever — the request would hang instead of
+        // failing open. Telemetry must never outrank the contract it observes.
         finish(false);
+        try {
+          this.noteFailOpen();
+        } catch {
+          /* observability must not break authentication */
+        }
       };
       const timer = setTimeout(failOpen, this.readTimeoutMs);
       try {

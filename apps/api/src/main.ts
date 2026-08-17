@@ -108,10 +108,17 @@ async function bootstrap() {
     // The default is already 'true' when unset, so this only rejects an
     // explicit opt-out. Fail loudly rather than boot unprotected: an outage
     // is recoverable in minutes, a silently unthrottled auth endpoint is not.
-    const throttleEnabled = process.env.THROTTLE_ENABLED?.trim();
-    if (throttleEnabled !== undefined && throttleEnabled !== '' && throttleEnabled !== 'true') {
+    // Compare the RAW value, exactly as app.module.ts does
+    // (`config.get('THROTTLE_ENABLED', 'true') === 'true'`). Do NOT trim and do
+    // NOT treat '' as absent: @nestjs/config returns '' for an explicitly-empty
+    // env var rather than falling back to the default, so THROTTLE_ENABLED=""
+    // and THROTTLE_ENABLED=" true " both DISABLE the throttler. A guard that
+    // normalises more loosely than its consumer waves through precisely the
+    // values it exists to catch.
+    const throttleRaw = process.env.THROTTLE_ENABLED;
+    if (throttleRaw !== undefined && throttleRaw !== 'true') {
       console.error(
-        `\n[FATAL] THROTTLE_ENABLED is "${throttleEnabled}" in production. Rate limiting would be disabled platform-wide (all tiers become 100000/min). Set it to "true" or remove it.\n`,
+        `\n[FATAL] THROTTLE_ENABLED must be exactly "true" in production (got ${JSON.stringify(throttleRaw)}). Any other value disables rate limiting platform-wide — all tiers become 100000/min, including /auth/login, OTP send and password reset. Set it to "true" or remove the variable entirely.\n`,
       );
       process.exit(1);
     }
