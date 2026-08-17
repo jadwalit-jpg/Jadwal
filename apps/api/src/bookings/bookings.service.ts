@@ -2043,7 +2043,10 @@ export class BookingsService {
             country: { select: { defaultTimezone: true } },
           },
         },
-        payment: { select: { id: true, status: true, amount: true } },
+        // gatewayBasketId is required to detect an IN-FLIGHT PAY2M session: its
+        // presence means the customer reached the gateway, so a capture may
+        // still land after this cancel and the payment row must NOT be deleted.
+        payment: { select: { id: true, status: true, amount: true, gatewayBasketId: true } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
@@ -2293,6 +2296,74 @@ export class BookingsService {
         suggestedRefundPercent: refundPercent,
         suggestedRefundAmount: suggestedRefund,
         refundReason,
+      };
+    } else if (
+      booking.payment &&
+      booking.payment.status === 'PENDING' &&
+      booking.payment.gatewayBasketId !== null
+    ) {
+      // ── Unpaid, but a PAY2M session is IN FLIGHT → soft-cancel, never delete ──
+      //
+      // The customer opened the gateway (a basket id exists) and the payment is
+      // still PENDING, so a capture may STILL land after this cancel — the
+      // classic "pay in tab A, cancel in tab B" race.
+      //
+      // Hard-deleting here destroys the payment row (and with it the
+      // gatewayBasketId + bookingSnapshot). A late success callback then looks
+      // the payment up by gatewayBasketId, finds nothing, and throws
+      // "Payment not found" (payment.service.ts) — the customer is charged with
+      // NO booking, NO payment row and NO refund, invisible even to
+      // reconciliation (which only compares our DB against our DB).
+      //
+      // This is the exact incident already fixed in the stale-PENDING cron
+      // (cleanup.service.ts — "payments are never hard-deleted"); this path was
+      // missed. Deleting the BOOKING is equally unsafe: with the booking gone a
+      // late capture takes the §B2_ORPHAN branch and RE-CREATES it from the
+      // snapshot — resurrecting a booking the customer deliberately cancelled,
+      // which payment.service.ts explicitly forbids.
+      //
+      // So we keep both rows and use the states the recovery logic already
+      // understands: payment → FAILED (guarded on PENDING so a capture that won
+      // the race is never clobbered), booking → CANCELLED by the customer. A
+      // late success then resolves to CANCELLED_REFUND and the money is
+      // refunded — the existing, tested path.
+      const redeemedPoints = Number(booking.pointsRedeemed) || 0;
+
+      await db.$transaction(async (tx) => {
+        await refundCouponUsage(tx, appliedCoupon, userId);
+
+        // Only flip a payment that is STILL pending. If a concurrent success
+        // callback already moved it to SUCCESS, leave it alone — that booking
+        // is genuinely paid and the callback owns the outcome.
+        await tx.payment.updateMany({
+          where: { id: booking.payment!.id, status: 'PENDING' },
+          data: { status: 'FAILED' },
+        });
+
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: { status: 'CANCELLED', cancelledAt: new Date(), cancelledBy: 'CUSTOMER' },
+        });
+
+        if (redeemedPoints > 0) {
+          await this.loyalty.refund(tx, {
+            userId,
+            amount: redeemedPoints,
+            bookingId,
+            source: 'CANCEL_REFUND_UNPAID',
+            actorType: 'CUSTOMER',
+            actorId: userId,
+            note: `Returned on customer-cancel with in-flight payment, booking ${booking.ref}`,
+          });
+        }
+      });
+
+      void this.availabilityCache.invalidate(booking.activityId);
+
+      return {
+        message: 'Booking cancelled.',
+        deleted: false,
+        status: 'CANCELLED',
       };
     } else {
       // Unpaid booking → hard-delete entirely. Customer never paid, so this
