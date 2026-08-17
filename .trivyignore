@@ -84,3 +84,10 @@ CVE-2026-35591
 # alongside the same advisories in .audit-allowlist.json, which must be
 # cleaned up in the same PR.
 CVE-2026-45623
+# CVE-2026-73646 — same vendored postcss 8.4.31 (fixed 8.5.18, unreachable for
+# the same exact-pin reason). Path traversal via "previous source map"
+# auto-loading (sourceMappingURL). Reachable only where postcss PARSES CSS,
+# which for this repo is the CI build over our OWN stylesheets — an attacker
+# would already need repo write access, at which point this CVE is moot. The
+# shipped runner never parses CSS at all (pre-compiled at build).
+CVE-2026-73646
