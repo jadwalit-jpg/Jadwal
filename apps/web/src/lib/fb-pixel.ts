@@ -19,7 +19,7 @@ declare global {
   }
 }
 
-export const FB_PIXEL_ID = process.env.NEXT_PUBLIC_FB_PIXEL_ID ?? '1554481776310825';
+export const FB_PIXEL_ID = process.env.NEXT_PUBLIC_FB_PIXEL_ID ?? '1369351807915972';
 
 /**
  * Fire a Meta Pixel event (e.g. 'Purchase', 'CompleteRegistration',
