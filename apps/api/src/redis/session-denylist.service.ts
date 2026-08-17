@@ -123,16 +123,56 @@ export class SessionDenylistService {
         clearTimeout(timer);
         resolve(denied);
       };
-      const timer = setTimeout(() => finish(false), this.readTimeoutMs);
+      const failOpen = () => {
+        if (settled) return;
+        this.noteFailOpen();
+        finish(false);
+      };
+      const timer = setTimeout(failOpen, this.readTimeoutMs);
       try {
         this.redis
           .getClient()
           .get(this.key(familyId))
-          .then((hit) => finish(hit !== null), () => finish(false));
+          .then((hit) => finish(hit !== null), failOpen);
       } catch {
         // getClient() threw synchronously (misconfiguration) — fail open.
-        finish(false);
+        failOpen();
       }
+    });
+  }
+
+  /**
+   * Record that a denylist read failed open, WITHOUT logging per request.
+   *
+   * Failing open is the correct availability trade — a Redis blip must not
+   * lock every user out — but while it lasts, instant-logout silently stops
+   * working: revoked sessions (logout, vendor suspend, refresh-reuse
+   * revocation, password reset) keep passing auth until the access token
+   * expires naturally. Previously that window produced no signal at all, so
+   * nobody could tell "revocation is currently degraded" from "nothing was
+   * revoked".
+   *
+   * Logging every request would flood during an outage (the reason the
+   * original code stayed quiet), so occurrences are counted and flushed at
+   * most once per interval with the count. `event: SESSION_DENYLIST_FAIL_OPEN`
+   * is the stable token for a CloudWatch metric filter + alarm.
+   */
+  private failOpenCount = 0;
+  private lastFailOpenLogAt = 0;
+  private static readonly FAIL_OPEN_LOG_INTERVAL_MS = 60_000;
+
+  private noteFailOpen(): void {
+    this.failOpenCount += 1;
+    const now = Date.now();
+    if (now - this.lastFailOpenLogAt < SessionDenylistService.FAIL_OPEN_LOG_INTERVAL_MS) return;
+    this.lastFailOpenLogAt = now;
+    const count = this.failOpenCount;
+    this.failOpenCount = 0;
+    this.logger.error({
+      event: 'SESSION_DENYLIST_FAIL_OPEN',
+      occurrences: count,
+      windowMs: SessionDenylistService.FAIL_OPEN_LOG_INTERVAL_MS,
+      impact: 'instant session revocation degraded — revoked tokens valid until natural expiry',
     });
   }
 }

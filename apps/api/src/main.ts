@@ -96,6 +96,26 @@ async function bootstrap() {
       process.exit(1);
     }
 
+    // Rate limiting must be ON in production.
+    //
+    // `THROTTLE_ENABLED=false` collapses every tier to 100_000/min (see
+    // app.module.ts + throttle-config.ts), i.e. no rate limiting at all —
+    // including on /auth/login, OTP send and password-reset. `false` is the
+    // documented value for the E2E workflow, so one copied task-def env var
+    // (or a mistyped SSM parameter) silently disables platform-wide abuse
+    // protection with NO startup signal and nothing failing.
+    //
+    // The default is already 'true' when unset, so this only rejects an
+    // explicit opt-out. Fail loudly rather than boot unprotected: an outage
+    // is recoverable in minutes, a silently unthrottled auth endpoint is not.
+    const throttleEnabled = process.env.THROTTLE_ENABLED?.trim();
+    if (throttleEnabled !== undefined && throttleEnabled !== '' && throttleEnabled !== 'true') {
+      console.error(
+        `\n[FATAL] THROTTLE_ENABLED is "${throttleEnabled}" in production. Rate limiting would be disabled platform-wide (all tiers become 100000/min). Set it to "true" or remove it.\n`,
+      );
+      process.exit(1);
+    }
+
     // DB connection — strict in production.
     //
     // We're already inside `if (NODE_ENV === 'production')` (outer block at

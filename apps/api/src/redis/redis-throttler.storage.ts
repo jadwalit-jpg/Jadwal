@@ -113,7 +113,14 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleInit {
       if (isShutdownRace) {
         this.logger.warn(`Redis throttler unavailable (${name}) — failing open`);
       } else {
-        this.logger.error(`Redis throttler failed (${name})`);
+        // Structured + stable token so this is ALARMABLE, not just readable.
+        // Failing open is the right availability trade (a Redis blip must not
+        // take the API down), but while it lasts EVERY rate limit is inert —
+        // including /auth/login, OTP send and password reset. That window has
+        // to be visible, so `event: RATE_LIMIT_FAIL_OPEN` is the token a
+        // CloudWatch metric filter + alarm keys on. Error class only: err.message
+        // can carry ElastiCache hostnames or auth state.
+        this.logger.error({ event: 'RATE_LIMIT_FAIL_OPEN', errorClass: name });
       }
       // Fail open — do not block requests when Redis is down
       return { totalHits: 0, timeToExpire: ttl, isBlocked: false, timeToBlockExpire: 0 };
