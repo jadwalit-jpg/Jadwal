@@ -2195,9 +2195,50 @@ export class AdminService {
     const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
     const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
 
+    // ── Pre-validate BEFORE writing anything ────────────────────────────────
+    // Marking paid is the system's record that a bank wire ALREADY LEFT
+    // (bankTransferRef is mandatory above). If some rows silently fail to
+    // match, the admin has wired money the DB still considers UNPAID — those
+    // rows resurface in the next payout cycle and get wired a SECOND time.
+    // The UI cannot save us here: payments-tab.tsx discards the return value
+    // and toasts success unconditionally.
+    //
+    // So refuse the whole batch and name the offenders instead of settling a
+    // subset. Nothing is written, and the admin can correct the selection
+    // before (or after) the wire rather than discovering a double-payment on
+    // a bank statement.
+    const eligible = await db.payment.findMany({
+      where: {
+        id: { in: paymentIds },
+        status: 'SUCCESS',
+        payoutStatus: 'UNPAID',
+        booking: { endDatetime: { lt: payoutCutoff } },
+      },
+      select: { id: true },
+    });
+    if (eligible.length < paymentIds.length) {
+      const eligibleIds = new Set(eligible.map((p) => p.id));
+      const skipped = paymentIds.filter((id) => !eligibleIds.has(id));
+      this.logger.warn({
+        event: 'PAYOUT_MARK_PAID_REJECTED',
+        requested: paymentIds.length,
+        eligible: eligible.length,
+        skippedCount: skipped.length,
+      });
+      throw new BadRequestException(
+        `${skipped.length} of ${paymentIds.length} selected payment(s) cannot be marked paid — ` +
+          'they are already PAID, not a SUCCESS payment, or their activity has not ended yet ' +
+          '(payout escrow). No payments were changed. Refresh the list and retry with the ' +
+          `eligible rows only. Skipped ids: ${skipped.slice(0, 10).join(', ')}` +
+          (skipped.length > 10 ? ` (+${skipped.length - 10} more)` : ''),
+      );
+    }
+
     // `payoutStatus: 'UNPAID'` in the where makes this a one-way transition:
     // a row already marked PAID is skipped, so a concurrent / repeated call
-    // can't overwrite its original `paidAt` + `bankTransferRef`.
+    // can't overwrite its original `paidAt` + `bankTransferRef`. The same
+    // predicate is repeated here (not just relied on from the check above)
+    // because a concurrent mark-paid could land between the two statements.
     const result = await db.payment.updateMany({
       where: {
         id: { in: paymentIds },
@@ -2208,16 +2249,14 @@ export class AdminService {
       data: { payoutStatus: 'PAID', paidAt: new Date(), bankTransferRef: trimmedRef },
     });
 
-    // Tell the admin when rows were skipped rather than silently paying out a
-    // subset. Without this the UI would report success for a request that only
-    // partially settled, and the unsettled rows would look like a bookkeeping
-    // mismatch later.
+    // Lost the race against a concurrent mark-paid between the check and the
+    // write. Surface it — the count is what the caller acts on.
     if (result.count < paymentIds.length) {
       this.logger.warn({
         event: 'PAYOUT_MARK_PAID_PARTIAL',
         requested: paymentIds.length,
         marked: result.count,
-        reason: 'rows skipped: already PAID, not SUCCESS, or activity has not ended (escrow)',
+        reason: 'concurrent update between eligibility check and write',
       });
     }
 
