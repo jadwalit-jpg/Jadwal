@@ -2183,13 +2183,43 @@ export class AdminService {
       throw new BadRequestException('bankTransferRef is required — record the bank-side wire confirmation number before marking paid.');
     }
 
+    // Escrow buffer — MUST mirror evaluatePayoutEligibility and the
+    // approve-payout path (both filter `booking.endDatetime < payoutCutoff`).
+    // This release path used to omit it, so a payment could be marked PAID
+    // while its activity was still in the future. The customer could then
+    // cancel before start (cancelBooking only blocks AFTER start) and the
+    // refund would be approved with no awareness that the vendor had already
+    // been paid — money out twice, with no clawback and no alert anywhere.
+    // Filtering here means an ineligible row is simply not marked, and the
+    // count check below surfaces the discrepancy to the caller.
+    const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
+    const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
+
     // `payoutStatus: 'UNPAID'` in the where makes this a one-way transition:
     // a row already marked PAID is skipped, so a concurrent / repeated call
     // can't overwrite its original `paidAt` + `bankTransferRef`.
     const result = await db.payment.updateMany({
-      where: { id: { in: paymentIds }, status: 'SUCCESS', payoutStatus: 'UNPAID' },
+      where: {
+        id: { in: paymentIds },
+        status: 'SUCCESS',
+        payoutStatus: 'UNPAID',
+        booking: { endDatetime: { lt: payoutCutoff } },
+      },
       data: { payoutStatus: 'PAID', paidAt: new Date(), bankTransferRef: trimmedRef },
     });
+
+    // Tell the admin when rows were skipped rather than silently paying out a
+    // subset. Without this the UI would report success for a request that only
+    // partially settled, and the unsettled rows would look like a bookkeeping
+    // mismatch later.
+    if (result.count < paymentIds.length) {
+      this.logger.warn({
+        event: 'PAYOUT_MARK_PAID_PARTIAL',
+        requested: paymentIds.length,
+        marked: result.count,
+        reason: 'rows skipped: already PAID, not SUCCESS, or activity has not ended (escrow)',
+      });
+    }
 
     // Notify each vendor whose payments were marked as paid. Pull the slug
     // here too so the notification link resolves to a real route (the vendor

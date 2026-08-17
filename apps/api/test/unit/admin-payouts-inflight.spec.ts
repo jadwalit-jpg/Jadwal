@@ -103,10 +103,83 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
 
     const result = await ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF');
     expect(result).toEqual({ updated: 1 });
-    // Must flip SUCCESS + still-UNPAID payments ONLY (optimistic, one-way)
+    // Must flip SUCCESS + still-UNPAID payments ONLY (optimistic, one-way),
+    // AND only for bookings whose activity has already ended (escrow buffer).
+    // Without the endDatetime filter a future booking could be paid out and
+    // then cancelled+refunded — money out twice with no clawback.
     expect(ctx.prisma._client.payment.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['p1'] }, status: 'SUCCESS', payoutStatus: 'UNPAID' },
+      where: {
+        id: { in: ['p1'] },
+        status: 'SUCCESS',
+        payoutStatus: 'UNPAID',
+        booking: { endDatetime: { lt: expect.any(Date) } },
+      },
       data: expect.objectContaining({ payoutStatus: 'PAID' }),
+    });
+  });
+
+  // ── Escrow guard on the RELEASE path ──────────────────────────────────────
+  // evaluatePayoutEligibility and the approve-payout path both filter on
+  // `booking.endDatetime < payoutCutoff`. markPayoutsPaid omitted it, so a
+  // future booking could be marked PAID; the customer could then cancel before
+  // start (cancelBooking only blocks AFTER start) and the refund would be
+  // approved with the vendor already holding the money.
+  describe('escrow buffer', () => {
+    async function setupUnblocked() {
+      const ctx = await buildSut();
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
+        { id: 'p1', booking: { vendor: { id: 'vA', businessNameEn: 'Alpha', status: 'ACTIVE' } } },
+      ]);
+      ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]);
+      return ctx;
+    }
+
+    test('restricts the update to bookings whose activity has ENDED', async () => {
+      const ctx = await setupUnblocked();
+      ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
+        { booking: { vendorId: 'vA', vendor: { userId: 'u1', slug: 'alpha' } } },
+      ]);
+
+      await ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF');
+
+      const where = ctx.prisma._client.payment.updateMany.mock.calls[0][0].where;
+      expect(where.booking.endDatetime.lt).toBeInstanceOf(Date);
+      // Cutoff is "now" minus the configured buffer — never in the future,
+      // which would let unfinished bookings settle.
+      expect(where.booking.endDatetime.lt.getTime()).toBeLessThanOrEqual(Date.now());
+    });
+
+    test('an in-escrow (future) booking is simply not marked — updated count reflects it', async () => {
+      const ctx = await setupUnblocked();
+      // The DB matches 0 rows because the booking has not ended yet.
+      ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 0 });
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
+
+      const result = await ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF');
+
+      // Reported honestly rather than claiming a payout that did not happen.
+      expect(result).toEqual({ updated: 0 });
+    });
+
+    test('honours PAYOUT_SETTLEMENT_BUFFER_DAYS by pushing the cutoff further back', async () => {
+      const prev = process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS;
+      process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS = '3';
+      try {
+        const ctx = await setupUnblocked();
+        ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
+        ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
+
+        await ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF');
+
+        const cutoff = ctx.prisma._client.payment.updateMany.mock.calls[0][0].where.booking.endDatetime.lt;
+        // ~3 days back, allowing a second of execution slack.
+        const expected = Date.now() - 3 * 86_400_000;
+        expect(Math.abs(cutoff.getTime() - expected)).toBeLessThan(5_000);
+      } finally {
+        if (prev === undefined) delete process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS;
+        else process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS = prev;
+      }
     });
   });
 
