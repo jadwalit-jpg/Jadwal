@@ -1821,7 +1821,17 @@ export class BookingsService {
           });
         }
         return createdBooking;
-      }, { isolationLevel: 'Serializable' });
+        // timeout: this transaction performs ~10 sequential round-trips
+        // (overlap scan, special prices, platform settings, coupon claim,
+        // loyalty config, payment + booking insert, payment update, loyalty
+        // redeem + ledger). Prisma's DEFAULT is 5s, which this can exceed
+        // under load or on a slow link — and the resulting P2028 surfaced as
+        // an unmapped generic 500 with no alert. 15s leaves headroom without
+        // letting a genuinely stuck transaction hold Serializable predicate
+        // locks indefinitely.
+        // maxWait: cap time spent waiting for a pool connection so a saturated
+        // pool fails fast instead of stacking requests behind it.
+      }, { isolationLevel: 'Serializable', timeout: 15_000, maxWait: 5_000 });
     } catch (err) {
       // P2034 = PostgreSQL serialization failure (two transactions conflicted).
       // Without this catch, NestJS returns 500. Map it to 409 so the frontend
