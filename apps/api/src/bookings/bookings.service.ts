@@ -2486,7 +2486,9 @@ export class BookingsService {
         id: true, ref: true, status: true, vendorId: true, customerId: true,
         activity: { select: { titleEn: true } },
         vendor: { select: { userId: true, slug: true } },
-        payment: { select: { id: true, status: true, amount: true } },
+        // payoutStatus is needed to detect a refund on a booking whose vendor
+        // has ALREADY been paid — money out twice unless finance claws it back.
+        payment: { select: { id: true, status: true, amount: true, payoutStatus: true } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
@@ -2589,6 +2591,39 @@ export class BookingsService {
         });
       }
     });
+
+    // ── Vendor already paid out for a booking we just refunded ──────────────
+    // The platform is now out of pocket: the customer has been made whole and
+    // the vendor still holds the money. We deliberately do NOT block the
+    // refund — the customer must not be held hostage to a bookkeeping problem
+    // — but this MUST be visible, because nothing else detects it:
+    // reconciliation never looks at payoutStatus, and the payout tables have
+    // no clawback flow. Raising it here gives finance a record to act on.
+    if (action === 'APPROVE' && finalAmount > 0 && booking.payment.payoutStatus === 'PAID') {
+      this.logger.warn({
+        event: 'REFUND_ON_PAID_OUT_BOOKING',
+        bookingId,
+        bookingRef: booking.ref,
+        vendorId: booking.vendorId,
+        refundAmount: finalAmount,
+      });
+      this.auditLogger.log({
+        actorType: actor,
+        actorId: userId,
+        actorName: `${actor} ${userId.slice(0, 8)}`,
+        action: 'REFUND_ON_PAID_OUT_BOOKING',
+        entity: 'Booking',
+        entityId: bookingId,
+        details: `Refund of ${finalAmount} approved on booking ${booking.ref} whose vendor payout was already marked PAID — clawback required`,
+        actionCategory: 'FINANCIAL',
+      });
+      this.notificationService.notifyAdmins({
+        type: 'SYSTEM',
+        title: 'Refund on an already-paid-out booking',
+        message: `Booking ${booking.ref} was refunded (${finalAmount}) after the vendor payout was marked PAID. The vendor holds funds that must be clawed back.`,
+        link: `/admin/bookings/${bookingId}`,
+      });
+    }
 
     // ── Audit log ──
     const decider = await db.user.findUnique({ where: { id: userId }, select: { fullName: true } });
