@@ -4,22 +4,27 @@
 # Each entry is a DOCUMENTED, time-boxed risk-acceptance, not a "fix". Remove the
 # entry as soon as the underlying dependency can be patched.
 #
-# ── multer 2.1.1 Denial-of-Service advisories ───────────────────────────────
-# The patch is multer 2.2.0, but @nestjs/platform-express pins multer EXACTLY
-# 2.1.1 (even in its latest release, 11.1.27) and npm 11.9.0 silently refuses to
-# apply an `overrides` bump, so the version cannot be raised cleanly yet.
+
+# ── deepmerge-ts 7.1.5 — CVE-2026-40345 (stack exhaustion) ─────────────────
+# Review by: 2026-09-30
 #
-# Risk is mitigated and LOW in context:
-#   - the only code paths that reach multer are the image-upload endpoints,
-#   - which are AUTH-GATED (vendor/admin only),
-#   - RATE-LIMITED (RATE_LIMIT_CALLBACK, 20/min/IP) behind Cloudflare,
-#   - fileSize-capped (10 MB), and
-#   - fields/parts/fieldNameSize-capped (PR #385) — which closes the
-#     "deeply nested field names" DoS vector at the app layer.
+# Newly published advisory; nothing in this repo changed to introduce it.
+# Reached only as prisma -> @prisma/config -> deepmerge-ts. The fix is
+# deepmerge-ts 8.0.0, but @prisma/config pins 7.1.5 exactly and npm refuses a
+# root `overrides` bump against an exact pin (verified: the override leaves
+# 7.1.5 in the tree). No published prisma release ships a patched copy, so
+# there is nothing to upgrade to.
 #
-# REMOVE these once NestJS ships a @nestjs/platform-express that depends on a
-# patched multer (Dependabot will open that PR). Tracked in the project memory
-# note `reference_deploy_trivy_gate`.
-CVE-2026-5079
-GHSA-72gw-mp4g-v24j
-GHSA-3p4h-7m6x-2hcm
+# Risk is LOW in context: the advisory is stack exhaustion when merging
+# deeply-recursive objects. @prisma/config uses deepmerge-ts to merge OUR OWN
+# prisma config at CLI/build time — it never merges request data, and no
+# runtime request path reaches it. An attacker would need write access to the
+# repo's prisma config, at which point this CVE is irrelevant.
+#
+# Already waived for the npm gate as GHSA-ggr8-5vv4-36mx in
+# .audit-allowlist.json; this is the same advisory under its CVE id, which is
+# what Trivy matches on. Remove BOTH together when prisma ships a fix.
+# Trivy enforces `exp:` natively — after this date the entry stops applying
+# and the finding blocks deploys again. That makes the review date mechanical
+# rather than a comment nobody re-reads.
+CVE-2026-40345 exp:2026-09-30
