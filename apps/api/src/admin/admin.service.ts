@@ -25,6 +25,7 @@ import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
+import { envNumber } from '../common/env';
 
 @Injectable()
 export class AdminService {
@@ -1656,7 +1657,7 @@ export class AdminService {
     // Side effect, deliberate: a payment whose booking row is gone (a B2 orphan
     // awaiting recovery) no longer appears. It has no vendor and no payable
     // share, so it was never actionable — the reconciliation cron owns it.
-    const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
+    const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
     const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
 
     const bookingFilter: Prisma.BookingWhereInput = { endDatetime: { lt: payoutCutoff } };
@@ -2244,7 +2245,7 @@ export class AdminService {
     // been paid — money out twice, with no clawback and no alert anywhere.
     // Filtering here means an ineligible row is simply not marked, and the
     // count check below surfaces the discrepancy to the caller.
-    const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
+    const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
     const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
 
     // ── Pre-validate BEFORE writing anything ────────────────────────────────
@@ -2290,11 +2291,21 @@ export class AdminService {
         requested: paymentIds.length,
         inEscrow: ids.length,
       });
+      // The message must describe the ACTUAL cutoff. With
+      // PAYOUT_SETTLEMENT_BUFFER_DAYS=3 an activity that ended two days ago is
+      // still in escrow, so "has not ended yet" would be plainly false and
+      // send the admin looking for a problem that isn't there.
+      const bufferNote = payoutBufferDays > 0
+        ? `their activity has not yet cleared the ${payoutBufferDays}-day settlement buffer`
+        : 'their activity has not ended yet';
+      const retryNote = payoutBufferDays > 0
+        ? `Retry once ${payoutBufferDays} day(s) have passed since the activity ended.`
+        : 'Retry once the activities have ended.';
       throw new BadRequestException(
         `${ids.length} of ${paymentIds.length} selected payment(s) are still in payout escrow — ` +
-          'their activity has not ended yet. No payments were changed. Paying these out now risks ' +
+          `${bufferNote}. No payments were changed. Paying these out now risks ` +
           'the customer cancelling before the activity starts and being refunded while the vendor ' +
-          `already holds the money. Retry once the activities have ended. Payment ids: ${ids.slice(0, 10).join(', ')}` +
+          `already holds the money. ${retryNote} Payment ids: ${ids.slice(0, 10).join(', ')}` +
           (ids.length > 10 ? ` (+${ids.length - 10} more)` : ''),
       );
     }
@@ -2317,19 +2328,39 @@ export class AdminService {
     // Lost the race against a concurrent mark-paid between the check and the
     // write. Surface it — the count is what the caller acts on.
     if (result.count < paymentIds.length) {
-      this.logger.warn({
+      // The bank transfer has ALREADY been sent (bankTransferRef is required
+      // above), so a short write is money out with no matching PAID row.
+      // Causes are wider than a concurrent mark-paid: a cancellation or refund
+      // landing between the escrow probe and this update also flips a row out
+      // of SUCCESS/UNPAID. Either way it needs a human, not a debug line —
+      // this is the same class of exposure as REFUND_ON_PAID_OUT_BOOKING.
+      this.logger.error({
         event: 'PAYOUT_MARK_PAID_PARTIAL',
         requested: paymentIds.length,
         marked: result.count,
-        reason: 'concurrent update between eligibility check and write',
+        unmarked: paymentIds.length - result.count,
+        bankTransferRef: trimmedRef,
+        reason: 'rows changed between the eligibility probe and the write (concurrent mark-paid, cancellation, or refund)',
+      });
+      this.notificationService.notifyAdmins({
+        type: 'SYSTEM',
+        title: 'Payout partially recorded — reconcile manually',
+        message: `A bank transfer (${trimmedRef}) covered ${paymentIds.length} payment(s) but only ${result.count} were marked PAID. The remaining ${paymentIds.length - result.count} changed state mid-operation and must be reconciled by hand.`,
+        link: '/admin/payouts',
       });
     }
 
     // Notify each vendor whose payments were marked as paid. Pull the slug
     // here too so the notification link resolves to a real route (the vendor
     // portal lives under /vendor/[slug]/*, not /vendor/*).
+    // Re-query the rows this call ACTUALLY settled, not everything submitted.
+    // updateMany returns a count and no ids, so filtering on
+    // `bankTransferRef` + PAID identifies exactly the rows this transfer just
+    // stamped. Notifying on the submitted list instead would tell a vendor
+    // "your payout has been sent" for payments that were skipped — escrow,
+    // already-paid, or state-changed — which is worse than staying silent.
     const payments = await this.prisma.client.payment.findMany({
-      where: { id: { in: paymentIds } },
+      where: { id: { in: paymentIds }, payoutStatus: 'PAID', bankTransferRef: trimmedRef },
       select: { booking: { select: { vendorId: true, vendor: { select: { userId: true, slug: true } } } } },
     });
     const notifiedVendors = new Set<string>();
@@ -2611,7 +2642,7 @@ export class AdminService {
         // whose activity has ENDED (+ optional PAYOUT_SETTLEMENT_BUFFER_DAYS), so
         // the FIFO lock (ordered by payment.createdAt, which does NOT track the
         // activity date) can't tie up a still-cancellable future booking.
-        const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
+        const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
         const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
         const eligible = await tx.payment.findMany({
           where: {

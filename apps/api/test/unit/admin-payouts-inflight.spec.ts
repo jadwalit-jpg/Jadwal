@@ -207,6 +207,32 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
     });
   });
 
+  // A vendor being told "your payout has been sent" for a payment that was
+  // NOT settled is worse than silence — they chase a transfer that never
+  // happened. updateMany returns only a count, so the notification pass must
+  // re-query the rows this transfer actually stamped.
+  test('notifies only the rows THIS transfer marked paid, not everything submitted', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
+      { id: 'p1', booking: { vendor: { id: 'vA', businessNameEn: 'Alpha', status: 'ACTIVE' } } },
+      { id: 'p2', booking: { vendor: { id: 'vB', businessNameEn: 'Beta', status: 'ACTIVE' } } },
+    ]);
+    ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]);
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);          // escrow probe: clear
+    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 2 });
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([             // notification lookup
+      { booking: { vendorId: 'vA', vendor: { userId: 'uA', slug: 'alpha' } } },
+    ]);
+
+    await ctx.sut.markPayoutsPaid(['p1', 'p2'], 'WIRE-REF-1');
+
+    // The notification query must be scoped to rows stamped by THIS wire ref.
+    const notifyWhere = ctx.prisma._client.payment.findMany.mock.calls[2][0].where;
+    expect(notifyWhere).toEqual(
+      expect.objectContaining({ payoutStatus: 'PAID', bankTransferRef: 'WIRE-REF-1' }),
+    );
+  });
+
   test('names up to 3 offending vendors and appends "and N more" for the rest', async () => {
     const ctx = await buildSut();
     // 5 vendors all have PENDING requests.
