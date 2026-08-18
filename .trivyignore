@@ -23,3 +23,24 @@
 CVE-2026-5079
 GHSA-72gw-mp4g-v24j
 GHSA-3p4h-7m6x-2hcm
+
+# ── deepmerge-ts 7.1.5 — CVE-2026-40345 (stack exhaustion) ─────────────────
+# Review by: 2026-09-30
+#
+# Newly published advisory; nothing in this repo changed to introduce it.
+# Reached only as prisma -> @prisma/config -> deepmerge-ts. The fix is
+# deepmerge-ts 8.0.0, but @prisma/config pins 7.1.5 exactly and npm refuses a
+# root `overrides` bump against an exact pin (verified: the override leaves
+# 7.1.5 in the tree). No published prisma release ships a patched copy, so
+# there is nothing to upgrade to.
+#
+# Risk is LOW in context: the advisory is stack exhaustion when merging
+# deeply-recursive objects. @prisma/config uses deepmerge-ts to merge OUR OWN
+# prisma config at CLI/build time — it never merges request data, and no
+# runtime request path reaches it. An attacker would need write access to the
+# repo's prisma config, at which point this CVE is irrelevant.
+#
+# Already waived for the npm gate as GHSA-ggr8-5vv4-36mx in
+# .audit-allowlist.json; this is the same advisory under its CVE id, which is
+# what Trivy matches on. Remove BOTH together when prisma ships a fix.
+CVE-2026-40345
