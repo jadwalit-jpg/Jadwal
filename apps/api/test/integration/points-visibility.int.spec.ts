@@ -356,8 +356,17 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
   });
 
   test('admin.getPayouts nested booking includes points fields via Prisma include', async () => {
-    await createWanasaBooking();
+    const { bookingId } = await createWanasaBooking();
     const { admin } = makeServices();
+
+    // getPayouts lists only what is PAYABLE NOW — a vendor is paid after the
+    // activity has taken place. The fixture books 7 days out, so age it past
+    // the escrow cutoff; this test is about the Prisma `include` returning
+    // loyalty fields, not about escrow.
+    await ctx.prisma.booking.update({
+      where: { id: bookingId },
+      data: { endDatetime: new Date(Date.now() - 86_400_000) },
+    });
 
     const res: any = await admin.getPayouts({ page: 1, limit: 20 });
     expect(res.data).toHaveLength(1);
