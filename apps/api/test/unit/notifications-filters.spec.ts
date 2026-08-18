@@ -369,6 +369,13 @@ describe('PrismaExceptionFilter — P1000 credential outage is alertable', () =>
 
   test('emits PRISMA_ERROR_5XX on the 503 early-return path', () => {
     const prev = process.env.RDS_SECRET_ARN;
+    // Not a secret: an ARN is a resource IDENTIFIER, and this one is a
+    // syntactically-valid dummy (account "1", name "x") that points at
+    // nothing. The filter only checks whether RDS_SECRET_ARN is non-empty to
+    // decide it is on the rotating-credentials path; the value is never
+    // dereferenced. Semgrep's node_secret rule matches on the variable name
+    // containing SECRET, so it flags any literal assigned here.
+    // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
     process.env.RDS_SECRET_ARN = 'arn:aws:secretsmanager:eu-central-1:1:secret:x';
     try {
       const prisma = { refreshOnAuthError: jest.fn().mockResolvedValue(undefined) } as any;
