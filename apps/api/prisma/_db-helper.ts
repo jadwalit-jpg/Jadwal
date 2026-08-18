@@ -77,5 +77,5 @@ export function createSeedPrisma(): PrismaClient {
     ssl: useSsl ? { ca: loadRdsCaBundle(), rejectUnauthorized: true } : undefined,
   });
   const adapter = new PrismaPg(pool);
-  return new PrismaClient({ adapter } as never);
+  return new PrismaClient({ adapter });
 }
