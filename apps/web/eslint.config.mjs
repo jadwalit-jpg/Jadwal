@@ -1,20 +1,20 @@
 import { defineConfig, globalIgnores } from "eslint/config";
-import { FlatCompat } from "@eslint/eslintrc";
-import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
+import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
+import nextTypescript from "eslint-config-next/typescript";
 
-// `eslint-config-next` ships in legacy (eslintrc-format) only — its
-// default export is `{ extends: [...] }`, not a flat-config array.
-// Trying to spread it directly works on some Node versions and
-// silently produces `undefined` on others (notably the Linux Node 22
-// in CI). FlatCompat is the canonical migration shim — it loads the
-// legacy config and emits flat-config-shaped objects we can spread.
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const compat = new FlatCompat({ baseDirectory: __dirname });
+// eslint-config-next 16 ships NATIVE flat config: the subpath exports are
+// already flat-config arrays, so they are spread directly.
+//
+// Do NOT reintroduce FlatCompat here. It was correct for v15, which shipped
+// eslintrc-format only — but running the v16 flat config through the compat
+// shim makes ESLint serialise a config object that references its own plugin
+// map, and it dies with "TypeError: Converting circular structure to JSON"
+// (property 'react' closes the circle). The failure is in ESLint's config
+// loading, so it takes down the whole lint job, not just one rule.
 
 const eslintConfig = defineConfig([
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...nextCoreWebVitals,
+  ...nextTypescript,
   // Downgrade the noisier `next/typescript` rules from error -> warn.
   // The codebase has ~3 k legitimate uses of `any` / require() that
   // would all need rewrites, and turning the lint job into a wall of
@@ -38,6 +38,22 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-unsafe-function-type": "warn",
       "@typescript-eslint/no-wrapper-object-types": "warn",
       "react-hooks/exhaustive-deps": "warn",
+      // ─── New in eslint-config-next 16 (React Compiler ruleset) ──────────
+      // These arrived with the framework upgrade, not from new code: 43
+      // pre-existing occurrences across the app, 33 of them
+      // set-state-in-effect. They are real code-quality signals and worth
+      // working through, but rewriting 43 component effects is a refactor
+      // project with its own regression risk — bundling it into a version
+      // bump would make this PR unreviewable and its blast radius unbounded.
+      // Downgraded to warn so they are VISIBLE and tracked, matching the
+      // policy already applied to the no-explicit-any / no-require-imports
+      // block above. Security rules (no-restricted-syntax below) stay error.
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/refs": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/preserve-manual-memoization": "warn",
+      "react-hooks/static-components": "warn",
       "@next/next/no-img-element": "warn",
       "react/no-unescaped-entities": "warn",
       "prefer-const": "warn",
