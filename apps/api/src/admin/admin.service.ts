@@ -1145,10 +1145,29 @@ export class AdminService {
                 });
               }
             } else if (bk.payment.status === 'PENDING') {
-              await tx.payment.update({
-                where: { id: bk.payment.id },
+                            // Optimistic lock, NOT a plain update. The `status === 'PENDING'`
+              // above was read earlier; a PAY2M capture can commit in between and
+              // flip the row to SUCCESS. An unguarded update would force that
+              // captured payment back to FAILED while the booking is cancelled,
+              // leaving the customer charged with no REFUND_PENDING row —
+              // recordRefundDecision requires REFUND_PENDING, so the refund queue
+              // could never reach it. Same incident the customer-cancel path was
+              // fixed for; this path was missed.
+              const flipped = await tx.payment.updateMany({
+                where: { id: bk.payment.id, status: 'PENDING' },
                 data: { status: 'FAILED' },
               });
+              if (flipped.count === 0) {
+                // State-neutral on purpose: a zero-row update does NOT prove a
+                // capture completed. A PAY2M failure callback or the
+                // stale-PENDING cleanup cron can flip the row out of PENDING
+                // first, and in those cases the booking may be gone entirely.
+                // Naming only the capture case would tell an admin the booking
+                // is paid when it is not.
+                throw new ConflictException(
+                  'This booking changed while you were cancelling. Please refresh to see its current state.',
+                );
+              }
             }
           }
 
@@ -1487,10 +1506,23 @@ export class AdminService {
             });
           }
         } else if (result.payment.status === 'PENDING') {
-          await tx.payment.update({
-            where: { id: result.payment.id },
+                    // Optimistic lock, NOT a plain update. The `status === 'PENDING'`
+          // above was read earlier; a PAY2M capture can commit in between and
+          // flip the row to SUCCESS. An unguarded update would force that
+          // captured payment back to FAILED while the booking is cancelled,
+          // leaving the customer charged with no REFUND_PENDING row —
+          // recordRefundDecision requires REFUND_PENDING, so the refund queue
+          // could never reach it. Same incident the customer-cancel path was
+          // fixed for; this path was missed.
+          const flipped = await tx.payment.updateMany({
+            where: { id: result.payment.id, status: 'PENDING' },
             data: { status: 'FAILED' },
           });
+          if (flipped.count === 0) {
+            throw new ConflictException(
+              'This booking changed while you were cancelling. Please refresh to see its current state.',
+            );
+          }
         }
 
         // Refund redeemed loyalty points back to customer (separate from refund-to-points above)
