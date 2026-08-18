@@ -1825,13 +1825,23 @@ export class BookingsService {
         // (overlap scan, special prices, platform settings, coupon claim,
         // loyalty config, payment + booking insert, payment update, loyalty
         // redeem + ledger). Prisma's DEFAULT is 5s, which this can exceed
-        // under load or on a slow link — and the resulting P2028 surfaced as
-        // an unmapped generic 500 with no alert. 15s leaves headroom without
-        // letting a genuinely stuck transaction hold Serializable predicate
-        // locks indefinitely.
-        // maxWait: cap time spent waiting for a pool connection so a saturated
-        // pool fails fast instead of stacking requests behind it.
-      }, { isolationLevel: 'Serializable', timeout: 15_000, maxWait: 5_000 });
+        // under load — and the resulting P2028 surfaced as an unmapped generic
+        // 500 with no alert.
+        //
+        // 10s, deliberately BELOW the 15s per-connection statement_timeout set
+        // in prisma.service.ts. Setting it equal (as an earlier version did)
+        // makes a single stalled statement race two different error paths —
+        // Prisma's P2028 vs Postgres's own statement error — so the failure
+        // mode becomes nondeterministic. Staying under it means P2028 always
+        // wins and the new PRISMA_ERROR_5XX alert fires predictably.
+        //
+        // maxWait: LEFT AT PRISMA'S 2s DEFAULT. An earlier version raised this
+        // to 5s while claiming it made a saturated pool "fail fast" — that is
+        // backwards. maxWait is how long a request waits FOR a pool
+        // connection, so raising it makes saturation last longer, holding a
+        // slot (pool max 20/task) and Serializable predicate locks for a
+        // combined worst case of 20s instead of 12s.
+      }, { isolationLevel: 'Serializable', timeout: 10_000, maxWait: 2_000 });
     } catch (err) {
       // P2034 = PostgreSQL serialization failure (two transactions conflicted).
       // Without this catch, NestJS returns 500. Map it to 409 so the frontend
@@ -2358,8 +2368,14 @@ export class BookingsService {
           data: { status: 'FAILED' },
         });
         if (flipped.count === 0) {
+          // Deliberately does NOT assert the booking is now confirmed. count===0
+          // has three causes: a capture won the race (booking CONFIRMED), the
+          // stale-PENDING cron soft-FAILed the payment, or a PAY2M failure
+          // callback flipped it — in the last two the booking may be gone
+          // entirely. Naming only the first would send the user chasing a state
+          // that isn't there.
           throw new ConflictException(
-            'Payment completed while cancelling. Please refresh — the booking is confirmed.',
+            'This booking changed while you were cancelling. Please refresh to see its current state.',
           );
         }
 

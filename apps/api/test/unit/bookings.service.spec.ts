@@ -249,7 +249,7 @@ describe('BookingsService.cancelBooking', () => {
       // 0 rows matched → the callback won the race.
       ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 0 });
 
-      await expect(ctx.sut.cancelBooking('u1', 'b1')).rejects.toThrow(/payment completed while cancelling/i);
+      await expect(ctx.sut.cancelBooking('u1', 'b1')).rejects.toThrow(/changed while you were cancelling/i);
 
       // Must NOT cancel the booking the callback just confirmed…
       expect(ctx.prisma._client.booking.update).not.toHaveBeenCalled();
