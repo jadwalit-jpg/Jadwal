@@ -637,7 +637,7 @@ export class VendorService {
           });
           if (flipped.count === 0) {
             throw new ConflictException(
-              'Payment completed while cancelling. Refresh — this booking is now paid.',
+              'This booking changed while you were cancelling. Please refresh to see its current state.',
             );
           }
         }

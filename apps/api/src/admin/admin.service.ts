@@ -1157,8 +1157,14 @@ export class AdminService {
                 data: { status: 'FAILED' },
               });
               if (flipped.count === 0) {
+                // State-neutral on purpose: a zero-row update does NOT prove a
+                // capture completed. A PAY2M failure callback or the
+                // stale-PENDING cleanup cron can flip the row out of PENDING
+                // first, and in those cases the booking may be gone entirely.
+                // Naming only the capture case would tell an admin the booking
+                // is paid when it is not.
                 throw new ConflictException(
-                  'Payment completed while cancelling. Refresh — this booking is now paid.',
+                  'This booking changed while you were cancelling. Please refresh to see its current state.',
                 );
               }
             }
@@ -1513,7 +1519,7 @@ export class AdminService {
           });
           if (flipped.count === 0) {
             throw new ConflictException(
-              'Payment completed while cancelling. Refresh — this booking is now paid.',
+              'This booking changed while you were cancelling. Please refresh to see its current state.',
             );
           }
         }
