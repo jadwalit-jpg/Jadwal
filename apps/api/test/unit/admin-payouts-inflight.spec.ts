@@ -460,3 +460,79 @@ describe('AdminService.getPayouts — inflightRequest enrichment', () => {
     );
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// getPayouts — the list means "PAYABLE NOW"
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A vendor is paid only after the activity has taken place; the customer can
+// still cancel before it starts. Enforcing that only in markPayoutsPaid is not
+// enough — if the list still OFFERS in-escrow rows, "select all" trips the
+// guard and the entire batch is refused, so nothing settles at all. The filter
+// has to be here, and the escrowed money still has to be VISIBLE or a missing
+// payout is indistinguishable from lost money.
+
+describe('AdminService.getPayouts — escrow filtering + upcoming visibility', () => {
+  function seed(ctx: any, rows: any[], upcoming = 0, nextDate: Date | null = null) {
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce(rows);   // page query
+    ctx.prisma._client.payment.count.mockResolvedValueOnce(rows.length); // total
+    ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]); // no inflight
+    ctx.prisma._client.payment.count.mockResolvedValueOnce(upcoming);    // upcomingCount
+    ctx.prisma._client.payment.findFirst.mockResolvedValueOnce(
+      nextDate ? { booking: { endDatetime: nextDate } } : null,
+    );
+  }
+
+  test('restricts the query to bookings whose activity has ENDED', async () => {
+    const ctx = await buildSut();
+    seed(ctx, []);
+
+    await ctx.sut.getPayouts({});
+
+    const where = ctx.prisma._client.payment.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe('SUCCESS');
+    expect(where.booking.endDatetime.lt).toBeInstanceOf(Date);
+    // Cutoff is never in the future — that would offer unfinished bookings.
+    expect(where.booking.endDatetime.lt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  test('search still works AND stays inside the escrow filter (cannot widen it)', async () => {
+    const ctx = await buildSut();
+    seed(ctx, []);
+
+    await ctx.sut.getPayouts({ search: 'alpha' } as any);
+
+    const b = ctx.prisma._client.payment.findMany.mock.calls[0][0].where.booking;
+    // Both must be present: a search that dropped endDatetime would re-expose
+    // in-escrow rows through the search box.
+    expect(b.endDatetime.lt).toBeInstanceOf(Date);
+    expect(Array.isArray(b.OR)).toBe(true);
+  });
+
+  test('reports upcoming (in-escrow) money so it is visible but not payable', async () => {
+    const ctx = await buildSut();
+    const soon = new Date(Date.now() + 3 * 86_400_000);
+    seed(ctx, [], 12, soon);
+
+    const res: any = await ctx.sut.getPayouts({});
+
+    expect(res.upcomingCount).toBe(12);
+    expect(res.upcomingFrom).toEqual(soon);
+    // ...and none of it leaked into the payable list.
+    expect(res.data).toHaveLength(0);
+    expect(res.total).toBe(0);
+  });
+
+  test('upcoming counts only UNPAID rows on not-yet-ended bookings', async () => {
+    const ctx = await buildSut();
+    seed(ctx, [], 3, new Date(Date.now() + 86_400_000));
+
+    await ctx.sut.getPayouts({});
+
+    // 2nd count call is the upcoming probe.
+    const upcomingWhere = ctx.prisma._client.payment.count.mock.calls[1][0].where;
+    expect(upcomingWhere.status).toBe('SUCCESS');
+    expect(upcomingWhere.payoutStatus).toBe('UNPAID');
+    expect(upcomingWhere.booking.endDatetime.gte).toBeInstanceOf(Date);
+  });
+});

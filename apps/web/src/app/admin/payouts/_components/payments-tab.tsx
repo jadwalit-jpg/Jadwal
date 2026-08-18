@@ -47,6 +47,13 @@ interface PayoutsResponse {
   page: number;
   limit: number;
   totalPages: number;
+  /** Bookings already paid for by the customer whose activity has NOT happened
+   *  yet. Deliberately not listed above — a vendor is only paid once the
+   *  activity is delivered — but surfaced so future money is visible rather
+   *  than silently missing. */
+  upcomingCount?: number;
+  /** When the earliest of those becomes payable. */
+  upcomingFrom?: string | null;
 }
 
 function TableSkeleton() {
@@ -286,6 +293,31 @@ export default function PaymentsTab() {
 
   return (
     <div>
+      {/* ─── In-escrow notice ──────────────────────────────────
+          This table lists what is PAYABLE NOW — a vendor is paid only after
+          the activity has taken place, because a customer can still cancel
+          before it starts. Without this line, prepaid future bookings would
+          simply be absent with no explanation, and "where is my payout?"
+          would be indistinguishable from money going missing. */}
+      {!!data?.upcomingCount && (
+        <div className="mb-4 flex items-start gap-3 rounded-2xl border border-sky-200/70 dark:border-sky-900/40 bg-sky-50/60 dark:bg-sky-900/10 p-4">
+          <div className="h-10 w-10 rounded-xl bg-sky-500/15 flex items-center justify-center shrink-0">
+            <Clock className="h-5 w-5 text-sky-600 dark:text-sky-400" aria-hidden="true" />
+          </div>
+          <div className="min-w-0 text-sm">
+            <p className="font-semibold text-sky-900 dark:text-sky-200">
+              {data.upcomingCount} booking{data.upcomingCount === 1 ? '' : 's'} not payable yet
+            </p>
+            <p className="text-sky-800/80 dark:text-sky-300/80">
+              Paid by the customer, but the activity has not taken place. They appear here once it has
+              {data.upcomingFrom
+                ? ` — the earliest on ${new Date(data.upcomingFrom).toLocaleDateString()}.`
+                : '.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ─── Summary bar ───────────────────────────────────────
           Three counters so admin can tell at a glance: how much cash
           remains to be wired, how much has already been paid out, and how
@@ -410,7 +442,11 @@ export default function PaymentsTab() {
               <tbody className="divide-y divide-gray-100 dark:divide-slate-800/60">
                 {visibleRows.length === 0 && (
                   <tr><td colSpan={9} className="px-6 py-12 text-center text-gray-400 dark:text-slate-500">
-                    {data?.data.length === 0 ? 'No payments found.' : 'No payments match the current method filter.'}
+                    {data?.data.length === 0
+                      ? (data?.upcomingCount
+                          ? `No payouts are due yet. ${data.upcomingCount} booking${data.upcomingCount === 1 ? '' : 's'} become payable once the activity has taken place.`
+                          : 'No payments found.')
+                      : 'No payments match the current method filter.'}
                   </td></tr>
                 )}
                 {visibleRows.map((payment) => {

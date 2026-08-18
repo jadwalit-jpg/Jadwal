@@ -1639,17 +1639,36 @@ export class AdminService {
     const { page = 1, limit = 20, search } = query;
     const skip = (page - 1) * limit;
 
-    const where: Prisma.PaymentWhereInput = { status: 'SUCCESS' };
+    // ── This list means "what is PAYABLE NOW", not "every successful payment" ──
+    //
+    // A vendor is only paid once their activity has actually happened. Showing
+    // future bookings here offered money the platform must not release yet: the
+    // customer can still cancel before the activity starts, and a payout already
+    // sent would leave the platform out of pocket with no clawback path.
+    //
+    // The escrow rule is enforced again in markPayoutsPaid, but enforcement
+    // alone is not enough — if the list still OFFERS in-escrow rows, "select
+    // all" trips the guard and the whole batch is refused, so nothing settles
+    // and the admin has no way to tell which rows to deselect. Filtering here
+    // makes the mistake unofferable; the guard downstream becomes a backstop
+    // that should never fire in normal use.
+    //
+    // Side effect, deliberate: a payment whose booking row is gone (a B2 orphan
+    // awaiting recovery) no longer appears. It has no vendor and no payable
+    // share, so it was never actionable — the reconciliation cron owns it.
+    const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
+    const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
+
+    const bookingFilter: Prisma.BookingWhereInput = { endDatetime: { lt: payoutCutoff } };
     if (search) {
-      where.booking = {
-        OR: [
-          { ref: { contains: search, mode: 'insensitive' } },
-          { vendor: { businessNameEn: { contains: search, mode: 'insensitive' } } },
-          { customer: { fullName: { contains: search, mode: 'insensitive' } } },
-          { activity: { titleEn: { contains: search, mode: 'insensitive' } } },
-        ],
-      };
+      bookingFilter.OR = [
+        { ref: { contains: search, mode: 'insensitive' } },
+        { vendor: { businessNameEn: { contains: search, mode: 'insensitive' } } },
+        { customer: { fullName: { contains: search, mode: 'insensitive' } } },
+        { activity: { titleEn: { contains: search, mode: 'insensitive' } } },
+      ];
     }
+    const where: Prisma.PaymentWhereInput = { status: 'SUCCESS', booking: bookingFilter };
 
     const [payments, total] = await Promise.all([
       db.payment.findMany({
@@ -1709,7 +1728,40 @@ export class AdminService {
       return { ...p, inflightRequest };
     });
 
-    return { data: enriched, total, page, limit, totalPages: Math.ceil(total / limit) };
+    // ── Upcoming (in escrow) — visible, but not payable ─────────────────────
+    // Filtering the list to payable-only would otherwise make future money
+    // vanish entirely: a vendor asks "where is my payout?" and the admin sees
+    // nothing at all, with no way to tell "not earned yet" from "we lost it".
+    // Surface the count and the earliest date it becomes payable, WITHOUT
+    // making any of it selectable. Counts only UNPAID rows — an already-PAID
+    // future booking (possible on rows settled before the escrow rule existed)
+    // is not upcoming money.
+    const upcomingWhere: Prisma.PaymentWhereInput = {
+      status: 'SUCCESS',
+      payoutStatus: 'UNPAID',
+      booking: { endDatetime: { gte: payoutCutoff } },
+    };
+    const [upcomingCount, nextPayable] = await Promise.all([
+      db.payment.count({ where: upcomingWhere }),
+      db.payment.findFirst({
+        where: upcomingWhere,
+        select: { booking: { select: { endDatetime: true } } },
+        orderBy: { booking: { endDatetime: 'asc' } },
+      }),
+    ]);
+
+    return {
+      data: enriched,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      // `total` counts payable rows only. These two describe money that exists
+      // but is still in escrow, so the UI can say "12 bookings become payable
+      // from 20 Aug" instead of silently showing nothing.
+      upcomingCount,
+      upcomingFrom: nextPayable?.booking?.endDatetime ?? null,
+    };
   }
 
   // ─── Countries CRUD ─────────────────────────────────────────
