@@ -43,4 +43,7 @@ GHSA-3p4h-7m6x-2hcm
 # Already waived for the npm gate as GHSA-ggr8-5vv4-36mx in
 # .audit-allowlist.json; this is the same advisory under its CVE id, which is
 # what Trivy matches on. Remove BOTH together when prisma ships a fix.
-CVE-2026-40345
+# Trivy enforces `exp:` natively — after this date the entry stops applying
+# and the finding blocks deploys again. That makes the review date mechanical
+# rather than a comment nobody re-reads.
+CVE-2026-40345 exp:2026-09-30
