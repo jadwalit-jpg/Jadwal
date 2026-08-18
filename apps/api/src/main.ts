@@ -96,6 +96,33 @@ async function bootstrap() {
       process.exit(1);
     }
 
+    // Rate limiting must be ON in production.
+    //
+    // `THROTTLE_ENABLED=false` collapses every tier to 100_000/min (see
+    // app.module.ts + throttle-config.ts), i.e. no rate limiting at all —
+    // including on /auth/login, OTP send and password-reset. `false` is the
+    // documented value for the E2E workflow, so one copied task-def env var
+    // (or a mistyped SSM parameter) silently disables platform-wide abuse
+    // protection with NO startup signal and nothing failing.
+    //
+    // The default is already 'true' when unset, so this only rejects an
+    // explicit opt-out. Fail loudly rather than boot unprotected: an outage
+    // is recoverable in minutes, a silently unthrottled auth endpoint is not.
+    // Compare the RAW value, exactly as app.module.ts does
+    // (`config.get('THROTTLE_ENABLED', 'true') === 'true'`). Do NOT trim and do
+    // NOT treat '' as absent: @nestjs/config returns '' for an explicitly-empty
+    // env var rather than falling back to the default, so THROTTLE_ENABLED=""
+    // and THROTTLE_ENABLED=" true " both DISABLE the throttler. A guard that
+    // normalises more loosely than its consumer waves through precisely the
+    // values it exists to catch.
+    const throttleRaw = process.env.THROTTLE_ENABLED;
+    if (throttleRaw !== undefined && throttleRaw !== 'true') {
+      console.error(
+        `\n[FATAL] THROTTLE_ENABLED must be exactly "true" in production (got ${JSON.stringify(throttleRaw)}). Any other value disables rate limiting platform-wide — all tiers become 100000/min, including /auth/login, OTP send and password reset. Set it to "true" or remove the variable entirely.\n`,
+      );
+      process.exit(1);
+    }
+
     // DB connection — strict in production.
     //
     // We're already inside `if (NODE_ENV === 'production')` (outer block at
