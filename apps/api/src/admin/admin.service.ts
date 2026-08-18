@@ -2359,7 +2359,18 @@ export class AdminService {
 
     // Lost the race against a concurrent mark-paid between the check and the
     // write. Surface it — the count is what the caller acts on.
-    if (result.count < paymentIds.length) {
+    // Idempotency: distinguish "already settled by this same wire" from a real
+    // short write. An ALB timeout after commit makes the admin re-click, and
+    // duplicate ids can arrive in one array. In both cases the escrow probe
+    // passes (nothing is UNPAID+in-escrow) and updateMany matches 0 rows —
+    // which naively reads as "we lost rows" and would page finance about a
+    // no-op AND tell every vendor "payout sent" a second time.
+    const alreadySettledByThisWire = await db.payment.count({
+      where: { id: { in: paymentIds }, payoutStatus: 'PAID', bankTransferRef: trimmedRef },
+    });
+    // Dedupe: a repeated id is one payment, not a missing one.
+    const requestedCount = new Set(paymentIds).size;
+    if (result.count + alreadySettledByThisWire < requestedCount) {
       // The bank transfer has ALREADY been sent (bankTransferRef is required
       // above), so a short write is money out with no matching PAID row.
       // Causes are wider than a concurrent mark-paid: a cancellation or refund
@@ -2368,16 +2379,17 @@ export class AdminService {
       // this is the same class of exposure as REFUND_ON_PAID_OUT_BOOKING.
       this.logger.error({
         event: 'PAYOUT_MARK_PAID_PARTIAL',
-        requested: paymentIds.length,
+        requested: requestedCount,
         marked: result.count,
-        unmarked: paymentIds.length - result.count,
+        alreadySettledByThisWire,
+        unmarked: requestedCount - result.count - alreadySettledByThisWire,
         bankTransferRef: trimmedRef,
         reason: 'rows changed between the eligibility probe and the write (concurrent mark-paid, cancellation, or refund)',
       });
       this.notificationService.notifyAdmins({
         type: 'SYSTEM',
         title: 'Payout partially recorded — reconcile manually',
-        message: `A bank transfer (${trimmedRef}) covered ${paymentIds.length} payment(s) but only ${result.count} were marked PAID. The remaining ${paymentIds.length - result.count} changed state mid-operation and must be reconciled by hand.`,
+        message: `A bank transfer (${trimmedRef}) covered ${requestedCount} payment(s) but only ${result.count + alreadySettledByThisWire} are PAID against it. The remaining ${requestedCount - result.count - alreadySettledByThisWire} changed state mid-operation and must be reconciled by hand.`,
         link: '/admin/payouts',
       });
     }
@@ -2385,6 +2397,13 @@ export class AdminService {
     // Notify each vendor whose payments were marked as paid. Pull the slug
     // here too so the notification link resolves to a real route (the vendor
     // portal lives under /vendor/[slug]/*, not /vendor/*).
+    // Only notify when this call actually settled something. On an idempotent
+    // retry result.count is 0 — the vendors were already told on the first
+    // call, and telling them again reads as a second payout.
+    if (result.count === 0) {
+      return { updated: 0 };
+    }
+
     // Re-query the rows this call ACTUALLY settled, not everything submitted.
     // updateMany returns a count and no ids, so filtering on
     // `bankTransferRef` + PAID identifies exactly the rows this transfer just

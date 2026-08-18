@@ -1,10 +1,11 @@
-import { IsArray, IsUUID, ArrayMinSize, ArrayMaxSize, IsString, MinLength, MaxLength } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
 export class MarkPayoutPaidDto {
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(500)  // generous batch ceiling — admin marks a settlement run
   @IsUUID('4', { each: true })
+  @ArrayUnique({ message: 'paymentIds must not contain duplicates' })
   paymentIds!: string[];
 
   /// §M4 — bank-side wire confirmation number. Required so every PAID

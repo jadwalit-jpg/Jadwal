@@ -562,3 +562,54 @@ describe('AdminService.getPayouts — escrow filtering + upcoming visibility', (
     expect(upcomingWhere.booking.endDatetime.gte).toBeInstanceOf(Date);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// markPayoutsPaid — idempotent retry
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// An ALB timeout after commit makes the admin re-click. On the retry nothing
+// is UNPAID any more, so updateMany matches 0 rows. Read naively that looks
+// like "we lost rows": it would page finance about a no-op AND tell every
+// vendor "payout sent" a second time. Rows already PAID under the SAME wire
+// reference are the same settlement, not a short write.
+
+describe('AdminService.markPayoutsPaid — idempotent retry', () => {
+  test('a repeat with the same wire ref is a no-op: no alert, no re-notification', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
+      { id: 'p1', booking: { vendor: { id: 'vA', businessNameEn: 'Alpha', status: 'ACTIVE' } } },
+    ]);
+    ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]);
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);        // escrow probe: clear
+    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 0 }); // already PAID
+    ctx.prisma._client.payment.count.mockResolvedValueOnce(1);            // settled by THIS ref
+
+    const res = await ctx.sut.markPayoutsPaid(['p1'], 'WIRE-1');
+
+    expect(res).toEqual({ updated: 0 });
+    // The whole point: a benign retry must not page anyone…
+    expect(ctx.notif.notifyAdmins).not.toHaveBeenCalled();
+    // …and must not tell the vendor they were paid again.
+    expect(ctx.notif.send).not.toHaveBeenCalled();
+  });
+
+  test('a genuine short write DOES still escalate', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
+      { id: 'p1', booking: { vendor: { id: 'vA', businessNameEn: 'Alpha', status: 'ACTIVE' } } },
+      { id: 'p2', booking: { vendor: { id: 'vB', businessNameEn: 'Beta', status: 'ACTIVE' } } },
+    ]);
+    ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]);
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);        // escrow probe: clear
+    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 }); // one row lost
+    ctx.prisma._client.payment.count.mockResolvedValueOnce(0);            // none pre-settled
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);        // notify lookup
+
+    await ctx.sut.markPayoutsPaid(['p1', 'p2'], 'WIRE-2');
+
+    // Money left the bank for 2 but only 1 is recorded — a human must look.
+    expect(ctx.notif.notifyAdmins).toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.stringMatching(/partially recorded/i) }),
+    );
+  });
+});
