@@ -31,10 +31,16 @@ COPY apps/web/package.json ./apps/web/
 #
 # After install we aggressively prune the node_modules tree before it gets
 # COPYed into the runner stage. Three things we strip:
-#   1. Dev tools that npm workspace hoisting drags in from apps/web
-#      (`prisma` CLI, `typescript`, their associated bin shims). These
-#      are devDependencies in apps/api but `--omit=dev` doesn't catch
-#      them when they're hoisted from another workspace.
+#   1. Dev tools (`prisma` CLI, `typescript`, their bin shims). Kept as
+#      belt-and-braces. NOTE: this list used to be described as devDeps
+#      that workspace hoisting drags in past `--omit=dev`. That was a
+#      misdiagnosis. The `npm ci --omit=dev` above yields 312 packages
+#      with no typescript and no puppeteer; it was the sharp reinstall
+#      below that re-hydrated EVERY workspace's dev tree (946 packages,
+#      incl. @lhci/cli -> lighthouse -> puppeteer-core -> extract-zip,
+#      which is where the extract-zip HIGH CVE in the api image came
+#      from). Root-caused and fixed by adding `--omit=dev` to that
+#      command; these rm's only ever removed two of the ~600 strays.
 #   2. TypeScript declaration files (.d.ts) and source maps (*.map) —
 #      useless at runtime, just disk weight.
 #   3. Per-package docs (README, LICENSE, CHANGELOG, etc.) and test
@@ -60,7 +66,7 @@ COPY apps/web/package.json ./apps/web/
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --ignore-scripts --workspace=api --include-workspace-root=false \
  && SHARP_VER="$(node -p "require('/app/node_modules/sharp/package.json').version")" \
- && npm install --no-save --no-package-lock --include=optional --ignore-scripts \
+ && npm install --no-save --no-package-lock --omit=dev --include=optional --ignore-scripts \
       --os=linux --cpu=x64 --libc=musl "sharp@${SHARP_VER}" \
  && rm -rf node_modules/prisma node_modules/.bin/prisma \
            node_modules/typescript node_modules/.bin/tsc node_modules/.bin/tsserver \
