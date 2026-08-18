@@ -3,7 +3,6 @@
  * SanitizePipe, geo haversine.
  */
 
-import { of, throwError } from 'rxjs';
 import { HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Test } from '@nestjs/testing';
