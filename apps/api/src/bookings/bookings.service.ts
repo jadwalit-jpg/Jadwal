@@ -2340,15 +2340,30 @@ export class BookingsService {
       const redeemedPoints = Number(booking.pointsRedeemed) || 0;
 
       await db.$transaction(async (tx) => {
-        await refundCouponUsage(tx, appliedCoupon, userId);
-
-        // Only flip a payment that is STILL pending. If a concurrent success
-        // callback already moved it to SUCCESS, leave it alone — that booking
-        // is genuinely paid and the callback owns the outcome.
-        await tx.payment.updateMany({
+        // Only flip a payment that is STILL pending, and ABORT if it is not.
+        //
+        // This is the optimistic lock, not a filter. If a concurrent success
+        // callback already moved the row to SUCCESS, count is 0 and the whole
+        // cancel must roll back: the callback has committed payment SUCCESS +
+        // booking CONFIRMED, and continuing would overwrite that with
+        // CANCELLED while returning the coupon and the redeemed points. The
+        // customer would be charged, credited back, and left with NO
+        // REFUND_PENDING row — recordRefundDecision requires REFUND_PENDING,
+        // so the refund queue would be unreachable for that booking.
+        //
+        // Throwing inside the transaction rolls back refundCouponUsage too,
+        // which is why the coupon refund is ordered after this check.
+        const flipped = await tx.payment.updateMany({
           where: { id: booking.payment!.id, status: 'PENDING' },
           data: { status: 'FAILED' },
         });
+        if (flipped.count === 0) {
+          throw new ConflictException(
+            'Payment completed while cancelling. Please refresh — the booking is confirmed.',
+          );
+        }
+
+        await refundCouponUsage(tx, appliedCoupon, userId);
 
         await tx.booking.update({
           where: { id: bookingId },
