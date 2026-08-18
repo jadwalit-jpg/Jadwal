@@ -249,7 +249,7 @@ describe('BookingsService.cancelBooking', () => {
       // 0 rows matched → the callback won the race.
       ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 0 });
 
-      await expect(ctx.sut.cancelBooking('u1', 'b1')).rejects.toThrow(/payment completed while cancelling/i);
+      await expect(ctx.sut.cancelBooking('u1', 'b1')).rejects.toThrow(/changed while you were cancelling/i);
 
       // Must NOT cancel the booking the callback just confirmed…
       expect(ctx.prisma._client.booking.update).not.toHaveBeenCalled();
@@ -421,5 +421,84 @@ describe('BookingsService.getCalendarAvailability', () => {
     expect(r).toBe(cachedPayload);
     // No booking query happened
     expect(ctx.prisma._client.booking.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// recordRefundDecision — refund on an already-paid-out booking
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// If the vendor payout was already marked PAID and we then refund the
+// customer, the platform is out of pocket: the customer is made whole and the
+// vendor still holds the money. Nothing else detects this — reconciliation
+// never reads payoutStatus and there is no clawback flow — so the alert here
+// is the only signal finance gets. The refund itself must NOT be blocked; the
+// customer cannot be held hostage to a bookkeeping problem.
+
+describe('BookingsService.recordRefundDecision — payout awareness', () => {
+  function mkBooking(payoutStatus: 'PAID' | 'UNPAID') {
+    return {
+      id: 'b1', ref: 'JD-9', status: 'CANCELLED',
+      vendorId: 'vA', customerId: 'cust1',
+      activity: { titleEn: 'Desert Safari' },
+      vendor: { userId: 'vendorUser1', slug: 'alpha' },
+      payment: { id: 'p1', status: 'REFUND_PENDING', amount: 200, payoutStatus },
+    };
+  }
+
+  async function runApprove(payoutStatus: 'PAID' | 'UNPAID') {
+    const ctx = await buildSut();
+    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce(mkBooking(payoutStatus));
+    ctx.prisma._client.payment.updateMany.mockResolvedValue({ count: 1 });
+    ctx.prisma._client.booking.updateMany.mockResolvedValue({ count: 1 });
+    ctx.prisma._client.user.findUnique.mockResolvedValue({ fullName: 'Vendor Bob' });
+    // Refunds are paid as Wanasa points, so the service reads the loyalty
+    // config; qarPerPoint is a Prisma Decimal, hence the toNumber() shim.
+    ctx.prisma._client.loyaltyConfig.findUnique.mockResolvedValue({
+      id: 'singleton', qarPerPoint: { toNumber: () => 1 },
+    });
+    // The shared loyalty mock still exposes the older refundPoints/earnPoints
+    // names; the service calls LoyaltyService.refund. Stub it locally rather
+    // than editing the shared mock, which other suites depend on.
+    (ctx.loyalty as any).refund = jest.fn().mockResolvedValue(undefined);
+    await ctx.sut.recordRefundDecision(
+      'vendorUser1', 'VENDOR', 'b1', 'APPROVE', 200, undefined,
+    );
+    return ctx;
+  }
+
+  test('refund on a PAID-OUT booking raises the clawback alert to admins', async () => {
+    const ctx = await runApprove('PAID');
+
+    expect(ctx.audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'REFUND_ON_PAID_OUT_BOOKING',
+        actionCategory: 'FINANCIAL',
+        entityId: 'b1',
+      }),
+    );
+    expect(ctx.notif.notifyAdmins).toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.stringMatching(/already-paid-out/i) }),
+    );
+  });
+
+  test('refund on an UNPAID booking raises NO clawback alert (normal case)', async () => {
+    const ctx = await runApprove('UNPAID');
+
+    const raised = (ctx.audit.log as jest.Mock).mock.calls
+      .some((c) => c[0]?.action === 'REFUND_ON_PAID_OUT_BOOKING');
+    expect(raised).toBe(false);
+    expect(ctx.notif.notifyAdmins).not.toHaveBeenCalled();
+  });
+
+  test('the refund itself is still recorded when the booking was paid out (never blocked)', async () => {
+    const ctx = await runApprove('PAID');
+
+    // The atomic REFUND_PENDING claim still ran — the customer gets their money.
+    expect(ctx.prisma._client.payment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'p1', status: 'REFUND_PENDING' }),
+      }),
+    );
   });
 });
