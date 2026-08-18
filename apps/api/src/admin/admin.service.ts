@@ -2207,30 +2207,43 @@ export class AdminService {
     // subset. Nothing is written, and the admin can correct the selection
     // before (or after) the wire rather than discovering a double-payment on
     // a bank statement.
-    const eligible = await db.payment.findMany({
+    // Scope the rejection to ESCROW only, deliberately.
+    //
+    // Rows in a genuinely invalid state (REFUNDED / REJECTED / REFUND_PENDING,
+    // or already PAID) are still skipped silently — that is the existing,
+    // tested contract, and it is safe because the payouts list only ever
+    // offers `status: SUCCESS, payoutStatus: UNPAID` rows, so an admin cannot
+    // select them from the UI. Skipping there is defence-in-depth against a
+    // crafted API call, not something a human will act on.
+    //
+    // Escrow is different: those rows ARE offered by the list (it does not
+    // filter on endDatetime), they look completely normal, and marking paid
+    // records a bank wire that has ALREADY LEFT. Silently skipping them leaves
+    // them UNPAID, so they resurface next cycle and get wired a SECOND time —
+    // and payments-tab.tsx discards the return value and toasts success
+    // regardless. So refuse the batch and name them.
+    const inEscrow = await db.payment.findMany({
       where: {
         id: { in: paymentIds },
         status: 'SUCCESS',
         payoutStatus: 'UNPAID',
-        booking: { endDatetime: { lt: payoutCutoff } },
+        booking: { endDatetime: { gte: payoutCutoff } },
       },
       select: { id: true },
     });
-    if (eligible.length < paymentIds.length) {
-      const eligibleIds = new Set(eligible.map((p) => p.id));
-      const skipped = paymentIds.filter((id) => !eligibleIds.has(id));
+    if (inEscrow.length > 0) {
+      const ids = inEscrow.map((p) => p.id);
       this.logger.warn({
-        event: 'PAYOUT_MARK_PAID_REJECTED',
+        event: 'PAYOUT_MARK_PAID_REJECTED_ESCROW',
         requested: paymentIds.length,
-        eligible: eligible.length,
-        skippedCount: skipped.length,
+        inEscrow: ids.length,
       });
       throw new BadRequestException(
-        `${skipped.length} of ${paymentIds.length} selected payment(s) cannot be marked paid — ` +
-          'they are already PAID, not a SUCCESS payment, or their activity has not ended yet ' +
-          '(payout escrow). No payments were changed. Refresh the list and retry with the ' +
-          `eligible rows only. Skipped ids: ${skipped.slice(0, 10).join(', ')}` +
-          (skipped.length > 10 ? ` (+${skipped.length - 10} more)` : ''),
+        `${ids.length} of ${paymentIds.length} selected payment(s) are still in payout escrow — ` +
+          'their activity has not ended yet. No payments were changed. Paying these out now risks ' +
+          'the customer cancelling before the activity starts and being refunded while the vendor ' +
+          `already holds the money. Retry once the activities have ended. Payment ids: ${ids.slice(0, 10).join(', ')}` +
+          (ids.length > 10 ? ` (+${ids.length - 10} more)` : ''),
       );
     }
 

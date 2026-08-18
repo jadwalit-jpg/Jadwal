@@ -95,8 +95,10 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
     ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([
       { vendorId: 'vA', status: 'APPROVED', paymentIds: ['other-id'], vendor: { businessNameEn: 'Alpha' } },
     ]);
+    // Escrow probe — nothing in escrow, so the batch is not rejected.
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
     ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
-    // Second findMany is for the notification lookup.
+    // Third findMany is for the notification lookup.
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
       { booking: { vendorId: 'vA', vendor: { userId: 'u1', slug: 'alpha-tours' } } },
     ]);
@@ -136,8 +138,8 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
 
     test('restricts the update to bookings whose activity has ENDED', async () => {
       const ctx = await setupUnblocked();
-      // Eligibility pre-check matches the row…
-      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([{ id: 'p1' }]);
+      // Escrow probe finds nothing in escrow…
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
       ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
       // …then the notification lookup.
       ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
@@ -157,21 +159,26 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
     // toasts success unconditionally. Settling a subset would leave the skipped
     // rows UNPAID, so they reappear next cycle and get wired a SECOND time.
     // Reject the whole batch instead, writing nothing.
-    test('REJECTS the whole batch when any row is ineligible — nothing is written', async () => {
+    // Escrow rows are OFFERED by the payouts list (it does not filter on
+    // endDatetime) and marking paid records a wire that already left the bank.
+    // Silently skipping them would leave them UNPAID -> re-wired next cycle.
+    // Genuinely-invalid states (REFUNDED/REJECTED/...) are still skipped
+    // silently: the list never offers those, so no human acts on them.
+    test('REJECTS the batch when a selected row is still in escrow — nothing is written', async () => {
       const ctx = await setupUnblocked();
-      // Only p1 is eligible; p2 is still in escrow.
-      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([{ id: 'p1' }]);
+      // The escrow probe finds p2 still in escrow.
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([{ id: 'p2' }]);
 
       await expect(ctx.sut.markPayoutsPaid(['p1', 'p2'], 'TEST-WIRE-REF'))
-        .rejects.toThrow(/cannot be marked paid[\s\S]*No payments were changed/i);
+        .rejects.toThrow(/still in payout escrow[\s\S]*No payments were changed/i);
 
       // Critical: no partial settlement.
       expect(ctx.prisma._client.payment.updateMany).not.toHaveBeenCalled();
     });
 
-    test('the rejection names the skipped payment ids so the admin can fix the selection', async () => {
+    test('the rejection names the in-escrow payment ids so the admin can fix the selection', async () => {
       const ctx = await setupUnblocked();
-      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([{ id: 'p1' }]);
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([{ id: 'p2' }]);
 
       await expect(ctx.sut.markPayoutsPaid(['p1', 'p2'], 'TEST-WIRE-REF'))
         .rejects.toThrow(/p2/);
@@ -182,8 +189,8 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
       process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS = '3';
       try {
         const ctx = await setupUnblocked();
-        // eligibility pre-check, then the update, then the notification lookup
-        ctx.prisma._client.payment.findMany.mockResolvedValueOnce([{ id: 'p1' }]);
+        // escrow probe (empty), then the update, then the notification lookup
+        ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
         ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
         ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
 
@@ -230,8 +237,8 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
       { id: 'p2', booking: { vendor: { id: 'vA', businessNameEn: 'Alpha', status: 'ACTIVE' } } },
     ]);
     ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]); // no inflight
-    // Eligibility pre-check — both rows eligible, so nothing is rejected.
-    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([{ id: 'p1' }, { id: 'p2' }]);
+    // Escrow probe — nothing in escrow, so nothing is rejected.
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
     ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 2 });
     // Third findMany for notifications.
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
