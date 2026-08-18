@@ -4,25 +4,6 @@
 # Each entry is a DOCUMENTED, time-boxed risk-acceptance, not a "fix". Remove the
 # entry as soon as the underlying dependency can be patched.
 #
-# ── multer 2.1.1 Denial-of-Service advisories ───────────────────────────────
-# The patch is multer 2.2.0, but @nestjs/platform-express pins multer EXACTLY
-# 2.1.1 (even in its latest release, 11.1.27) and npm 11.9.0 silently refuses to
-# apply an `overrides` bump, so the version cannot be raised cleanly yet.
-#
-# Risk is mitigated and LOW in context:
-#   - the only code paths that reach multer are the image-upload endpoints,
-#   - which are AUTH-GATED (vendor/admin only),
-#   - RATE-LIMITED (RATE_LIMIT_CALLBACK, 20/min/IP) behind Cloudflare,
-#   - fileSize-capped (10 MB), and
-#   - fields/parts/fieldNameSize-capped (PR #385) — which closes the
-#     "deeply nested field names" DoS vector at the app layer.
-#
-# REMOVE these once NestJS ships a @nestjs/platform-express that depends on a
-# patched multer (Dependabot will open that PR). Tracked in the project memory
-# note `reference_deploy_trivy_gate`.
-CVE-2026-5079
-GHSA-72gw-mp4g-v24j
-GHSA-3p4h-7m6x-2hcm
 
 # ── deepmerge-ts 7.1.5 — CVE-2026-40345 (stack exhaustion) ─────────────────
 # Review by: 2026-09-30
