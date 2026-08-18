@@ -140,7 +140,11 @@ COPY --from=builder /app/package.json ./
 # only crashed at ECS startup with ERR_DLOPEN_FAILED, tripping the deployment
 # circuit breaker + an auto-rollback to the previous task-def. This turns that
 # into a fast, loud, pre-push CI failure.
-RUN node -e "const s=require('sharp'); if(!s||!s.format){throw new Error('sharp.format missing')} console.log('[build] sharp OK v'+require('sharp/package.json').version)"
+# NOTE on the version read: sharp 0.35 removed "./package.json" from its
+# package `exports`, so the bare specifier `require('sharp/package.json')`
+# now throws ERR_PACKAGE_PATH_NOT_EXPORTED and would fail this very build.
+# A filesystem path is not subject to `exports`, so read it that way.
+RUN node -e "const s=require('sharp'); if(!s||!s.format){throw new Error('sharp.format missing')} const v=require('/app/node_modules/sharp/package.json').version; console.log('[build] sharp OK v'+v)"
 
 # Strip the npm CLI shipped with the node:22-alpine base image. The
 # runtime never calls npm (entrypoint is `node dist/main.js`), and npm's

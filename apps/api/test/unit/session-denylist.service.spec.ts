@@ -133,3 +133,71 @@ describe('SessionDenylistService.denylistUserSessionsExcept', () => {
     );
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fail-open OBSERVABILITY
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Failing open is the right availability trade, but while it lasts, instant
+// session revocation silently stops working — a revoked token keeps passing
+// auth until it expires naturally. That window previously produced NO signal.
+// It must now be observable, WITHOUT logging once per request (which would
+// flood during an outage — the reason the original code stayed quiet).
+
+describe('SessionDenylistService — fail-open visibility', () => {
+  const ev = (spy: jest.SpyInstance) =>
+    spy.mock.calls
+      .map((c) => c[0])
+      .filter((a) => typeof a === 'object' && a !== null && (a as any).event === 'SESSION_DENYLIST_FAIL_OPEN');
+
+  test('a rejected read emits SESSION_DENYLIST_FAIL_OPEN with the impact stated', async () => {
+    const { svc } = make(async () => { throw new Error('redis down'); });
+    const spy = jest.spyOn((svc as any).logger, 'error').mockImplementation(() => undefined);
+
+    expect(await svc.isDenied('fam')).toBe(false); // still fails OPEN
+
+    const events = ev(spy);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(expect.objectContaining({
+      event: 'SESSION_DENYLIST_FAIL_OPEN',
+      occurrences: 1,
+      impact: expect.stringMatching(/revocation degraded/i),
+    }));
+    spy.mockRestore();
+  });
+
+  test('a burst logs ONCE and reports the count — no per-request flooding', async () => {
+    const { svc } = make(async () => { throw new Error('redis down'); });
+    const spy = jest.spyOn((svc as any).logger, 'error').mockImplementation(() => undefined);
+
+    for (let i = 0; i < 50; i++) await svc.isDenied('fam');
+
+    const events = ev(spy);
+    // One flush for the window, not 50 lines.
+    expect(events).toHaveLength(1);
+    expect(events[0].occurrences).toBe(1); // first call flushes immediately
+    spy.mockRestore();
+  });
+
+  test('a SUCCESSFUL read never emits the fail-open alert', async () => {
+    const { svc } = make(async () => null);
+    const spy = jest.spyOn((svc as any).logger, 'error').mockImplementation(() => undefined);
+
+    expect(await svc.isDenied('fam')).toBe(false); // not denied, but healthy
+
+    expect(ev(spy)).toHaveLength(0);
+    spy.mockRestore();
+  });
+});
+
+// Telemetry must never outrank the fail-open contract: isDenied runs on every
+// authenticated request, so a throw inside the counter would leave the promise
+// pending and HANG the request instead of failing open.
+describe('SessionDenylistService — fail-open survives broken telemetry', () => {
+  test('still resolves false when the counter itself throws', async () => {
+    const { svc } = make(async () => { throw new Error('redis down'); });
+    jest.spyOn(svc as any, 'noteFailOpen').mockImplementation(() => { throw new Error('logger exploded'); });
+
+    await expect(svc.isDenied('fam')).resolves.toBe(false);
+  });
+});
