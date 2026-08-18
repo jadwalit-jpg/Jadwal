@@ -6,6 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import * as Sentry from '@sentry/nestjs';
 import { Request, Response } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -86,6 +87,39 @@ export class PrismaExceptionFilter implements ExceptionFilter {
     }
 
     const { status, message } = this.mapError(code);
+
+    // ── Make server-side Prisma failures OBSERVABLE ──────────────────────
+    // This filter is registered after AllExceptionsFilter and Nest reverses
+    // filter order, so it WINS for every PrismaClientKnownRequestError — and
+    // it never reported anywhere. Any unmapped code (P2028 interactive-tx
+    // timeout, P1001 unreachable, P2024 pool exhausted) therefore became a
+    // silent generic 500: no Sentry event, no alertable log line, nothing.
+    //
+    // 4xx is caller-caused (unique collision, bad id) and stays quiet to
+    // avoid alert fatigue. 5xx means WE are broken and must page.
+    //
+    // Two sinks on purpose: Sentry is a no-op unless SENTRY_DSN is set, and
+    // that is not guaranteed in this environment, so the structured log line
+    // below is the sink that always works — `event: PRISMA_ERROR_5XX` is a
+    // stable, greppable token to build a CloudWatch metric filter + alarm on.
+    if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      this.logger.error({
+        event: 'PRISMA_ERROR_5XX',
+        prismaCode: code,
+        method: request.method,
+        path: safePath,
+      });
+      // Never throws: captureException is a no-op without a DSN, but guard
+      // anyway so a reporting failure can never mask the original error.
+      try {
+        Sentry.captureException(exception, {
+          tags: { prismaCode: code, filter: 'PrismaExceptionFilter' },
+          extra: { method: request.method, path: safePath },
+        });
+      } catch {
+        /* reporting must never break the response path */
+      }
+    }
 
     response.status(status).json({
       statusCode: status,
