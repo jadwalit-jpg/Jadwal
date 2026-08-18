@@ -17,6 +17,7 @@ import { refundCouponUsage } from '../bookings/bookings.service';
 import { createActivityBlockCore } from './activity-blocks.logic';
 import { createSpecialPriceCore, bulkCreateSpecialPricesCore } from './activity-special-prices.logic';
 import { BulkSpecialPriceDto } from './dto/bulk-special-price.dto';
+import { envNumber } from '../common/env';
 
 @Injectable()
 export class VendorService {
@@ -1431,7 +1432,7 @@ export class VendorService {
     // endDatetime closes the "vendor gets paid, then the customer cancels a
     // still-future booking for a points refund" collusion vector — no cash
     // leaves while the booking is still reversible.
-    const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
+    const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
     const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
 
     const agg = await db.booking.aggregate({
