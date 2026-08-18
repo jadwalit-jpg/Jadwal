@@ -170,6 +170,108 @@ describe('BookingsService.cancelBooking', () => {
     await expect(ctx.sut.cancelBooking('u1', 'b1'))
       .rejects.toThrow(/already started/i);
   });
+
+  // ── In-flight PAY2M session must NEVER be hard-deleted ────────────────────
+  // Regression guard for the "pay in tab A, cancel in tab B" money-loss bug:
+  // deleting a PENDING payment that already holds a gatewayBasketId destroys
+  // the row the late success-callback looks up by basket id, so the customer is
+  // charged with no booking, no payment row and no refund — invisible even to
+  // reconciliation. Same invariant the stale-PENDING cron already enforces
+  // ("payments are never hard-deleted"). We must also NOT delete the booking:
+  // with it gone a late capture takes the B2_ORPHAN branch and RE-CREATES a
+  // booking the customer deliberately cancelled. Correct end state is
+  // payment FAILED + booking CANCELLED, which resolves to CANCELLED_REFUND.
+  describe('in-flight PAY2M session (gatewayBasketId set, payment PENDING)', () => {
+    const inFlightBooking = {
+      id: 'b1', ref: 'JD-1', customerId: 'u1', status: 'PENDING',
+      startDatetime: futureDate(), activityId: 'a1',
+      couponCode: null, pointsRedeemed: 0,
+      activity: baseActivity,
+      payment: { id: 'p1', status: 'PENDING', amount: 100, gatewayBasketId: 'JDWL-abc123def456' },
+    };
+
+    // The shared prisma mock defaults updateMany to { count: 0 }, which now
+    // (correctly) trips the optimistic-lock abort — so the happy-path tests
+    // must simulate a payment row that was genuinely still PENDING.
+    const wonTheRace = (ctx: any) =>
+      ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    test('does NOT delete the payment row', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      wonTheRace(ctx);
+      const res = await ctx.sut.cancelBooking('u1', 'b1');
+
+      expect(ctx.prisma._client.payment.delete).not.toHaveBeenCalled();
+      expect(ctx.prisma._client.booking.delete).not.toHaveBeenCalled();
+      expect(res).toEqual(expect.objectContaining({ deleted: false, status: 'CANCELLED' }));
+    });
+
+    test('flips the payment to FAILED only while it is still PENDING', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      wonTheRace(ctx);
+      await ctx.sut.cancelBooking('u1', 'b1');
+
+      // The status guard is what stops us clobbering a capture that won the race.
+      expect(ctx.prisma._client.payment.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: 'p1', status: 'PENDING' }),
+          data: expect.objectContaining({ status: 'FAILED' }),
+        }),
+      );
+    });
+
+    test('marks the booking CANCELLED by CUSTOMER so a late capture refunds instead of resurrecting', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      wonTheRace(ctx);
+      await ctx.sut.cancelBooking('u1', 'b1');
+
+      expect(ctx.prisma._client.booking.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'b1' },
+          data: expect.objectContaining({ status: 'CANCELLED', cancelledBy: 'CUSTOMER' }),
+        }),
+      );
+    });
+
+    // THE race this whole branch exists for, and the one the first version of
+    // this fix did not cover: the PAY2M capture commits between our read and
+    // our write. The payment updateMany then matches 0 rows. Without an abort
+    // we would still flip the booking to CANCELLED and hand back the coupon +
+    // points on a booking the callback just CONFIRMED and charged — leaving no
+    // REFUND_PENDING row, so recordRefundDecision (which requires
+    // REFUND_PENDING) could never refund it.
+    test('ABORTS when a concurrent capture already flipped the payment to SUCCESS', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      // 0 rows matched → the callback won the race.
+      ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(ctx.sut.cancelBooking('u1', 'b1')).rejects.toThrow(/payment completed while cancelling/i);
+
+      // Must NOT cancel the booking the callback just confirmed…
+      expect(ctx.prisma._client.booking.update).not.toHaveBeenCalled();
+      // …and must NOT hand back the redeemed points for a paid booking.
+      expect((ctx.loyalty as any).refund ?? ctx.loyalty.refundPoints).not.toHaveBeenCalled();
+    });
+
+    test('still hard-deletes when NO gateway session was ever opened (behaviour preserved)', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+        ...inFlightBooking,
+        // Payment row exists but the customer never reached PAY2M — nothing can
+        // be captured, so the original throw-away behaviour is still correct.
+        payment: { id: 'p1', status: 'PENDING', amount: 100, gatewayBasketId: null },
+      });
+      const res = await ctx.sut.cancelBooking('u1', 'b1');
+
+      expect(ctx.prisma._client.payment.delete).toHaveBeenCalled();
+      expect(ctx.prisma._client.booking.delete).toHaveBeenCalled();
+      expect(res).toEqual(expect.objectContaining({ deleted: true }));
+    });
+  });
 });
 
 // Note: the standalone BookingsService.awardLoyaltyPoints method was removed —
