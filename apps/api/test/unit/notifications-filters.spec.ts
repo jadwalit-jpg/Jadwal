@@ -4,7 +4,7 @@
  */
 
 import { of, throwError } from 'rxjs';
-import { HttpException, HttpStatus } from '@nestjs/common';
+import { HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Test } from '@nestjs/testing';
 import { NotificationService } from '../../src/common/services/notification.service';
@@ -228,6 +228,69 @@ describe('PrismaExceptionFilter', () => {
     const res = makeRes();
     filter.catch(mkPrismaErr('P9999'), makeHost({ path: '/x', method: 'POST' }, res));
     expect(res.status).toHaveBeenCalledWith(500);
+  });
+
+  // ── 5xx must be OBSERVABLE ────────────────────────────────────────────────
+  // This filter wins over AllExceptionsFilter for every Prisma error (Nest
+  // reverses filter order), and it used to report nowhere — so an unmapped
+  // code such as P2028 (interactive-transaction timeout) became a silent 500.
+  // `event: PRISMA_ERROR_5XX` is the stable token a CloudWatch metric filter
+  // alarms on, and it must NOT fire for caller-caused 4xx (alert fatigue).
+  describe('5xx observability', () => {
+    test.each([
+      ['P2028', 'interactive transaction timeout'],
+      ['P1001', 'cannot reach database'],
+      ['P2024', 'connection pool timeout'],
+      ['P9999', 'unknown code'],
+    ])('%s (%s) → emits PRISMA_ERROR_5XX with the code and route', (code) => {
+      const filter = new PrismaExceptionFilter();
+      const res = makeRes();
+      const errSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      filter.catch(mkPrismaErr(code), makeHost({ path: '/bookings', method: 'POST' }, res));
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      const alert = errSpy.mock.calls
+        .map((c) => c[0])
+        .find((a) => typeof a === 'object' && a !== null && (a as any).event === 'PRISMA_ERROR_5XX');
+      expect(alert).toBeDefined();
+      expect(alert).toEqual(
+        expect.objectContaining({ prismaCode: code, method: 'POST', path: '/bookings' }),
+      );
+      errSpy.mockRestore();
+    });
+
+    test.each([['P2002', 409], ['P2025', 404], ['P2003', 400]])(
+      '%s → HTTP %d does NOT emit the 5xx alert (caller-caused, no paging)',
+      (code, status) => {
+        const filter = new PrismaExceptionFilter();
+        const res = makeRes();
+        const errSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+        filter.catch(mkPrismaErr(code), makeHost({ path: '/x', method: 'POST' }, res));
+
+        expect(res.status).toHaveBeenCalledWith(status);
+        const alerted = errSpy.mock.calls
+          .map((c) => c[0])
+          .some((a) => typeof a === 'object' && a !== null && (a as any).event === 'PRISMA_ERROR_5XX');
+        expect(alerted).toBe(false);
+        errSpy.mockRestore();
+      },
+    );
+
+    test('the response body still leaks nothing when the alert fires', () => {
+      const filter = new PrismaExceptionFilter();
+      const res = makeRes();
+      const errSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      filter.catch(mkPrismaErr('P2028', 'tx timed out on bookings'), makeHost({ path: '/bookings', method: 'POST' }, res));
+
+      const body = res.json.mock.calls[0][0];
+      expect(body.message).toBe('Internal server error');
+      expect(JSON.stringify(body)).not.toContain('P2028');
+      expect(JSON.stringify(body)).not.toContain('tx timed out');
+      errSpy.mockRestore();
+    });
   });
 });
 
