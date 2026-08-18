@@ -113,14 +113,16 @@ export class RedisThrottlerStorage implements ThrottlerStorage, OnModuleInit {
       if (isShutdownRace) {
         this.logger.warn(`Redis throttler unavailable (${name}) — failing open`);
       } else {
-        // Structured + stable token so this is ALARMABLE, not just readable.
-        // Failing open is the right availability trade (a Redis blip must not
-        // take the API down), but while it lasts EVERY rate limit is inert —
-        // including /auth/login, OTP send and password reset. That window has
-        // to be visible, so `event: RATE_LIMIT_FAIL_OPEN` is the token a
-        // CloudWatch metric filter + alarm keys on. Error class only: err.message
-        // can carry ElastiCache hostnames or auth state.
-        this.logger.error({ event: 'RATE_LIMIT_FAIL_OPEN', errorClass: name });
+        // KEEP THIS EXACT STRING. A live CloudWatch metric filter
+        // ("jadwal-redis-throttler-failed") matches the literal text
+        // "Redis throttler failed" and feeds the Jadwal/API
+        // RedisThrottlerFailures metric behind the
+        // jadwal-api-redis-throttler-failing alarm -> SNS jadwal-alerts.
+        // Reformatting this line to a structured object silently breaks that
+        // alarm: the filter stops matching, the metric flatlines at zero, and
+        // the alarm sits in OK forever while rate limiting is actually failing
+        // open. Error class only — err.message can carry ElastiCache hostnames.
+        this.logger.error(`Redis throttler failed (${name})`);
       }
       // Fail open — do not block requests when Redis is down
       return { totalHits: 0, timeToExpire: ttl, isBlocked: false, timeToBlockExpire: 0 };
