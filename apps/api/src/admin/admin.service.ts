@@ -1144,10 +1144,23 @@ export class AdminService {
                 });
               }
             } else if (bk.payment.status === 'PENDING') {
-              await tx.payment.update({
-                where: { id: bk.payment.id },
+                            // Optimistic lock, NOT a plain update. The `status === 'PENDING'`
+              // above was read earlier; a PAY2M capture can commit in between and
+              // flip the row to SUCCESS. An unguarded update would force that
+              // captured payment back to FAILED while the booking is cancelled,
+              // leaving the customer charged with no REFUND_PENDING row —
+              // recordRefundDecision requires REFUND_PENDING, so the refund queue
+              // could never reach it. Same incident the customer-cancel path was
+              // fixed for; this path was missed.
+              const flipped = await tx.payment.updateMany({
+                where: { id: bk.payment.id, status: 'PENDING' },
                 data: { status: 'FAILED' },
               });
+              if (flipped.count === 0) {
+                throw new ConflictException(
+                  'Payment completed while cancelling. Refresh — this booking is now paid.',
+                );
+              }
             }
           }
 
@@ -1486,10 +1499,23 @@ export class AdminService {
             });
           }
         } else if (result.payment.status === 'PENDING') {
-          await tx.payment.update({
-            where: { id: result.payment.id },
+                    // Optimistic lock, NOT a plain update. The `status === 'PENDING'`
+          // above was read earlier; a PAY2M capture can commit in between and
+          // flip the row to SUCCESS. An unguarded update would force that
+          // captured payment back to FAILED while the booking is cancelled,
+          // leaving the customer charged with no REFUND_PENDING row —
+          // recordRefundDecision requires REFUND_PENDING, so the refund queue
+          // could never reach it. Same incident the customer-cancel path was
+          // fixed for; this path was missed.
+          const flipped = await tx.payment.updateMany({
+            where: { id: result.payment.id, status: 'PENDING' },
             data: { status: 'FAILED' },
           });
+          if (flipped.count === 0) {
+            throw new ConflictException(
+              'Payment completed while cancelling. Refresh — this booking is now paid.',
+            );
+          }
         }
 
         // Refund redeemed loyalty points back to customer (separate from refund-to-points above)
