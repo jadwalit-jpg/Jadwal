@@ -20,6 +20,8 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { hasAcceptedCurrentTerms } from '../common/terms';
+import { SessionDenylistService } from '../redis/session-denylist.service';
 
 @Controller('auth')
 export class AuthController {
@@ -27,6 +29,7 @@ export class AuthController {
     private authService: AuthService,
     private prisma: PrismaService,
     private configService: ConfigService,
+    private sessionDenylist: SessionDenylistService,
   ) {}
 
   @Public()
@@ -94,7 +97,7 @@ export class AuthController {
   // be expired (that's why the client is calling refresh). Auth here is
   // by the RefreshToken cookie, which auth.service.refreshTokens
   // validates against the DB.
-  @Throttle(RATE_LIMIT_WRITE)
+  @Throttle(RATE_LIMIT_AUTH)
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) response: Response,
@@ -147,7 +150,10 @@ export class AuthController {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
     const sessions = await this.prisma.client.refreshToken.findMany({
-      where: { userId: user.id },
+      // Only ACTIVE sessions. M6 keeps rotated tokens as reuse-detection
+      // tombstones (rotatedAt set); those are historical, not live devices, and
+      // must not surface here as phantom sessions.
+      where: { userId: user.id, rotatedAt: null },
       select: {
         id: true,
         userAgent: true,
@@ -185,13 +191,21 @@ export class AuthController {
     // Only allow revoking own sessions (prevent cross-user access)
     const session = await this.prisma.client.refreshToken.findUnique({
       where: { id: sessionId },
-      select: { userId: true },
+      select: { userId: true, familyId: true },
     });
     if (!session || session.userId !== user.id) {
       throw new ForbiddenException('Cannot revoke this session');
     }
 
-    await this.prisma.client.refreshToken.delete({ where: { id: sessionId } });
+    // Denylist the family so the revoked device's outstanding ACCESS token dies
+    // immediately (M5), then delete the whole family (active token + tombstones)
+    // so the session is fully gone. Scope the destructive delete by BOTH familyId
+    // AND userId (defence-in-depth tenant isolation — even though familyId is a
+    // globally-unique uuid, a destructive query should never rely on that alone).
+    await this.sessionDenylist.denylistSession(session.familyId);
+    await this.prisma.client.refreshToken.deleteMany({
+      where: { familyId: session.familyId, userId: user.id },
+    });
     return { message: 'Session revoked' };
   }
 
@@ -207,21 +221,51 @@ export class AuthController {
       ? this.authService.getTokenHash(req.cookies.RefreshToken)
       : null;
 
-    // Delete all sessions EXCEPT the current one
-    const { count } = await this.prisma.client.refreshToken.deleteMany({
+    // Resolve the current session's family so we KEEP it (this device stays
+    // logged in) and revoke every OTHER family.
+    const currentFamilyId = currentTokenHash
+      ? (
+          await this.prisma.client.refreshToken.findUnique({
+            where: { tokenHash: currentTokenHash },
+            select: { familyId: true },
+          })
+        )?.familyId ?? null
+      : null;
+
+    // Distinct OTHER active families = the "other sessions". Denylist each so
+    // its outstanding ACCESS token dies immediately (M5), THEN delete every token
+    // row of EXACTLY those families (active + tombstones). Count distinct
+    // families, not rows — a rotated session has many tombstone rows.
+    const otherFamilies = await this.prisma.client.refreshToken.findMany({
       where: {
         userId: user.id,
-        ...(currentTokenHash ? { tokenHash: { not: currentTokenHash } } : {}),
+        rotatedAt: null,
+        ...(currentFamilyId ? { familyId: { not: currentFamilyId } } : {}),
       },
+      select: { familyId: true },
+      distinct: ['familyId'],
     });
+    const familyIds = otherFamilies.map((f) => f.familyId);
+    await Promise.all(familyIds.map((fid) => this.sessionDenylist.denylistSession(fid)));
+    // Delete ONLY the families we just denylisted — NOT a broad `familyId: { not:
+    // current }`. Otherwise a session created concurrently (a new login between
+    // the findMany above and this delete) would have its refresh token deleted
+    // here but its family never denylisted → a ≤JWT_EXPIRATION "ghost" access
+    // token that evades revocation. Matching the delete-set to the denylist-set
+    // closes that TOCTOU and correctly leaves a brand-new session untouched.
+    if (familyIds.length > 0) {
+      await this.prisma.client.refreshToken.deleteMany({
+        where: { userId: user.id, familyId: { in: familyIds } },
+      });
+    }
 
-    return { message: `${count} session(s) revoked` };
+    return { message: `${familyIds.length} session(s) revoked` };
   }
 
   // ─── W.127 PDPL / GDPR self-service account management ──────────────────
 
   /**
-   * Export every piece of data Jadwal stores about the calling user.
+   * Export every piece of data AL Jadwal stores about the calling user.
    * Returns inline JSON (Content-Disposition: attachment) so the browser
    * triggers a download. Rate-limited per-IP at STRICT (3/min) plus a
    * per-user 24h cooldown inside the service. Excludes auth secrets
@@ -345,19 +389,34 @@ export class AuthController {
   async getProfile(@CurrentUser() user: RequestUser) {
     const dbUser = await this.prisma.client.user.findUnique({
       where: { id: user.id },
-      select: { id: true, email: true, fullName: true, role: true, phone: true },
+      select: { id: true, email: true, fullName: true, role: true, phone: true, termsAcceptedAt: true, termsAcceptedVersion: true },
     });
     if (!dbUser) throw new UnauthorizedException();
+
+    // Drives the one-time post-login consent gate: true when the user has never
+    // accepted, or accepted an older TERMS_VERSION.
+    const needsTermsAcceptance = !hasAcceptedCurrentTerms(dbUser);
 
     if (dbUser.role === 'VENDOR') {
       const vendor = await this.prisma.client.vendor.findUnique({
         where: { userId: user.id },
         select: { id: true, businessNameEn: true, businessNameAr: true, slug: true, status: true, countryId: true },
       });
-      return { ...dbUser, vendor };
+      return { ...dbUser, vendor, needsTermsAcceptance };
     }
 
-    return dbUser;
+    return { ...dbUser, needsTermsAcceptance };
+  }
+
+  // Records the current user's acceptance of the latest Terms — called by the
+  // post-login consent gate (Google-OAuth signups, pre-feature accounts, and
+  // anyone after a TERMS_VERSION bump). Email/password + vendor signups accept
+  // at registration, so they never need this.
+  @Post('accept-terms')
+  @Throttle(RATE_LIMIT_WRITE)
+  @UseGuards(JwtAuthGuard)
+  async acceptTerms(@CurrentUser() user: RequestUser) {
+    return this.authService.acceptTerms(user.id);
   }
 
   // ─── Password Reset ─────────────────────────────────────────────────────

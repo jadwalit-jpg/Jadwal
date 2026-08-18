@@ -26,14 +26,32 @@ async function buildSut() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('LoyaltyService.redeem', () => {
-  test('400 on non-positive amount (0, negative, non-integer)', async () => {
+  test('400 on non-positive amount (0, negative, NaN)', async () => {
     const { sut, tx } = await buildSut();
     await expect(sut.redeem(tx, { userId: 'u1', amount: 0, bookingId: 'b1', note: 'n' }))
       .rejects.toThrow(BadRequestException);
     await expect(sut.redeem(tx, { userId: 'u1', amount: -5, bookingId: 'b1', note: 'n' }))
       .rejects.toThrow(BadRequestException);
-    await expect(sut.redeem(tx, { userId: 'u1', amount: 1.5, bookingId: 'b1', note: 'n' }))
+    await expect(sut.redeem(tx, { userId: 'u1', amount: NaN, bookingId: 'b1', note: 'n' }))
       .rejects.toThrow(BadRequestException);
+  });
+
+  test('accepts a fractional (2 dp) amount — points are QAR-denominated', async () => {
+    const { sut, tx } = await buildSut();
+    tx.user.updateMany.mockResolvedValueOnce({ count: 1 });
+    tx.user.findUniqueOrThrow.mockResolvedValueOnce({ loyaltyPoints: 8.5 });
+
+    await sut.redeem(tx, { userId: 'u1', amount: 1.5, bookingId: 'b1', note: 'partial redeem' });
+
+    expect(tx.user.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'u1', loyaltyPoints: { gte: 1.5 } },
+        data:  { loyaltyPoints: { decrement: 1.5 } },
+      }),
+    );
+    expect(tx.loyaltyLedger.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ delta: -1.5 }) }),
+    );
   });
 
   test('409 when balance insufficient (updateMany count=0)', async () => {
@@ -236,5 +254,94 @@ describe('LoyaltyService.adjust', () => {
         }),
       }),
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// reverseAwarded — clawing back points credited on a COMPLETED booking that is
+// later cancelled (admin/vendor). Must be a clean no-op when the customer has
+// already spent the balance to 0, NOT throw and roll back the cancel tx.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('LoyaltyService.reverseAwarded', () => {
+  test('ZERO balance → clean no-op (no -0 ledger throw, cancel tx survives)', async () => {
+    const { sut, tx } = await buildSut();
+    tx.user.findUniqueOrThrow.mockResolvedValueOnce({ loyaltyPoints: 0 });
+
+    const r = await sut.reverseAwarded(tx, {
+      userId: 'u1', amount: 2.5, bookingId: 'b1', actorType: 'ADMIN', actorId: 'a1', note: 'admin cancel of completed booking',
+    });
+
+    expect(r.appliedDelta).toBe(0);
+    expect(r.balanceAfter).toBe(0);
+    expect(tx.user.update).not.toHaveBeenCalled();        // nothing to debit
+    expect(tx.loyaltyLedger.create).not.toHaveBeenCalled(); // no row, no "must be non-zero" throw
+  });
+
+  test('with balance → debits the awarded amount (normal path unchanged)', async () => {
+    const { sut, tx } = await buildSut();
+    tx.user.findUniqueOrThrow.mockResolvedValueOnce({ loyaltyPoints: 10 });
+    tx.user.update.mockResolvedValueOnce({ loyaltyPoints: 7.5 });
+
+    const r = await sut.reverseAwarded(tx, {
+      userId: 'u1', amount: 2.5, bookingId: 'b1', actorType: 'ADMIN', actorId: 'a1', note: 'admin cancel',
+    });
+
+    expect(r.appliedDelta).toBe(-2.5);
+    expect(r.balanceAfter).toBe(7.5);
+    expect(tx.loyaltyLedger.create).toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// computeEarnedPoints — earn on CASH paid only; points-redeemed portion earns
+// 0 (closes the infinite-points loop). Single source of truth for the earn
+// amount across every award + reverse site.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('LoyaltyService.computeEarnedPoints', () => {
+  test('cash booking (no points) earns on the full price', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(300, 0, 1)).toBe(300);
+  });
+
+  test('points-paid booking (pointsDiscount == totalPrice) earns 0 — no loop', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(300, 300, 1)).toBe(0);
+  });
+
+  test('earns only on the non-points portion (cash basis)', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(300, 100, 1)).toBe(200);
+  });
+
+  test('pointsDiscount above totalPrice clamps to 0 (never negative earn)', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(300, 400, 1)).toBe(0);
+  });
+
+  test('rate of 0 earns nothing', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(300, 0, 0)).toBe(0);
+  });
+
+  test('fractional earn is kept to 2 dp — NOT floored (points are QAR-denominated)', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(255, 0, 0.1)).toBe(25.5); // round2(25.5), was floor→25
+  });
+
+  // New "1 point = 1 QAR" model: earn = 1% of cash paid (pointsPerQar = 0.01).
+  test('1% earn model — 100 QAR → 1.00, 90 QAR → 0.90, 250 QAR → 2.50', async () => {
+    const { sut } = await buildSut();
+    expect(sut.computeEarnedPoints(100, 0, 0.01)).toBe(1);
+    expect(sut.computeEarnedPoints(90, 0, 0.01)).toBe(0.9);
+    expect(sut.computeEarnedPoints(250, 0, 0.01)).toBe(2.5);
+  });
+
+  test('float-safe: 90 * 0.01 (=0.8999… in JS) rounds cleanly to 0.90', async () => {
+    const { sut } = await buildSut();
+    // Guards the binary-float trap: without round2 this would be 0.8999999999999999.
+    expect(sut.computeEarnedPoints(90, 0, 0.01)).toBe(0.9);
+    expect(sut.computeEarnedPoints(70, 0, 0.01)).toBe(0.7);
   });
 });

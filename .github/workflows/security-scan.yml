@@ -23,7 +23,7 @@ jobs:
     container:
       image: semgrep/semgrep:latest@sha256:7810f1d7884974ab6dda7bef8f4a2c8e165ea2142fd8260515d380e4f1407263
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Run Semgrep
         # Block deploy on ERROR-severity only. WARNING-level rules
         # (njsscan Math.random, regex-DoS heuristic, "string equality
@@ -57,7 +57,7 @@ jobs:
     name: retire.js
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
@@ -84,7 +84,7 @@ jobs:
       matrix:
         language: [javascript-typescript]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Initialize CodeQL
         uses: github/codeql-action/init@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v3
         with:
@@ -100,7 +100,7 @@ jobs:
     name: npm audit (production)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
@@ -109,9 +109,9 @@ jobs:
         run: npm ci
       - name: Verify package integrity signatures
         run: npm audit signatures
-      - name: API audit (production deps)
-        working-directory: apps/api
-        run: npm audit --omit=dev --audit-level=high
-      - name: Web audit (production deps)
-        working-directory: apps/web
-        run: npm audit --omit=dev --audit-level=high
+      # See scripts/audit-gate.mjs — fails on any high/critical production
+      # advisory that is not explicitly waived (with a reason + expiry) in
+      # .audit-allowlist.json, so newly introduced vulnerabilities still block
+      # while known-unfixable-upstream ones don't freeze the whole repo.
+      - name: Production audit (allowlist-aware)
+        run: node scripts/audit-gate.mjs apps/api apps/web

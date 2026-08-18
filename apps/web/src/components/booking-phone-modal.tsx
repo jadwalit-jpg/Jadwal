@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Phone, X, ChevronDown } from 'lucide-react';
+import { validatePhone } from '@/lib/validation';
 
 /* ─── Country codes ────────────────────────────────────────────
  *
@@ -106,15 +107,19 @@ export function BookingPhoneModal({
   const handleSubmit = useCallback(() => {
     setError('');
     const cleaned = localNumber.replace(/[\s\-()]/g, '');
-    if (!/^[0-9]{4,14}$/.test(cleaned)) {
+    if (!/^[0-9]+$/.test(cleaned)) {
       setError(t('phone.validNumber'));
       return;
     }
     const normalized = `${selectedCountry.code}${cleaned}`;
-    // Final shape check before handing to the parent. Matches the
-    // backend DTO regex (^\+?[0-9]{7,15}$) — both ends agree on the
-    // E.164 shape. UX hint only; the DTO is the authority.
-    if (!/^\+[0-9]{7,15}$/.test(normalized)) {
+    // Authoritative shape + length check via the shared validator. For GCC
+    // countries it enforces the EXACT national digit count (e.g. Qatar = 8),
+    // so a too-short local number like "1234" is rejected even though the
+    // country-code prefix would push the total past the generic 7-digit floor.
+    // Falls back to the generic E.164 rule (^\+?[0-9]{7,15}$) for non-GCC
+    // countries, matching the backend DTO. UX hint only; the DTO is the authority.
+    const result = validatePhone(normalized, selectedCountry.iso);
+    if (!result.valid) {
       setError(t('phone.tooShortOrLong'));
       return;
     }

@@ -42,7 +42,7 @@ interface RefundRequest {
   cancelledAt: string | null;
   cancelledBy: string | null;
   createdAt: string;
-  customer: { id: string; fullName: string; email: string; phone: string | null };
+  customer: { fullName: string; email: string; phone: string | null };
   activity: {
     titleEn: string;
     titleAr: string | null;
@@ -62,63 +62,36 @@ interface RefundRequest {
 
 function suggestedRefund(r: RefundRequest, t: TFunction): { amount: number; label: string; reason: string } {
   const paid = r.payment ? Number(r.payment.amount) : Number(r.totalPrice);
+  // Use the SERVER's suggestion — cancelBooking computed it at cancel time with the
+  // correct activity-TIMEZONE hours-before-start (nowInTimezone) and froze it on the
+  // payment row (payment.refundAmount). Recomputing here from
+  // `startDatetime − cancelledAt` was WRONG: startDatetime is local-wall-clock tagged
+  // UTC, so a client subtraction skewed the 24h-deadline decision by the country's
+  // UTC offset (±3h in the GCC) and mis-suggested the amount the vendor approves.
+  // A null refundAmount ⇒ the policy suggested no refund. Vendor can still override.
+  const amount = r.payment?.refundAmount != null ? Number(r.payment.refundAmount) : 0;
   const policy = r.activity.cancellationPolicy ?? 'FREE_CANCELLATION';
-  const deadline = 24;
-  if (!r.cancelledAt) {
-    return {
-      amount: paid,
-      label: t('vendor.refundRequests.suggested.labelFull', { defaultValue: 'Full refund' }),
-      reason: t('vendor.refundRequests.suggested.reasonNoCancelTs', { defaultValue: 'No cancel timestamp' }),
-    };
-  }
-  const hoursBeforeStart =
-    (new Date(r.startDatetime).getTime() - new Date(r.cancelledAt).getTime()) / (1000 * 60 * 60);
-  const ok = hoursBeforeStart >= deadline;
-  const hours = Math.floor(hoursBeforeStart);
-  if (policy === 'NON_REFUNDABLE') {
+  if (amount <= 0) {
     return {
       amount: 0,
       label: t('vendor.refundRequests.suggested.labelNone', { defaultValue: 'No refund' }),
-      reason: t('vendor.refundRequests.suggested.reasonNonRefundable', { defaultValue: 'Non-refundable activity' }),
+      reason: policy === 'NON_REFUNDABLE'
+        ? t('vendor.refundRequests.suggested.reasonNonRefundable', { defaultValue: 'Non-refundable activity' })
+        : t('vendor.refundRequests.suggested.reasonPolicy', { defaultValue: 'Per cancellation policy + timing' }),
     };
   }
-  if (policy === 'PARTIAL_REFUND') {
-    if (ok) {
-      return {
-        amount: Number((paid * 0.5).toFixed(2)),
-        label: t('vendor.refundRequests.suggested.labelHalf', { defaultValue: '50% refund' }),
-        reason: t('vendor.refundRequests.suggested.reasonPartialOk', {
-          hours,
-          defaultValue: `Cancelled ${hours}h before start`,
-        }),
-      };
-    }
-    return {
-      amount: 0,
-      label: t('vendor.refundRequests.suggested.labelNone', { defaultValue: 'No refund' }),
-      reason: t('vendor.refundRequests.suggested.reasonPartialLate', {
-        deadline,
-        defaultValue: `Cancelled less than ${deadline}h before start`,
-      }),
-    };
-  }
-  if (ok) {
+  if (amount >= paid) {
     return {
       amount: paid,
       label: t('vendor.refundRequests.suggested.labelFull', { defaultValue: 'Full refund' }),
-      reason: t('vendor.refundRequests.suggested.reasonFreeOk', {
-        hours,
-        defaultValue: `Cancelled ${hours}h before start`,
-      }),
+      reason: t('vendor.refundRequests.suggested.reasonPolicy', { defaultValue: 'Per cancellation policy + timing' }),
     };
   }
+  const pct = Math.round((amount / paid) * 100);
   return {
-    amount: 0,
-    label: t('vendor.refundRequests.suggested.labelNone', { defaultValue: 'No refund' }),
-    reason: t('vendor.refundRequests.suggested.reasonFreeLate', {
-      deadline,
-      defaultValue: `Cancelled less than ${deadline}h before start`,
-    }),
+    amount,
+    label: t('vendor.refundRequests.suggested.labelPercent', { pct, defaultValue: `${pct}% refund` }),
+    reason: t('vendor.refundRequests.suggested.reasonPolicy', { defaultValue: 'Per cancellation policy + timing' }),
   };
 }
 
@@ -130,6 +103,25 @@ function formatDateTime(iso: string | null, t: TFunction) {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
+    // Booking START/END are stored as local-wall-clock tagged UTC — render in UTC
+    // so the shown time matches the activity's clock regardless of browser zone.
+    timeZone: 'UTC',
+  });
+}
+
+// For TRUE INSTANTS (createdAt / cancelledAt / paidAt) — real points in time, NOT
+// wall-clock-tagged. Render in the viewer's LOCAL zone; forcing UTC on these would
+// show a ~offset-shifted (≈3h off in the GCC) WRONG absolute time.
+function formatInstant(iso: string | null, t: TFunction) {
+  if (!iso) return t('vendor.refundRequests.dash');
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
   });
 }
 
@@ -261,7 +253,7 @@ export default function VendorRefundRequestsPage() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
       <VendorSidebar />
-      <main className="ps-64">
+      <main className="md:ps-64 max-md:pt-16">
         <div className="max-w-6xl mx-auto px-6 sm:px-8 lg:px-10 py-10">
           <div className="mb-8">
             <div className="flex items-center gap-3 mb-2">
@@ -370,11 +362,11 @@ export default function VendorRefundRequestsPage() {
                         <div className="space-y-1">
                           <div>
                             <p className="text-[10px] text-gray-400 dark:text-slate-500">{t('vendor.refundRequests.timelineBooked')}</p>
-                            <p className="text-xs text-gray-700 dark:text-slate-300">{formatDateTime(r.createdAt, t)}</p>
+                            <p className="text-xs text-gray-700 dark:text-slate-300">{formatInstant(r.createdAt, t)}</p>
                           </div>
                           <div>
                             <p className="text-[10px] text-gray-400 dark:text-slate-500">{t('vendor.refundRequests.timelineCancelled')}</p>
-                            <p className="text-xs text-gray-700 dark:text-slate-300">{formatDateTime(r.cancelledAt, t)}</p>
+                            <p className="text-xs text-gray-700 dark:text-slate-300">{formatInstant(r.cancelledAt, t)}</p>
                           </div>
                         </div>
                       </div>
@@ -389,7 +381,7 @@ export default function VendorRefundRequestsPage() {
                         <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{r.payment?.method ?? t('vendor.refundRequests.na')}</p>
                         {r.payment?.paidAt && (
                           <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                            {t('vendor.refundRequests.paidAt', { datetime: formatDateTime(r.payment.paidAt, t) })}
+                            {t('vendor.refundRequests.paidAt', { datetime: formatInstant(r.payment.paidAt, t) })}
                           </p>
                         )}
                         {r.payment?.gatewayTxnId && (

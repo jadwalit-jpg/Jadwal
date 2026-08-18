@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { LANG_COOKIE, LANG_HEADER } from './lib/lang-cookie';
+import { hasArPrefix, isLocalizablePath, localePath, stripLocalePrefix } from './lib/locale-path';
 
 /**
  * Decode JWT payload without verification (Edge runtime can't use the full
@@ -68,6 +70,17 @@ const IMG_HOSTS = [
   'https://jadwal-assets.s3.amazonaws.com',
   'https://jadwal-assets.s3.eu-central-1.amazonaws.com',
   'https://cdn.jadwal.qa',
+  // Meta Pixel image beacons (fbevents.js posts tracking to facebook.com/tr).
+  // The pixel loads ONLY after cookie consent — see components/meta-pixel.tsx.
+  'https://www.facebook.com',
+  // Google Ads (gtag.js) conversion + remarketing image beacons. gtag.js is
+  // loaded via 'strict-dynamic' (no script-src entry needed); only its beacon
+  // hosts need allowlisting. Loads under the SAME opt-out cookie consent as the
+  // Meta Pixel — see components/google-ads.tsx.
+  'https://www.googletagmanager.com',
+  'https://www.google.com',
+  'https://www.googleadservices.com',
+  'https://googleads.g.doubleclick.net',
   // Build-time CDN host (NEXT_PUBLIC_CDN_URL). Add to the allowlist ONLY if
   // it differs from the hardcoded production fallback above — prevents the
   // duplicate `cdn.jadwal.qa cdn.jadwal.qa` entry that the live CSP header
@@ -115,7 +128,11 @@ function buildCsp(nonce: string, isProd: boolean): string {
     // script-src above is nonce-based with NO 'unsafe-inline'.
     `style-src 'self' 'unsafe-inline'`,
     `img-src ${IMG_HOSTS.join(' ')}`,
-    `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
+    // Meta Pixel: fbevents.js is fetched from connect.facebook.net and beacons
+    // to www.facebook.com (only after cookie consent — see MetaPixel).
+    // Google Ads: gtag.js (googletagmanager.com) beacons conversions to
+    // google.com / googleadservices.com / doubleclick — same opt-out consent.
+    `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org https://www.facebook.com https://connect.facebook.net https://www.googletagmanager.com https://www.google.com https://www.googleadservices.com https://googleads.g.doubleclick.net${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
     `font-src 'self' data:`,
     `frame-src ${FRAME_HOSTS.join(' ')}`,
     `frame-ancestors 'none'`,
@@ -226,6 +243,42 @@ export function middleware(request: NextRequest) {
   if (LAUNCH_DISABLED && !isAllowedDuringKillswitch(pathname)) {
     return applyCspHeaders(NextResponse.redirect(new URL('/maintenance', request.url)));
   }
+
+  // ─── Bilingual /ar locale routing (PUBLIC routes only) ───────
+  // English is unprefixed; Arabic is served under /ar/* via an internal REWRITE
+  // (the browser URL stays /ar/..., the underlying public route renders in
+  // Arabic via the x-lang header). The cookie is a *preference*: a returning
+  // Arabic user landing on an unprefixed public URL is redirected to its /ar
+  // twin. Crawlers send no cookie → they always get English at the root URL,
+  // so English rankings are untouched. Non-public routes (admin/vendor/auth/
+  // per-user) fall through to the auth logic below and stay cookie-driven.
+  const cookieLang = request.cookies.get(LANG_COOKIE)?.value;
+
+  if (hasArPrefix(pathname)) {
+    const { path: underlying } = stripLocalePrefix(pathname);
+    if (!isLocalizablePath(underlying)) {
+      // /ar may only wrap public routes — strip the prefix off a non-public path.
+      const stripped = request.nextUrl.clone();
+      stripped.pathname = underlying;
+      return applyCspHeaders(NextResponse.redirect(stripped));
+    }
+    requestHeaders.set(LANG_HEADER, 'ar');
+    const rewritten = request.nextUrl.clone();
+    rewritten.pathname = underlying; // search params preserved by clone()
+    return applyCspHeaders(NextResponse.rewrite(rewritten, { request: { headers: requestHeaders } }));
+  }
+
+  if (isLocalizablePath(pathname)) {
+    if (cookieLang === 'ar') {
+      const target = request.nextUrl.clone();
+      target.pathname = localePath(pathname, 'ar');
+      return applyCspHeaders(NextResponse.redirect(target));
+    }
+    requestHeaders.set(LANG_HEADER, 'en'); // public unprefixed = English; tell SSR explicitly
+    return applyCspHeaders(NextResponse.next({ request: { headers: requestHeaders } }));
+  }
+  // else: non-localizable (admin/vendor/auth/per-user) → fall through; language
+  // stays cookie-driven (LANG_HEADER intentionally not set).
 
   const authCookie = request.cookies.get('Authentication');
   const isAuthenticated = !!authCookie?.value;

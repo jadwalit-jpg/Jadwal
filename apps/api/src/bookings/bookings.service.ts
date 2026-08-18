@@ -23,6 +23,7 @@ import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { EmailService } from '../email/email.service';
 import { EmailQuotaService } from '../email/email-quota.service';
 import { envNumber } from '../common/env';
+import { nowInTimezone } from '../common/validators/timezone';
 import { ConfigService } from '@nestjs/config';
 import { CreateBookingDto } from './dto/create-booking.dto';
 
@@ -66,9 +67,12 @@ export async function refundCouponUsage(
   customerId: string,
 ): Promise<void> {
   if (!couponCode) return;
-  const coupon = await tx.coupon.findUnique({ where: { code: couponCode }, select: { id: true } });
+  const coupon = await tx.coupon.findUnique({
+    where: { code: couponCode },
+    select: { id: true, status: true, usageLimit: true, usedCount: true, validTo: true },
+  });
   if (!coupon) return;
-  await tx.coupon.updateMany({
+  const dec = await tx.coupon.updateMany({
     where: { id: coupon.id, usedCount: { gt: 0 } },
     data: { usedCount: { decrement: 1 } },
   });
@@ -76,6 +80,27 @@ export async function refundCouponUsage(
     where: { userId: customerId, couponId: coupon.id, used: true },
     data: { used: false },
   });
+  // Release a coupon that was auto-EXPIRED *solely* because it hit its usage cap
+  // (the increment path flips status→EXPIRED once usedCount reaches usageLimit).
+  // After refunding one use it's back under the limit, so restore it to APPROVED
+  // — otherwise a single-use voucher stays dead forever after the booking that
+  // claimed it is cancelled ("This voucher is no longer active"). Tight guards so
+  // we never resurrect an admin-rejected or time-expired coupon:
+  //   • dec.count > 0                         → a use was actually refunded
+  //   • status === 'EXPIRED'                  → currently "off"
+  //   • usageLimit set && usedCount >= it     → it was AT the cap (auto-capped);
+  //       an admin-rejected coupon is PENDING-origin with usedCount 0 < limit,
+  //       so it never matches this and stays rejected
+  //   • validTo in the future                 → not a time-expired coupon
+  if (
+    dec.count > 0 &&
+    coupon.status === 'EXPIRED' &&
+    coupon.usageLimit != null &&
+    coupon.usedCount >= coupon.usageLimit &&
+    coupon.validTo > new Date()
+  ) {
+    await tx.coupon.update({ where: { id: coupon.id }, data: { status: 'APPROVED' } });
+  }
 }
 
 /**
@@ -143,7 +168,7 @@ export function buildBookingSnapshot(booking: {
   commissionAmount: any;
   couponCode: string | null;
   couponDiscount: any;
-  pointsRedeemed: number;
+  pointsRedeemed: any;        // Prisma.Decimal (QAR-denominated)
   pointsDiscount: any;
   currencyCode: string;
   idempotencyKey: string | null;
@@ -169,7 +194,7 @@ export function buildBookingSnapshot(booking: {
     commissionAmount: dec(booking.commissionAmount),
     couponCode: booking.couponCode ?? null,
     couponDiscount: dec(booking.couponDiscount),
-    pointsRedeemed: booking.pointsRedeemed,
+    pointsRedeemed: Number(booking.pointsRedeemed),
     pointsDiscount: dec(booking.pointsDiscount),
     currencyCode: booking.currencyCode,
     idempotencyKey: booking.idempotencyKey ?? null,
@@ -185,11 +210,13 @@ function fromMinutes(mins: number): string {
 
 /**
  * Granularity between consecutive hourly slot start times, in minutes.
- * Hard-coded to 60 (top of the hour) — this is the ONLY accepted flex granularity.
- * Changing this to a finer value (e.g. 30) would also require tightening the
- * DTO regex for `slotTime` and re-reviewing UX + lock contention.
+ * 30 = half-hour slots (…:00 and …:30) so customers can pick e.g. 3:30 PM.
+ * Safe at a finer granularity because slot conflict/availability is computed
+ * on the actual [start, start+duration] time RANGE (sweep-line max-concurrency
+ * below), not on slot indexes — a 30-min-offset start is just a shorter offset.
+ * The `slotTime`/`slotEndTime` DTO regexes accept `:00` or `:30` to match.
  */
-const HOURLY_SLOT_GRANULARITY_MINUTES = 60;
+const HOURLY_SLOT_GRANULARITY_MINUTES = 30;
 
 /**
  * Maximum number of slots ever returned to the frontend in a single response.
@@ -209,6 +236,14 @@ const MAX_HOURLY_SLOTS = Number(process.env.HOURLY_MAX_SLOTS || 48);
 const MAX_SLOT_UNITS = Number(process.env.BOOKING_MAX_SLOT_UNITS || 24);
 
 /**
+ * Hard cap on the number of nights a single DAILY booking can span. Bounds the
+ * per-night price loop and the special-price `date: { in: [...] }` query against
+ * an abusive multi-year range. Applies to BOTH flexible (durationValue=null) and
+ * minimum-nights DAILY activities. Tunable via BOOKING_MAX_NIGHTS env var.
+ */
+const MAX_BOOKING_NIGHTS = Number(process.env.BOOKING_MAX_NIGHTS || 90);
+
+/**
  * Compute HOURLY slot START times from checkIn/checkOut/duration.
  * Each slot runs for `durationValue` hours. Slots overlap each other — they
  * start every `HOURLY_SLOT_GRANULARITY_MINUTES` minutes (on the hour).
@@ -220,7 +255,7 @@ const MAX_SLOT_UNITS = Number(process.env.BOOKING_MAX_SLOT_UNITS || 24);
  *
  * The LAST slot's END never exceeds checkOutTime.
  */
-function computeSlots(checkInTime: string, checkOutTime: string, durationValue: number): string[] {
+export function computeSlots(checkInTime: string, checkOutTime: string, durationValue: number): string[] {
   const startMins = toMinutes(checkInTime);
   const endMins = toMinutes(checkOutTime);
   const slotDuration = durationValue * 60; // hours → minutes
@@ -248,7 +283,10 @@ function computeSlots(checkInTime: string, checkOutTime: string, durationValue: 
  *
  * Algorithm: sweep-line over clipped event points, O(n log n) in bookings.
  */
-function maxConcurrentInWindow(
+// Exported so the §B2/§M6 payment-recovery paths (payment.service.ts) reuse the
+// EXACT same slot-conflict semantics instead of a naive SUM(guests) that
+// over-counts non-concurrent overlaps + expired holds. One definition = no drift.
+export function maxConcurrentInWindow(
   bookings: ReadonlyArray<{ startDatetime: Date; endDatetime: Date; guests: number }>,
   windowStart: Date,
   windowEnd: Date,
@@ -281,10 +319,22 @@ function maxConcurrentInWindow(
 }
 
 /**
+ * Whole-unit rental? When true, ONE booking reserves an ENTIRE unit — no seat-
+ * sharing, regardless of how many guests it has. This is true for:
+ *   • any DAILY activity with units (rooms — DAILY is always per-unit priced), and
+ *   • HOURLY activities priced PER_UNIT.
+ * HOURLY + PER_PERSON activities with units still sell individual seats and so
+ * pack/share a unit up to its capacity. Activities without units are unaffected.
+ */
+export function rentsWholeUnit(a: { hasUnits: boolean; bookingType: string; pricingModel: string }): boolean {
+  return a.hasUnits && (a.bookingType === 'DAILY' || a.pricingModel === 'PER_UNIT');
+}
+
+/**
  * Build a Date from a date string (YYYY-MM-DD) + time string (HH:MM).
  * Always interprets as UTC to avoid timezone drift in conflict queries.
  */
-function buildDatetime(dateStr: string, timeStr: string): Date {
+export function buildDatetime(dateStr: string, timeStr: string): Date {
   return new Date(`${dateStr}T${timeStr}:00.000Z`);
 }
 
@@ -298,7 +348,7 @@ function weekdayOf(dateStr: string): string {
  * Validate a YYYY-MM-DD string is a real calendar date.
  * FIX #10: Reject invalid dates like "2026-13-45"
  */
-function isValidDate(dateStr: string): boolean {
+export function isValidDate(dateStr: string): boolean {
   const [y, m, d] = dateStr.split('-').map(Number);
   const date = new Date(Date.UTC(y, m - 1, d));
   return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
@@ -319,6 +369,12 @@ function todayInTimezone(tz: string): string {
   }
 }
 
+// `nowInTimezone` now lives in ../common/validators/timezone (a leaf module) so
+// the cleanup cron + vendor complete guard can share the SAME implementation
+// without a circular import through this service (imported at the top). Re-
+// exported here so existing importers (and the unit spec) keep their path.
+export { nowInTimezone };
+
 // ─── Active booking filter ────────────────────────────────────────────────────
 //
 // A booking "holds" a seat if ALL of the following are true:
@@ -328,7 +384,7 @@ function todayInTimezone(tz: string): string {
 // PENDING bookings where reservedUntil < now are treated as free seats
 // immediately — no cron wait needed. The cron cleans them up asynchronously.
 //
-function activeBookingFilter(now: Date) {
+export function activeBookingFilter(now: Date) {
   return {
     status: { notIn: ['CANCELLED'] as any },
     NOT: {
@@ -346,7 +402,7 @@ function activeBookingFilter(now: Date) {
 export class BookingsService {
   private readonly logger = new Logger(BookingsService.name);
   private readonly reservationWindowMinutes: number;
-  private readonly bookingMaxAdvanceYears: number;
+  private readonly bookingMaxAdvanceMonths: number;
   private readonly redisLockTtlMs: number;
 
   constructor(
@@ -364,12 +420,30 @@ export class BookingsService {
     this.reservationWindowMinutes = Number(
       this.configService.get('RESERVATION_WINDOW_MINUTES', '15'),
     );
-    this.bookingMaxAdvanceYears = Number(
-      this.configService.get('BOOKING_MAX_ADVANCE_YEARS', '2'),
+    this.bookingMaxAdvanceMonths = Number(
+      this.configService.get('BOOKING_MAX_ADVANCE_MONTHS', '6'),
     );
     this.redisLockTtlMs = Number(
       this.configService.get('REDIS_LOCK_TTL_MS', '30000'),
     );
+  }
+
+  /**
+   * Active (non-deleted) vendor availability blocks overlapping
+   * [windowStart, windowEnd). Used by the availability endpoints + booking
+   * creation to treat blocked dates / time-windows as unbookable. Half-open
+   * interval overlap: blockStart < windowEnd && blockEnd > windowStart.
+   */
+  private async getBlocksInWindow(activityId: string, windowStart: Date, windowEnd: Date) {
+    return this.prisma.client.activityBlock.findMany({
+      where: {
+        activityId,
+        deletedAt: null,
+        blockStart: { lt: windowEnd },
+        blockEnd: { gt: windowStart },
+      },
+      select: { blockStart: true, blockEnd: true },
+    });
   }
 
   /**
@@ -436,6 +510,9 @@ export class BookingsService {
       take: DAY_BOOKINGS_CAP,
     });
 
+    // Vendor availability locks overlapping the day's operating window.
+    const dayBlocks = await this.getBlocksInWindow(activityId, dayStart, dayEnd);
+
     const result = slots.map((slotStart) => {
       const slotEnd = fromMinutes(toMinutes(slotStart) + activity.durationValue! * 60);
       const startDatetime = buildDatetime(date, slotStart);
@@ -443,25 +520,40 @@ export class BookingsService {
 
       // Past-slot marker — uses activity's local timezone
       const isSlotPast = isPastDate || (isToday && slotStart <= nowTimeLocal);
+      // Vendor lock — RAW per-hour signal: is THIS hour boundary inside a lock
+      // window. The hourly picker uses this to reject any booking whose RANGE
+      // (start..end, including a longer/earlier-started one) crosses a locked
+      // hour. The authoritative range rejection lives in createBooking.
+      // Half-open: [blockStart, blockEnd).
+      const isBlocked = dayBlocks.some((b) => startDatetime >= b.blockStart && startDatetime < b.blockEnd);
 
       if (activity.hasUnits && activity.unitCount > 0) {
+        const wholeUnit = rentsWholeUnit(activity);
         const unitSlots = Array.from({ length: activity.unitCount }, (_, i) => i + 1).map((unitNum) => {
           const unitBookings = dayBookings.filter((b) => b.unitNumber === unitNum);
           const peak = maxConcurrentInWindow(unitBookings, startDatetime, endDatetime);
+          // Whole-unit rentals are all-or-nothing: any overlap takes the entire
+          // unit out (no seat-sharing). Per-person units count remaining seats.
+          // Capacity (concurrency) is computed independently of isBlocked; the
+          // lock is surfaced via isBlocked and enforced at booking create.
+          const available = wholeUnit
+            ? (peak > 0 ? 0 : activity.unitCapacity)
+            : Math.max(0, activity.unitCapacity - peak);
           return {
             unitNumber: unitNum,
             capacity: activity.unitCapacity,
             booked: peak,
-            available: Math.max(0, activity.unitCapacity - peak),
+            available,
           };
         });
         const totalAvailable = unitSlots.reduce((s, u) => s + u.available, 0);
-        return { slotStart, slotEnd, units: unitSlots, totalAvailable, isPast: isSlotPast };
+        return { slotStart, slotEnd, units: unitSlots, totalAvailable, isPast: isSlotPast, isBlocked };
       } else {
         const peak = maxConcurrentInWindow(dayBookings, startDatetime, endDatetime);
         const cap = activity.capacity ?? Infinity;
+        // Capacity (concurrency) is independent of isBlocked — see note above.
         const available = cap === Infinity ? Infinity : Math.max(0, cap - peak);
-        return { slotStart, slotEnd, capacity: activity.capacity, booked: peak, available, isPast: isSlotPast };
+        return { slotStart, slotEnd, capacity: activity.capacity, booked: peak, available, isPast: isSlotPast, isBlocked };
       }
     });
 
@@ -494,6 +586,10 @@ export class BookingsService {
     const startDatetime = buildDatetime(checkInDate, activity.checkInTime ?? '14:00');
     const endDatetime = buildDatetime(checkOutDate, activity.checkOutTime ?? '11:00');
     const now = new Date();
+
+    // Vendor availability lock — if any block overlaps the requested stay,
+    // the whole range is unbookable (can't stay across a blocked night).
+    const blocked = (await this.getBlocksInWindow(activityId, startDatetime, endDatetime)).length > 0;
 
     // Overlap condition — excludes CANCELLED and expired PENDING reservations
     const overlapCondition = {
@@ -530,18 +626,25 @@ export class BookingsService {
           if (g.unitNumber == null) continue;
           bookedByUnit.set(g.unitNumber, g._sum.guests ?? 0);
         }
+        const wholeUnit = rentsWholeUnit(activity);
         const unitAvailability = Array.from({ length: activity.unitCount }, (_, i) => i + 1).map(
           (unitNum) => {
             const booked = bookedByUnit.get(unitNum) ?? 0;
+            // Whole-unit rentals (rooms): any guest in the unit takes it entirely.
+            const available = blocked
+              ? 0
+              : wholeUnit
+                ? (booked > 0 ? 0 : activity.unitCapacity)
+                : Math.max(0, activity.unitCapacity - booked);
             return {
               unitNumber: unitNum,
               capacity: activity.unitCapacity,
               booked,
-              available: Math.max(0, activity.unitCapacity - booked),
+              available,
             };
           },
         );
-        return { bookingType: 'DAILY', checkInDate, checkOutDate, units: unitAvailability };
+        return { bookingType: 'DAILY', checkInDate, checkOutDate, units: unitAvailability, isBlocked: blocked };
       } else {
         if (unitNumber < 1 || unitNumber > activity.unitCount) {
           throw new NotFoundException('Unit not found');
@@ -551,10 +654,16 @@ export class BookingsService {
           _sum: { guests: true },
         });
         const booked = agg._sum.guests ?? 0;
+        const available = blocked
+          ? 0
+          : rentsWholeUnit(activity)
+            ? (booked > 0 ? 0 : activity.unitCapacity)
+            : Math.max(0, activity.unitCapacity - booked);
         return {
           bookingType: 'DAILY', checkInDate, checkOutDate, unitNumber,
           capacity: activity.unitCapacity, booked,
-          available: Math.max(0, activity.unitCapacity - booked),
+          available,
+          isBlocked: blocked,
         };
       }
     } else {
@@ -566,7 +675,8 @@ export class BookingsService {
       return {
         bookingType: 'DAILY', checkInDate, checkOutDate,
         capacity: activity.capacity, booked,
-        available: activity.capacity != null ? Math.max(0, activity.capacity - booked) : Infinity,
+        available: blocked ? 0 : (activity.capacity != null ? Math.max(0, activity.capacity - booked) : Infinity),
+        isBlocked: blocked,
       };
     }
   }
@@ -628,14 +738,25 @@ export class BookingsService {
       take: MONTH_BOOKINGS_CAP,
     });
 
+    // Vendor availability locks anywhere in this month (one query for the month).
+    const monthBlocks = await this.getBlocksInWindow(activityId, monthStart, monthEnd);
+
+    // Per-date special prices for the month → override the day's displayed price.
+    const monthSpecials = await this.prisma.client.activitySpecialPrice.findMany({
+      where: { activityId, deletedAt: null, date: { gte: monthStart, lte: monthEnd } },
+      select: { date: true, price: true },
+    });
+    const specialPriceByDate = new Map<string, number>();
+    for (const sp of monthSpecials) specialPriceByDate.set(sp.date.toISOString().slice(0, 10), Number(sp.price));
+
     // FIX #4 & #20: Use activity's country timezone for "today" calculation
     const tz = activity.country?.defaultTimezone ?? 'UTC';
     const todayStr = todayInTimezone(tz);
 
     const days: {
-      date: string; dayOfWeek: string; price: number; isActiveDay: boolean;
+      date: string; dayOfWeek: string; price: number; isSpecialPrice: boolean; isActiveDay: boolean;
       isPast: boolean; capacity: number | null; booked: number;
-      available: number | null; isFullyBooked: boolean;
+      available: number | null; isFullyBooked: boolean; isBlocked: boolean;
     }[] = [];
 
     const pricePerPerson = Number(activity.pricePerPerson);
@@ -685,33 +806,99 @@ export class BookingsService {
       const nextDateStr = `${nextDay.getUTCFullYear()}-${String(nextDay.getUTCMonth() + 1).padStart(2, '0')}-${String(nextDay.getUTCDate()).padStart(2, '0')}`;
       const dayCheckOut = buildDatetime(nextDateStr, checkOutTime);
 
+      // Whole-unit rentals (rooms / per-unit) → a day's availability is counted
+      // in UNITS: a unit with ANY overlapping booking is fully taken (no seat-
+      // sharing). Seat-based activities (per-person, or no units) count guests
+      // against total capacity as before.
+      const wholeUnit = rentsWholeUnit(activity);
       let booked = 0;
-      if (activity.bookingType === 'HOURLY') {
-        const dayBookings = bookings.filter(
-          (b) => b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn,
-        );
-        booked = maxConcurrentInWindow(dayBookings, dayCheckIn, dayCheckOut);
-      } else {
+      let capacity: number | null = null;
+      let available: number | null = null;
+
+      if (wholeUnit && unitNumber) {
+        const occ = bookings.some((b) => b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn);
+        capacity = 1; booked = occ ? 1 : 0; available = occ ? 0 : 1;
+      } else if (wholeUnit) {
+        const occupiedUnits = new Set<number>();
         for (const b of bookings) {
-          if (b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn) {
-            booked += b.guests;
+          if (b.unitNumber != null && b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn) {
+            occupiedUnits.add(b.unitNumber);
           }
         }
-      }
-
-      let capacity: number | null = null;
-      if (unitNumber) {
-        capacity = activity.unitCapacity;
-      } else if (activity.hasUnits) {
-        capacity = activity.unitCount * activity.unitCapacity;
+        capacity = activity.unitCount;
+        booked = occupiedUnits.size;
+        available = Math.max(0, activity.unitCount - occupiedUnits.size);
       } else {
-        capacity = activity.capacity;
+        if (activity.bookingType === 'HOURLY') {
+          const dayBookings = bookings.filter(
+            (b) => b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn,
+          );
+          booked = maxConcurrentInWindow(dayBookings, dayCheckIn, dayCheckOut);
+        } else {
+          for (const b of bookings) {
+            if (b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn) {
+              booked += b.guests;
+            }
+          }
+        }
+        if (unitNumber) {
+          capacity = activity.unitCapacity;
+        } else if (activity.hasUnits) {
+          capacity = activity.unitCount * activity.unitCapacity;
+        } else {
+          capacity = activity.capacity;
+        }
+        available = capacity != null ? Math.max(0, capacity - booked) : null;
       }
 
-      const available = capacity != null ? Math.max(0, capacity - booked) : null;
-      const isFullyBooked = capacity != null ? available === 0 : false;
+      let isFullyBooked = capacity != null ? available === 0 : false;
 
-      days.push({ date: dateStr, dayOfWeek: dow, price: pricePerPerson, isActiveDay, isPast, capacity, booked, available, isFullyBooked });
+      // BUG FIX — HOURLY "fully booked" must be PER-SLOT, not whole-day peak.
+      // The block above derives `booked`/`available` from the peak concurrency
+      // (or peak unit-occupancy) ANYWHERE in the day, so a single booking on a
+      // capacity-limited hourly activity (e.g. capacity 1, or 1 unit) made
+      // available=0 → the WHOLE date showed fully-booked even though only a few
+      // hours were taken. A date is full only when EVERY bookable slot is at
+      // capacity — the same notion getHourlyAvailability uses per slot.
+      if (
+        activity.bookingType === 'HOURLY' &&
+        activity.checkInTime && activity.checkOutTime && activity.durationValue
+      ) {
+        const slots = computeSlots(activity.checkInTime, activity.checkOutTime, activity.durationValue);
+        const dayBks = bookings.filter(
+          (b) => b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn,
+        );
+        const durMs = activity.durationValue * 60 * 60 * 1000;
+        isFullyBooked = slots.length > 0 && slots.every((slotStart) => {
+          const sStart = buildDatetime(dateStr, slotStart);
+          const sEnd = new Date(sStart.getTime() + durMs);
+          if (wholeUnit) {
+            // Whole-unit (per-unit hourly): slot full only if every unit is
+            // occupied during it.
+            const occ = new Set<number>();
+            for (const b of dayBks) {
+              if (b.unitNumber != null && b.startDatetime < sEnd && b.endDatetime > sStart) {
+                occ.add(b.unitNumber);
+              }
+            }
+            return occ.size >= (unitNumber ? 1 : activity.unitCount);
+          }
+          // Seat-based (per-person units / no units): slot full when peak
+          // concurrency in it reaches total capacity. Uncapped → never full.
+          return capacity != null && maxConcurrentInWindow(dayBks, sStart, sEnd) >= capacity;
+        });
+      }
+
+      // Vendor availability lock. A block fully covering the calendar day
+      // disables it (available → 0); a partial (time-window) block only flags
+      // it — those slots are removed in getHourlyAvailability and rejected at
+      // booking time, so the day itself stays selectable.
+      const dayEndUtc = new Date(dayDate.getTime() + 24 * 60 * 60 * 1000);
+      const isBlocked = monthBlocks.some((b) => b.blockStart < dayEndUtc && b.blockEnd > dayDate);
+      const fullyBlocked = monthBlocks.some((b) => b.blockStart <= dayDate && b.blockEnd >= dayEndUtc);
+      if (fullyBlocked) { available = 0; isFullyBooked = true; }
+
+      days.push({ date: dateStr, dayOfWeek: dow, price: specialPriceByDate.get(dateStr) ?? pricePerPerson, isSpecialPrice: specialPriceByDate.has(dateStr), isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked });
     }
 
     const response = {
@@ -790,10 +977,10 @@ export class BookingsService {
 
     // Prevent bookings too far in the future (avoids indefinite seat locks)
     const maxFutureDate = new Date();
-    maxFutureDate.setFullYear(maxFutureDate.getFullYear() + this.bookingMaxAdvanceYears);
+    maxFutureDate.setMonth(maxFutureDate.getMonth() + this.bookingMaxAdvanceMonths);
     const maxFutureDateStr = maxFutureDate.toISOString().slice(0, 10);
     if (dto.checkInDate > maxFutureDateStr) {
-      throw new BadRequestException(`Cannot book more than ${this.bookingMaxAdvanceYears} year(s) in advance`);
+      throw new BadRequestException(`Cannot book more than ${this.bookingMaxAdvanceMonths} month(s) in advance`);
     }
 
     // 2. Validate activeDays (check-in day must be allowed)
@@ -839,7 +1026,7 @@ export class BookingsService {
       }
 
       // Flex-hour booking validation. A request is valid iff:
-      //   (1) slotTime + slotEndTime both start on the hour (DTO regex)
+      //   (1) slotTime + slotEndTime are on the hour or half-hour (:00/:30, DTO regex)
       //   (2) slotTime ≥ activity checkInTime
       //   (3) slotEndTime ≤ activity checkOutTime
       //   (4) hours(end − start) ≥ durationValue              (the minimum)
@@ -853,8 +1040,8 @@ export class BookingsService {
       // slotEndTime is optional: when omitted, end = start + durationValue
       // (legacy single-slot behaviour, backward compatible with clients that
       // only send slotTime).
-      if (!/:00$/.test(dto.slotTime)) {
-        throw new BadRequestException('Slot time must start on the hour (e.g. 09:00, 14:00)');
+      if (!/:(00|30)$/.test(dto.slotTime)) {
+        throw new BadRequestException('Slot time must be on the hour or half-hour (e.g. 09:00, 09:30)');
       }
       const slotStartMins = toMinutes(dto.slotTime);
       const checkInMins = toMinutes(activity.checkInTime);
@@ -864,13 +1051,21 @@ export class BookingsService {
 
       let slotEndMins: number;
       if (dto.slotEndTime) {
-        if (!/:00$/.test(dto.slotEndTime)) {
-          throw new BadRequestException('Slot end time must start on the hour (e.g. 10:00, 18:00)');
+        if (!/:(00|30)$/.test(dto.slotEndTime)) {
+          throw new BadRequestException('Slot end time must be on the hour or half-hour (e.g. 10:00, 10:30)');
         }
         slotEndMins = toMinutes(dto.slotEndTime);
         const span = slotEndMins - slotStartMins;
         if (span <= 0) {
           throw new BadRequestException('Slot end time must be after slot start time');
+        }
+        // Whole-hour booking LENGTHS only. :30 START times are allowed (KAN-12),
+        // but a half-hour SPAN (e.g. 09:00→10:30) would be rounded UP by the
+        // server's hour math (Math.round) while the client preview shows the
+        // lower whole hour → a silent overcharge. A :30 start + N×duration end is
+        // always a whole-hour span; this rejects only an explicit half-hour range.
+        if (span % 60 !== 0) {
+          throw new BadRequestException('Booking length must be a whole number of hours');
         }
         if (span < unitMins) {
           throw new BadRequestException(
@@ -904,26 +1099,53 @@ export class BookingsService {
       if (checkOut <= checkIn) throw new BadRequestException('Check-out date must be after check-in date');
 
       const nights = Math.round((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
+      // durationValue on a DAILY activity is the MINIMUM nights (mirrors HOURLY's
+      // durationValue minimum): the customer must book at least that many but may
+      // extend freely (and pays per night). null = flexible (any stay ≥ 1 night).
       if (activity.durationValue !== null && activity.durationValue !== undefined) {
-        if (nights !== activity.durationValue) {
+        if (nights < activity.durationValue) {
           throw new BadRequestException(
-            `This activity requires exactly ${activity.durationValue} night(s)`,
+            `This activity requires a minimum stay of ${activity.durationValue} night(s)`,
           );
         }
+      }
+      // DoS bound — caps the per-night price loop + the special-price `in` query.
+      if (nights > MAX_BOOKING_NIGHTS) {
+        throw new BadRequestException(`A stay cannot exceed ${MAX_BOOKING_NIGHTS} nights`);
       }
 
       startDatetime = buildDatetime(dto.checkInDate, activity.checkInTime ?? '14:00');
       endDatetime = buildDatetime(dto.checkOutDate, activity.checkOutTime ?? '11:00');
     }
 
-    // FIX #12: Prevent duplicate bookings (same user, same activity, same time)
+    // Vendor availability lock. Checked here, before the Redis lock + capacity
+    // transaction, so a locked slot fails fast with a clear message rather than
+    // appearing as "no capacity".
+    //   Both HOURLY and DAILY → RANGE OVERLAP: reject if the booking's full
+    //   range [start, end) crosses any locked window, even when it starts before
+    //   the lock. A 3-hour or 3-night booking may not span an off-hour / off-day.
+    //   Half-open overlap: block.start < booking.end && block.end > booking.start.
+    const blockWhere = { blockStart: { lt: endDatetime }, blockEnd: { gt: startDatetime } };
+    const overlappingBlock = await db.activityBlock.findFirst({
+      where: { activityId: dto.activityId, deletedAt: null, ...blockWhere },
+      select: { id: true },
+    });
+    if (overlappingBlock) {
+      throw new BadRequestException('This date/time is not available for booking');
+    }
+
+    // FIX #12: Prevent duplicate bookings (same user, same activity, same time).
+    // Uses activeBookingFilter so an EXPIRED PENDING (reservedUntil passed) does
+    // NOT count — an abandoned checkout whose slot is already free must not block
+    // the owner from re-booking it (the stale row is reaped by the cleanup cron).
+    // This decouples the re-book UX from the cron's grace window entirely.
     const existingBooking = await db.booking.findFirst({
       where: {
         customerId: userId,
         activityId: dto.activityId,
-        status: { notIn: ['CANCELLED'] },
         startDatetime,
         endDatetime,
+        ...activeBookingFilter(new Date()),
       },
     });
     if (existingBooking) {
@@ -989,13 +1211,26 @@ export class BookingsService {
         });
 
         if (activity.hasUnits && activity.unitCount > 0) {
+          const wholeUnit = rentsWholeUnit(activity);
           for (let unitNum = 1; unitNum <= activity.unitCount; unitNum++) {
             const unitBookings = windowBookings.filter((b) => b.unitNumber === unitNum);
-            const peak = maxConcurrentInWindow(unitBookings, startDatetime, endDatetime);
-            if (activity.unitCapacity - peak >= dto.guests) {
-              resolvedUnitNumber = unitNum;
-              capacityLimit = activity.unitCapacity;
-              break;
+            if (wholeUnit) {
+              // Whole-unit rental (rooms / per-unit): a unit is available ONLY if
+              // nothing overlaps it — one booking owns the entire unit, no seat-
+              // sharing, regardless of guest count.
+              if (unitBookings.length === 0) {
+                resolvedUnitNumber = unitNum;
+                capacityLimit = activity.unitCapacity;
+                break;
+              }
+            } else {
+              // Per-person units: pack into the first unit with enough free seats.
+              const peak = maxConcurrentInWindow(unitBookings, startDatetime, endDatetime);
+              if (activity.unitCapacity - peak >= dto.guests) {
+                resolvedUnitNumber = unitNum;
+                capacityLimit = activity.unitCapacity;
+                break;
+              }
             }
           }
           if (!resolvedUnitNumber) {
@@ -1045,8 +1280,22 @@ export class BookingsService {
           // Daily is always per-unit pricing: price × nights (guests don't affect price)
           const checkInD = new Date(`${dto.checkInDate}T00:00:00Z`);
           const checkOutD = new Date(`${dto.checkOutDate!}T00:00:00Z`);
-          const nights = Math.max(1, Math.round((checkOutD.getTime() - checkInD.getTime()) / (1000 * 60 * 60 * 24)));
-          totalPriceCents = priceCents * nights;
+          const DAY_MS = 1000 * 60 * 60 * 24;
+          const nights = Math.max(1, Math.round((checkOutD.getTime() - checkInD.getTime()) / DAY_MS));
+          // Per-date special prices: each night's date may override the base
+          // price. The summed total is frozen on the booking, so editing or
+          // removing an override later never changes this booking.
+          const nightDates = Array.from({ length: nights }, (_, i) => new Date(checkInD.getTime() + i * DAY_MS));
+          const specials = await tx.activitySpecialPrice.findMany({
+            where: { activityId: activity.id, deletedAt: null, date: { in: nightDates } },
+            select: { date: true, price: true },
+          });
+          const centsByDate = new Map<string, number>();
+          for (const s of specials) centsByDate.set(s.date.toISOString().slice(0, 10), Math.round(Number(s.price) * 100));
+          totalPriceCents = nightDates.reduce(
+            (sum, d) => sum + (centsByDate.get(d.toISOString().slice(0, 10)) ?? priceCents),
+            0,
+          );
         } else {
           // Hourly: the stored `pricePerPerson` is the price for a baseline
           // of `durationValue` hours. Bookings longer than that are priced
@@ -1058,6 +1307,13 @@ export class BookingsService {
           // needs Math.round to snap to a whole cent. Derived from the SERVER-
           // validated start/end datetimes (never the raw DTO), so a tampered
           // slotEndTime can't bypass the span bounds computed above.
+          // Per-date special price: the booking DATE's override (if any) replaces
+          // the base, then scales pro-rata by hours. Frozen on the booking.
+          const special = await tx.activitySpecialPrice.findFirst({
+            where: { activityId: activity.id, deletedAt: null, date: new Date(`${dto.checkInDate}T00:00:00.000Z`) },
+            select: { price: true },
+          });
+          const effectiveCents = special ? Math.round(Number(special.price) * 100) : priceCents;
           const bookedMs = endDatetime.getTime() - startDatetime.getTime();
           const hoursBooked = Math.max(
             activity.durationValue!,
@@ -1066,7 +1322,7 @@ export class BookingsService {
           const durHours = activity.durationValue!;
           const perPersonCount = activity.pricingModel === 'PER_UNIT' ? 1 : dto.guests;
           totalPriceCents = Math.round(
-            (priceCents * hoursBooked * perPersonCount) / durHours,
+            (effectiveCents * hoursBooked * perPersonCount) / durHours,
           );
         }
 
@@ -1143,6 +1399,9 @@ export class BookingsService {
                   discountType: true,
                   discountValue: true,
                   maxDiscount: true,
+                  usageLimit: true,
+                  usedCount: true,
+                  applicableActivityIds: true,
                 },
               },
             },
@@ -1155,6 +1414,20 @@ export class BookingsService {
 
           const now = new Date();
           if (now > claimed.coupon.validTo) throw new BadRequestException('This voucher has expired');
+          // Usage-limit pre-check (read-then-act, fail fast). The authoritative
+          // race-safe guard is the conditional updateMany at increment time below.
+          if (claimed.coupon.usageLimit != null && claimed.coupon.usedCount >= claimed.coupon.usageLimit) {
+            throw new BadRequestException('This voucher has reached its usage limit');
+          }
+
+          // Activity scoping (Bug A): a non-empty list restricts the voucher's
+          // coupon to those activities only (empty = applies to all).
+          if (
+            claimed.coupon.applicableActivityIds.length > 0 &&
+            !claimed.coupon.applicableActivityIds.includes(activity.id)
+          ) {
+            throw new BadRequestException('This voucher is not valid for this activity');
+          }
 
           if (claimed.coupon.minOrderAmount && totalPrice < Number(claimed.coupon.minOrderAmount)) {
             throw new BadRequestException(`Minimum order amount for this voucher is ${Number(claimed.coupon.minOrderAmount)}`);
@@ -1170,9 +1443,33 @@ export class BookingsService {
           couponDiscount = Math.round(couponDiscount * 100) / 100;
           couponCode = claimed.coupon.code; // stored on booking for accounting, never shown to customer
 
-          // Mark voucher as used + increment coupon usage count
+          // Mark voucher as used + increment coupon usage count. The increment
+          // re-asserts the usage limit in the WHERE (conditional updateMany, not
+          // a plain update) so two users redeeming the coupon's LAST use at the
+          // same time can't both pass the read-then-act pre-check above — the same
+          // race fix the typed-code path got in #306. Without this guard the
+          // voucher path could push usedCount past usageLimit under concurrency.
           await tx.claimedCoupon.update({ where: { id: dto.voucherId }, data: { used: true } });
-          await tx.coupon.update({ where: { id: claimed.coupon.id }, data: { usedCount: { increment: 1 } } });
+          if (claimed.coupon.usageLimit != null) {
+            const inc = await tx.coupon.updateMany({
+              where: { id: claimed.coupon.id, usedCount: { lt: claimed.coupon.usageLimit } },
+              data: { usedCount: { increment: 1 } },
+            });
+            if (inc.count === 0) {
+              throw new BadRequestException('This voucher has reached its usage limit');
+            }
+            // Auto-expire once the cap is hit so no further uses can slip through,
+            // even if a cancellation later decrements usedCount. Once the cap is
+            // hit the coupon is permanently closed.
+            if (claimed.coupon.usedCount + 1 >= claimed.coupon.usageLimit) {
+              await tx.coupon.update({
+                where: { id: claimed.coupon.id },
+                data: { status: 'EXPIRED' },
+              });
+            }
+          } else {
+            await tx.coupon.update({ where: { id: claimed.coupon.id }, data: { usedCount: { increment: 1 } } });
+          }
         }
 
         // 6d-ii. Vendor coupon code (typed manually by customer)
@@ -1190,8 +1487,32 @@ export class BookingsService {
             throw new BadRequestException('This coupon has reached its usage limit');
           }
 
+          // Per-user uniqueness: a customer may only use the same coupon code once
+          // across all their non-cancelled bookings.
+          const priorUse = await tx.booking.findFirst({
+            where: {
+              customerId: userId,
+              couponCode: codeUpper,
+              status: { not: 'CANCELLED' },
+            },
+            select: { id: true },
+          });
+          if (priorUse) {
+            throw new BadRequestException('You have already used this coupon');
+          }
+
           // Vendor-specific coupon must match activity's vendor
           if (coupon.vendorId && coupon.vendorId !== activity.vendor.id) {
+            throw new BadRequestException('This coupon is not valid for this activity');
+          }
+
+          // Activity scoping (Bug A): a non-empty list restricts the coupon to
+          // those activities only (empty = applies to all). Authoritative guard —
+          // the UI selector + validateCoupon preview can be bypassed, this can't.
+          if (
+            coupon.applicableActivityIds.length > 0 &&
+            !coupon.applicableActivityIds.includes(activity.id)
+          ) {
             throw new BadRequestException('This coupon is not valid for this activity');
           }
 
@@ -1222,6 +1543,14 @@ export class BookingsService {
             });
             if (claimed.count === 0) {
               throw new BadRequestException('This coupon has reached its usage limit');
+            }
+            // Auto-expire once the cap is hit so no further uses can slip through,
+            // even if a cancellation later decrements usedCount.
+            if (coupon.usedCount + 1 >= coupon.usageLimit) {
+              await tx.coupon.update({
+                where: { id: coupon.id },
+                data: { status: 'EXPIRED' },
+              });
             }
           } else {
             await tx.coupon.update({
@@ -1263,7 +1592,10 @@ export class BookingsService {
         let effectiveServiceFee = serviceFee;
 
         if (dto.redeemPoints && dto.redeemPoints > 0) {
-          const redeemAmount = Math.floor(dto.redeemPoints); // enforce integer
+          // Points are QAR-denominated (1 point = 1 QAR), so fractional
+          // redemption is valid (e.g. redeem 5.50 points = 5.50 QAR). Round to
+          // 2 dp — no longer floored to whole points.
+          const redeemAmount = Math.round(dto.redeemPoints * 100) / 100;
 
           // Load loyalty config for conversion rate + minimum redemption
           let loyaltyConfig = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
@@ -1291,8 +1623,9 @@ export class BookingsService {
             // "Pay with Wanasa" path — customer's points fully cover the
             // activity price (post-coupon). Waive the service fee and cap
             // the redemption at exactly what's needed, so extra points
-            // aren't burned on a waived fee.
-            pointsRedeemed = Math.ceil(activityPrice / qarPerPoint);
+            // aren't burned on a waived fee. Points are fractional QAR now, so
+            // this is an exact 2-dp amount (was Math.ceil for whole points).
+            pointsRedeemed = Math.round((activityPrice / qarPerPoint) * 100) / 100;
             pointsDiscount = activityPrice;
             effectiveServiceFee = 0;
           } else {
@@ -1488,7 +1821,27 @@ export class BookingsService {
           });
         }
         return createdBooking;
-      }, { isolationLevel: 'Serializable' });
+        // timeout: this transaction performs ~10 sequential round-trips
+        // (overlap scan, special prices, platform settings, coupon claim,
+        // loyalty config, payment + booking insert, payment update, loyalty
+        // redeem + ledger). Prisma's DEFAULT is 5s, which this can exceed
+        // under load — and the resulting P2028 surfaced as an unmapped generic
+        // 500 with no alert.
+        //
+        // 10s, deliberately BELOW the 15s per-connection statement_timeout set
+        // in prisma.service.ts. Setting it equal (as an earlier version did)
+        // makes a single stalled statement race two different error paths —
+        // Prisma's P2028 vs Postgres's own statement error — so the failure
+        // mode becomes nondeterministic. Staying under it means P2028 always
+        // wins and the new PRISMA_ERROR_5XX alert fires predictably.
+        //
+        // maxWait: LEFT AT PRISMA'S 2s DEFAULT. An earlier version raised this
+        // to 5s while claiming it made a saturated pool "fail fast" — that is
+        // backwards. maxWait is how long a request waits FOR a pool
+        // connection, so raising it makes saturation last longer, holding a
+        // slot (pool max 20/task) and Serializable predicate locks for a
+        // combined worst case of 20s instead of 12s.
+      }, { isolationLevel: 'Serializable', timeout: 10_000, maxWait: 2_000 });
     } catch (err) {
       // P2034 = PostgreSQL serialization failure (two transactions conflicted).
       // Without this catch, NestJS returns 500. Map it to 409 so the frontend
@@ -1710,7 +2063,10 @@ export class BookingsService {
             country: { select: { defaultTimezone: true } },
           },
         },
-        payment: { select: { id: true, status: true, amount: true } },
+        // gatewayBasketId is required to detect an IN-FLIGHT PAY2M session: its
+        // presence means the customer reached the gateway, so a capture may
+        // still land after this cancel and the payment row must NOT be deleted.
+        payment: { select: { id: true, status: true, amount: true, gatewayBasketId: true } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
@@ -1719,7 +2075,14 @@ export class BookingsService {
     if (booking.status === 'CANCELLED') throw new BadRequestException('Booking is already cancelled');
     if (booking.status === 'COMPLETED') throw new BadRequestException('Cannot cancel a completed booking');
 
-    const hoursUntilStart = (booking.startDatetime.getTime() - Date.now()) / (1000 * 60 * 60);
+    // startDatetime is local wall-clock tagged UTC (buildDatetime), so we must
+    // measure "hours until start" against NOW in the activity's timezone — not
+    // raw Date.now(). Otherwise, in a +offset country (e.g. Qatar UTC+3) this
+    // stayed positive for hours AFTER the activity really began, letting a
+    // customer cancel mid-activity. This value also drives the refund-deadline
+    // math below, so fixing it here corrects both the guard and the refund window.
+    const activityTz = booking.activity.country?.defaultTimezone ?? 'UTC';
+    const hoursUntilStart = (booking.startDatetime.getTime() - nowInTimezone(activityTz).getTime()) / (1000 * 60 * 60);
     if (hoursUntilStart < 0) {
       throw new BadRequestException('Cannot cancel a booking that has already started');
     }
@@ -1954,6 +2317,95 @@ export class BookingsService {
         suggestedRefundAmount: suggestedRefund,
         refundReason,
       };
+    } else if (
+      booking.payment &&
+      booking.payment.status === 'PENDING' &&
+      booking.payment.gatewayBasketId !== null
+    ) {
+      // ── Unpaid, but a PAY2M session is IN FLIGHT → soft-cancel, never delete ──
+      //
+      // The customer opened the gateway (a basket id exists) and the payment is
+      // still PENDING, so a capture may STILL land after this cancel — the
+      // classic "pay in tab A, cancel in tab B" race.
+      //
+      // Hard-deleting here destroys the payment row (and with it the
+      // gatewayBasketId + bookingSnapshot). A late success callback then looks
+      // the payment up by gatewayBasketId, finds nothing, and throws
+      // "Payment not found" (payment.service.ts) — the customer is charged with
+      // NO booking, NO payment row and NO refund, invisible even to
+      // reconciliation (which only compares our DB against our DB).
+      //
+      // This is the exact incident already fixed in the stale-PENDING cron
+      // (cleanup.service.ts — "payments are never hard-deleted"); this path was
+      // missed. Deleting the BOOKING is equally unsafe: with the booking gone a
+      // late capture takes the §B2_ORPHAN branch and RE-CREATES it from the
+      // snapshot — resurrecting a booking the customer deliberately cancelled,
+      // which payment.service.ts explicitly forbids.
+      //
+      // So we keep both rows and use the states the recovery logic already
+      // understands: payment → FAILED (guarded on PENDING so a capture that won
+      // the race is never clobbered), booking → CANCELLED by the customer. A
+      // late success then resolves to CANCELLED_REFUND and the money is
+      // refunded — the existing, tested path.
+      const redeemedPoints = Number(booking.pointsRedeemed) || 0;
+
+      await db.$transaction(async (tx) => {
+        // Only flip a payment that is STILL pending, and ABORT if it is not.
+        //
+        // This is the optimistic lock, not a filter. If a concurrent success
+        // callback already moved the row to SUCCESS, count is 0 and the whole
+        // cancel must roll back: the callback has committed payment SUCCESS +
+        // booking CONFIRMED, and continuing would overwrite that with
+        // CANCELLED while returning the coupon and the redeemed points. The
+        // customer would be charged, credited back, and left with NO
+        // REFUND_PENDING row — recordRefundDecision requires REFUND_PENDING,
+        // so the refund queue would be unreachable for that booking.
+        //
+        // Throwing inside the transaction rolls back refundCouponUsage too,
+        // which is why the coupon refund is ordered after this check.
+        const flipped = await tx.payment.updateMany({
+          where: { id: booking.payment!.id, status: 'PENDING' },
+          data: { status: 'FAILED' },
+        });
+        if (flipped.count === 0) {
+          // Deliberately does NOT assert the booking is now confirmed. count===0
+          // has three causes: a capture won the race (booking CONFIRMED), the
+          // stale-PENDING cron soft-FAILed the payment, or a PAY2M failure
+          // callback flipped it — in the last two the booking may be gone
+          // entirely. Naming only the first would send the user chasing a state
+          // that isn't there.
+          throw new ConflictException(
+            'This booking changed while you were cancelling. Please refresh to see its current state.',
+          );
+        }
+
+        await refundCouponUsage(tx, appliedCoupon, userId);
+
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: { status: 'CANCELLED', cancelledAt: new Date(), cancelledBy: 'CUSTOMER' },
+        });
+
+        if (redeemedPoints > 0) {
+          await this.loyalty.refund(tx, {
+            userId,
+            amount: redeemedPoints,
+            bookingId,
+            source: 'CANCEL_REFUND_UNPAID',
+            actorType: 'CUSTOMER',
+            actorId: userId,
+            note: `Returned on customer-cancel with in-flight payment, booking ${booking.ref}`,
+          });
+        }
+      });
+
+      void this.availabilityCache.invalidate(booking.activityId);
+
+      return {
+        message: 'Booking cancelled.',
+        deleted: false,
+        status: 'CANCELLED',
+      };
     } else {
       // Unpaid booking → hard-delete entirely. Customer never paid, so this
       // is not a real booking — no money refund, no vendor notification, no
@@ -2034,7 +2486,9 @@ export class BookingsService {
         id: true, ref: true, status: true, vendorId: true, customerId: true,
         activity: { select: { titleEn: true } },
         vendor: { select: { userId: true, slug: true } },
-        payment: { select: { id: true, status: true, amount: true } },
+        // payoutStatus is needed to detect a refund on a booking whose vendor
+        // has ALREADY been paid — money out twice unless finance claws it back.
+        payment: { select: { id: true, status: true, amount: true, payoutStatus: true } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
@@ -2087,10 +2541,11 @@ export class BookingsService {
     const qarPerPoint = loyaltyConfig.qarPerPoint.toNumber();
 
     // Points conversion: amount / qarPerPoint = how many points the customer gets.
-    // Example: 200 QAR refund ÷ 0.01 qarPerPoint = 20,000 points (worth 200 QAR at checkout).
-    // Math.floor ensures we never award fractional points. Integer arithmetic only.
+    // Points are QAR-denominated (1 pt = 1 QAR at qarPerPoint = 1.0), so a
+    // 200 QAR refund → 200.00 points; a 50.75 QAR refund → 50.75 points. Rounded
+    // to 2 dp (money precision) rather than floored to whole points.
     const refundPoints = action === 'APPROVE' && finalAmount > 0 && qarPerPoint > 0
-      ? Math.floor(finalAmount / qarPerPoint)
+      ? Math.round((finalAmount / qarPerPoint) * 100) / 100
       : 0;
 
     // ── Commit the decision inside a transaction with optimistic locking ──
@@ -2136,6 +2591,39 @@ export class BookingsService {
         });
       }
     });
+
+    // ── Vendor already paid out for a booking we just refunded ──────────────
+    // The platform is now out of pocket: the customer has been made whole and
+    // the vendor still holds the money. We deliberately do NOT block the
+    // refund — the customer must not be held hostage to a bookkeeping problem
+    // — but this MUST be visible, because nothing else detects it:
+    // reconciliation never looks at payoutStatus, and the payout tables have
+    // no clawback flow. Raising it here gives finance a record to act on.
+    if (action === 'APPROVE' && finalAmount > 0 && booking.payment.payoutStatus === 'PAID') {
+      this.logger.warn({
+        event: 'REFUND_ON_PAID_OUT_BOOKING',
+        bookingId,
+        bookingRef: booking.ref,
+        vendorId: booking.vendorId,
+        refundAmount: finalAmount,
+      });
+      this.auditLogger.log({
+        actorType: actor,
+        actorId: userId,
+        actorName: `${actor} ${userId.slice(0, 8)}`,
+        action: 'REFUND_ON_PAID_OUT_BOOKING',
+        entity: 'Booking',
+        entityId: bookingId,
+        details: `Refund of ${finalAmount} approved on booking ${booking.ref} whose vendor payout was already marked PAID — clawback required`,
+        actionCategory: 'FINANCIAL',
+      });
+      this.notificationService.notifyAdmins({
+        type: 'SYSTEM',
+        title: 'Refund on an already-paid-out booking',
+        message: `Booking ${booking.ref} was refunded (${finalAmount}) after the vendor payout was marked PAID. The vendor holds funds that must be clawed back.`,
+        link: `/admin/bookings/${bookingId}`,
+      });
+    }
 
     // ── Audit log ──
     const decider = await db.user.findUnique({ where: { id: userId }, select: { fullName: true } });
@@ -2224,7 +2712,11 @@ export class BookingsService {
         cancelledBy: true,
         createdAt: true,
         customer: {
-          select: { id: true, fullName: true, email: true, phone: true },
+          // Name/email/phone: the vendor needs these to identify + coordinate the
+          // refund for THEIR own customer (disclosed in Privacy §4 Data Sharing).
+          // The internal user id is NOT exposed — the vendor UI never uses it and
+          // it has no business purpose here (PDPPL data-minimisation).
+          select: { fullName: true, email: true, phone: true },
         },
         activity: {
           select: {
@@ -2294,92 +2786,6 @@ export class BookingsService {
     });
     if (!booking) throw new NotFoundException('Booking not found');
     return booking;
-  }
-
-  // ─── Loyalty Points Award ──────────────────────────────────────────────────
-  /**
-   * Award loyalty points to a customer when their booking is COMPLETED.
-   * Called by: admin updateBookingStatus, vendor updateBookingStatus, auto-complete cron.
-   *
-   * Safety guards:
-   *   - Skips if booking.pointsAwarded is already true (prevents double-earn)
-   *   - All updates are inside a DB transaction (prevents race conditions)
-   *   - Points are always integers (Math.floor)
-   */
-  async awardLoyaltyPoints(bookingId: string): Promise<{ pointsAwarded: number } | null> {
-    const db = this.prisma.client;
-
-    const booking = await db.booking.findUnique({
-      where: { id: bookingId },
-      select: {
-        id: true,
-        ref: true,
-        pointsAwarded: true,
-        totalPrice: true,
-        customerId: true,
-      },
-    });
-    if (!booking) return null;
-    if (booking.pointsAwarded) return null; // already awarded — skip
-
-    // Load loyalty config singleton
-    let config = await db.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
-    if (!config) {
-      config = await db.loyaltyConfig.create({ data: { id: 'singleton' } });
-    }
-
-    const points = Math.floor(Number(booking.totalPrice) * config.pointsPerQar.toNumber());
-    if (points <= 0) return null;
-
-    await db.$transaction(async (tx) => {
-      // Double-check inside transaction to prevent race
-      const fresh = await tx.booking.findUnique({
-        where: { id: bookingId },
-        select: { pointsAwarded: true },
-      });
-      if (fresh?.pointsAwarded) return;
-
-      await tx.booking.update({
-        where: { id: bookingId },
-        data: { pointsAwarded: true },
-      });
-
-      // Routed through LoyaltyService → ledger row BOOKING_EARN.
-      await this.loyalty.earn(tx, {
-        userId: booking.customerId,
-        amount: points,
-        bookingId,
-        note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
-      });
-    });
-
-    // Notify customer (fire-and-forget, outside transaction)
-    this.notificationService.send({
-      userId: booking.customerId,
-      type: 'SYSTEM',
-      title: 'Points Earned!',
-      message: `You earned ${points} WANASA points for booking ${booking.ref}`,
-      link: '/bookings',
-    });
-
-    // Audit log (fire-and-forget)
-    this.auditLogger.log({
-      actorType: 'SYSTEM',
-      actorId: 'loyalty',
-      actorName: 'Loyalty System',
-      action: 'LOYALTY_POINTS_AWARDED',
-      entity: 'Booking',
-      entityId: bookingId,
-      details: JSON.stringify({
-        customerId: booking.customerId,
-        points,
-        totalPrice: Number(booking.totalPrice),
-        pointsPerQar: config.pointsPerQar.toNumber(),
-      }),
-      actionCategory: 'FINANCIAL',
-    });
-
-    return { pointsAwarded: points };
   }
 
   // ─── Email-OTP verification (booking → payment gate) ──────────────────────

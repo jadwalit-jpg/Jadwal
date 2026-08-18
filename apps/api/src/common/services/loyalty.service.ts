@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, ConflictException, BadRequestException, Logger } from '@nestjs/common';
 import { Prisma, LoyaltyLedgerSource, LoyaltyActorType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -82,6 +82,8 @@ export interface AdjustArgs {
  */
 @Injectable()
 export class LoyaltyService {
+  private readonly logger = new Logger(LoyaltyService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -89,13 +91,14 @@ export class LoyaltyService {
    * has ≥ amount and both rows update, or no change and we throw 409.
    */
   async redeem(tx: Tx, args: RedeemArgs): Promise<{ balanceAfter: number }> {
-    this.assertPositive(args.amount, 'amount');
+    const amount = this.round2(args.amount);
+    this.assertPositive(amount, 'amount');
 
     // Conditional updateMany — only decrements if current balance ≥ amount.
     // `count: 0` means the guard failed → insufficient funds.
     const updated = await tx.user.updateMany({
-      where: { id: args.userId, loyaltyPoints: { gte: args.amount } },
-      data: { loyaltyPoints: { decrement: args.amount } },
+      where: { id: args.userId, loyaltyPoints: { gte: amount } },
+      data: { loyaltyPoints: { decrement: amount } },
     });
     if (updated.count === 0) {
       // Either the user doesn't exist or balance < amount. We return the
@@ -110,8 +113,8 @@ export class LoyaltyService {
 
     await this.writeLedger(tx, {
       userId: args.userId,
-      delta: -args.amount,
-      balanceAfter: user.loyaltyPoints,
+      delta: -amount,
+      balanceAfter: this.toNum(user.loyaltyPoints),
       source: 'BOOKING_REDEEM',
       bookingId: args.bookingId,
       actorType: 'CUSTOMER',
@@ -119,7 +122,7 @@ export class LoyaltyService {
       reason: args.note,
     });
 
-    return { balanceAfter: user.loyaltyPoints };
+    return { balanceAfter: this.toNum(user.loyaltyPoints) };
   }
 
   /**
@@ -129,18 +132,19 @@ export class LoyaltyService {
    * against double-cancel).
    */
   async refund(tx: Tx, args: RefundArgs): Promise<{ balanceAfter: number }> {
-    this.assertPositive(args.amount, 'amount');
+    const amount = this.round2(args.amount);
+    this.assertPositive(amount, 'amount');
 
     const user = await tx.user.update({
       where: { id: args.userId },
-      data: { loyaltyPoints: { increment: args.amount } },
+      data: { loyaltyPoints: { increment: amount } },
       select: { loyaltyPoints: true },
     });
 
     await this.writeLedger(tx, {
       userId: args.userId,
-      delta: args.amount,
-      balanceAfter: user.loyaltyPoints,
+      delta: amount,
+      balanceAfter: this.toNum(user.loyaltyPoints),
       source: args.source,
       bookingId: args.bookingId,
       actorType: args.actorType,
@@ -148,7 +152,7 @@ export class LoyaltyService {
       reason: args.note,
     });
 
-    return { balanceAfter: user.loyaltyPoints };
+    return { balanceAfter: this.toNum(user.loyaltyPoints) };
   }
 
   /**
@@ -156,18 +160,19 @@ export class LoyaltyService {
    * Called from cleanup cron and admin/vendor status-completion paths.
    */
   async earn(tx: Tx, args: EarnArgs): Promise<{ balanceAfter: number }> {
-    this.assertPositive(args.amount, 'amount');
+    const amount = this.round2(args.amount);
+    this.assertPositive(amount, 'amount');
 
     const user = await tx.user.update({
       where: { id: args.userId },
-      data: { loyaltyPoints: { increment: args.amount } },
+      data: { loyaltyPoints: { increment: amount } },
       select: { loyaltyPoints: true },
     });
 
     await this.writeLedger(tx, {
       userId: args.userId,
-      delta: args.amount,
-      balanceAfter: user.loyaltyPoints,
+      delta: amount,
+      balanceAfter: this.toNum(user.loyaltyPoints),
       source: 'BOOKING_EARN',
       bookingId: args.bookingId,
       actorType: 'SYSTEM',
@@ -175,7 +180,48 @@ export class LoyaltyService {
       reason: args.note,
     });
 
-    return { balanceAfter: user.loyaltyPoints };
+    return { balanceAfter: this.toNum(user.loyaltyPoints) };
+  }
+
+  /**
+   * The EXACT number of points credited on a booking's completion — the
+   * BOOKING_EARN ledger row's delta, or 0 if none (points-paid booking, or never
+   * completed). This is the AUTHORITATIVE amount to reverse on a later cancel:
+   * reversing a fresh `computeEarnedPoints` recompute would be WRONG if an admin
+   * changed the earn rate between the award and the cancel (it would debit the
+   * new-rate amount, or 0, leaving the customer free residual points). Reversal
+   * paths MUST use this, not a recompute.
+   */
+  async getEarnedPoints(tx: Tx, bookingId: string): Promise<number> {
+    const row = await tx.loyaltyLedger.findFirst({
+      where: { bookingId, source: 'BOOKING_EARN' },
+      select: { delta: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return row ? this.toNum(row.delta) : 0;
+  }
+
+  /**
+   * Points earned on a completed booking. SINGLE SOURCE OF TRUTH for the earn
+   * amount — every award AND reverse site computes through here so the
+   * cancel-debit always equals the earn-credit.
+   *
+   * The earn rate applies ONLY to the cash value the customer actually paid:
+   * the Wanasa-points-redeemed portion earns NOTHING. Otherwise paying fully
+   * with points would mint the same points straight back — an infinite-points
+   * loop (book free → earn enough to book again). Redemption is binary (cover
+   * the whole activity or none), so a points-paid booking has
+   * `pointsDiscount == totalPrice` → 0 earned, and a cash booking has
+   * `pointsDiscount == 0` → earns on the full price (unchanged behaviour).
+   */
+  computeEarnedPoints(totalPrice: number, pointsDiscount: number, pointsPerQar: number): number {
+    if (pointsPerQar <= 0) return 0;
+    const cashBasis = Math.max(0, totalPrice - pointsDiscount);
+    // Points are QAR-denominated (1 point = 1 QAR), so the 1% earn keeps its
+    // fractional value rounded to 2 dp — NOT floored. 90 QAR × 0.01 = 0.90 pt,
+    // 100 → 1.00, 250 → 2.50. round2 also absorbs float dust (90 * 0.01 in JS
+    // is 0.8999999999999999).
+    return this.round2(cashBasis * pointsPerQar);
   }
 
   /**
@@ -191,7 +237,8 @@ export class LoyaltyService {
    * clamp for reconciliation.
    */
   async reverseAwarded(tx: Tx, args: ReverseAwardedArgs): Promise<{ balanceAfter: number; appliedDelta: number }> {
-    this.assertPositive(args.amount, 'amount');
+    const requestedDebit = this.round2(args.amount);
+    this.assertPositive(requestedDebit, 'amount');
 
     const current = await tx.user.findUniqueOrThrow({
       where: { id: args.userId },
@@ -201,13 +248,39 @@ export class LoyaltyService {
     // Negative delta — clamp magnitude to current balance so the row
     // never drives the balance below zero (balance constraint at
     // user.loyaltyPoints column would otherwise reject the update).
-    const requestedDebit = args.amount;
-    const actualDebit = Math.min(requestedDebit, current.loyaltyPoints);
+    const currentBalance = this.toNum(current.loyaltyPoints);
+    const actualDebit = this.round2(Math.min(requestedDebit, currentBalance));
+
+    // Clamp = the awarded points can't be fully clawed back because the customer
+    // already spent some. Points are awarded ~5 min after the activity STARTS and
+    // are spendable immediately, yet an admin/vendor can still cancel after that —
+    // so this is the accepted, bounded points "leak". Log it (WARN) so it's
+    // visible/alertable in CloudWatch instead of silently swallowed by the clamp.
+    if (actualDebit < requestedDebit) {
+      this.logger.warn({
+        event: 'LOYALTY_REVERSE_CLAMPED',
+        bookingId: args.bookingId,
+        userId: args.userId,
+        requested: requestedDebit,
+        applied: actualDebit,
+        leaked: this.round2(requestedDebit - actualDebit),
+        balanceWas: currentBalance,
+      });
+    }
+
+    // Nothing left to claw back — the customer already spent the awarded points
+    // down to (or below) zero. A -0 delta would make writeLedger throw ("must be
+    // non-zero") and roll back the ENTIRE cancel transaction. Treat as a clean
+    // no-op instead: the reversal simply has nothing to reverse.
+    if (actualDebit <= 0) {
+      return { balanceAfter: currentBalance, appliedDelta: 0 };
+    }
+
     const appliedDelta = -actualDebit;
 
     const clampNote =
       actualDebit !== requestedDebit
-        ? ` (clamped from -${requestedDebit} — balance was ${current.loyaltyPoints})`
+        ? ` (clamped from -${requestedDebit} — balance was ${currentBalance})`
         : '';
 
     const user = await tx.user.update({
@@ -219,7 +292,7 @@ export class LoyaltyService {
     await this.writeLedger(tx, {
       userId: args.userId,
       delta: appliedDelta,
-      balanceAfter: user.loyaltyPoints,
+      balanceAfter: this.toNum(user.loyaltyPoints),
       source: 'CANCEL_REVERSE_AWARDED',
       bookingId: args.bookingId,
       actorType: args.actorType,
@@ -227,7 +300,7 @@ export class LoyaltyService {
       reason: `${args.note}${clampNote}`,
     });
 
-    return { balanceAfter: user.loyaltyPoints, appliedDelta };
+    return { balanceAfter: this.toNum(user.loyaltyPoints), appliedDelta };
   }
 
   /**
@@ -236,7 +309,8 @@ export class LoyaltyService {
    * current balance so the ledger row matches the actual change.
    */
   async adjust(tx: Tx, args: AdjustArgs): Promise<{ balanceAfter: number; appliedDelta: number }> {
-    if (args.delta === 0) {
+    const delta = this.round2(args.delta);
+    if (delta === 0) {
       throw new BadRequestException('Adjustment delta must be non-zero');
     }
 
@@ -248,15 +322,16 @@ export class LoyaltyService {
     });
 
     // Clamp negative deltas so balance never goes below zero.
+    const currentBalance = this.toNum(current.loyaltyPoints);
     const appliedDelta =
-      args.delta < 0 ? -Math.min(-args.delta, current.loyaltyPoints) : args.delta;
+      delta < 0 ? -this.round2(Math.min(-delta, currentBalance)) : delta;
 
     // If the admin asked to deduct 500 but the user only has 100, we
     // actually deducted 100 — the ledger reason notes the clamp so
     // reconciliation shows the intent vs. the applied change.
     const clampNote =
-      appliedDelta !== args.delta
-        ? ` (clamped from ${args.delta} — balance was ${current.loyaltyPoints})`
+      appliedDelta !== delta
+        ? ` (clamped from ${delta} — balance was ${currentBalance})`
         : '';
 
     const user = await tx.user.update({
@@ -268,7 +343,7 @@ export class LoyaltyService {
     await this.writeLedger(tx, {
       userId: args.userId,
       delta: appliedDelta,
-      balanceAfter: user.loyaltyPoints,
+      balanceAfter: this.toNum(user.loyaltyPoints),
       source: 'ADMIN_ADJUST',
       bookingId: null,
       actorType: args.actorType,
@@ -276,14 +351,30 @@ export class LoyaltyService {
       reason: `${args.reason}${clampNote}`,
     });
 
-    return { balanceAfter: user.loyaltyPoints, appliedDelta };
+    return { balanceAfter: this.toNum(user.loyaltyPoints), appliedDelta };
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
 
+  /**
+   * Round to 2 decimals (QAR precision). Points are QAR-denominated, so every
+   * balance/delta is money and must be exactly 2 dp — this also absorbs binary
+   * float dust (e.g. 90 * 0.01 === 0.8999999999999999 in JS → 0.90).
+   */
+  private round2(n: number): number {
+    return Math.round((n + Number.EPSILON) * 100) / 100;
+  }
+
+  /** Prisma returns Decimal columns as Prisma.Decimal; normalise to a JS number. */
+  private toNum(value: Prisma.Decimal | number): number {
+    return typeof value === 'number' ? value : value.toNumber();
+  }
+
   private assertPositive(value: number, field: string) {
-    if (!Number.isInteger(value) || value <= 0) {
-      throw new BadRequestException(`${field} must be a positive integer`);
+    // Points are QAR-denominated to 2 dp, so fractional amounts (e.g. 0.90) are
+    // valid — only reject non-finite or non-positive values.
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      throw new BadRequestException(`${field} must be a positive amount`);
     }
   }
 

@@ -1,5 +1,20 @@
-import { cookies } from 'next/headers';
-import { isLang, type Lang, LANG_COOKIE, DEFAULT_LANG } from './lang-cookie';
+import { cookies, headers } from 'next/headers';
+import { isLang, type Lang, LANG_COOKIE, LANG_HEADER, DEFAULT_LANG } from './lang-cookie';
+
+/**
+ * Resolve the SSR language for the current request. The `x-lang` header is set
+ * by the middleware from the URL (`/ar/...` → 'ar') and is the source of truth
+ * for public localized routes. Falls back to the language cookie (for non-
+ * localized routes like /admin, and before the middleware runs in dev). This is
+ * what layout.tsx + the home islands use so server HTML matches the URL's
+ * language and the client hydration (which also reads the same value).
+ */
+export async function readLangServer(): Promise<Lang> {
+  const hdrs = await headers();
+  const fromHeader = hdrs.get(LANG_HEADER);
+  if (isLang(fromHeader)) return fromHeader;
+  return readLangCookieServer();
+}
 
 /**
  * Read the current user's language preference from the request cookie during

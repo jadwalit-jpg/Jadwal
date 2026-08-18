@@ -7,6 +7,7 @@ import { LoyaltyService } from './loyalty.service';
 import { AvailabilityCacheService } from '../../redis/availability-cache.service';
 import { RedisLockService } from '../../redis/redis-lock.service';
 import { refundCouponUsage } from '../../bookings/bookings.service';
+import { nowInTimezone } from '../validators/timezone';
 
 /**
  * Scheduled jobs for data hygiene + business logic automation.
@@ -46,6 +47,18 @@ export class CleanupService {
 
   // Business rules — all read from env so ops can tune without a code deploy
   private readonly PENDING_BOOKING_FALLBACK_HOURS: number;
+  // Grace before reaping a booking that DID reach PAY2M (has a basket id). The
+  // slot is already freed the moment reservedUntil passes (availability ignores
+  // expired-PENDING), so the cron gains nothing by reaping fast — and reaping at
+  // ~30 min could race a slow/retried PAY2M success. A generous grace (default 2h,
+  // well beyond PAY2M's ~15-20 min session + IPN delivery) makes that race
+  // practically impossible without storing anything extra. Tunable via env.
+  private readonly PAY2M_PENDING_GRACE_MINUTES: number;
+  // Minutes after an activity STARTS before its loyalty points are awarded. The
+  // customer can no longer cancel once the activity has started (cancel guard in
+  // bookings.service.ts), so the reward is safe to grant then rather than waiting
+  // for the activity to END. Completion (status → COMPLETED) still happens at END.
+  private readonly LOYALTY_AWARD_DELAY_MINUTES: number;
 
   constructor(
     private prisma: PrismaService,
@@ -73,6 +86,19 @@ export class CleanupService {
     this.PENDING_BOOKING_FALLBACK_HOURS = Number(
       this.configService.get('PENDING_BOOKING_FALLBACK_HOURS', '4'),
     );
+    // Default 120 min (2h). Clamp to a sane positive integer (1..1440 min) so a bad
+    // SSM value can't reap in-flight payments early, and an absurd one can't push
+    // the cutoff past JS's Date range into an Invalid Date (cron would throw).
+    const grace = Number(this.configService.get('PAY2M_PENDING_GRACE_MINUTES', '120'));
+    this.PAY2M_PENDING_GRACE_MINUTES = Number.isInteger(grace) && grace > 0 && grace <= 1440 ? grace : 120;
+
+    // Award delay after activity START. Default 5 min. Clamp to 0..1440 so a bad
+    // SSM value can't push the award far into the future (or, negative, before
+    // the activity starts — which would defeat the "can't cancel after start"
+    // safety the earlier award relies on).
+    const awardDelay = Number(this.configService.get('LOYALTY_AWARD_DELAY_MINUTES', '5'));
+    this.LOYALTY_AWARD_DELAY_MINUTES =
+      Number.isFinite(awardDelay) && awardDelay >= 0 && awardDelay <= 1440 ? awardDelay : 5;
   }
 
   // ─── Daily Cleanup (3 AM) — purge stale data ─────────────────────────────
@@ -135,8 +161,12 @@ export class CleanupService {
     const now = new Date();
     const fallbackCutoff = new Date(now.getTime() - this.PENDING_BOOKING_FALLBACK_HOURS * 60 * 60 * 1000);
 
-    // PAY2M checkout sessions last ~15-20 min max. 30 min is safe buffer.
-    const paymentInitiatedCutoff = new Date(now.getTime() - 30 * 60 * 1000);
+    // PAY2M checkout sessions last ~15-20 min. We wait PAY2M_PENDING_GRACE_MINUTES
+    // (default 120) — far beyond that + IPN delivery — before reaping a
+    // basket-initiated booking, so a slow/retried success can't be raced. The slot
+    // is already free (reservedUntil filter), so the extra wait costs nothing but a
+    // ghost PENDING row lingering a bit longer (its points return when reaped).
+    const paymentInitiatedCutoff = new Date(now.getTime() - this.PAY2M_PENDING_GRACE_MINUTES * 60 * 1000);
 
     const staleBookings = await this.prisma.client.booking.findMany({
       where: {
@@ -164,6 +194,15 @@ export class CleanupService {
           // paymentInitiatedAt; this OR is the runtime fallback for
           // edge-case rows still in flight during the deploy window.
           {
+            // Never reap a booking whose reservation is still actively held in
+            // the future: a verified NAPS-rail success extends `reservedUntil`
+            // (holdNapsSuccess) to keep the slot while PAY2M's delayed capture
+            // confirmation (IPN) is still expected. Without this AND, Case 3's
+            // 30-min anchor reaped the held booking out from under its own
+            // extension, dropping a paid customer into the §B2 recovery path.
+            // An ordinary abandoned booking has its short original reservedUntil
+            // (already < now by the 30-min mark) so it is still reaped here.
+            reservedUntil: { lt: now },
             payment: {
               gatewayBasketId: { not: null },
               OR: [
@@ -206,63 +245,88 @@ export class CleanupService {
     // blows past, Postgres rolls back cleanly and the next cron run
     // (5 min later) picks up the same set and retries. No per-tx SET
     // LOCAL override — repo enforces a hard no-raw-SQL gate.
-    await this.prisma.client.$transaction(async (tx) => {
-      const bookingIds = staleBookings.map(b => b.id);
+    const claimedBookingIds = await this.prisma.client.$transaction(async (tx) => {
       const paymentIds = staleBookings.map(b => b.paymentId).filter(Boolean) as string[];
+      const claimedIds: string[] = [];
 
-      // Refund coupon usage before delete — createBooking incremented
-      // usedCount at reservation time; bookings that never paid must return
-      // that increment so coupons stay accurate. Per-booking loop is fine
-      // because this cron runs every 5 min and batch sizes are small
-      // (usually < 20 stale reservations).
+      // Per-booking: CLAIM (hard-delete) each stale reservation, THEN refund what
+      // the customer put in — but ONLY for a row we actually reaped. Claiming
+      // before refunding is what closes a money-mint race: a delayed/retried PAY2M
+      // success can CONFIRM a booking in the window between the findMany above and
+      // this transaction. If that happened, the claim-delete matches 0 rows and we
+      // skip the refund — otherwise the customer would keep a paid, CONFIRMED
+      // booking AND get the redeemed points + coupon usage back (a mint).
+      // (Previously the coupon/points refund ran UNCONDITIONALLY and only the
+      // delete/payment-fail were PENDING-guarded, so the refund leaked on the race.)
       for (const b of staleBookings) {
+        // Atomic claim: delete only if STILL PENDING. Deleting the booking — the
+        // FK-owning side — leaves the soft-failed payment intact for §B2 recovery;
+        // loyaltyLedger.bookingId is a soft pointer (no FK) so the refund ledger
+        // written below stays valid after the row is gone.
+        const del = await tx.booking.deleteMany({
+          where: { id: b.id, status: 'PENDING' },
+        });
+        if (del.count === 0) continue; // a late success CONFIRMED it → leave it (and its points) alone
+        claimedIds.push(b.id);
+
+        // Refund coupon usage — createBooking incremented usedCount at reservation
+        // time; an abandoned booking must return that increment so coupons stay accurate.
         if (b.couponCode) {
           await refundCouponUsage(tx, b.couponCode, b.customerId);
         }
-        // Return any Wanasa points redeemed on this PENDING booking. Points are
-        // debited at booking-create time (so the same points can't double-book),
-        // so hard-deleting an abandoned booking without refunding them would
-        // silently confiscate the customer's store credit. Mirrors the
-        // customer-cancel-unpaid path (bookings.service.ts) — source
-        // CANCEL_REFUND_UNPAID; the ledger row's bookingId is a soft pointer, so
-        // the delete below doesn't invalidate it.
-        if (b.pointsRedeemed > 0) {
+        // Return any Wanasa points redeemed on this booking. Points are debited at
+        // booking-create time (so the same points can't double-book), so dropping
+        // an abandoned booking without refunding them would silently confiscate the
+        // customer's store credit. Mirrors the customer-cancel-unpaid path
+        // (bookings.service.ts) — source CANCEL_REFUND_UNPAID.
+        const redeemed = Number(b.pointsRedeemed); // Decimal column (QAR-denominated) → number
+        if (redeemed > 0) {
           await this.loyalty.refund(tx, {
             userId: b.customerId,
-            amount: b.pointsRedeemed,
+            amount: redeemed,
             bookingId: b.id,
             source: 'CANCEL_REFUND_UNPAID',
             actorType: 'SYSTEM',
             actorId: 'cron',
-            note: `Stale PENDING auto-cancel — returned ${b.pointsRedeemed} redeemed points, booking ${b.ref}`,
+            note: `Stale PENDING auto-cancel — returned ${redeemed} redeemed points, booking ${b.ref}`,
           });
         }
       }
 
-      // Detach payment FKs before deleting
-      await tx.booking.updateMany({
-        where: { id: { in: bookingIds } },
-        data: { paymentId: null },
-      });
-
-      // Delete PENDING payments (mark FAILED ones are handled by PAY2M callback)
+      // Soft-FAIL the abandoned PENDING payments instead of deleting them.
+      // The cron used to hard-delete the payment row, which destroyed the
+      // gatewayBasketId + bookingSnapshot that the PAY2M success-callback
+      // recovery (§B2 in payment.service.ts) depends on — so a genuine,
+      // verified card success arriving AFTER this cron run (a delayed/retried
+      // PAY2M callback past the 30-min cutoff) hit "Payment not found" and the
+      // customer was charged with NO booking and NO refund (invisible even to
+      // reconciliation). Marking the payment FAILED but KEEPING the row (with
+      // its snapshot) lets that late success recover the booking from the
+      // snapshot or queue a refund — and restores this file's stated invariant
+      // that payments are never hard-deleted. Only flip rows still PENDING: a
+      // payment a concurrent success-callback already moved to SUCCESS must be
+      // left intact (its booking, now CONFIRMED, is protected by the claim above).
       if (paymentIds.length > 0) {
-        await tx.payment.deleteMany({
+        await tx.payment.updateMany({
           where: { id: { in: paymentIds }, status: 'PENDING' },
+          data: { status: 'FAILED' },
         });
       }
 
-      // Delete the bookings themselves
-      await tx.booking.deleteMany({
-        where: { id: { in: bookingIds } },
-      });
+      return claimedIds;
     });
 
-    this.logger.log({ event: 'CLEANUP_STALE_PENDING_CANCELLED', count: staleBookings.length });
+    // Report only the bookings we ACTUALLY reaped. A row a late PAY2M success
+    // confirmed between the scan and the transaction was skipped above, so counting
+    // all staleBookings here would over-report cancellations in the log + audit.
+    const claimedSet = new Set(claimedBookingIds);
+    const claimedActivityIds = staleBookings.filter((b) => claimedSet.has(b.id)).map((b) => b.activityId);
 
-    // Batch-invalidate availability for every affected activity. Dedup happens
-    // inside invalidateMany; pipelined INCRs keep Redis round-trips bounded.
-    void this.availabilityCache.invalidateMany(staleBookings.map((b) => b.activityId));
+    this.logger.log({ event: 'CLEANUP_STALE_PENDING_CANCELLED', count: claimedBookingIds.length, scanned: staleBookings.length });
+
+    // Batch-invalidate availability only for activities we actually freed. Dedup
+    // happens inside invalidateMany; pipelined INCRs keep Redis round-trips bounded.
+    void this.availabilityCache.invalidateMany(claimedActivityIds);
 
     this.auditLogger.log({
       actorType: 'SYSTEM',
@@ -270,99 +334,108 @@ export class CleanupService {
       actorName: 'System Cron',
       action: 'AUTO_CANCEL_STALE_BOOKINGS',
       entity: 'Booking',
-      details: JSON.stringify({ count: staleBookings.length, bookingIds: staleBookings.map(b => b.id).slice(0, 20) }),
+      details: JSON.stringify({ count: claimedBookingIds.length, bookingIds: claimedBookingIds.slice(0, 20) }),
     });
   }
 
-  // ─── Auto-complete Past Bookings (1 AM daily) ────────────────────────────
-  // CONFIRMED bookings whose activity date has passed → COMPLETED
-  // Also awards loyalty points for each newly completed booking.
+  // ─── Auto-award + auto-complete Past Bookings (every 10 min) ─────────────
+  // Two passes, both gating on nowInTimezone(activity tz) against the tagged-UTC
+  // datetimes (see #463 — a raw-UTC compare fired the country's offset LATE):
+  //   1. AWARD    — CONFIRMED bookings whose START + LOYALTY_AWARD_DELAY_MINUTES
+  //      has passed earn their Wanasa points NOW, while still CONFIRMED. The
+  //      customer can no longer cancel once the activity has started (cancel
+  //      guard in bookings.service.ts), so the reward is granted at the start of
+  //      the experience rather than waiting for it to end.
+  //   2. COMPLETE — CONFIRMED bookings whose END has passed flip to COMPLETED
+  //      (unchanged timing); a safety-net award covers the rare booking that
+  //      reaches END still unawarded.
+  // Idempotent: the pointsAwarded flag + the unique (bookingId, source) ledger
+  // constraint + an atomic claim prevent any double-award even if ticks overlap,
+  // and the claim's status guard blocks awarding a booking cancelled mid-tick.
+  //
+  // NOTE (accepted trade-off): awarding at start (not end) widens the window in
+  // which points are live but the booking could still be cancelled by an
+  // admin/vendor. reverseAwarded (loyalty.service.ts) claws them back on cancel,
+  // clamping to the balance if the customer already spent them — a small, logged
+  // (LOYALTY_REVERSE_CLAMPED) points leak that is NOT customer-triggerable (the
+  // customer cannot self-cancel after start).
 
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron(CronExpression.EVERY_10_MINUTES)
   async autoCompletePastBookings() {
-    // Leader-election TTL = 60 min. The per-booking loyalty-points loop
-    // can take a while if hundreds of bookings completed yesterday, but
-    // duplicate execution would call loyalty.earn() twice for each booking
-    // — pointsAwarded flag would prevent the double-credit, but the audit
-    // log line would still be duplicated. Lock keeps the picture clean.
-    await this.lock.withLeaderLock('cron:auto-complete-bookings', 60 * 60_000, async () => {
+    // Leader-election so only one API task runs it per tick (avoids duplicate
+    // audit-log lines; double-credit is already impossible per the guards
+    // above). TTL 15 min: longer than any run (each pass processes only
+    // newly-ended bookings) yet short enough that a crashed leader is recovered
+    // within a couple of ticks.
+    await this.lock.withLeaderLock('cron:auto-complete-bookings', 15 * 60_000, async () => {
       await this.runAutoCompletePastBookings();
     });
   }
 
   private async runAutoCompletePastBookings() {
     const now = new Date();
+    // Tagged-UTC datetimes (buildDatetime) are local-wall-clock, so "has it
+    // started / ended?" must be judged in the ACTIVITY'S timezone, not raw UTC
+    // (a raw compare fires the country's offset LATE — the #463 bug). Coarse-fetch
+    // by a widened window (a tagged time can be up to the max UTC offset ahead of
+    // raw now), then gate each booking EXACTLY with nowInTimezone(its own tz).
+    const MAX_TZ_OFFSET_MS = 14 * 60 * 60 * 1000; // widest real IANA offset (+14)
+    const coarseCutoff = new Date(now.getTime() + MAX_TZ_OFFSET_MS);
+    const delayMs = this.LOYALTY_AWARD_DELAY_MINUTES * 60 * 1000;
 
-    // Fetch individual bookings so we can award points per-booking
-    const bookingsToComplete = await this.prisma.client.booking.findMany({
-      where: {
-        status: 'CONFIRMED',
-        endDatetime: { lt: now },
-      },
+    // ── PASS 1 — AWARD ~delay after START (while still CONFIRMED) ────────────
+    // Only un-awarded CONFIRMED bookings whose start could plausibly have passed.
+    // Bounded + oldest-first so a backlog drains deterministically across ticks.
+    const awardCandidates = await this.prisma.client.booking.findMany({
+      where: { status: 'CONFIRMED', pointsAwarded: false, startDatetime: { lt: coarseCutoff } },
       select: {
-        id: true,
-        ref: true,
-        customerId: true,
-        totalPrice: true,
-        pointsAwarded: true,
+        id: true, ref: true, customerId: true, totalPrice: true, pointsDiscount: true,
+        startDatetime: true,
+        activity: { select: { country: { select: { defaultTimezone: true } } } },
+      },
+      orderBy: { startDatetime: 'asc' },
+      take: 1000,
+    });
+    const toAward = awardCandidates.filter((b) => {
+      const tz = b.activity?.country?.defaultTimezone ?? 'UTC';
+      return b.startDatetime.getTime() + delayMs <= nowInTimezone(tz).getTime();
+    });
+    const awarded = await this.awardLoyaltyForBookings(toAward);
+    if (awarded > 0) {
+      this.logger.log({ event: 'LOYALTY_AWARDED_ON_START', pointsAwarded: awarded, bookings: toAward.length });
+    }
+
+    // ── PASS 2 — COMPLETE when the local END has passed (unchanged timing) ───
+    const completeCandidates = await this.prisma.client.booking.findMany({
+      where: { status: 'CONFIRMED', endDatetime: { lt: coarseCutoff } },
+      select: {
+        id: true, ref: true, customerId: true, totalPrice: true, pointsDiscount: true,
+        pointsAwarded: true, endDatetime: true,
+        activity: { select: { country: { select: { defaultTimezone: true } } } },
       },
     });
-
+    const bookingsToComplete = completeCandidates.filter((b) => {
+      const tz = b.activity?.country?.defaultTimezone ?? 'UTC';
+      return b.endDatetime.getTime() <= nowInTimezone(tz).getTime();
+    });
     if (bookingsToComplete.length === 0) return;
 
-    // Mark all as COMPLETED in bulk
+    // Mark COMPLETED — but ONLY those still CONFIRMED. A vendor/admin cancel that
+    // commits between the findMany and this updateMany must NOT be resurrected
+    // CANCELLED→COMPLETED. The status guard makes this a conditional atomic update.
     await this.prisma.client.booking.updateMany({
-      where: { id: { in: bookingsToComplete.map(b => b.id) } },
+      where: { id: { in: bookingsToComplete.map((b) => b.id) }, status: 'CONFIRMED' },
       data: { status: 'COMPLETED' },
     });
 
-    // Award loyalty points for each booking that hasn't been awarded yet
-    const eligibleBookings = bookingsToComplete.filter(b => !b.pointsAwarded);
-    if (eligibleBookings.length > 0) {
-      let config = await this.prisma.client.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
-      if (!config) {
-        config = await this.prisma.client.loyaltyConfig.create({ data: { id: 'singleton' } });
-      }
-
-      let totalPointsAwarded = 0;
-      const pointsPerQar = config.pointsPerQar.toNumber();
-      for (const booking of eligibleBookings) {
-        const points = Math.floor(Number(booking.totalPrice) * pointsPerQar);
-        if (points <= 0) continue;
-
-        try {
-          await this.prisma.client.$transaction(async (tx) => {
-            // Double-check to prevent race conditions
-            const fresh = await tx.booking.findUnique({
-              where: { id: booking.id },
-              select: { pointsAwarded: true, ref: true, totalPrice: true },
-            });
-            if (fresh?.pointsAwarded) return;
-
-            await tx.booking.update({
-              where: { id: booking.id },
-              data: { pointsAwarded: true },
-            });
-            await this.loyalty.earn(tx, {
-              userId: booking.customerId,
-              amount: points,
-              bookingId: booking.id,
-              note: `Earned on booking ${fresh?.ref ?? booking.id} (${Number(fresh?.totalPrice ?? 0)})`,
-            });
-          });
-          totalPointsAwarded += points;
-        } catch (err: unknown) {
-          // Don't stringify the whole err — it serialises stack + internal
-          // Prisma query context. Log class name + booking ID only; the
-          // transaction has already rolled back by this point.
-          const kind = err instanceof Error ? err.name : 'UnknownError';
-          this.logger.error({ event: 'LOYALTY_AWARD_FAILED', bookingId: booking.id, kind });
-        }
-      }
-
-      if (totalPointsAwarded > 0) {
-        this.logger.log({ event: 'LOYALTY_AWARD_BATCH', pointsAwarded: totalPointsAwarded, bookings: eligibleBookings.length });
-      }
+    // Safety-net award: pass 1 already awarded everything whose start+delay passed
+    // (and pass-1 ran first, so pointsAwarded here is up to date), so this normally
+    // awards 0. It only catches the rare booking that reached END still unawarded
+    // (e.g. created with an already-past start between ticks).
+    const unawarded = bookingsToComplete.filter((b) => !b.pointsAwarded);
+    const lateAwarded = await this.awardLoyaltyForBookings(unawarded);
+    if (lateAwarded > 0) {
+      this.logger.log({ event: 'LOYALTY_AWARDED_ON_COMPLETE', pointsAwarded: lateAwarded, bookings: unawarded.length });
     }
 
     this.logger.log({ event: 'BOOKINGS_AUTO_COMPLETED', count: bookingsToComplete.length });
@@ -374,6 +447,64 @@ export class CleanupService {
       entity: 'Booking',
       details: JSON.stringify({ count: bookingsToComplete.length }),
     });
+  }
+
+  /**
+   * Award Wanasa loyalty for each booking not yet awarded — atomically + once.
+   * Shared by the start-based award pass and the completion safety-net. The claim
+   * (pointsAwarded false→true, guarded to a non-CANCELLED booking) is BOTH the
+   * idempotency guard and the anti-cancel guard: a booking cancelled between the
+   * fetch and here matches 0 rows, so it never earns on top of its refund.
+   * Points-paid bookings compute 0 and are skipped (no infinite-points loop).
+   */
+  private async awardLoyaltyForBookings(
+    bookings: ReadonlyArray<{ id: string; ref: string; customerId: string; totalPrice: unknown; pointsDiscount: unknown }>,
+  ): Promise<number> {
+    if (bookings.length === 0) return 0;
+
+    let config = await this.prisma.client.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
+    if (!config) {
+      config = await this.prisma.client.loyaltyConfig.create({ data: { id: 'singleton' } });
+    }
+    const pointsPerQar = config.pointsPerQar.toNumber();
+
+    let total = 0;
+    for (const booking of bookings) {
+      // Cash-only earn basis — a points-paid booking earns 0 (no loop).
+      const points = this.loyalty.computeEarnedPoints(
+        Number(booking.totalPrice),
+        Number(booking.pointsDiscount),
+        pointsPerQar,
+      );
+      if (points <= 0) continue;
+
+      try {
+        await this.prisma.client.$transaction(async (tx) => {
+          // Atomic claim: flip pointsAwarded false→true only if the booking is
+          // still CONFIRMED or already COMPLETED (never CANCELLED) and not yet
+          // awarded. count 0 ⇒ a prior award / manual complete / a mid-tick cancel
+          // already settled it → skip (no double-earn, no earn-on-cancel).
+          const claim = await tx.booking.updateMany({
+            where: { id: booking.id, status: { in: ['CONFIRMED', 'COMPLETED'] }, pointsAwarded: false },
+            data: { pointsAwarded: true },
+          });
+          if (claim.count === 0) return;
+
+          await this.loyalty.earn(tx, {
+            userId: booking.customerId,
+            amount: points,
+            bookingId: booking.id,
+            note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
+          });
+        });
+        total += points;
+      } catch (err: unknown) {
+        // Don't stringify the whole err — Prisma errors serialise query context.
+        const kind = err instanceof Error ? err.name : 'UnknownError';
+        this.logger.error({ event: 'LOYALTY_AWARD_FAILED', bookingId: booking.id, kind });
+      }
+    }
+    return total;
   }
 
   // ─── Auto-expire Coupons (2 AM daily) ────────────────────────────────────

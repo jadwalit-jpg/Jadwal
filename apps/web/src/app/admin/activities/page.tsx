@@ -10,8 +10,9 @@ import AdminLayout from '../_components/admin-layout';
 import {
   Search, ChevronLeft, ChevronRight, CheckCircle, Clock, Ban, Star, BookOpen,
   Pencil, Download, X, ChevronDown, MapPin, Calendar, Users, Tag, Image as ImageIcon,
-  Clock3, Home, Globe, ZoomIn,
+  Clock3, Home, Globe, ZoomIn, PauseCircle,
 } from 'lucide-react';
+import type { ActivityStatus } from '@/lib/status-config';
 import CustomSelect from '@/components/custom-select';
 
 /* ─── Types ───────────────────────────────────────────────── */
@@ -42,7 +43,7 @@ interface Activity {
   extraServices: { name: string; nameAr?: string; price: number; perPerson?: boolean }[] | null;
   cancellationPolicy: string | null;
   categoryId: string;
-  status: 'PENDING' | 'ACTIVE' | 'BLOCKED';
+  status: 'PENDING' | 'ACTIVE' | 'INACTIVE' | 'BLOCKED';
   isFeatured: boolean;
   createdAt: string;
   vendor: { businessNameEn: string; slug: string };
@@ -62,9 +63,15 @@ interface ActivitiesResponse {
 
 /* ─── Constants ───────────────────────────────────────────── */
 
-const statusConfig: Record<string, { bg: string; text: string; icon: React.ElementType }> = {
+// Exhaustive: keyed by ActivityStatus, so the build FAILS if an enum value is
+// missing a badge (this is what would have caught the INACTIVE crash).
+const statusConfig: Record<ActivityStatus, { bg: string; text: string; icon: React.ElementType }> = {
   ACTIVE: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', icon: CheckCircle },
   PENDING: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', icon: Clock },
+  // INACTIVE is a real ActivityStatus enum value (a deactivated listing). It was
+  // missing here, so an INACTIVE activity made statusConfig[status] undefined and
+  // `badge.icon` crashed the whole admin table render.
+  INACTIVE: { bg: 'bg-gray-500/10', text: 'text-gray-600 dark:text-gray-400', icon: PauseCircle },
   BLOCKED: { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', icon: Ban },
 };
 
@@ -273,7 +280,9 @@ export default function AdminActivitiesPage() {
                   <tr><td colSpan={7} className="px-6 py-12 text-center text-gray-400 dark:text-slate-500">No activities found.</td></tr>
                 )}
                 {data?.data.map((activity) => {
-                  const badge = statusConfig[activity.status];
+                  // Fallback guard: never crash the table if a future status value
+                  // isn't in statusConfig (the INACTIVE bug). Unknown → neutral PENDING style.
+                  const badge = statusConfig[activity.status] ?? statusConfig.PENDING;
                   const BadgeIcon = badge.icon;
                   const isExpanded = expandedIds.has(activity.id);
                   return (

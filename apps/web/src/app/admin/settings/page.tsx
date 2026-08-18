@@ -65,12 +65,11 @@ export default function AdminSettingsPage() {
                 platformName: sanitize(fd.get('platformName') as string),
                 supportEmail: fd.get('supportEmail') ? sanitize(fd.get('supportEmail') as string) : null,
                 supportPhone: fd.get('supportPhone') ? sanitize(fd.get('supportPhone') as string) : null,
-                aboutText: fd.get('aboutText') ? sanitize(fd.get('aboutText') as string) : null,
               });
             }} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className={labelCls}>Platform Name</label>
-                <input name="platformName" defaultValue={platformSettings?.platformName ?? 'Jadwal'} required className={inputCls} />
+                <input name="platformName" defaultValue={platformSettings?.platformName ?? 'AL Jadwal'} required className={inputCls} />
               </div>
               <div>
                 <label className={labelCls}>Support Email</label>
@@ -79,10 +78,6 @@ export default function AdminSettingsPage() {
               <div>
                 <label className={labelCls}>Support Phone</label>
                 <input name="supportPhone" defaultValue={platformSettings?.supportPhone ?? ''} placeholder="+974 xxxx xxxx" className={inputCls} />
-              </div>
-              <div className="sm:col-span-2">
-                <label className={labelCls}>About Text</label>
-                <textarea name="aboutText" rows={3} defaultValue={platformSettings?.aboutText ?? ''} placeholder="Brief description of the platform..." className={inputCls} />
               </div>
               <div className="sm:col-span-2 flex justify-end">
                 <button type="submit" disabled={platformInfoMutation.isPending} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-all disabled:opacity-50 cursor-pointer">

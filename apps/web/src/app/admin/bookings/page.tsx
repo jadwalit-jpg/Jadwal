@@ -1,5 +1,7 @@
 'use client';
 
+import type { BookingStatus } from '@/lib/status-config';
+
 import React, { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -49,7 +51,7 @@ interface BookingsResponse {
   totalPages: number;
 }
 
-const statusConfig: Record<string, { bg: string; text: string; icon: React.ElementType }> = {
+const statusConfig: Record<BookingStatus, { bg: string; text: string; icon: React.ElementType }> = {
   PENDING: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', icon: Clock },
   CONFIRMED: { bg: 'bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', icon: CheckCircle },
   COMPLETED: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', icon: CheckCheck },
@@ -258,7 +260,7 @@ export default function AdminBookingsPage() {
                   <tr><td colSpan={7} className="px-6 py-12 text-center text-gray-400 dark:text-slate-500">No bookings found.</td></tr>
                 )}
                 {data?.data.map((booking) => {
-                  const badge = statusConfig[booking.status];
+                  const badge = statusConfig[booking.status] ?? statusConfig.PENDING;
                   const BadgeIcon = badge.icon;
                   const isExpanded = expandedId === booking.id;
                   const currency = booking.currencyCode || booking.activity.country?.currencyCode || 'QAR';
@@ -283,7 +285,7 @@ export default function AdminBookingsPage() {
                           <p className="text-xs text-gray-400 dark:text-slate-500 wrap-break-word max-w-[240px]">{booking.vendor.businessNameEn}</p>
                         </td>
                         <td className="px-6 py-4 text-gray-500 dark:text-slate-400 text-xs">
-                          <p>{new Date(booking.startDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                          <p>{new Date(booking.startDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</p>
                           {(() => {
                             // For HOURLY bookings, show the actual booked
                             // time range and duration — with flex-length
@@ -315,7 +317,7 @@ export default function AdminBookingsPage() {
                                 {pts > 0 && (
                                   <span className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-600 dark:text-purple-400">
                                     <Sparkles className="h-3 w-3" aria-hidden="true" />
-                                    {pts} pts used
+                                    {pts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} pts used
                                   </span>
                                 )}
                               </div>
@@ -379,10 +381,10 @@ export default function AdminBookingsPage() {
                               <div className="space-y-1.5">
                                 <p className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider">Dates</p>
                                 <p className="font-medium text-gray-900 dark:text-white leading-tight">
-                                  {new Date(booking.startDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                  {new Date(booking.startDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })}
                                 </p>
                                 <p className="text-xs text-gray-500 dark:text-slate-400">
-                                  → {new Date(booking.endDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                  → {new Date(booking.endDatetime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })}
                                 </p>
                               </div>
 
@@ -413,7 +415,7 @@ export default function AdminBookingsPage() {
                                         <div className="flex justify-between text-xs">
                                           <span className="text-purple-600 dark:text-purple-400 inline-flex items-center gap-1">
                                             <Sparkles className="h-3 w-3" aria-hidden="true" />
-                                            Wanasa points ({pts})
+                                            Wanasa points ({pts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                                           </span>
                                           <span className="text-purple-600 dark:text-purple-400">-{Number(booking.pointsDiscount).toLocaleString()} {currency}</span>
                                         </div>

@@ -9,6 +9,7 @@ export { SectionHeader, type SectionHeaderProps } from './section-header';
 export { PatternDivider } from './pattern-divider';
 export {
   ActivityCard,
+  CARD_IMG_BLUR,
   type ActivityCardProps,
   type ActivityCardActivity,
 } from './activity-card';

@@ -34,6 +34,44 @@ async function runErr(i: VendorAuditInterceptor, req: any, err: Error) {
   await new Promise(r => setTimeout(r, 100));
 }
 
+/**
+ * The interceptor writes the audit row FIRE-AND-FORGET — it does not await the
+ * insert, so the request returns before the row exists. Reading straight after a
+ * fixed sleep is a race: on a loaded CI runner 100ms is not always enough, and
+ * the suite fails intermittently (this is the flake that was reported).
+ *
+ * Poll for the row instead of guessing at a duration. Fast when the write has
+ * already landed (the normal case), patient when the runner is busy.
+ *
+ * NOTE: the sleeps in runOk/runErr above are deliberately KEPT — the negative
+ * tests ("GET/HEAD/OPTIONS write nothing") assert an EMPTY table, and they need
+ * a settle window or they would pass vacuously by reading too early.
+ */
+async function waitForAuditRow(timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const row = await ctx.prisma.auditLog.findFirst();
+    if (row) return row;
+    if (Date.now() > deadline) {
+      throw new Error(`audit row never landed within ${timeoutMs}ms (fire-and-forget write lost?)`);
+    }
+    await new Promise(r => setTimeout(r, 25));
+  }
+}
+
+/** Same race, but for a test that expects N rows — wait for all N to land. */
+async function waitForAuditRows(n: number, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const rows = await ctx.prisma.auditLog.findMany({ orderBy: { createdAt: 'asc' } });
+    if (rows.length >= n) return rows;
+    if (Date.now() > deadline) {
+      throw new Error(`only ${rows.length}/${n} audit rows landed within ${timeoutMs}ms`);
+    }
+    await new Promise(r => setTimeout(r, 25));
+  }
+}
+
 describe('VendorAuditInterceptor', () => {
   test('POST write → audit row with actorType=VENDOR', async () => {
     const i = makeInterceptor();
@@ -49,7 +87,7 @@ describe('VendorAuditInterceptor', () => {
       params: {},
     });
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.actorType).toBe('VENDOR');
     expect(row.actorId).toBe('vuser-1');
     expect(row.entity).toBe('Activity');
@@ -79,7 +117,7 @@ describe('VendorAuditInterceptor', () => {
       user: { id: 'v', fullName: 'V' },
       params: {},
     });
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).toContain('[REDACTED]');
     expect(row.details).not.toContain('secret-value-xyz');
   });
@@ -94,7 +132,7 @@ describe('VendorAuditInterceptor', () => {
       user: { id: 'v', fullName: 'V' },
       params: { activitySlug: 'desert-safari' },
     });
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.entityId).toBe('desert-safari');
   });
 
@@ -109,7 +147,7 @@ describe('VendorAuditInterceptor', () => {
       params: {},
     }, new Error('Validation failed: missing field'));
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).toMatch(/^FAILED:/);
     expect(row.details).not.toContain('leakme!');
     expect(row.details).toContain('[REDACTED]');
@@ -142,7 +180,7 @@ describe('VendorAuditInterceptor', () => {
       params: {},
     });
 
-    const rows = await ctx.prisma.auditLog.findMany({ orderBy: { createdAt: 'asc' } });
+    const rows = await waitForAuditRows(3);
     expect(rows).toHaveLength(3);
     expect(rows[0].actorName).toBe('Business Primary');
     expect(rows[1].actorName).toBe('Alice Vendor');
@@ -157,7 +195,7 @@ describe('VendorAuditInterceptor', () => {
       user: { id: 'v', fullName: 'V' },
       params: {},
     });
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details!.length).toBeLessThanOrEqual(1000);
   });
 });

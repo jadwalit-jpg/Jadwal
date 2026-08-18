@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import Link from 'next/link';
+import { LocaleLink as Link } from '@/components/locale-link';
 import { Clock, Heart, MapPin } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -9,6 +9,12 @@ import { localized } from '@/lib/localize';
 import { cn } from '@/lib/utils';
 import { Badge } from './badge';
 import { Rating } from './rating';
+
+// Neutral soft-gradient blur-up placeholder shown while a card image loads —
+// replaces the hard grey box with a gentle reveal. Generic (not per-image) so
+// there is ZERO backend/fetch surface: a tiny (~20×13) WebP, ~99 bytes, inlined.
+export const CARD_IMG_BLUR =
+  'data:image/webp;base64,UklGRjAAAABXRUJQVlA4ICQAAACwAgCdASoUAA0APt1cpkyopSOiMAgBEBuJaQAAeyAA/vKhAAA=';
 
 type Size = 'sm' | 'md' | 'lg' | 'fill';
 
@@ -177,6 +183,8 @@ export function ActivityCard({
               // the S3/CDN URLs are public and full AVIF/WebP negotiation
               // + responsive srcset run normally.
               unoptimized={process.env.NODE_ENV !== 'production'}
+              placeholder="blur"
+              blurDataURL={CARD_IMG_BLUR}
               className="object-cover transition-transform duration-500 group-hover:scale-105"
             />
           ) : (

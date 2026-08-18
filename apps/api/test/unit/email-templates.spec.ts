@@ -176,4 +176,31 @@ describe('bilingual email templates', () => {
       expect(out.text).toContain('{{APP_URL}}/vendor/acme-vendor/bookings/booking-id-42');
     });
   });
+
+  describe('booking-confirmation (Wanasa points reward line)', () => {
+    const base = {
+      customerName: 'Sara', activityTitle: 'Desert Safari', date: '2030-01-01',
+      guests: 2, totalAmount: '200', currency: 'QAR', bookingId: 'JDWL-1',
+    };
+
+    test('shows the earn-after-activity reward badge, 2 dp (EN + AR) when pointsToEarn > 0', () => {
+      // Points are QAR-denominated (1 pt = 1 QAR) and fractional → rendered to 2 dp
+      // in a "+X.XX points" badge, with copy that they land AFTER the activity ends.
+      const en = bookingConfirmationTemplate({ ...base, pointsToEarn: 2.5 }, 'EN');
+      expect(en.html).toMatch(/\+2\.50/);                   // badge value
+      expect(en.html).toMatch(/Wanasa points/i);            // "Wanasa points on the way"
+      expect(en.html).toMatch(/after your activity ends/i); // credited-after-event copy
+      expect(en.text).toMatch(/\+2\.50 points/i);
+      const ar = bookingConfirmationTemplate({ ...base, pointsToEarn: 2.5 }, 'AR');
+      expect(ar.html).toContain('نقاط ونسة');
+      expect(ar.text).toContain('نقاط ونسة');
+    });
+
+    test('hides the reward line when pointsToEarn is 0 or absent (points-paid booking earns nothing)', () => {
+      const zero = bookingConfirmationTemplate({ ...base, pointsToEarn: 0 }, 'EN');
+      expect(zero.html).not.toMatch(/Wanasa points/i);
+      const absent = bookingConfirmationTemplate(base, 'EN');
+      expect(absent.html).not.toMatch(/Wanasa points/i);
+    });
+  });
 });

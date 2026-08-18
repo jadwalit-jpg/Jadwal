@@ -19,6 +19,7 @@ import { BookingsService } from '../../src/bookings/bookings.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -54,8 +55,8 @@ function makeServices() {
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
   return {
-    admin: new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any),
-    vendor: new VendorService(prismaSvc, notificationService, loyalty, availabilityCache),
+    admin: new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any, makeSessionDenylistMock() as any),
+    vendor: new VendorService(prismaSvc, notificationService, loyalty, availabilityCache, makeSessionDenylistMock() as any),
     bookings: new BookingsService(
       prismaSvc, auditLogger, notificationService, redisLock,
       configService, loyalty, availabilityCache,
@@ -134,7 +135,7 @@ describe('Booking list endpoints — Wanasa points visibility', () => {
 
     expect(row.customer.id).toBe(seed.customer.id);
     // Points fields MUST come back (bug fix)
-    expect(row.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(row.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(row.pointsDiscount)).toBeGreaterThan(0);
     // Payment method identifies the Wanasa path
     expect(row.payment.method).toBe('WANASA_POINTS');
@@ -155,7 +156,7 @@ describe('Booking list endpoints — Wanasa points visibility', () => {
     expect(res.data).toHaveLength(1);
     const row = res.data[0];
 
-    expect(row.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(row.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(row.pointsDiscount)).toBeGreaterThan(0);
     expect(row.payment.method).toBe('WANASA_POINTS');
     // totalPrice = full vendor value (2 × 100 = 200).
@@ -176,7 +177,7 @@ describe('Booking list endpoints — Wanasa points visibility', () => {
     expect(res.data).toHaveLength(1);
     const row = res.data[0];
 
-    expect(row.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(row.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(row.pointsDiscount)).toBeGreaterThan(0);
     expect(row.payment.method).toBe('WANASA_POINTS');
   });
@@ -186,7 +187,7 @@ describe('Booking list endpoints — Wanasa points visibility', () => {
     const { bookings } = makeServices();
 
     const row: any = await bookings.getBookingById(seed.customer.id, bookingId);
-    expect(row.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(row.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(row.pointsDiscount)).toBeGreaterThan(0);
     expect(row.payment.method).toBe('WANASA_POINTS');
   });
@@ -227,7 +228,7 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
     // Wanasa chip + method badge on the earnings table.
     expect(earnings.recentPayments).toHaveLength(1);
     const p = earnings.recentPayments[0];
-    expect(p.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(p.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(p.pointsDiscount)).toBeGreaterThan(0);
     expect(p.payment.method).toBe('WANASA_POINTS');
   });
@@ -293,7 +294,7 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
     // Service fee is waived as a loyalty incentive to the customer.
     expect(Number(row.serviceFee)).toBe(0);
     // Redemption is capped at activity price — 200 QAR worth of points used.
-    expect(row.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(row.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(row.pointsDiscount)).toBe(200);
   });
 
@@ -303,8 +304,8 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
 
     await ctx.prisma.loyaltyConfig.upsert({
       where: { id: 'singleton' },
-      create: { id: 'singleton', pointsPerQar: 1, qarPerPoint: 1 },
-      update: { pointsPerQar: 1, qarPerPoint: 1 },
+      create: { id: 'singleton', pointsPerQar: 1, qarPerPoint: 1, minRedemption: 100 },
+      update: { pointsPerQar: 1, qarPerPoint: 1, minRedemption: 100 },
     });
     await ctx.prisma.user.update({
       where: { id: seed.customer.id },
@@ -349,21 +350,30 @@ describe('Dashboard & analytics aggregates — Wanasa visibility', () => {
     expect(b.status).toBe('PENDING');
     expect(Number(b.serviceFee)).toBe(5);
     expect(Number(b.totalPrice)).toBe(200);
-    expect(b.pointsRedeemed).toBe(100);
+    expect(Number(b.pointsRedeemed)).toBe(100);
     expect(Number(b.pointsDiscount)).toBe(100);
     expect(Number(b.payment!.amount)).toBe(105);
   });
 
   test('admin.getPayouts nested booking includes points fields via Prisma include', async () => {
-    await createWanasaBooking();
+    const { bookingId } = await createWanasaBooking();
     const { admin } = makeServices();
+
+    // getPayouts lists only what is PAYABLE NOW — a vendor is paid after the
+    // activity has taken place. The fixture books 7 days out, so age it past
+    // the escrow cutoff; this test is about the Prisma `include` returning
+    // loyalty fields, not about escrow.
+    await ctx.prisma.booking.update({
+      where: { id: bookingId },
+      data: { endDatetime: new Date(Date.now() - 86_400_000) },
+    });
 
     const res: any = await admin.getPayouts({ page: 1, limit: 20 });
     expect(res.data).toHaveLength(1);
     const p = res.data[0];
     // Admin getPayouts uses `include` (not `select`) on booking → all
     // scalar fields are returned by default, including loyalty fields.
-    expect(p.booking.pointsRedeemed).toBeGreaterThan(0);
+    expect(Number(p.booking.pointsRedeemed)).toBeGreaterThan(0);
     expect(Number(p.booking.pointsDiscount)).toBeGreaterThan(0);
     expect(p.method).toBe('WANASA_POINTS');
   });

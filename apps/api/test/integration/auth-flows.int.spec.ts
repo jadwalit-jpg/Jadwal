@@ -1,3 +1,5 @@
+// Anti-enum constant-time floor off in tests (behaviour verified by inspection; timing is flaky).
+process.env.REGISTER_MIN_RESPONSE_MS = '0';
 /**
  * AuthService end-to-end account flows against real Postgres.
  *
@@ -11,12 +13,13 @@
  */
 
 import { getTestContext, seedReference } from './_setup';
+import { TERMS_VERSION } from '../../src/common/terms';
 import { AuthService } from '../../src/auth/auth.service';
 import { UsersService } from '../../src/users/users.service';
 import {
   makeJwtMock, makeConfigMock, makeSecurityLoggerMock, makeAuditLoggerMock,
   makeEmailMock, makeEmailQuotaMock, makeNotificationMock, makeRedisMock,
-  makeResponseMock, makeRequestMock,
+  makeResponseMock, makeRequestMock, makeSessionDenylistMock,
 } from '../mocks/auth-deps.mock';
 import * as bcrypt from 'bcrypt';
 
@@ -40,6 +43,7 @@ function makeAuth(emailMock = makeEmailMock()) {
     makeEmailQuotaMock() as any,    // EmailQuotaService — mock returns true (no quota gating in tests)
     makeNotificationMock() as any,
     makeRedisMock() as any,         // RedisService — in-memory stub for rate-limit / lock state
+    makeSessionDenylistMock() as any,
   );
   return { svc, emailMock };
 }
@@ -75,18 +79,32 @@ describe('AuthService.registerAndLogin', () => {
     expect(emailMock.sendEmailVerification).toHaveBeenCalled();
   });
 
-  test('duplicate email → ConflictException', async () => {
+  test('M3: duplicate email → generic {pending} response (no enumeration) + notifies the owner', async () => {
     await seedReference(ctx.prisma);
-    const { svc } = makeAuth();
+    const emailMock = makeEmailMock();
+    const { svc } = makeAuth(emailMock);
 
-    await svc.registerAndLogin({
-      fullName: 'U1', email: 'dupe@t.com', password: 'P@ssw0rd123',
+    // Seed the existing owner DIRECTLY (not via a first registerAndLogin, whose
+    // fire-and-forget verification email would race this test's assertions).
+    await ctx.prisma.user.create({
+      data: { fullName: 'U1', email: 'dupe@t.com', password: 'x', role: 'CUSTOMER', emailVerified: true },
     });
-    await expect(
-      svc.registerAndLogin({
-        fullName: 'U2', email: 'dupe@t.com', password: 'Other!Pass9',
-      }),
-    ).rejects.toThrow(/already registered/i);
+
+    // Registering with the SAME email must NOT throw "already registered" (that's
+    // an existence oracle). It returns the identical generic response a fresh
+    // signup returns, so the two are indistinguishable to the caller.
+    const res = await svc.registerAndLogin({
+      fullName: 'U2', email: 'dupe@t.com', password: 'Other!Pass9',
+    });
+    expect(res).toEqual({ pending: true, email: 'dupe@t.com' });
+
+    // No SECOND account created, and NO verification email (the account exists) —
+    // instead the OWNER is told they already have one.
+    expect(await ctx.prisma.user.count({ where: { email: 'dupe@t.com' } })).toBe(1);
+    expect(emailMock.sendEmailVerification).not.toHaveBeenCalled();
+    expect(emailMock.sendAccountExistsNotification).toHaveBeenCalledWith(
+      'dupe@t.com', expect.objectContaining({ userName: 'U1' }), expect.anything(),
+    );
   });
 
   test('duplicate phone → ConflictException with neutral message (anti-enumeration)', async () => {
@@ -103,6 +121,69 @@ describe('AuthService.registerAndLogin', () => {
       }),
     ).rejects.toThrow(/different phone number/i);
     // Should NOT leak "phone already registered"
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Terms acceptance — captured at registration; recorded by the consent gate
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('Terms acceptance', () => {
+  test('registerAndLogin stamps termsAcceptedAt + current TERMS_VERSION', async () => {
+    await seedReference(ctx.prisma);
+    const { svc } = makeAuth();
+    await svc.registerAndLogin({ fullName: 'T', email: 'terms@t.com', password: 'S3cure!Pass1' });
+    const u = await ctx.prisma.user.findUniqueOrThrow({ where: { email: 'terms@t.com' } });
+    expect((u as any).termsAcceptedAt).toBeInstanceOf(Date);
+    expect((u as any).termsAcceptedVersion).toBe(TERMS_VERSION);
+  });
+
+  test('registerVendor stamps termsAcceptedAt + current TERMS_VERSION', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeAuth();
+    await svc.registerVendor({
+      fullName: 'Vend', email: 'vend-terms@t.com', password: 'S3cure!Pass1',
+      businessNameEn: 'Biz', businessNameAr: 'بيز', businessId: 'CR-123456',
+      slug: 'biz-terms-test', countryId: seed.country.id, termsAccepted: true,
+    } as any);
+    const u = await ctx.prisma.user.findUniqueOrThrow({ where: { email: 'vend-terms@t.com' } });
+    expect(u.role).toBe('VENDOR');
+    expect((u as any).termsAcceptedAt).toBeInstanceOf(Date);
+    expect((u as any).termsAcceptedVersion).toBe(TERMS_VERSION);
+  });
+
+  test('registerVendor auto-suffixes a colliding slug (read-only slug never dead-ends)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeAuth();
+    const base = {
+      businessNameEn: 'Doha Tours', businessNameAr: 'دوحة تورز',
+      countryId: seed.country.id, termsAccepted: true, password: 'S3cure!Pass1',
+    };
+    // Two different vendors derive the SAME slug from an identical business name.
+    await svc.registerVendor({ ...base, fullName: 'V One', email: 'v1-slug@t.com', businessId: 'CR-SLUG-1', slug: 'doha-tours' } as any);
+    await svc.registerVendor({ ...base, fullName: 'V Two', email: 'v2-slug@t.com', businessId: 'CR-SLUG-2', slug: 'doha-tours' } as any);
+
+    const v1 = await ctx.prisma.vendor.findUniqueOrThrow({ where: { businessId: 'CR-SLUG-1' } });
+    const v2 = await ctx.prisma.vendor.findUniqueOrThrow({ where: { businessId: 'CR-SLUG-2' } });
+    expect(v1.slug).toBe('doha-tours');
+    expect(v2.slug).toBe('doha-tours-2'); // auto-suffixed — no 409, no dead-end
+  });
+
+  test('acceptTerms sets consent for a user that had none (e.g. OAuth / pre-feature account)', async () => {
+    await seedReference(ctx.prisma);
+    const { svc } = makeAuth();
+    // A user with NO consent yet (mirrors a Google-OAuth signup / legacy row).
+    const user = await ctx.prisma.user.create({
+      data: { fullName: 'OAuth U', email: 'oauth-terms@t.com', role: 'CUSTOMER', emailVerified: true },
+    });
+    expect(user.termsAcceptedAt).toBeNull();
+
+    const res = await svc.acceptTerms(user.id);
+    expect(res).toEqual({ accepted: true, version: TERMS_VERSION });
+
+    const u = await ctx.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect((u as any).termsAcceptedAt).toBeInstanceOf(Date);
+    expect((u as any).termsAcceptedVersion).toBe(TERMS_VERSION);
   });
 });
 
@@ -379,6 +460,35 @@ describe('AuthService.loginWithCheck — lockout', () => {
     const after = await ctx.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     expect(after.failedLoginAttempts).toBe(0);
     expect(after.lockedUntil).toBeNull();
+  }, 30_000);
+
+  test('M4: after the lock EXPIRES, a single wrong password does NOT permanently re-lock', async () => {
+    await seedReference(ctx.prisma);
+    const { svc } = makeAuth();
+    const { user } = await mkVerifiedCustomer('expiry@t.com');
+
+    // Lock it (5 wrong), then simulate the lock window having elapsed.
+    for (let i = 0; i < 5; i++) {
+      await svc.loginWithCheck(user.email, 'WRONG!', makeResponseMock() as any, makeRequestMock() as any).catch(() => {});
+    }
+    await ctx.prisma.user.update({
+      where: { id: user.id },
+      data: { lockedUntil: new Date(Date.now() - 60_000) }, // lock expired 1 min ago (attempts still ≥5)
+    });
+
+    // ONE wrong password after expiry. Before the fix, failedLoginAttempts was
+    // still ≥5, so this single failure incremented to ≥6 and re-locked instantly
+    // → an attacker could keep the victim locked forever at 1 attempt / window.
+    await svc.loginWithCheck(user.email, 'WRONG!', makeResponseMock() as any, makeRequestMock() as any).catch(() => {});
+
+    const afterOneFail = await ctx.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(afterOneFail.lockedUntil).toBeNull();          // NOT re-locked
+    expect(afterOneFail.failedLoginAttempts).toBe(1);     // fresh budget: this is attempt #1, not #6
+
+    // And the correct password still works (the account is usable again).
+    await expect(
+      svc.loginWithCheck(user.email, 'Correct!Pass1', makeResponseMock() as any, makeRequestMock() as any),
+    ).resolves.toBeDefined();
   }, 30_000);
 
   test('unverified customer → login rejected with EMAIL_NOT_VERIFIED signal', async () => {

@@ -12,6 +12,13 @@ export interface BookingConfirmationData {
   bookingId: string;
   locationAddress?: string;
   mapsLink?: string;
+  /**
+   * Wanasa points the customer will earn once the booking is COMPLETED (after
+   * the event). Computed by the caller via LoyaltyService.computeEarnedPoints so
+   * it exactly matches what will be awarded. Omit / 0 = don't show the reward
+   * line (e.g. a booking fully paid with points earns nothing).
+   */
+  pointsToEarn?: number;
 }
 
 const STRINGS: Record<
@@ -25,6 +32,7 @@ const STRINGS: Record<
     mapsButton: string;
     viewButton: string;
     questions: string;
+    points: { title: string; caption: string; unit: string };
   }
 > = {
   EN: {
@@ -36,6 +44,11 @@ const STRINGS: Record<
     mapsButton: 'Open in Google Maps',
     viewButton: 'View Booking',
     questions: 'If you have any questions, reply to this email and our team will help.',
+    points: {
+      title: 'Wanasa points on the way',
+      caption: 'Added to your balance after your activity ends. 1 point = 1 QAR.',
+      unit: 'points',
+    },
   },
   AR: {
     subject: 'تأكيد الحجز — AL Jadwal',
@@ -46,6 +59,11 @@ const STRINGS: Record<
     mapsButton: 'افتح في خرائط Google',
     viewButton: 'عرض الحجز',
     questions: 'إذا كان لديك أي استفسار، يمكنك الرد على هذا البريد وسيساعدك فريقنا.',
+    points: {
+      title: 'نقاط ونسة في طريقها إليك',
+      caption: 'تُضاف إلى رصيدك بعد انتهاء نشاطك. كل نقطة = 1 ريال.',
+      unit: 'نقطة',
+    },
   },
 };
 
@@ -92,6 +110,36 @@ export function bookingConfirmationTemplate(
       </table>`
     : '';
 
+  // Wanasa reward — shown only when the booking will earn points (a cash
+  // booking); a points-paid booking earns 0 so this stays hidden. A branded
+  // badge (points value) + a short line making clear the points land AFTER the
+  // activity ends — not at booking time.
+  const pointsValue = data.pointsToEarn && data.pointsToEarn > 0 ? data.pointsToEarn.toFixed(2) : null;
+  const badgeCell = pointsValue
+    ? `<td width="76" valign="middle" align="center" style="width: 76px; background-color: #7c3aed; border-radius: 10px; padding: 12px 6px;">
+            <div style="font-family: Arial, sans-serif; font-size: 20px; font-weight: bold; color: #ffffff; line-height: 22px;">+${pointsValue}</div>
+            <div style="font-family: Arial, sans-serif; font-size: 10px; font-weight: bold; color: #ede9fe; text-transform: uppercase; letter-spacing: 1px;">${t.points.unit}</div>
+          </td>`
+    : '';
+  const textCell = pointsValue
+    ? `<td valign="middle" style="padding: 0 14px;">
+            <div style="font-family: Arial, sans-serif; font-size: 15px; font-weight: bold; color: #4c1d95; padding-bottom: 3px;">${t.points.title}</div>
+            <div style="font-family: Arial, sans-serif; font-size: 13px; color: #6b7280; line-height: 19px;">${t.points.caption}</div>
+          </td>`
+    : '';
+  const pointsSection = pointsValue
+    ? `
+      <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin-top: 16px; background-color: #faf5ff; border: 1px solid #e9d5ff; border-radius: 12px;">
+        <tr>
+          <td style="padding: 14px 16px;">
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+              <tr>${locale === 'AR' ? textCell + badgeCell : badgeCell + textCell}</tr>
+            </table>
+          </td>
+        </tr>
+      </table>`
+    : '';
+
   const content = `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
       <tr>
@@ -131,6 +179,8 @@ export function bookingConfirmationTemplate(
       </tr>
     </table>
 
+    ${pointsSection}
+
     ${locationSection}
 
     ${ctaButton(t.viewButton, viewUrl)}
@@ -153,6 +203,9 @@ export function bookingConfirmationTemplate(
     ...(data.time ? [`${L.time}: ${data.time}`] : []),
     `${L.guests}: ${data.guests}`,
     `${L.total}: ${data.currency} ${data.totalAmount}`,
+    ...(data.pointsToEarn && data.pointsToEarn > 0
+      ? ['', `${t.points.title}: +${data.pointsToEarn.toFixed(2)} ${t.points.unit} — ${t.points.caption}`]
+      : []),
     ...(data.locationAddress ? ['', `${L.location}: ${data.locationAddress}`] : []),
     ...(data.mapsLink ? [data.mapsLink] : []),
     '',

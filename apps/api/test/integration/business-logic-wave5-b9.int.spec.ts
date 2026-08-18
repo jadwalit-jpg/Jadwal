@@ -21,6 +21,7 @@ import { getTestContext, seedReference } from './_setup';
 import { AdminService } from '../../src/admin/admin.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import * as crypto from 'crypto';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -40,7 +41,7 @@ function makeAdmin() {
     invalidate: jest.fn().mockResolvedValue(undefined),
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
-  return new AdminService(prismaSvc, notif, loyalty, cache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any);
+  return new AdminService(prismaSvc, notif, loyalty, cache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any, makeSessionDenylistMock() as any);
 }
 
 async function seedCustomerWithHistory() {
@@ -130,7 +131,7 @@ describe('§B9 — deleteUser anonymises PII + preserves financial records', () 
     const ledgerAfter = await ctx.prisma.loyaltyLedger.findUnique({ where: { id: ledger.id } });
     expect(ledgerAfter).not.toBeNull();
     expect(ledgerAfter!.userId).toBe(seed.customer.id);
-    expect(ledgerAfter!.delta).toBe(100);
+    expect(Number(ledgerAfter!.delta)).toBe(100); // Decimal column → Number()
   });
 
   test('ephemerals are hard-deleted (sessions, push subs, notifications, claims, likes)', async () => {
@@ -387,5 +388,33 @@ describe('§B9 — soft-deleted entities are hidden from public catalog queries'
       where: { slug: originalSlug, deletedAt: null },
     });
     expect(found).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test-team bug (2026-06-15): a deleted vendor stayed visible in the admin
+// Vendors list. getVendors must exclude soft-deleted vendors end-to-end.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('§B9 — deleted vendor disappears from the admin Vendors list', () => {
+  test('getVendors no longer returns a vendor after deleteVendor', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = makeAdmin();
+
+    // Before: the active vendor is listed and counted.
+    const before: any = await admin.getVendors({});
+    expect(before.data.some((v: any) => v.id === seed.vendor.id)).toBe(true);
+    const totalBefore = before.total;
+
+    // Delete (soft-delete — row kept for audit).
+    await admin.deleteVendor(seed.vendor.id);
+
+    // After: gone from the list AND the total drops.
+    const after: any = await admin.getVendors({});
+    expect(after.data.some((v: any) => v.id === seed.vendor.id)).toBe(false);
+    expect(after.total).toBe(totalBefore - 1);
+
+    // But the row still exists in the DB (audit preserved) — just deletedAt-stamped.
+    const stillInDb = await ctx.prisma.vendor.findUnique({ where: { id: seed.vendor.id }, select: { deletedAt: true } });
+    expect(stillInDb!.deletedAt).not.toBeNull();
   });
 });

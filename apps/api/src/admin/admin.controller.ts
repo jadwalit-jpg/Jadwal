@@ -42,6 +42,10 @@ import { UpdateCommissionDto, UpdateVendorCommissionDto } from './dto/commission
 import { CreateTrendingEventDto, UpdateTrendingEventDto } from './dto/trending-event.dto';
 import { UpdatePlatformSettingsDto } from './dto/platform-settings.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
+import { CreateActivityBlockDto } from '../vendor/dto/create-activity-block.dto';
+import { BulkDeleteBlocksDto } from '../vendor/dto/bulk-delete-blocks.dto';
+import { CreateSpecialPriceDto } from '../vendor/dto/create-special-price.dto';
+import { BulkSpecialPriceDto } from '../vendor/dto/bulk-special-price.dto';
 import { MarkPayoutPaidDto, MarkPayoutUnpaidDto } from './dto/payout.dto';
 import { ProcessPayoutRequestDto } from './dto/process-payout-request.dto';
 import { RevertPayoutRequestDto } from './dto/revert-payout-request.dto';
@@ -50,7 +54,7 @@ import { UpdateAdminProfileDto, ChangeAdminPasswordDto } from './dto/admin-profi
 import { UpdateLoyaltyConfigDto, AdjustUserPointsDto } from './dto/loyalty.dto';
 import { LoyaltyUserQueryDto } from './dto/loyalty-user-query.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { Throttle } from '@nestjs/throttler';
+import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { RATE_LIMIT_ADMIN, RATE_LIMIT_WRITE, RATE_LIMIT_CALLBACK, RATE_LIMIT_AUTH, RATE_LIMIT_STRICT, RATE_LIMIT_MINIMAL, RATE_LIMIT_READ } from '../common/throttle-config';
 import { AdminAuditInterceptor } from './interceptors/audit.interceptor';
 
@@ -58,6 +62,13 @@ import { AdminAuditInterceptor } from './interceptors/audit.interceptor';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN')
 @UseInterceptors(AdminAuditInterceptor)
+// Skip the global `long` (100/10min) + `availability` (30/min) named tiers so the
+// intended 120/min ADMIN limit actually applies. Without this, those two global
+// tiers still evaluate on every admin route and the 30/min availability floor —
+// meant for PUBLIC unauthenticated endpoints — silently caps authenticated admin
+// dashboard reads to ~30/min, causing spurious 429s. Per-method @Throttle
+// overrides on mutations (WRITE/STRICT) remain stricter and unaffected.
+@SkipThrottle({ long: true, availability: true })
 @Throttle(RATE_LIMIT_ADMIN) // generous for admin reads, overridden on mutations
 export class AdminController {
   constructor(
@@ -247,6 +258,62 @@ export class AdminController {
   @Throttle(RATE_LIMIT_WRITE)
   toggleFeatured(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.toggleFeatured(id);
+  }
+
+  // ─── Activity availability blocks (admin can manage any activity) ──
+  // List inherits the class RATE_LIMIT_ADMIN; mutations use RATE_LIMIT_WRITE.
+  @Get('activities/:id/blocks')
+  getActivityBlocks(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.getActivityBlocks(id);
+  }
+
+  @Post('activities/:id/blocks')
+  @Throttle(RATE_LIMIT_WRITE)
+  createActivityBlock(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateActivityBlockDto) {
+    return this.adminService.createActivityBlock(id, dto);
+  }
+
+  @Delete('activities/:id/blocks/:blockId')
+  @Throttle(RATE_LIMIT_WRITE)
+  deleteActivityBlock(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('blockId', ParseUUIDPipe) blockId: string,
+  ) {
+    return this.adminService.deleteActivityBlock(id, blockId);
+  }
+
+  @Post('activities/:id/blocks/bulk-delete')
+  @Throttle(RATE_LIMIT_WRITE)
+  deleteActivityBlocksBulk(@Param('id', ParseUUIDPipe) id: string, @Body() dto: BulkDeleteBlocksDto) {
+    return this.adminService.deleteActivityBlocksBulk(id, dto.ids);
+  }
+
+  // ─── Activity special prices (admin can manage any activity) ──
+  // List inherits the class RATE_LIMIT_ADMIN; mutations use RATE_LIMIT_WRITE.
+  @Get('activities/:id/special-prices')
+  getActivitySpecialPrices(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.getActivitySpecialPrices(id);
+  }
+
+  @Post('activities/:id/special-prices')
+  @Throttle(RATE_LIMIT_WRITE)
+  createActivitySpecialPrice(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateSpecialPriceDto) {
+    return this.adminService.createActivitySpecialPrice(id, dto);
+  }
+
+  @Post('activities/:id/special-prices/bulk')
+  @Throttle(RATE_LIMIT_WRITE)
+  bulkCreateActivitySpecialPrices(@Param('id', ParseUUIDPipe) id: string, @Body() dto: BulkSpecialPriceDto) {
+    return this.adminService.bulkCreateActivitySpecialPrices(id, dto);
+  }
+
+  @Delete('activities/:id/special-prices/:priceId')
+  @Throttle(RATE_LIMIT_WRITE)
+  deleteActivitySpecialPrice(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('priceId', ParseUUIDPipe) priceId: string,
+  ) {
+    return this.adminService.deleteActivitySpecialPrice(id, priceId);
   }
 
   // ─── Bookings ───────────────────────────────────────────────

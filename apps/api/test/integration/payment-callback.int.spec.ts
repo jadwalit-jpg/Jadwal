@@ -57,11 +57,32 @@ function configShim(overrides: Record<string, string> = {}) {
 
 function makePaymentService(configOverrides: Record<string, string> = {}) {
   const prismaSvc = { client: ctx.prisma } as any;
+  // Faithful SET NX PX semantics: first acquire of a key wins (returns a token),
+  // a second acquire of a still-held key returns null. This matters for the
+  // duplicate-capture dedup, which relies on an atomic Redis marker.
+  const heldLocks = new Set<string>();
   const redisLock = {
-    acquire: jest.fn().mockResolvedValue('lock-token'),
-    release: jest.fn().mockResolvedValue(undefined),
+    acquire: jest.fn(async (key: string) => {
+      if (heldLocks.has(key)) return null;
+      heldLocks.add(key);
+      return 'lock-token';
+    }),
+    release: jest.fn(async (key: string) => { heldLocks.delete(key); }),
   } as any;
-  const auditLogger = { log: jest.fn().mockResolvedValue(undefined) } as any;
+  // Persist to the real auditLog table (as the production AuditLoggerService does
+  // — it awaits the create) AND record the call, so tests can both count calls and
+  // exercise code that READS audit rows back (e.g. the duplicate-capture dedup).
+  const auditLogger = {
+    log: jest.fn(async (p: any) => {
+      await ctx.prisma.auditLog.create({
+        data: {
+          actorType: p.actorType, actorId: p.actorId, actorName: p.actorName,
+          action: p.action, entity: p.entity, entityId: p.entityId ?? null,
+          details: p.details ?? null, actionCategory: p.actionCategory ?? 'OPERATIONAL',
+        },
+      });
+    }),
+  } as any;
   const notificationService = {
     send: jest.fn().mockResolvedValue(undefined),
     notifyAdmins: jest.fn().mockResolvedValue(undefined),
@@ -71,6 +92,16 @@ function makePaymentService(configOverrides: Record<string, string> = {}) {
   } as any;
   const availabilityCache = {
     invalidate: jest.fn().mockResolvedValue(undefined),
+  } as any;
+  const loyalty = {
+    refund: jest.fn().mockResolvedValue(undefined),
+    redeem: jest.fn().mockResolvedValue(undefined),
+    reverseAwarded: jest.fn().mockResolvedValue(undefined),
+    // Pure function (no DB) — mirror the real LoyaltyService formula so the
+    // booking-confirmation email's projected-points value is computed correctly.
+    computeEarnedPoints: jest.fn((total: number, discount: number, rate: number) =>
+      rate <= 0 ? 0 : Math.round(Math.max(0, total - discount) * rate * 100) / 100,
+    ),
   } as any;
 
   return {
@@ -82,7 +113,9 @@ function makePaymentService(configOverrides: Record<string, string> = {}) {
       notificationService,
       emailService,
       availabilityCache,
+      loyalty,
     ),
+    loyalty,
     auditLogger,
     notificationService,
     emailService,
@@ -97,6 +130,18 @@ function makePaymentService(configOverrides: Record<string, string> = {}) {
  */
 function signCallback(basketId: string, amount: string, errCode: string): string {
   const raw = `${PAY2M.MERCHANT_ID}${basketId}${PAY2M.SECRET_WORD}${amount}${errCode}`;
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+/**
+ * NAPS/QPay rail Response_Key — the SWAPPED order (err_code + amount), as
+ * proven from live production recipeMatch diagnostics (2026-06-10): NAPS signs
+ * SHA256(merchant_id + basket_id + secret_word + err_code + amount) with the
+ * gateway code "00" and the integer amount form, while echoing "001" in the
+ * visible err_code field.
+ */
+function signCallbackNaps(basketId: string, amount: string, errCode: string): string {
+  const raw = `${PAY2M.MERCHANT_ID}${basketId}${PAY2M.SECRET_WORD}${errCode}${amount}`;
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
@@ -325,6 +370,34 @@ describe('PaymentService.handleCallback — email outbox (R4)', () => {
 
     expect(await ctx.prisma.emailOutbox.count()).toBe(0);
   });
+
+  test('FAILURE callback REFUNDS a coupon-applied booking (usedCount--, status restored, claim freed)', async () => {
+    const { svc } = makePaymentService();
+    const { seed, basketId, bookingId, amountStr } = await seedPendingPayment(120);
+    // The state createBooking leaves for a single-use voucher it consumed:
+    // usedCount at the cap, auto-EXPIRED, claim marked used.
+    const voucher = await ctx.prisma.coupon.create({
+      data: {
+        code: `FAILREF-${crypto.randomUUID().slice(0, 6)}`, vendorId: null,
+        discountType: 'PERCENTAGE', discountValue: 10,
+        validFrom: new Date('2020-01-01T00:00:00Z'), validTo: new Date('2035-01-01T00:00:00Z'),
+        usageLimit: 1, usedCount: 1, status: 'EXPIRED',
+      },
+    });
+    const claim = await ctx.prisma.claimedCoupon.create({ data: { userId: seed.customer.id, couponId: voucher.id, used: true } });
+    await ctx.prisma.booking.update({ where: { id: bookingId }, data: { couponCode: voucher.code } });
+
+    // PAY2M reports failure → booking torn down → the coupon must be returned.
+    await svc.handleCallback({
+      err_code: '99', basket_id: basketId,
+      Response_Key: signCallback(basketId, amountStr, '99'),
+    });
+
+    const after = await ctx.prisma.coupon.findUniqueOrThrow({ where: { id: voucher.id } });
+    expect(after.usedCount).toBe(0);
+    expect(after.status).toBe('APPROVED'); // restored — voucher back in the customer's wallet
+    expect((await ctx.prisma.claimedCoupon.findUniqueOrThrow({ where: { id: claim.id } })).used).toBe(false);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -400,7 +473,7 @@ describe('PaymentService.handleCallback — tamper detection', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('PaymentService.handleCallback — FAILURE path', () => {
-  test('err_code non-00 → booking + payment rows deleted (slot freed)', async () => {
+  test('err_code non-00 → booking deleted (slot freed), payment KEPT as FAILED', async () => {
     const { svc } = makePaymentService();
     const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(200);
 
@@ -410,8 +483,20 @@ describe('PaymentService.handleCallback — FAILURE path', () => {
     });
 
     expect(res.status).toBe('failed');
-    expect(await ctx.prisma.payment.findUnique({ where: { id: paymentId } })).toBeNull();
+
+    // The unpaid booking is removed so the slot is freed.
     expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+
+    // But the payment row is NOT hard-deleted (was the H2 bug). It is flipped to
+    // FAILED and retained: (1) the codebase invariant is "payments are never
+    // hard-deleted" (7-year FINANCIAL retention); (2) keeping gatewayBasketId +
+    // bookingSnapshot is what lets §B2 orphan-recovery re-create the booking or
+    // queue a refund if PAY2M later reports a genuine capture for this basket
+    // (browser callbacks can carry non-terminal codes like 002/001).
+    const kept = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(kept).not.toBeNull();
+    expect(kept!.status).toBe('FAILED');
+    expect(kept!.gatewayBasketId).toBe(basketId); // recovery anchor preserved
   });
 
   test('availabilityCache invalidate called for the deleted booking\'s activity', async () => {
@@ -465,24 +550,145 @@ describe('PaymentService.handleCallback — idempotency', () => {
     expect(auditLogger.log.mock.calls.length).toBe(auditCallsAfter1);
   });
 
-  test('duplicate FAILURE callback → 2nd returns failed without throwing; no booking/payment resurrected', async () => {
+  test('duplicate FAILURE callback → 2nd returns failed idempotently; no booking resurrected', async () => {
     const { svc } = makePaymentService();
-    const { basketId, amountStr } = await seedPendingPayment(200);
+    const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(200);
 
     await svc.handleCallback({
       err_code: '01', basket_id: basketId,
       Response_Key: signCallback(basketId, amountStr, '01'),
     });
 
-    // Second call now hits "unknown basket" because the payment row is gone —
-    // that is the expected post-failure behaviour (idempotent from the
-    // customer's point of view because their money is already back).
-    await expect(
-      svc.handleCallback({
-        err_code: '01', basket_id: basketId,
-        Response_Key: signCallback(basketId, amountStr, '01'),
-      }),
-    ).rejects.toThrow('Payment not found');
+    // The payment row is now KEPT as FAILED (H2 fix) rather than hard-deleted, so
+    // the second callback no longer throws "Payment not found". It finds the
+    // FAILED row, the `updateMany WHERE status:'PENDING'` matches nothing, and it
+    // returns a clean idempotent "failed" — a strictly better outcome than the old
+    // throw, and the booking is NOT resurrected.
+    const res2 = await svc.handleCallback({
+      err_code: '01', basket_id: basketId,
+      Response_Key: signCallback(basketId, amountStr, '01'),
+    });
+    expect(res2.status).toBe('failed');
+
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('FAILED');
+    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+  });
+
+  test('SECOND CAPTURE (different txn id on an already-SUCCESS payment) → flagged, not swallowed', async () => {
+    const { svc, auditLogger, notificationService } = makePaymentService();
+    const { basketId, paymentId, amountStr } = await seedPendingPayment(200);
+
+    // First capture → SUCCESS, records txn 'CAP-1'.
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'CAP-1', Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+    const auditsAfterFirst = auditLogger.log.mock.calls.length;
+
+    // A REPLAY of the same capture (same txn id) must stay a silent no-op.
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'CAP-1', Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+    expect(auditLogger.log.mock.calls.length).toBe(auditsAfterFirst); // no new audit
+
+    // Only the duplicate-capture ALERT is the concern here; the normal success flow
+    // may notify admins for its own reasons, so we assert on DELTAS not absolutes.
+    const dupAudits = () =>
+      auditLogger.log.mock.calls.map((c: any[]) => c[0]).filter((a: any) => a.action === 'PAYMENT_DUPLICATE_CAPTURE');
+    const dupNotifies = () =>
+      (notificationService.notifyAdmins as jest.Mock).mock.calls.filter((c: any[]) => /duplicate charge/i.test(c[0]?.title ?? ''));
+
+    // An UNSIGNED second capture (forged/garbage Response_Key) must NOT raise an
+    // alarm — the duplicate-charge alert fires only for an AUTHENTICATED success,
+    // otherwise anyone hitting /payment/callback could spam admins.
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'FORGED', Response_Key: 'deadbeef'.repeat(8), // wrong hash
+    });
+    expect(dupAudits()).toHaveLength(0);
+    expect(dupNotifies()).toHaveLength(0);
+
+    // A genuine SECOND CAPTURE (DIFFERENT, correctly-signed txn) is the
+    // duplicate-charge case — recorded FINANCIAL + paged to admin, not discarded.
+    const res = await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'CAP-2', Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+    expect(res.status).toBe('success'); // still idempotent to the gateway
+
+    expect(dupAudits()).toHaveLength(1);
+    expect(dupAudits()[0].actionCategory).toBe('FINANCIAL');
+    expect(dupAudits()[0].entityId).toBe(paymentId);
+    expect(dupNotifies()).toHaveLength(1);
+
+    // REPLAY of the same second capture (CAP-2 again). The admin PAGE is deduped
+    // (atomic Redis marker) — admins are paged exactly ONCE. The FINANCIAL audit
+    // row, however, is written unconditionally each time BY DESIGN: durability of
+    // the authoritative record must not hinge on a best-effort marker, so a
+    // duplicate (harmless, append-only) row is the deliberate trade. (PAY2M can
+    // re-deliver; a browser redirect can be re-hit.)
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId,
+      transaction_id: 'CAP-2', Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+    expect(dupNotifies()).toHaveLength(1); // page deduped — still ONE (the guarantee that matters)
+    expect(dupAudits()).toHaveLength(2); // audit written every time — durable, not gated on the marker
+
+    // The recorded capture is unchanged — we never overwrite CAP-1 with CAP-2.
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).gatewayTxnId).toBe('CAP-1');
+  });
+
+  test('CONCURRENT second capture (loser of the confirm race) → still flagged', async () => {
+    // The dangerous case: two captures arrive so close that BOTH read PENDING at
+    // entry. The winner confirms (records CAP-1); the loser's confirm updateMany
+    // matches 0 rows (already SUCCESS) and returns success through the optimistic-
+    // lock-loss path — WITHOUT re-entering the entry-SUCCESS branch. Without the
+    // loss-path detection this genuine double charge is silently dropped.
+    //
+    // We drive the loser deterministically: force ONLY the entry read (by basket
+    // id) to report PENDING, while the real row is already SUCCESS with CAP-1 —
+    // exactly the state the loser observes.
+    const { svc, auditLogger, notificationService } = makePaymentService();
+    const { basketId, paymentId, amountStr } = await seedPendingPayment(200);
+
+    // Winner confirms first.
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'CAP-1',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    const realFindUnique = ctx.prisma.payment.findUnique.bind(ctx.prisma.payment);
+    const spy = (jest.spyOn(ctx.prisma.payment, 'findUnique') as any).mockImplementation(async (args: any) => {
+      const row = await realFindUnique(args);
+      // Only the entry lookup (by gatewayBasketId) sees the stale PENDING; the
+      // by-id refetch + the helper's re-read see the true SUCCESS + CAP-1.
+      if (args?.where?.gatewayBasketId && row) return { ...row, status: 'PENDING' };
+      return row;
+    });
+
+    let res;
+    try {
+      res = await svc.handleCallback({
+        err_code: '00', basket_id: basketId, transaction_id: 'CAP-2-CONCURRENT',
+        Response_Key: signCallback(basketId, amountStr, '00'),
+      });
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(res!.status).toBe('success'); // idempotent to the gateway
+
+    const dup = auditLogger.log.mock.calls
+      .map((c: any[]) => c[0])
+      .filter((a: any) => a.action === 'PAYMENT_DUPLICATE_CAPTURE' && /CAP-2-CONCURRENT/.test(a.details ?? ''));
+    expect(dup).toHaveLength(1); // the loser flagged the duplicate
+    expect(dup[0].actionCategory).toBe('FINANCIAL');
+    expect(
+      (notificationService.notifyAdmins as jest.Mock).mock.calls.filter((c: any[]) => /duplicate charge/i.test(c[0]?.title ?? '')),
+    ).toHaveLength(1);
+    // Winner's txn preserved.
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).gatewayTxnId).toBe('CAP-1');
   });
 });
 
@@ -567,5 +773,227 @@ describe('PaymentService.handleCallback — cron-race recovery', () => {
     const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(p.status).toBe('REFUND_PENDING');
     expect(p.refundAmount?.toString()).toBe('200');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NAPS/QPay rail — rail-aware hold semantics against a real DB
+//
+// A verified NAPS success is authentic but capture-ambiguous (the rail can
+// sign "00" pre-capture — live basket 939bd325 booked with no money — AND
+// post-capture — Apple Pay/Fawran captures lost their bookings when rejected).
+// So: NAPS success → HOLD (payment+booking stay PENDING, reservation extended,
+// audited, status 'pending'); NAPS failure → normal cleanup; card → unchanged.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('PaymentService.handleCallback — NAPS rail (err+amount order)', () => {
+  test('verified NAPS success → HELD: stays PENDING, reservation extended, audited, 0 outbox, nothing deleted', async () => {
+    const { svc, auditLogger, availabilityCache } = makePaymentService();
+    const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
+    const before = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId }, select: { reservedUntil: true } });
+
+    // Real NAPS shape: visible err_code "001", hash signed err "00" + INTEGER amount.
+    const res = await svc.handleCallback({
+      err_code: '001', basket_id: basketId, transaction_id: 'TXN-NAPS-HELD',
+      Response_Key: signCallbackNaps(basketId, '200', '00'),
+    });
+
+    expect(res.status).toBe('pending');
+    expect(res.bookingId).toBe(bookingId);
+
+    // Money-state untouched: neither confirmed (no money proof) nor deleted (money may be real).
+    const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(p.status).toBe('PENDING');
+    expect(p.paidAt).toBeNull();
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
+    expect(b.status).toBe('PENDING');
+
+    // Reservation extended forward (seed gives +10 min; hold extends to ~+30 min).
+    expect(b.reservedUntil!.getTime()).toBeGreaterThan(before.reservedUntil!.getTime());
+    expect(b.reservedUntil!.getTime()).toBeGreaterThan(Date.now() + 20 * 60_000);
+
+    // No success side-effects fired.
+    expect(await ctx.prisma.emailOutbox.findMany({ where: { bookingId } })).toHaveLength(0);
+    expect(availabilityCache.invalidate).not.toHaveBeenCalled();
+
+    // Forensic trail: held-awaiting-capture, not success/failure.
+    expect(auditLogger.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_NAPS_AWAITING_CAPTURE', actionCategory: 'FINANCIAL' }),
+    );
+  });
+
+  test('duplicate NAPS success callbacks → idempotent holds (still PENDING, never confirmed)', async () => {
+    const { svc } = makePaymentService();
+    const { basketId, paymentId } = await seedPendingPayment(200);
+
+    const key = signCallbackNaps(basketId, '200', '00');
+    await svc.handleCallback({ err_code: '001', basket_id: basketId, Response_Key: key });
+    const res2 = await svc.handleCallback({ err_code: '001', basket_id: basketId, Response_Key: key });
+
+    expect(res2.status).toBe('pending');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+  });
+
+  test('verified NAPS FAILURE (901 customer-cancel) → booking deleted, payment KEPT as FAILED, slot freed', async () => {
+    const { svc, availabilityCache } = makePaymentService();
+    const { basketId, paymentId, bookingId, seed } = await seedPendingPayment(200);
+
+    const res = await svc.handleCallback({
+      err_code: '901', basket_id: basketId,
+      Response_Key: signCallbackNaps(basketId, '200', '901'),
+    });
+
+    expect(res.status).toBe('failed');
+    // Booking gone (slot freed); payment retained as FAILED (never hard-deleted).
+    expect(await ctx.prisma.booking.findUnique({ where: { id: bookingId } })).toBeNull();
+    const kept = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(kept).not.toBeNull();
+    expect(kept!.status).toBe('FAILED');
+    expect(availabilityCache.invalidate).toHaveBeenCalledWith(seed.activity.id);
+  });
+
+  test('cron-FAILED payment + late NAPS success → held as pending, payment stays FAILED (no capture-ambiguous recovery)', async () => {
+    const { svc, auditLogger } = makePaymentService();
+    const { basketId, paymentId } = await seedPendingPayment(200);
+    await ctx.prisma.payment.update({ where: { id: paymentId }, data: { status: 'FAILED' } });
+
+    const res = await svc.handleCallback({
+      err_code: '001', basket_id: basketId,
+      Response_Key: signCallbackNaps(basketId, '200', '00'),
+    });
+
+    expect(res.status).toBe('pending');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('FAILED');
+    expect(auditLogger.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_NAPS_AWAITING_CAPTURE' }),
+    );
+  });
+
+  test('SECURITY: forged NAPS-shaped callback (wrong key) still rejected; nothing held or deleted', async () => {
+    const { svc } = makePaymentService();
+    const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
+
+    await expect(svc.handleCallback({
+      err_code: '001', basket_id: basketId, Response_Key: 'a'.repeat(64),
+    })).rejects.toThrow(/verification failed/i);
+
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('PENDING');
+  });
+
+  test('SECURITY: NAPS-order signature for the WRONG amount does not verify (amount tamper)', async () => {
+    const { svc } = makePaymentService();
+    const { basketId } = await seedPendingPayment(200);
+
+    // Signed for 1 QAR but the payment is 200 QAR — must not pass on any form/order.
+    await expect(svc.handleCallback({
+      err_code: '001', basket_id: basketId, Response_Key: signCallbackNaps(basketId, '1', '00'),
+    })).rejects.toThrow(/verification failed/i);
+  });
+
+  test('card SUCCESS regression: amount+err order still confirms exactly as before', async () => {
+    const { svc } = makePaymentService();
+    const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(150);
+
+    const res = await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'TXN-CARD-REG',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    expect(res.status).toBe('success');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('SUCCESS');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('CONFIRMED');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IPN capture confirmation — the server-to-server push is the authoritative
+// "captured" signal for NAPS (browser callback is hash-unverifiable: no amount).
+// Trust = allow-listed source IP (NOT the hash). These prove: a trusted success
+// books; an UNTRUSTED IPN can neither confirm nor fail (anti-forgery); a trusted
+// failure marks failed (no booking); retries are idempotent; the charged amount
+// is always the server-frozen payment.amount (the IPN carries none).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const IPN_CFG = { PAY2M_IPN_CONFIRM_ENABLED: 'true', PAY2M_IPN_ALLOWED_IPS: '34.18.115.33' };
+
+describe('PaymentService — IPN capture confirmation', () => {
+  test('trusted SUCCESS IPN (err_code 0000) → booking CONFIRMED, amount = server value', async () => {
+    const { basketId, paymentId, bookingId, amountStr } = await seedPendingPayment(200);
+    const { svc } = makePaymentService(IPN_CFG);
+    const res = await svc.handleCallback(
+      { err_code: '0000', basket_id: basketId, transaction_id: 'TXN-IPN-1', Response_Key: '' },
+      { via: 'ipn', trustedCapture: true },
+    );
+    expect(res.status).toBe('success');
+    const p = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(p.status).toBe('SUCCESS');
+    expect(Number(p.amount).toFixed(2)).toBe(amountStr); // unchanged — IPN has no amount
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('CONFIRMED');
+  });
+
+  test('UNTRUSTED IPN success → NO confirm (anti-forgery): payment + booking stay PENDING', async () => {
+    const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
+    const { svc } = makePaymentService(IPN_CFG);
+    const res = await svc.handleCallback(
+      { err_code: '0000', basket_id: basketId, transaction_id: 'TXN-FORGED', Response_Key: '' },
+      { via: 'ipn', trustedCapture: false },
+    );
+    expect(res.status).toBe('pending');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('PENDING');
+  });
+
+  test('UNTRUSTED IPN failure → does NOT fail a legit pending payment (forged-failure guard)', async () => {
+    const { basketId, paymentId } = await seedPendingPayment(200);
+    const { svc } = makePaymentService(IPN_CFG);
+    await svc.handleCallback(
+      { err_code: '90', basket_id: basketId, transaction_id: 'TXN-FORGED-FAIL', Response_Key: '' },
+      { via: 'ipn', trustedCapture: false },
+    );
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+  });
+
+  test('trusted NON-success IPN (err_code 90) → NO destructive action (stays PENDING; callback+cron handle declines)', async () => {
+    const { basketId, paymentId, bookingId } = await seedPendingPayment(200);
+    const { svc } = makePaymentService(IPN_CFG);
+    const res = await svc.handleCallback(
+      { err_code: '90', basket_id: basketId, transaction_id: 'TXN-FAIL', Response_Key: '' },
+      { via: 'ipn', trustedCapture: true },
+    );
+    // We never FAIL from an IPN (unknown code taxonomy) — leave it PENDING so a
+    // payment PAY2M may still capture is never prematurely failed.
+    expect(res.status).toBe('pending');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('PENDING');
+    expect((await ctx.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe('PENDING');
+  });
+
+  test('duplicate trusted success IPN → idempotent (stays SUCCESS, no error)', async () => {
+    const { basketId, paymentId } = await seedPendingPayment(200);
+    const { svc } = makePaymentService(IPN_CFG);
+    await svc.handleCallback({ err_code: '0000', basket_id: basketId, transaction_id: 'TXN-A', Response_Key: '' }, { via: 'ipn', trustedCapture: true });
+    const res2 = await svc.handleCallback({ err_code: '0000', basket_id: basketId, transaction_id: 'TXN-A', Response_Key: '' }, { via: 'ipn', trustedCapture: true });
+    expect(res2.status).toBe('success');
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('SUCCESS');
+  });
+});
+
+describe('PaymentService.isTrustedIpnSource — fail-closed', () => {
+  test('feature OFF → never trusted, even an allow-listed IP', async () => {
+    const { svc } = makePaymentService({ PAY2M_IPN_CONFIRM_ENABLED: 'false', PAY2M_IPN_ALLOWED_IPS: '34.18.115.33' });
+    expect(svc.isTrustedIpnSource('34.18.115.33')).toBe(false);
+  });
+  test('feature ON + IP in allow-list → trusted', async () => {
+    const { svc } = makePaymentService(IPN_CFG);
+    expect(svc.isTrustedIpnSource('34.18.115.33')).toBe(true);
+  });
+  test('feature ON + IP NOT in allow-list → not trusted', async () => {
+    const { svc } = makePaymentService(IPN_CFG);
+    expect(svc.isTrustedIpnSource('1.2.3.4')).toBe(false);
+    expect(svc.isTrustedIpnSource(undefined)).toBe(false);
+  });
+  test('empty allow-list → trusts nothing (fail-closed)', async () => {
+    const { svc } = makePaymentService({ PAY2M_IPN_CONFIRM_ENABLED: 'true', PAY2M_IPN_ALLOWED_IPS: '' });
+    expect(svc.isTrustedIpnSource('34.18.115.33')).toBe(false);
   });
 });

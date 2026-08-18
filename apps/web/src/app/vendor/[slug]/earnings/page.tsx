@@ -172,7 +172,7 @@ export default function VendorEarningsPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="md:ms-64 p-4 md:p-10 overflow-x-hidden">
+      <main className="md:ms-64 p-4 max-md:pt-16 md:p-10 overflow-x-hidden">
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight">{t('vendor.earnings.title')}</h1>
           <p className="text-gray-500 dark:text-slate-400 mt-1">{t('vendor.earnings.subtitle')}</p>
@@ -260,7 +260,7 @@ export default function VendorEarningsPage() {
                 <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{t('vendor.earnings.payoutRequests.subtitle')}</p>
               </div>
             </div>
-            <table className="w-full">
+            <div className="overflow-x-auto"><table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-slate-800">
                   <th className="text-start px-6 py-3 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
@@ -325,7 +325,7 @@ export default function VendorEarningsPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
             {payoutRequests.totalPages > 1 && (
               <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 dark:border-slate-800">
                 <p className="text-xs text-gray-500 dark:text-slate-400">
@@ -375,7 +375,7 @@ export default function VendorEarningsPage() {
               <p className="text-gray-400 dark:text-slate-500 text-sm mt-1">{t('vendor.earnings.paymentHistory.emptySubtitle')}</p>
             </div>
           ) : (
-            <table className="w-full">
+            <div className="overflow-x-auto"><table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-slate-800">
                   <th className="text-start px-6 py-4 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
@@ -423,7 +423,7 @@ export default function VendorEarningsPage() {
                           ) : pts > 0 ? (
                             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-600 dark:text-purple-400 w-fit">
                               <Sparkles className="h-3 w-3" aria-hidden="true" />
-                              {t('vendor.earnings.paymentHistory.ptsApplied', { pts })}
+                              {t('vendor.earnings.paymentHistory.ptsApplied', { pts: pts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })}
                             </span>
                           ) : null}
                         </div>
@@ -443,7 +443,7 @@ export default function VendorEarningsPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
           )}
         </div>
 

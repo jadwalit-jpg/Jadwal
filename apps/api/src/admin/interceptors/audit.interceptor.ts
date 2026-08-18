@@ -153,6 +153,10 @@ export class AdminAuditInterceptor implements NestInterceptor {
       'PATCH:/admin/activities/:id/status': 'UPDATE_ACTIVITY_STATUS',
       'PATCH:/admin/activities/:id/feature': 'TOGGLE_ACTIVITY_FEATURED',
       'PATCH:/admin/activities/:id': 'UPDATE_ACTIVITY',
+      // Activity availability blocks
+      'POST:/admin/activities/:id/blocks': 'CREATE_ACTIVITY_BLOCK',
+      'POST:/admin/activities/:id/blocks/bulk-delete': 'DELETE_ACTIVITY_BLOCKS_BULK',
+      'DELETE:/admin/activities/:id/blocks/:blockId': 'DELETE_ACTIVITY_BLOCK',
       // Users
       'PATCH:/admin/users/:id/role': 'UPDATE_USER_ROLE',
       'PATCH:/admin/users/:id/deactivate': 'TOGGLE_USER_ACTIVE',
@@ -212,6 +216,8 @@ export class AdminAuditInterceptor implements NestInterceptor {
   /** Extract entity name from route */
   private resolveEntity(route: string): string {
     if (route.includes('/vendors')) return 'Vendor';
+    // Check /blocks before /activities — block routes contain both substrings.
+    if (route.includes('/blocks')) return 'ActivityBlock';
     if (route.includes('/activities')) return 'Activity';
     if (route.includes('/users')) return 'User';
     if (route.includes('/bookings')) return 'Booking';

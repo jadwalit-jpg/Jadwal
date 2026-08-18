@@ -1,5 +1,6 @@
 import { Controller, Get, HttpCode, ServiceUnavailableException, Logger } from '@nestjs/common';
-import { SkipThrottle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
+import { RATE_LIMIT_HEALTH } from './common/throttle-config';
 import { Public } from './auth/decorators/public.decorator';
 import { AppService } from './app.service';
 import { PrismaService } from './prisma/prisma.service';
@@ -66,7 +67,17 @@ export class AppController {
    */
   @Public()
   @Get('health/ready')
-  @SkipThrottle()
+  // Unlike /health this does a real DB + Redis check, so an unauthenticated flood
+  // could exhaust the Prisma pool — hence a cap instead of the old @SkipThrottle().
+  // CRITICAL: the global throttler applies ALL tiers (short + long + availability)
+  // unless each is skipped BY NAME. We must skip long (100/10min) + availability
+  // (30/min) here — otherwise the ALB readiness probe would be bound by the 10-min
+  // long tier and, at a short probe interval, 429 → targets marked unhealthy →
+  // OUTAGE. With those skipped, only the short tier (120/min) applies: ~15× over
+  // the ALB probe (~8/min at ≤4 tasks) so it can't trip, while capping a single-IP
+  // flood. Distributed floods still want a Cloudflare edge rule on /api/health*. (M8)
+  @SkipThrottle({ long: true, availability: true })
+  @Throttle(RATE_LIMIT_HEALTH)
   @HttpCode(200)
   async getReady(): Promise<{ status: 'ok'; db: 'up'; redis: 'up' }> {
     const checks = await Promise.allSettled([this.checkDb(), this.checkRedis()]);

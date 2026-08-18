@@ -23,7 +23,10 @@ model User {
   profilePicture    String?
   role              Role      @default(CUSTOMER)
   isDeactivated     Boolean   @default(false)
-  loyaltyPoints     Int       @default(0)
+  // Wanasa loyalty balance, denominated in QAR (1 point = 1 QAR). Decimal(12,2)
+  // so a 1%-of-cash earn lands exactly (90 QAR paid → 0.90 points = 0.90 QAR)
+  // with no rounding loss. Was Int (100 pts = 1 QAR) before the redenomination.
+  loyaltyPoints     Decimal   @default(0) @db.Decimal(12, 2)
   preferredCountryId String?
   preferredCountry  Country?  @relation(fields: [preferredCountryId], references: [id], onDelete: SetNull)
   /// Preferred email language. Captured from the Accept-Language header at
@@ -33,6 +36,15 @@ model User {
   /// First time this user cleared a booking email-OTP. NULL = never; once set,
   /// later bookings skip the OTP step. One-way (set once, never cleared).
   bookingOtpVerifiedAt DateTime?
+  /// Terms & Privacy acceptance. `termsAcceptedAt` = when the user accepted;
+  /// `termsAcceptedVersion` = which TERMS_VERSION they accepted. NULL = never
+  /// accepted (accounts created before this feature, or a Google-OAuth signup
+  /// that hasn't passed the post-login consent gate). Accepting the Terms also
+  /// constitutes the user's confirmation that they are 18+. The contract-forming
+  /// endpoints (booking create, payment initiate, vendor listing create) reject
+  /// when this is NULL, so consent cannot be bypassed.
+  termsAcceptedAt          DateTime?
+  termsAcceptedVersion     String?
   emailVerified            Boolean   @default(false)
   verificationToken        String?   @unique
   verificationTokenExpiry  DateTime?
@@ -92,10 +104,23 @@ model RefreshToken {
   ipAddress   String?  // IP address at login time
   lastUsedAt  DateTime @default(now()) // Updated on each token refresh
 
+  // Stable session identity, carried across every rotation of this session's
+  // refresh token (like sessionStartedAt). Lets us (a) revoke a whole session on
+  // logout / stolen-token reuse, and (b) put the session on a short-lived Redis
+  // denylist so an already-issued ACCESS token stops working the moment the user
+  // logs out (M5). DB default so pre-migration rows each become their own family.
+  familyId    String   @default(uuid())
+
+  // Set when this refresh token is ROTATED (single-use consumed). A token
+  // presented AGAIN after this is set is a REUSE (a stolen, already-rotated
+  // token replayed) → revoke the entire family (M6). NULL = not yet used.
+  rotatedAt   DateTime?
+
   // tokenHash is @unique — no separate @@index needed
   @@index([userId])
   @@index([expiresAt])
   @@index([userId, createdAt])
+  @@index([familyId])
   @@map("refresh_tokens")
 }
 
@@ -179,6 +204,8 @@ model Vendor {
   bookings        Booking[]
   coupons         Coupon[]
   payoutRequests  PayoutRequest[]
+  activityBlocks  ActivityBlock[]
+  specialPrices   ActivitySpecialPrice[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   /// §B9 — soft-delete marker. Same contract as User.deletedAt: keeps
@@ -223,6 +250,12 @@ model Country {
   users           User[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+  // Soft-delete marker (Bug C). Distinct from `status: HIDDEN` (a public-hide
+  // toggle that keeps the country manageable). A non-null deletedAt means the
+  // country is removed from every admin/public list, but the row is KEPT so
+  // soft-deleted vendors/activities that still reference countryId retain their
+  // 7-year audit linkage (and the FK never dangles). Mirrors Vendor/Activity.
+  deletedAt       DateTime?
 
   @@map("countries")
 }
@@ -310,6 +343,8 @@ model Activity {
   bookings          Booking[]
   reviews           Review[]
   likes             Like[]
+  blocks            ActivityBlock[]
+  specialPrices     ActivitySpecialPrice[]
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   /// §B9 — soft-delete marker. Cascade-set when the parent Vendor is
@@ -350,6 +385,55 @@ enum ActivityStatus {
   BLOCKED
 }
 
+/// Vendor-managed availability lock. A block makes the UTC interval
+/// [blockStart, blockEnd) unbookable on an activity — maintenance, a
+/// private event, or a midday break on an hourly activity. The
+/// availability endpoints + createBooking treat any slot/day overlapping
+/// an active (deletedAt IS NULL) block as unavailable. NOTE: recurring
+/// weekday closures are Activity.activeDays, not this. Soft-deleted so the
+/// audit trail (who blocked what, when) survives a vendor un-blocking.
+model ActivityBlock {
+  id           String    @id @default(uuid())
+  activityId   String
+  activity     Activity  @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  vendorId     String
+  vendor       Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  blockStart   DateTime  // inclusive (UTC)
+  blockEnd     DateTime  // exclusive (UTC)
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  @@index([activityId])
+  @@index([vendorId])
+  @@index([activityId, blockStart])
+  @@map("activity_blocks")
+}
+
+/// Vendor/admin-managed per-date price override. On `date` the activity's
+/// effective price becomes `price` instead of `pricePerPerson` (DAILY: that
+/// night; HOURLY: that day's slots). One ACTIVE override per (activity, date),
+/// enforced by a PARTIAL unique index (WHERE deletedAt IS NULL) added in the
+/// migration SQL — Prisma can't express a filtered unique, so the @@index here
+/// is non-unique. Soft-deleted so history survives a removal. The applied price
+/// is FROZEN onto each Booking at booking time, so editing/removing an override
+/// never changes an existing booking's total.
+model ActivitySpecialPrice {
+  id           String    @id @default(uuid())
+  activityId   String
+  activity     Activity  @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  vendorId     String
+  vendor       Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  date         DateTime  @db.Date
+  price        Decimal   @db.Decimal(10, 2)
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  @@index([activityId])
+  @@index([vendorId])
+  @@index([activityId, date])
+  @@map("activity_special_prices")
+}
+
 model Booking {
   id                String        @id @default(uuid())
   ref               String        @unique // e.g. JDWL-XXXXX
@@ -376,7 +460,7 @@ model Booking {
   commissionAmount  Decimal       @default(0) @db.Decimal(10, 2) // platform commission = totalPrice * commissionPct / 100
   couponCode        String?       @db.VarChar(50)                 // coupon applied at booking time (frozen)
   couponDiscount    Decimal       @default(0) @db.Decimal(10, 2)  // discount amount applied
-  pointsRedeemed    Int           @default(0)                      // loyalty points used for discount
+  pointsRedeemed    Decimal       @default(0) @db.Decimal(10, 2)   // loyalty points used for discount (QAR-denominated; equals pointsDiscount at 1 pt = 1 QAR)
   pointsDiscount    Decimal       @default(0) @db.Decimal(10, 2)  // monetary value of redeemed points
   pointsAwarded     Boolean       @default(false)                  // true after points earned on COMPLETED — prevents double-earn
   currencyCode      String        @db.VarChar(10) @default("QAR") // currency at booking time — survives country config changes
@@ -573,6 +657,11 @@ model Coupon {
   code          String       @unique
   vendorId      String?
   vendor        Vendor?      @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  // Activity scoping: when NON-EMPTY, the coupon is valid ONLY for these
+  // activity ids; EMPTY (default) = applies to all (preserves prior behaviour).
+  // Plain String[] (not an FK relation) — a stale/deleted id is harmless (a
+  // deleted activity can't be booked), so no referential cleanup is needed.
+  applicableActivityIds String[]   @default([])
   discountType  DiscountType
   discountValue Decimal      @db.Decimal(10, 2)
   validFrom     DateTime
@@ -621,7 +710,7 @@ enum CouponStatus {
 model PlatformSettings {
   id                    String   @id @default("default")
   defaultCommissionPct  Decimal  @default(10) @db.Decimal(5, 2)
-  platformName          String   @default("Jadwal")
+  platformName          String   @default("AL Jadwal")
   supportEmail          String?
   supportPhone          String?
   aboutText             String?
@@ -645,6 +734,10 @@ model TrendingEvent {
   descriptionAr String?
   image       String?
   eventDate   DateTime?
+  /// Optional END date for multi-day events (Bug B). NULL = single-day event
+  /// (shows just `eventDate`, unchanged). When set, the UI shows a range
+  /// (e.g. "20 – 23 Jun"). Must be >= eventDate (validated in the DTO).
+  eventEndDate DateTime?
   countryId   String?
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
@@ -660,9 +753,12 @@ model LoyaltyConfig {
   // Financial rates — stored as exact Decimal (Postgres NUMERIC(10,4)) so the
   // loyalty↔money conversion can't drift through float rounding errors.
   // Decimal.js at the Prisma client level, NUMERIC(10,4) at the DB level.
-  pointsPerQar   Decimal  @default(1.0)  @db.Decimal(10, 4)
-  qarPerPoint    Decimal  @default(0.01) @db.Decimal(10, 4)
-  minRedemption  Int      @default(100)
+  // 1 point = 1 QAR model. Earn = 1% of cash paid (pointsPerQar = 0.01 →
+  // 100 QAR earns 1.00 point); a point redeems for 1 QAR (qarPerPoint = 1.0).
+  pointsPerQar   Decimal  @default(0.01) @db.Decimal(10, 4)
+  qarPerPoint    Decimal  @default(1.0)  @db.Decimal(10, 4)
+  // Minimum points (= QAR) a customer must redeem in one booking.
+  minRedemption  Int      @default(1)
   updatedAt      DateTime @updatedAt
 
   @@map("loyalty_config")
@@ -701,8 +797,8 @@ model LoyaltyLedger {
   id             String              @id @default(uuid())
   userId         String
   user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  delta          Int                 // positive = credit, negative = debit. Never zero.
-  balanceAfter   Int                 // user.loyaltyPoints AFTER this delta — used to detect drift
+  delta          Decimal             @db.Decimal(12, 2)  // positive = credit, negative = debit. Never zero. QAR-denominated.
+  balanceAfter   Decimal             @db.Decimal(12, 2)  // user.loyaltyPoints AFTER this delta — used to detect drift
   source         LoyaltyLedgerSource
   bookingId      String?             // nullable — ADMIN_ADJUST isn't tied to a booking
   actorType      LoyaltyActorType

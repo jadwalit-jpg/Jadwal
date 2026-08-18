@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsNumber, IsOptional, IsInt, IsDateString, Min, Max, MaxLength, MinLength, Matches } from 'class-validator';
+import { IsString, IsEnum, IsNumber, IsOptional, IsInt, IsDateString, IsArray, IsUUID, Min, Max, MaxLength, MinLength, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 import { IsValidCouponDiscount } from '../../common/validators/coupon-discount';
 
@@ -45,4 +45,12 @@ export class CreateCouponDto {
   @Min(0)
   @Max(100000)
   maxDiscount?: number;
+
+  // Activity scoping (Bug A): when non-empty, the coupon is valid ONLY for these
+  // activity ids; empty/omitted = applies to all. Admin coupons may scope to any
+  // activity (vendor coupons are restricted to the vendor's own — see vendor svc).
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  activityIds?: string[];
 }

@@ -12,6 +12,8 @@ import AdminLayout from '../../_components/admin-layout';
 import { Check, Loader2, X, BookmarkIcon, AlertTriangle, ImagePlus } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import CustomSelect from '@/components/custom-select';
+import ActivityBlocksManager from '@/components/activity-blocks-manager';
+import ActivitySpecialPricesManager from '@/components/activity-special-prices-manager';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
 
 // Heavy widgets — only mount when their respective wizard step opens.
@@ -81,7 +83,17 @@ function CoverImageUploader({ value, onChange, error }: { value: string; onChang
     try {
       const compressed = await compressCoverImage(file);
       const fd = new FormData(); fd.append('file', compressed);
-      const { data } = await api.post('/upload/image', fd);
+      // `/upload/image` NEVER EXISTED — every admin cover upload 404'd, hit the
+      // catch below, and surfaced as "Upload failed", so an admin could not
+      // change an activity's cover image at all. The real endpoint is
+      // /vendor/upload-image, which explicitly allows ADMIN (see the @Roles on
+      // VendorController.uploadImage) precisely so the admin panel can upload
+      // activity images while moderating. It's what the gallery uploader
+      // (components/image-uploader.tsx) has always used.
+      const { data } = await api.post('/vendor/upload-image', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setPreview(data.url);
       onChange(data.url);
       URL.revokeObjectURL(objectUrl);
     } catch { setUploadError('Upload failed. Try again.'); setPreview(value); }
@@ -92,16 +104,32 @@ function CoverImageUploader({ value, onChange, error }: { value: string; onChang
     <div>
       {preview ? (
         <div className="relative rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700 max-w-[480px]">
-          <NextImage
-            src={preview}
-            alt="Cover"
-            width={480}
-            height={224}
-            unoptimized={process.env.NODE_ENV !== 'production'}
-            className="w-full h-56 object-cover"
-          />
+          {/* Click the image itself to REPLACE it. Before, the only control on an
+              existing cover was the X (remove) — there was no way to swap it
+              directly, so an admin had to delete the cover first (and with the
+              404'ing endpoint above, that dead-ended entirely). */}
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            aria-label="Change cover image"
+            className="group block w-full"
+          >
+            <NextImage
+              src={preview}
+              alt="Cover"
+              width={480}
+              height={224}
+              unoptimized={process.env.NODE_ENV !== 'production'}
+              className="w-full h-56 object-cover"
+            />
+            <span className="absolute inset-0 hidden group-hover:flex items-center justify-center gap-2 bg-black/45 text-white text-sm font-medium">
+              <ImagePlus className="h-5 w-5" aria-hidden="true" />
+              Change cover image
+            </span>
+          </button>
           {uploading && <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><Loader2 className="h-6 w-6 text-white animate-spin" /></div>}
-          <button type="button" onClick={() => { setPreview(''); onChange(''); }} className="absolute top-2 end-2 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition cursor-pointer"><X className="h-4 w-4" /></button>
+          <button type="button" onClick={() => { setPreview(''); onChange(''); }} aria-label="Remove cover image" className="absolute top-2 inset-e-2 z-10 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition"><X className="h-4 w-4" /></button>
         </div>
       ) : (
         <button type="button" onClick={() => inputRef.current?.click()}
@@ -245,6 +273,8 @@ export default function AdminEditActivityPage() {
       } else {
         if (!form.checkInTime) errs.checkInTime = 'Check-in time is required';
         if (!form.checkOutTime) errs.checkOutTime = 'Check-out time is required';
+        // Minimum nights optional for DAILY (empty = flexible). If set, bound 1–90.
+        if (form.durationValue && (Number(form.durationValue) < 1 || Number(form.durationValue) > 90)) errs.durationValue = 'Minimum nights must be between 1 and 90';
       }
     }
     if (step === 3) {
@@ -282,7 +312,7 @@ export default function AdminEditActivityPage() {
       descriptionEn: sanitize(form.descriptionEn), descriptionAr: sanitize(form.descriptionAr),
       categoryId: form.categoryId, subCategoryId: form.subCategoryId || undefined,
       pricePerPerson: Number(form.pricePerPerson),
-      durationValue: form.bookingType === 'HOURLY' ? (Number(form.durationValue) || undefined) : undefined,
+      durationValue: form.durationValue ? Number(form.durationValue) : null,  // explicit null clears it on update (undefined would keep the old value)
       pricingModel: form.bookingType === 'DAILY' ? 'PER_UNIT' : form.pricingModel,
       capacity: totalCapacity,
       locationLat: Number(form.locationLat), locationLng: Number(form.locationLng),
@@ -422,10 +452,10 @@ export default function AdminEditActivityPage() {
                 </FieldGroup>
                 <div />
                 <FieldGroup label="Start Time" required error={errors.checkInTime}>
-                  <TimePicker value={form.checkInTime} onChange={val => updateField('checkInTime', val)} hasError={!!errors.checkInTime} placeholder="Select start time" />
+                  <TimePicker value={form.checkInTime} onChange={val => updateField('checkInTime', val)} hasError={!!errors.checkInTime} placeholder="Select start time" minuteStep={30} />
                 </FieldGroup>
                 <FieldGroup label="End Time" required error={errors.checkOutTime}>
-                  <TimePicker value={form.checkOutTime} onChange={val => updateField('checkOutTime', val)} hasError={!!errors.checkOutTime} placeholder="Select end time" />
+                  <TimePicker value={form.checkOutTime} onChange={val => updateField('checkOutTime', val)} hasError={!!errors.checkOutTime} placeholder="Select end time" minuteStep={30} />
                 </FieldGroup>
               </div>
             ) : (
@@ -436,12 +466,16 @@ export default function AdminEditActivityPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-5">
                   <FieldGroup label="Check-in Time" required error={errors.checkInTime}>
-                    <TimePicker value={form.checkInTime} onChange={val => updateField('checkInTime', val)} hasError={!!errors.checkInTime} placeholder="Select check-in time" />
+                    <TimePicker value={form.checkInTime} onChange={val => updateField('checkInTime', val)} hasError={!!errors.checkInTime} placeholder="Select check-in time" minuteStep={30} />
                   </FieldGroup>
                   <FieldGroup label="Check-out Time" required error={errors.checkOutTime}>
-                    <TimePicker value={form.checkOutTime} onChange={val => updateField('checkOutTime', val)} hasError={!!errors.checkOutTime} placeholder="Select check-out time" />
+                    <TimePicker value={form.checkOutTime} onChange={val => updateField('checkOutTime', val)} hasError={!!errors.checkOutTime} placeholder="Select check-out time" minuteStep={30} />
                   </FieldGroup>
                 </div>
+                {/* Minimum stay — optional. Empty = flexible day-by-day; set = at least N nights (extendable, pays per night). */}
+                <FieldGroup label="Minimum nights" error={errors.durationValue}>
+                  <input type="number" min="1" max="90" inputMode="numeric" value={form.durationValue} onChange={e => updateField('durationValue', e.target.value)} className={inputCls(!!errors.durationValue)} placeholder="e.g. 3 (or leave empty for flexible)" />
+                </FieldGroup>
               </div>
             )}
             <div>
@@ -475,6 +509,23 @@ export default function AdminEditActivityPage() {
                 </div>
               )}
             </div>
+
+            {/* Availability blocks — admin can lock any activity's dates/times
+                (same calendar as vendor). Edit-only, independent of the wizard save. */}
+            {activity?.id && (
+              <ActivityBlocksManager
+                activityId={activity.id}
+                /* One source of truth: the block API validates against the SAVED
+                   activity, so the manager must use the persisted activity config
+                   (not the unsaved `form`) to avoid create-validation drift. */
+                bookingType={activity.bookingType}
+                checkInTime={activity.checkInTime}
+                checkOutTime={activity.checkOutTime}
+                durationValue={activity.durationValue}
+                apiBase="/admin"
+                collapsible
+              />
+            )}
           </div>
         )}
 
@@ -525,6 +576,15 @@ export default function AdminEditActivityPage() {
                 </div>
               </div>
             </div>
+
+            {activity?.id && (
+              <ActivitySpecialPricesManager
+                activityId={activity.id}
+                currency={activity.country?.currencyCode || 'QAR'}
+                apiBase="/admin"
+                collapsible
+              />
+            )}
           </div>
         )}
 

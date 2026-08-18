@@ -170,30 +170,114 @@ describe('BookingsService.cancelBooking', () => {
     await expect(ctx.sut.cancelBooking('u1', 'b1'))
       .rejects.toThrow(/already started/i);
   });
-});
 
-// ═══════════════════════════════════════════════════════════════════════════
-// awardLoyaltyPoints — idempotency
-// ═══════════════════════════════════════════════════════════════════════════
+  // ── In-flight PAY2M session must NEVER be hard-deleted ────────────────────
+  // Regression guard for the "pay in tab A, cancel in tab B" money-loss bug:
+  // deleting a PENDING payment that already holds a gatewayBasketId destroys
+  // the row the late success-callback looks up by basket id, so the customer is
+  // charged with no booking, no payment row and no refund — invisible even to
+  // reconciliation. Same invariant the stale-PENDING cron already enforces
+  // ("payments are never hard-deleted"). We must also NOT delete the booking:
+  // with it gone a late capture takes the B2_ORPHAN branch and RE-CREATES a
+  // booking the customer deliberately cancelled. Correct end state is
+  // payment FAILED + booking CANCELLED, which resolves to CANCELLED_REFUND.
+  describe('in-flight PAY2M session (gatewayBasketId set, payment PENDING)', () => {
+    const inFlightBooking = {
+      id: 'b1', ref: 'JD-1', customerId: 'u1', status: 'PENDING',
+      startDatetime: futureDate(), activityId: 'a1',
+      couponCode: null, pointsRedeemed: 0,
+      activity: baseActivity,
+      payment: { id: 'p1', status: 'PENDING', amount: 100, gatewayBasketId: 'JDWL-abc123def456' },
+    };
 
-describe('BookingsService.awardLoyaltyPoints', () => {
-  test('returns null when booking does not exist (no throw)', async () => {
-    const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce(null);
-    const r = await ctx.sut.awardLoyaltyPoints('b-missing');
-    expect(r).toBeNull();
-  });
+    // The shared prisma mock defaults updateMany to { count: 0 }, which now
+    // (correctly) trips the optimistic-lock abort — so the happy-path tests
+    // must simulate a payment row that was genuinely still PENDING.
+    const wonTheRace = (ctx: any) =>
+      ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
 
-  test('returns null when points already awarded (double-earn guard)', async () => {
-    const ctx = await buildSut();
-    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
-      id: 'b1', ref: 'JDWL-ABC', pointsAwarded: true, totalPrice: 100, customerId: 'u1',
+    test('does NOT delete the payment row', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      wonTheRace(ctx);
+      const res = await ctx.sut.cancelBooking('u1', 'b1');
+
+      expect(ctx.prisma._client.payment.delete).not.toHaveBeenCalled();
+      expect(ctx.prisma._client.booking.delete).not.toHaveBeenCalled();
+      expect(res).toEqual(expect.objectContaining({ deleted: false, status: 'CANCELLED' }));
     });
-    const r = await ctx.sut.awardLoyaltyPoints('b1');
-    expect(r).toBeNull();
-    expect(ctx.loyalty.earnPoints).not.toHaveBeenCalled();
+
+    test('flips the payment to FAILED only while it is still PENDING', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      wonTheRace(ctx);
+      await ctx.sut.cancelBooking('u1', 'b1');
+
+      // The status guard is what stops us clobbering a capture that won the race.
+      expect(ctx.prisma._client.payment.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: 'p1', status: 'PENDING' }),
+          data: expect.objectContaining({ status: 'FAILED' }),
+        }),
+      );
+    });
+
+    test('marks the booking CANCELLED by CUSTOMER so a late capture refunds instead of resurrecting', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      wonTheRace(ctx);
+      await ctx.sut.cancelBooking('u1', 'b1');
+
+      expect(ctx.prisma._client.booking.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'b1' },
+          data: expect.objectContaining({ status: 'CANCELLED', cancelledBy: 'CUSTOMER' }),
+        }),
+      );
+    });
+
+    // THE race this whole branch exists for, and the one the first version of
+    // this fix did not cover: the PAY2M capture commits between our read and
+    // our write. The payment updateMany then matches 0 rows. Without an abort
+    // we would still flip the booking to CANCELLED and hand back the coupon +
+    // points on a booking the callback just CONFIRMED and charged — leaving no
+    // REFUND_PENDING row, so recordRefundDecision (which requires
+    // REFUND_PENDING) could never refund it.
+    test('ABORTS when a concurrent capture already flipped the payment to SUCCESS', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({ ...inFlightBooking });
+      // 0 rows matched → the callback won the race.
+      ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(ctx.sut.cancelBooking('u1', 'b1')).rejects.toThrow(/changed while you were cancelling/i);
+
+      // Must NOT cancel the booking the callback just confirmed…
+      expect(ctx.prisma._client.booking.update).not.toHaveBeenCalled();
+      // …and must NOT hand back the redeemed points for a paid booking.
+      expect((ctx.loyalty as any).refund ?? ctx.loyalty.refundPoints).not.toHaveBeenCalled();
+    });
+
+    test('still hard-deletes when NO gateway session was ever opened (behaviour preserved)', async () => {
+      const ctx = await buildSut();
+      ctx.prisma._client.booking.findFirst.mockResolvedValueOnce({
+        ...inFlightBooking,
+        // Payment row exists but the customer never reached PAY2M — nothing can
+        // be captured, so the original throw-away behaviour is still correct.
+        payment: { id: 'p1', status: 'PENDING', amount: 100, gatewayBasketId: null },
+      });
+      const res = await ctx.sut.cancelBooking('u1', 'b1');
+
+      expect(ctx.prisma._client.payment.delete).toHaveBeenCalled();
+      expect(ctx.prisma._client.booking.delete).toHaveBeenCalled();
+      expect(res).toEqual(expect.objectContaining({ deleted: true }));
+    });
   });
 });
+
+// Note: the standalone BookingsService.awardLoyaltyPoints method was removed —
+// it was dead (0 callers). Awarding happens inline in the admin/vendor status-
+// completion paths + the auto-complete cron, covered by cleanup-cron.int.spec.ts
+// (earn-on-completion + pointsAwarded idempotency) and the admin/vendor suites.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // getHourlyAvailability — precondition guards
@@ -337,5 +421,84 @@ describe('BookingsService.getCalendarAvailability', () => {
     expect(r).toBe(cachedPayload);
     // No booking query happened
     expect(ctx.prisma._client.booking.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// recordRefundDecision — refund on an already-paid-out booking
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// If the vendor payout was already marked PAID and we then refund the
+// customer, the platform is out of pocket: the customer is made whole and the
+// vendor still holds the money. Nothing else detects this — reconciliation
+// never reads payoutStatus and there is no clawback flow — so the alert here
+// is the only signal finance gets. The refund itself must NOT be blocked; the
+// customer cannot be held hostage to a bookkeeping problem.
+
+describe('BookingsService.recordRefundDecision — payout awareness', () => {
+  function mkBooking(payoutStatus: 'PAID' | 'UNPAID') {
+    return {
+      id: 'b1', ref: 'JD-9', status: 'CANCELLED',
+      vendorId: 'vA', customerId: 'cust1',
+      activity: { titleEn: 'Desert Safari' },
+      vendor: { userId: 'vendorUser1', slug: 'alpha' },
+      payment: { id: 'p1', status: 'REFUND_PENDING', amount: 200, payoutStatus },
+    };
+  }
+
+  async function runApprove(payoutStatus: 'PAID' | 'UNPAID') {
+    const ctx = await buildSut();
+    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce(mkBooking(payoutStatus));
+    ctx.prisma._client.payment.updateMany.mockResolvedValue({ count: 1 });
+    ctx.prisma._client.booking.updateMany.mockResolvedValue({ count: 1 });
+    ctx.prisma._client.user.findUnique.mockResolvedValue({ fullName: 'Vendor Bob' });
+    // Refunds are paid as Wanasa points, so the service reads the loyalty
+    // config; qarPerPoint is a Prisma Decimal, hence the toNumber() shim.
+    ctx.prisma._client.loyaltyConfig.findUnique.mockResolvedValue({
+      id: 'singleton', qarPerPoint: { toNumber: () => 1 },
+    });
+    // The shared loyalty mock still exposes the older refundPoints/earnPoints
+    // names; the service calls LoyaltyService.refund. Stub it locally rather
+    // than editing the shared mock, which other suites depend on.
+    (ctx.loyalty as any).refund = jest.fn().mockResolvedValue(undefined);
+    await ctx.sut.recordRefundDecision(
+      'vendorUser1', 'VENDOR', 'b1', 'APPROVE', 200, undefined,
+    );
+    return ctx;
+  }
+
+  test('refund on a PAID-OUT booking raises the clawback alert to admins', async () => {
+    const ctx = await runApprove('PAID');
+
+    expect(ctx.audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'REFUND_ON_PAID_OUT_BOOKING',
+        actionCategory: 'FINANCIAL',
+        entityId: 'b1',
+      }),
+    );
+    expect(ctx.notif.notifyAdmins).toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.stringMatching(/already-paid-out/i) }),
+    );
+  });
+
+  test('refund on an UNPAID booking raises NO clawback alert (normal case)', async () => {
+    const ctx = await runApprove('UNPAID');
+
+    const raised = (ctx.audit.log as jest.Mock).mock.calls
+      .some((c) => c[0]?.action === 'REFUND_ON_PAID_OUT_BOOKING');
+    expect(raised).toBe(false);
+    expect(ctx.notif.notifyAdmins).not.toHaveBeenCalled();
+  });
+
+  test('the refund itself is still recorded when the booking was paid out (never blocked)', async () => {
+    const ctx = await runApprove('PAID');
+
+    // The atomic REFUND_PENDING claim still ran — the customer gets their money.
+    expect(ctx.prisma._client.payment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'p1', status: 'REFUND_PENDING' }),
+      }),
+    );
   });
 });

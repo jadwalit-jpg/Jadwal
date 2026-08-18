@@ -1,6 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import { pickBadge } from '@/lib/status-config';
+
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -34,8 +36,13 @@ interface Coupon {
   status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
   usageLimit: number | null;
   usageCount: number;
+  /** Empty = applies to every activity; otherwise scoped to these activity ids. */
+  applicableActivityIds?: string[];
 }
 
+// Kept Record<string> (not exhaustive): the vendor coupon UI models a REJECTED
+// status that the Prisma CouponStatus enum doesn't have (FE/backend drift), so
+// pickBadge runtime-guards it instead of an exhaustive compile check.
 const STATUS_VIS: Record<string, { classes: string; icon: React.ElementType }> = {
   PENDING: {
     classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
@@ -104,7 +111,9 @@ export default function VendorCouponsPage() {
   const { data: activitiesData } = useQuery({
     queryKey: [user?.id, 'vendor-activities-for-coupons'],
     queryFn: () => api.get('/vendor/activities', { params: { limit: 100 } }).then((r) => r.data),
-    enabled: !!user && showModal,
+    // Loaded whenever the page is open (not just the create modal) so the table
+    // can resolve each coupon's applicable-activity ids to readable titles.
+    enabled: !!user,
   });
 
   const createMutation = useMutation({
@@ -158,6 +167,27 @@ export default function VendorCouponsPage() {
   const totalPages = data?.totalPages ?? 1;
   const activities = activitiesData?.data ?? [];
 
+  // id → localized title, so the coupon table can show WHICH activities a
+  // restricted coupon applies to (confirms the create-form selection stuck).
+  const activityTitleById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of activities as { id: string }[]) m.set(a.id, localized(a, 'title'));
+    return m;
+  }, [activities]);
+
+  // Human label for a coupon's scope: "All activities", the resolved names, or
+  // a count fallback when names aren't loaded (e.g. >100 activities).
+  const couponScopeLabel = (ids?: string[]): { text: string; scoped: boolean } => {
+    const list = ids ?? [];
+    if (list.length === 0) return { text: t('vendor.coupons.allActivities', { defaultValue: 'All activities' }), scoped: false };
+    const names = list.map((id) => activityTitleById.get(id)).filter(Boolean) as string[];
+    if (names.length === list.length) return { text: names.join(', '), scoped: true };
+    const text = list.length === 1
+      ? t('vendor.coupons.appliesToCountOne', { count: list.length, defaultValue: '1 activity' })
+      : t('vendor.coupons.appliesToCount', { count: list.length, defaultValue: `${list.length} activities` });
+    return { text, scoped: true };
+  };
+
   const filterTabLabel = (tab: (typeof FILTER_TABS)[number]) => {
     if (tab === 'All') return t('vendor.coupons.filterAll');
     return payoutRequestStatusLabel(t, tab);
@@ -167,7 +197,7 @@ export default function VendorCouponsPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="md:ms-64 p-4 md:p-10 overflow-x-hidden">
+      <main className="md:ms-64 p-4 max-md:pt-16 md:p-10 overflow-x-hidden">
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{t('vendor.coupons.title')}</h1>
@@ -217,7 +247,7 @@ export default function VendorCouponsPage() {
               <p className="text-gray-400 dark:text-slate-500 text-sm mt-1">{t('vendor.coupons.emptySubtitle')}</p>
             </div>
           ) : (
-            <table className="w-full">
+            <div className="overflow-x-auto"><table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-slate-800">
                   <th className="text-start px-6 py-4 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
@@ -225,6 +255,9 @@ export default function VendorCouponsPage() {
                   </th>
                   <th className="text-start px-6 py-4 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                     {t('vendor.coupons.thDiscount')}
+                  </th>
+                  <th className="text-start px-6 py-4 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
+                    {t('vendor.coupons.thAppliesTo', { defaultValue: 'Applies To' })}
                   </th>
                   <th className="text-start px-6 py-4 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                     {t('vendor.coupons.thExpiry')}
@@ -239,8 +272,9 @@ export default function VendorCouponsPage() {
               </thead>
               <tbody>
                 {coupons.map((c) => {
-                  const cfg = STATUS_VIS[c.status] ?? STATUS_VIS.PENDING;
+                  const cfg = pickBadge(STATUS_VIS, c.status, STATUS_VIS.PENDING);
                   const StatusIcon = cfg.icon;
+                  const scope = couponScopeLabel(c.applicableActivityIds);
                   return (
                     <tr key={c.id} className="border-b border-gray-50 dark:border-slate-800/50 hover:bg-gray-50/50 dark:hover:bg-slate-800/30 transition-colors">
                       <td className="px-6 py-4">
@@ -250,6 +284,16 @@ export default function VendorCouponsPage() {
                         {c.discountType === 'PERCENTAGE'
                           ? t('vendor.coupons.discountPercent', { value: c.discountValue })
                           : t('vendor.coupons.discountFixed', { value: c.discountValue, defaultValue: `QAR ${c.discountValue} off` })}
+                      </td>
+                      <td className="px-6 py-4 text-sm">
+                        {scope.scoped ? (
+                          <span className="inline-flex items-center gap-1.5 text-gray-700 dark:text-slate-300" title={scope.text}>
+                            <Tag className="h-3.5 w-3.5 text-teal-500 shrink-0" aria-hidden="true" />
+                            <span className="truncate max-w-[220px]">{scope.text}</span>
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 dark:text-slate-500">{scope.text}</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600 dark:text-slate-300">
                         {new Date(c.validFrom).toLocaleDateString()} – {new Date(c.validTo).toLocaleDateString()}
@@ -267,7 +311,7 @@ export default function VendorCouponsPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
           )}
 
           {totalPages > 1 && (
@@ -370,7 +414,12 @@ export default function VendorCouponsPage() {
                 </label>
                 <input
                   type="number"
-                  min={1}
+                  // step + min allow fractional values (e.g. 0.10 QAR). Without
+                  // step, type=number defaults to step="1" and the browser rejects
+                  // decimals; min=1 also blocked sub-1 amounts. 0.01 matches the
+                  // server DTO (@Min(0.01)).
+                  step="0.01"
+                  min={0.01}
                   max={form.discountType === 'PERCENTAGE' ? 100 : undefined}
                   value={form.discountValue}
                   onChange={(e) => setForm((p) => ({ ...p, discountValue: e.target.value }))}

@@ -16,6 +16,9 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ACTIVITY_TITLE_REGEX, ACTIVITY_TITLE_MESSAGE } from '../../common/validators/name-allowlist';
+import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
+import { CreateActivityBlockDto } from './create-activity-block.dto';
+import { CreateSpecialPriceDto } from './create-special-price.dto';
 
 enum BookingType {
   HOURLY = 'HOURLY',
@@ -71,9 +74,14 @@ export class CreateActivityDto {
   @Matches(ACTIVITY_TITLE_REGEX, { message: ACTIVITY_TITLE_MESSAGE })
   titleAr!: string;
 
+  // URL slug — same contract as the vendor slug: lowercase a-z/0-9/hyphen only,
+  // and not a reserved system word (admin, api, login, …). Prevents an activity
+  // slug from carrying spaces/unicode or squatting a reserved route name.
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)
+  @Matches(/^[a-z0-9-]+$/, { message: 'URL slug may only contain lowercase letters, numbers, and hyphens' })
+  @IsNotReservedSlug()
   slug!: string;
 
   @IsString()
@@ -111,13 +119,18 @@ export class CreateActivityDto {
   @IsOptional()
   pricingModel?: PricingModel;
 
-  // HOURLY: activity start/end time ("14:00"); DAILY: check-in/check-out time
+  // HOURLY: activity start/end time; DAILY: check-in/check-out time. Format only
+  // here (any valid HH:MM). The 30-min-grid rule for HOURLY (:00/:30) is enforced
+  // in assertHourlyTimesConsistent, so DAILY (a day boundary, not a slot grid) can
+  // use any minute without being blocked.
   @IsString()
   @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkInTime must be a valid time (HH:MM)' })
   checkInTime?: string;
 
   @IsString()
   @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkOutTime must be a valid time (HH:MM)' })
   checkOutTime?: string;
 
   @IsInt()
@@ -183,4 +196,23 @@ export class CreateActivityDto {
   @Max(10000)
   @IsOptional()
   unitCapacity?: number;
+
+  // ── Optional availability LOCKS + SPECIAL PRICES set DURING create. The add
+  // wizard collects the exact same shapes the live sub-resource endpoints accept;
+  // createActivity processes them atomically (same transaction) via the SAME core
+  // logic the standalone endpoints use, so validation/expansion can't drift.
+  // Bounded so a nested-create payload stays sane.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateActivityBlockDto)
+  @ArrayMaxSize(200)
+  blocks?: CreateActivityBlockDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateSpecialPriceDto)
+  @ArrayMaxSize(200)
+  specialPrices?: CreateSpecialPriceDto[];
 }

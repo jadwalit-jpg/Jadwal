@@ -119,19 +119,24 @@ function BookingCard({ booking }: { booking: BookingSummary }) {
   const startDate = new Date(booking.startDatetime);
   const endDate = new Date(booking.endDatetime);
 
+  // timeZone:'UTC' — booking datetimes are local-wall-clock tagged UTC; must match
+  // the UTC-pinned timeLabel below (else the date can read off-by-one vs the time).
   const dateLabel = isDaily
     ? `${startDate.toLocaleDateString(locale, {
         day: 'numeric',
         month: 'short',
+        timeZone: 'UTC',
       })} – ${endDate.toLocaleDateString(locale, {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
+        timeZone: 'UTC',
       })}`
     : startDate.toLocaleDateString(locale, {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
+        timeZone: 'UTC',
       });
 
   const timeLabel = isDaily
@@ -250,7 +255,7 @@ function BookingCard({ booking }: { booking: BookingSummary }) {
                 <Sparkles className="w-3 h-3" aria-hidden="true" />
                 {t('booking.pointsUsed', {
                   defaultValue: '{{n}} pts used',
-                  n: pointsUsed,
+                  n: pointsUsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
                 })}
               </span>
             ) : null}

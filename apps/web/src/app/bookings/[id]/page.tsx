@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import api from '@/lib/api';
+import { fbTrack } from '@/lib/fb-pixel';
 import { localized } from '@/lib/localize';
 import { getApiError } from '@/lib/api-error';
 import { isAllowedPay2mFormAction } from '@/lib/pay2m';
@@ -145,6 +146,24 @@ export default function BookingDetailPage() {
     if (needsEmailOtp) setShowEmailOtpModal(true);
   }, [needsEmailOtp]);
 
+  // Meta Pixel: Purchase fires once when the booking is CONFIRMED — covers both
+  // card-paid and points-only bookings (both land here confirmed) and never
+  // fires on PENDING/failed ones. sessionStorage guard prevents a re-fire on
+  // revisit. No-ops unless the pixel loaded after cookie consent.
+  useEffect(() => {
+    if (booking?.status !== 'CONFIRMED' || !id) return;
+    const key = `fb_purchase_${id}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch {
+      // sessionStorage unavailable — fall through (at worst a rare double-count).
+    }
+    const cur = booking.currencyCode ?? booking.activity?.country?.currencyCode ?? 'QAR';
+    const value = Number(booking.totalPrice ?? 0) + Number(booking.serviceFee ?? 0);
+    fbTrack('Purchase', { currency: cur, value });
+  }, [booking, id]);
+
   const handleOtpVerified = useCallback(() => {
     setShowEmailOtpModal(false);
     // Refetch so emailOtpVerifiedAt flips to a value and the page state
@@ -201,8 +220,13 @@ export default function BookingDetailPage() {
     : 0;
   const cashPaid = Number(booking?.payment?.amount || 0);
   const paidWithWanasa = booking?.payment?.method === 'WANASA_POINTS';
+  // What the customer actually pays: activity price (already post-coupon) +
+  // service fee − the Wanasa points discount. Points are NOT baked into
+  // totalPrice, so they must be subtracted here — otherwise the "You paid"
+  // total ignores the redemption the breakdown shows just above it (e.g. a
+  // 1-point redeem on a 300 + 5 booking would wrongly read 305 instead of 304).
   const total = booking
-    ? Number(booking.totalPrice) + Number(booking.serviceFee)
+    ? Math.round((Number(booking.totalPrice) + Number(booking.serviceFee) - pointsValue) * 100) / 100
     : 0;
   const statusVariant =
     booking && STATUS_VARIANT[booking.status]
@@ -389,20 +413,46 @@ export default function BookingDetailPage() {
                     className="w-5 h-5 text-jadwal-warning shrink-0 mt-0.5"
                     aria-hidden="true"
                   />
-                  <div>
-                    <p className="text-sm font-semibold text-jadwal-warning">
-                      {t('booking.refundPendingTitle', {
-                        defaultValue:
-                          'Cancellation recorded · Awaiting vendor review',
-                      })}
-                    </p>
-                    <p className="text-xs text-jadwal-warning/90 mt-0.5">
-                      {t('booking.refundPendingDesc', {
-                        defaultValue:
-                          'The vendor will review your refund request. Any approved amount will be added as Wanasa points to your balance.',
-                      })}
-                    </p>
-                  </div>
+                  {booking.cancelledBy === 'SYSTEM' ? (
+                    // System auto-cancel (e.g. the spot became unavailable before
+                    // the payment could be confirmed): the customer did NOT ask
+                    // to cancel, so reassure them their money is coming back
+                    // rather than framing it as a "refund request under review".
+                    <div>
+                      <p className="text-sm font-semibold text-jadwal-warning">
+                        {t('booking.refundQueuedTitle', {
+                          defaultValue: "We couldn't confirm your booking",
+                        })}
+                      </p>
+                      <p className="text-xs text-jadwal-warning/90 mt-0.5">
+                        {t('booking.refundQueuedDesc', {
+                          defaultValue:
+                            'The spot became unavailable before your payment could be confirmed. Your payment of {{amount}} {{cur}} is safe — a refund has been queued and will be added to your balance as Wanasa points once processed. No action needed.',
+                          amount: Number(
+                            booking.payment.refundAmount ??
+                              booking.payment.amount ??
+                              0,
+                          ).toLocaleString(),
+                          cur: currency,
+                        })}
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-sm font-semibold text-jadwal-warning">
+                        {t('booking.refundPendingTitle', {
+                          defaultValue:
+                            'Cancellation recorded · Awaiting vendor review',
+                        })}
+                      </p>
+                      <p className="text-xs text-jadwal-warning/90 mt-0.5">
+                        {t('booking.refundPendingDesc', {
+                          defaultValue:
+                            'The vendor will review your refund request. Any approved amount will be added as Wanasa points to your balance.',
+                        })}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : null}
 
@@ -494,7 +544,7 @@ export default function BookingDetailPage() {
                       />
                       {new Date(booking.startDatetime).toLocaleDateString(
                         locale,
-                        { day: 'numeric', month: 'short', year: 'numeric' },
+                        { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' },
                       )}
                     </p>
                     {/* Show activity's fixed check-in time only for DAILY
@@ -524,7 +574,7 @@ export default function BookingDetailPage() {
                         />
                         {new Date(booking.endDatetime).toLocaleDateString(
                           locale,
-                          { day: 'numeric', month: 'short', year: 'numeric' },
+                          { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' },
                         )}
                       </p>
                       {booking.activity?.checkOutTime ? (
@@ -654,7 +704,7 @@ export default function BookingDetailPage() {
                         <Sparkles className="w-3.5 h-3.5 text-purple-600" aria-hidden="true" />
                         {t('booking.pointsRedeemed', {
                           defaultValue: 'Wanasa points ({{n}})',
-                          n: pointsUsed,
+                          n: pointsUsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
                         })}
                       </span>
                       <span className="text-purple-600 font-medium tabular-nums">

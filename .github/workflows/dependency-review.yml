@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Run Dependency Review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
@@ -56,7 +56,21 @@ jobs:
           # in via lightningcss platform binaries (bundled by Tailwind /
           # Next.js) and is the same licence Firefox itself ships under.
           # Standard practice in JS ecosystems is to allow it.
+          #
+          # LGPL-3.0-or-later covers the @img/sharp-libvips-* platform
+          # binaries that sharp depends on. This is NOT a new exposure: the
+          # same licence is already in the tree and in production today via
+          # sharp 0.34 (libvips 1.2.4). It surfaced only when the sharp 0.35
+          # upgrade moved those packages to 1.3.2, because Dependency Review
+          # evaluates CHANGED dependencies — an unchanged package is never
+          # re-checked. Refusing it here would not remove the licence from
+          # the image, it would only block upgrades of a package we already
+          # ship.
+          #
+          # libvips is consumed as an unmodified, dynamically-loaded native
+          # addon, which is the arrangement LGPL is written for; we neither
+          # modify nor statically link it.
           allow-licenses: >-
             MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD,
             CC0-1.0, CC-BY-3.0, CC-BY-4.0, Unlicense, Python-2.0,
-            BlueOak-1.0.0, MIT-0, MPL-2.0
+            BlueOak-1.0.0, MIT-0, MPL-2.0, LGPL-3.0-or-later

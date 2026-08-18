@@ -85,25 +85,69 @@ export default function NotificationBell({ align = 'end' }: { align?: 'start' | 
     staleTime: 5_000,
   });
 
+  // ── Optimistic notification mutations ──────────────────────────────
+  // The unread badge + read state flip INSTANTLY, roll back on error, and
+  // reconcile with the server on settle. Server stays authoritative (onSettled
+  // refetch); this is client-only perceived state → no security surface. Both
+  // the always-on badge query and the open-dropdown list are kept in sync.
+  const COUNT_KEY = ['notifications', 'unread-count'];
+  const LIST_KEY = ['notifications', 'list'];
+  const snapshotNotifs = async () => {
+    // Cancel in-flight refetches so they can't clobber the optimistic value.
+    await queryClient.cancelQueries({ queryKey: ['notifications'] });
+    return {
+      count: queryClient.getQueryData<{ unreadCount: number }>(COUNT_KEY),
+      list: queryClient.getQueryData<NotificationsResponse>(LIST_KEY),
+    };
+  };
+  const rollbackNotifs = (ctx?: { count?: { unreadCount: number }; list?: NotificationsResponse }) => {
+    if (ctx?.count !== undefined) queryClient.setQueryData(COUNT_KEY, ctx.count);
+    if (ctx?.list !== undefined) queryClient.setQueryData(LIST_KEY, ctx.list);
+  };
+  const reconcileNotifs = () => queryClient.invalidateQueries({ queryKey: ['notifications'] });
+
   const markReadMutation = useMutation({
     mutationFn: (id: string) => api.patch(`/notifications/${id}/read`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    onMutate: async (id: string) => {
+      const ctx = await snapshotNotifs();
+      const wasUnread = !!ctx.list?.data.find((n) => n.id === id && !n.read);
+      const dec = wasUnread ? 1 : 0;
+      if (ctx.count) queryClient.setQueryData(COUNT_KEY, { unreadCount: Math.max(0, ctx.count.unreadCount - dec) });
+      if (ctx.list) queryClient.setQueryData(LIST_KEY, {
+        ...ctx.list,
+        unreadCount: Math.max(0, ctx.list.unreadCount - dec),
+        data: ctx.list.data.map((n) => (n.id === id ? { ...n, read: true } : n)),
+      });
+      return ctx;
     },
+    onError: (_e, _id, ctx) => rollbackNotifs(ctx),
+    onSettled: reconcileNotifs,
   });
 
   const markAllReadMutation = useMutation({
     mutationFn: () => api.patch('/notifications/read-all'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    onMutate: async () => {
+      const ctx = await snapshotNotifs();
+      queryClient.setQueryData(COUNT_KEY, { unreadCount: 0 });
+      if (ctx.list) queryClient.setQueryData(LIST_KEY, {
+        ...ctx.list, unreadCount: 0, data: ctx.list.data.map((n) => ({ ...n, read: true })),
+      });
+      return ctx;
     },
+    onError: (_e, _v, ctx) => rollbackNotifs(ctx),
+    onSettled: reconcileNotifs,
   });
 
   const clearAllMutation = useMutation({
     mutationFn: () => api.delete('/notifications/clear-all'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    onMutate: async () => {
+      const ctx = await snapshotNotifs();
+      queryClient.setQueryData(COUNT_KEY, { unreadCount: 0 });
+      if (ctx.list) queryClient.setQueryData(LIST_KEY, { ...ctx.list, unreadCount: 0, total: 0, data: [] });
+      return ctx;
     },
+    onError: (_e, _v, ctx) => rollbackNotifs(ctx),
+    onSettled: reconcileNotifs,
   });
 
   // Close on outside click

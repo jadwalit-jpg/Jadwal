@@ -8,20 +8,38 @@ import {
   isLang,
   type Lang,
 } from './lang-cookie';
+import { isLocalizablePath } from './locale-path';
 
 export { LANG_COOKIE, STORAGE_KEY, isLang };
 export type { Lang };
 
 /**
- * Read the language from a `document.cookie` on the client. Server components
- * read it via `next/headers` `cookies()` — see readLangCookieServer() in
- * lib/lang-cookie.server.ts. Both paths resolve to the same value so server
- * HTML and client hydration pick the same language → no hydration mismatch.
+ * Read the language cookie on the client. Used for non-localized routes
+ * (admin/vendor/…) where the UI language is the user's stored preference.
  */
 export function readLangCookieClient(): Lang {
   if (typeof document === 'undefined') return 'en';
   const match = document.cookie.match(/(?:^|;\s*)jadwal_lang=(en|ar)/);
   return (match?.[1] as Lang) ?? 'en';
+}
+
+/**
+ * Resolve the client language the SAME way the server does (see readLangServer):
+ * the URL is the source of truth on public routes.
+ *   - `/ar/...`            → 'ar'
+ *   - public unprefixed    → 'en' (English lives at the root; the cookie only
+ *                            drives the middleware redirect, never the rendered
+ *                            language once you're on an unprefixed page)
+ *   - non-localized routes → the cookie (admin/vendor/auth UI preference)
+ * Keeping this identical to the server's resolution is what prevents hydration
+ * mismatches now that language comes from the URL, not the cookie.
+ */
+export function readLangClient(): Lang {
+  if (typeof window === 'undefined') return 'en';
+  const path = window.location.pathname;
+  if (path === '/ar' || path.startsWith('/ar/')) return 'ar';
+  if (isLocalizablePath(path)) return 'en';
+  return readLangCookieClient();
 }
 
 /**
@@ -31,7 +49,7 @@ export function readLangCookieClient(): Lang {
  */
 i18n.use(initReactI18next).init({
   resources: { en: { translation: en }, ar: { translation: ar } },
-  lng: typeof document === 'undefined' ? 'en' : readLangCookieClient(),
+  lng: typeof document === 'undefined' ? 'en' : readLangClient(),
   fallbackLng: 'en',
   interpolation: { escapeValue: false },
   react: { useSuspense: false },

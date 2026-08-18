@@ -59,7 +59,7 @@ async function balanceOf(userId: string): Promise<number> {
   const u = await ctx.prisma.user.findUniqueOrThrow({
     where: { id: userId }, select: { loyaltyPoints: true },
   });
-  return u.loyaltyPoints;
+  return Number(u.loyaltyPoints);
 }
 
 async function ledgerSum(userId: string): Promise<number> {
@@ -139,11 +139,17 @@ describe('LoyaltyService — double-entry invariant', () => {
       },
     });
 
+    // Two redeems on DIFFERENT bookings. The loyalty_ledger (bookingId, source)
+    // unique index (migration 20260621000000) forbids two BOOKING_REDEEM rows for
+    // the same booking — which matches real code (a booking is redeemed exactly
+    // once at creation). bookingId is a correlation string, not an FK, so a
+    // synthetic second id is valid here; the assertions are per-user balance and
+    // don't depend on which booking.
     await ctx.prisma.$transaction(async (tx) => {
       await loyalty.redeem(tx, { userId, amount: 100, bookingId: booking.id, note: 'one' });
     });
     await ctx.prisma.$transaction(async (tx) => {
-      await loyalty.redeem(tx, { userId, amount: 50, bookingId: booking.id, note: 'two' });
+      await loyalty.redeem(tx, { userId, amount: 50, bookingId: `${booking.id}-2`, note: 'two' });
     });
 
     // Skip genesis seed row; inspect just the two redeems
@@ -152,10 +158,10 @@ describe('LoyaltyService — double-entry invariant', () => {
       orderBy: { createdAt: 'asc' },
     });
     expect(rows).toHaveLength(2);
-    expect(rows[0].delta).toBe(-100);
-    expect(rows[0].balanceAfter).toBe(400);
-    expect(rows[1].delta).toBe(-50);
-    expect(rows[1].balanceAfter).toBe(350); // Snapshot matches actual post-write balance
+    expect(Number(rows[0].delta)).toBe(-100);
+    expect(Number(rows[0].balanceAfter)).toBe(400);
+    expect(Number(rows[1].delta)).toBe(-50);
+    expect(Number(rows[1].balanceAfter)).toBe(350); // Snapshot matches actual post-write balance
   });
 });
 
@@ -203,7 +209,7 @@ describe('LoyaltyService.redeem — TOCTOU-safe under parallel race', () => {
       where: { userId, source: 'BOOKING_REDEEM' },
     });
     expect(rows).toHaveLength(1);
-    expect(rows[0].delta).toBe(-60);
+    expect(Number(rows[0].delta)).toBe(-60);
   });
 
   test('10 parallel 15-point redeems on 100-point balance → at most 6 succeed (100/15 floor)', async () => {
@@ -219,9 +225,14 @@ describe('LoyaltyService.redeem — TOCTOU-safe under parallel race', () => {
       },
     });
 
+    // Distinct bookingId per redeem: this test isolates the BALANCE TOCTOU guard
+    // (atomic decrement → at most 6 by balance). A shared bookingId would instead
+    // be capped at 1 by the loyalty_ledger (bookingId, source) unique index
+    // (migration 20260621000000), masking the balance race we're testing here.
+    // bookingId is a correlation string (not an FK), so synthetic ids are valid.
     const runs = Array.from({ length: 10 }, (_, i) =>
       ctx.prisma.$transaction(async (tx) => {
-        return loyalty.redeem(tx, { userId, amount: 15, bookingId: booking.id, note: `parallel-${i}` });
+        return loyalty.redeem(tx, { userId, amount: 15, bookingId: `${booking.id}-${i}`, note: `parallel-${i}` });
       }).catch(e => e),
     );
     const results = await Promise.all(runs);
@@ -273,7 +284,7 @@ describe('LoyaltyService.adjust — clamp never drives balance negative', () => 
     const row = await ctx.prisma.loyaltyLedger.findFirstOrThrow({
       where: { userId, source: 'ADMIN_ADJUST', NOT: { reason: { contains: 'genesis' } } },
     });
-    expect(row.delta).toBe(-100);
+    expect(Number(row.delta)).toBe(-100);
     expect(row.reason).toMatch(/clamped from -500/);
     expect(row.reason).toMatch(/balance was 100/);
   });

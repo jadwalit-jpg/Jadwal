@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import { LocaleLink as Link } from '@/components/locale-link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -14,15 +14,18 @@ import {
   Gift,
   MapPin,
   User,
+  X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import api from '@/lib/api';
 import { getApiError } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import { sanitizeObject } from '@/lib/validation';
+import { fbTrack } from '@/lib/fb-pixel';
 import { localized } from '@/lib/localize';
 import { useAuth } from '@/context/auth-context';
 import { useGeo } from '@/context/geo-context';
+import TermsAcceptModal from '@/components/terms-accept-modal';
 import { useToast } from '@/components/toast';
 import { BookingPhoneModal } from '@/components/booking-phone-modal';
 import Navbar from '@/components/navbar';
@@ -78,6 +81,7 @@ interface HourlySlot {
   slotStart: string;
   slotEnd: string;
   isPast?: boolean;
+  isBlocked?: boolean;
   capacity?: number | null;
   booked?: number;
   available?: number;
@@ -120,9 +124,12 @@ function countNights(checkIn: string, checkOut: string): number {
   return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string, locale: string): string {
   const d = new Date(dateStr + 'T00:00:00Z');
-  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  // timeZone:'UTC' — dateStr is a plain calendar date tagged midnight-UTC; without
+  // this a non-UTC browser can render the day off by one (must match the times,
+  // which are already UTC-pinned across the app).
+  return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 function formatTime12h(time: string): string {
@@ -149,10 +156,13 @@ export default function BookActivityPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user } = useAuth();
+  const { user, checkAuth } = useAuth();
   const { country: geoCountry } = useGeo();
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  // Arabic with Latin numerals — date names localise, numbers stay Western to
+  // match the calendar cells. Passed to formatDate (the selected-date summary).
+  const fmtLocale = i18n.language?.toLowerCase().startsWith('ar') ? 'ar-u-nu-latn' : 'en-US';
   const queryClient = useQueryClient();
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   // Per-booking phone the customer enters via the modal. Distinct from
@@ -307,30 +317,56 @@ export default function BookActivityPage() {
   });
 
   // ─── Daily: date selection ───────────────────────────────
-  const fixedNights = activity?.durationValue ?? null;
+  // DAILY durationValue = MINIMUM nights (null/0 = flexible day-by-day booking).
+  const minNights = activity?.durationValue ?? null;
+
+  // Checkout date for check-in + minNights — the minimum stay, pre-selected on pick.
+  const minCheckout = useCallback(
+    (cinStr: string): string => {
+      const cin = new Date(cinStr + 'T00:00:00Z');
+      cin.setUTCDate(cin.getUTCDate() + (minNights ?? 1));
+      return cin.toISOString().split('T')[0];
+    },
+    [minNights],
+  );
 
   const handleDailyDateSelect = useCallback(
     (date: string) => {
-      if (fixedNights) {
-        setCheckIn(date);
-        const cin = new Date(date + 'T00:00:00Z');
-        cin.setUTCDate(cin.getUTCDate() + fixedNights);
-        setCheckOut(cin.toISOString().split('T')[0]);
+      // Tapping the currently-selected check-in again clears the whole
+      // selection (toggle off) — no need to click an earlier date to reset.
+      if (date === checkIn) {
+        setCheckIn(null);
+        setCheckOut(null);
         return;
       }
+      if (minNights && minNights > 0) {
+        // Minimum-stay model: the first pick (or a pick on/before the current
+        // check-in) sets check-in and INSTANTLY pre-selects the minimum stay;
+        // a pick AFTER check-in extends the stay; a too-short pick snaps back to
+        // the minimum. The customer can extend but never drop below the minimum.
+        if (!checkIn || date <= checkIn) {
+          setCheckIn(date);
+          setCheckOut(minCheckout(date));
+          return;
+        }
+        const cin = new Date(checkIn + 'T00:00:00Z');
+        const clicked = new Date(date + 'T00:00:00Z');
+        const nights = Math.round((clicked.getTime() - cin.getTime()) / 86400000);
+        setCheckOut(nights < minNights ? minCheckout(checkIn) : date);
+        return;
+      }
+      // Flexible (no minimum) — standard range picker.
       if (!checkIn || checkOut) {
         setCheckIn(date);
         setCheckOut(null);
+      } else if (date <= checkIn) {
+        setCheckIn(date);
+        setCheckOut(null);
       } else {
-        if (date <= checkIn) {
-          setCheckIn(date);
-          setCheckOut(null);
-        } else {
-          setCheckOut(date);
-        }
+        setCheckOut(date);
       }
     },
-    [checkIn, checkOut, fixedNights],
+    [checkIn, checkOut, minNights, minCheckout],
   );
 
   // ─── Hourly: date selection ──────────────────────────────
@@ -359,7 +395,26 @@ export default function BookActivityPage() {
   // ─── Pricing ─────────────────────────────────────────────
   const currency = activity?.country?.currencyCode ?? 'QAR';
   const price = Number(activity?.pricePerPerson ?? 0);
-  const effectivePrice = price;
+
+  // Per-date prices from the loaded calendar months — these already include any
+  // special-price overrides (the calendar endpoint applies them). Lets the
+  // preview match the server's per-date charge instead of always using the base.
+  const priceByDate = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const cal of [calLeft, calRight, hourlyCalLeft, hourlyCalRight]) {
+      for (const d of cal?.days ?? []) {
+        if (typeof d.price === 'number') m.set(d.date, d.price);
+      }
+    }
+    return m;
+  }, [calLeft, calRight, hourlyCalLeft, hourlyCalRight]);
+
+  // Effective per-unit price for the selected date (special override or base).
+  // HOURLY books a single date via `selectedDate`; DAILY uses `checkIn` (the
+  // total sums each night below). Keying off the wrong one made HOURLY
+  // special-price dates fall back to the base price in the preview.
+  const priceLookupDate = isHourly ? selectedDate : checkIn;
+  const effectivePrice = (priceLookupDate ? priceByDate.get(priceLookupDate) : undefined) ?? price;
 
   const nights = checkIn && checkOut ? countNights(checkIn, checkOut) : 0;
   const isPerUnit = activity?.pricingModel === 'PER_UNIT';
@@ -387,9 +442,15 @@ export default function BookActivityPage() {
   const slotHours = useMemo(() => {
     const baseline = activity?.durationValue ?? 0;
     if (!selectedSlot || !selectedSlotEnd || baseline <= 0) return baseline;
-    const startH = parseInt(selectedSlot.split(':')[0], 10);
-    const endH = parseInt(selectedSlotEnd.split(':')[0], 10);
-    const hours = endH - startH;
+    // Minute-accurate so a :30 start (KAN-12) is measured correctly. Booking
+    // lengths are whole hours (server + picker enforce span % 60 === 0), so this
+    // stays an integer that matches the server's hoursBooked exactly — the old
+    // `endH - startH` dropped minutes and mis-priced a half-hour-offset range.
+    const toMin = (t: string) => {
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + (m || 0);
+    };
+    const hours = (toMin(selectedSlotEnd) - toMin(selectedSlot)) / 60;
     const maxHours = MAX_SLOT_UNITS_CLIENT * baseline;
     return Math.max(baseline, Math.min(hours, maxHours));
   }, [selectedSlot, selectedSlotEnd, activity?.durationValue]);
@@ -407,10 +468,34 @@ export default function BookActivityPage() {
       const pricePerHour = durHours > 0 ? effectivePrice / durHours : effectivePrice;
       base = isPerUnit ? pricePerHour * hours : pricePerHour * guests * hours;
     } else {
-      base = effectivePrice * Math.max(1, nights);
+      // DAILY: sum each night's price (special override or base) so the preview
+      // matches the server, which prices each night by its own date.
+      if (checkIn && checkOut && nights > 0) {
+        const start = new Date(`${checkIn}T00:00:00Z`).getTime();
+        base = 0;
+        for (let i = 0; i < nights; i++) {
+          const ds = new Date(start + i * 86400000).toISOString().slice(0, 10);
+          base += priceByDate.get(ds) ?? price;
+        }
+      } else {
+        base = effectivePrice * Math.max(1, nights);
+      }
     }
     return base + extrasTotal;
-  }, [isHourly, isPerUnit, effectivePrice, guests, nights, slotHours, extrasTotal, activity?.durationValue]);
+  }, [isHourly, isPerUnit, effectivePrice, guests, nights, slotHours, extrasTotal, activity?.durationValue, checkIn, checkOut, price, priceByDate]);
+
+  // Per-night prices for the DAILY breakdown label — so a stay mixing special and
+  // normal nights is shown explicitly (e.g. "2000 + 300") instead of a misleading
+  // flat "rate × N nights". The total above already sums these.
+  const dailyNightPrices = useMemo(() => {
+    if (isHourly || !checkIn || !checkOut || nights <= 0) return [] as number[];
+    const start = new Date(`${checkIn}T00:00:00Z`).getTime();
+    return Array.from({ length: nights }, (_, i) => {
+      const ds = new Date(start + i * 86400000).toISOString().slice(0, 10);
+      return priceByDate.get(ds) ?? price;
+    });
+  }, [isHourly, checkIn, checkOut, nights, priceByDate, price]);
+  const dailyMixedNightly = useMemo(() => new Set(dailyNightPrices).size > 1, [dailyNightPrices]);
 
   // ─── Loyalty points calculations ────────────────────────
   // Service fee is platform revenue, normally added on top of bookingCost.
@@ -424,13 +509,18 @@ export default function BookActivityPage() {
   // is the ceiling we cap Wanasa redemption against — anything beyond
   // this would land on the (soon-to-be-waived) fee anyway.
   const activityPayable = Math.max(0, bookingCost - couponPart);
-  // Wanasa is now all-or-nothing: either the customer has enough points to
-  // fully cover the activity (→ book with points, fee waived) or they
-  // don't (→ the option is disabled with a clear "not enough" message).
-  // No slider, no partial redemption from the UI.
-  const qarPerPoint = loyaltyData?.qarPerPoint ?? 0.01;
+  // Wanasa redemption: enough points to cover the whole activity → full
+  // coverage (fee waived, nothing left to pay); fewer than that but at least
+  // the minimum → PARTIAL (redeem the whole balance, pay the rest in cash, fee
+  // kept); below the minimum → the option is locked. One toggle drives all
+  // three — it redeems as much as helps (capped at full coverage).
+  // 1 point = 1 QAR (qarPerPoint default 1.0). Points are QAR-denominated and
+  // fractional, so the points needed to fully cover the price is an exact 2-dp
+  // amount (matches the backend's round2(activityPrice / qarPerPoint)), not a
+  // whole-point ceil.
+  const qarPerPoint = loyaltyData?.qarPerPoint ?? 1;
   const requiredPoints = activityPayable > 0 && qarPerPoint > 0
-    ? Math.ceil(activityPayable / qarPerPoint)
+    ? Math.round((activityPayable / qarPerPoint) * 100) / 100
     : 0;
   const minRedemption = loyaltyData?.minRedemption ?? 1;
   // Show the Wanasa block only when redemption is configured AND the
@@ -441,6 +531,17 @@ export default function BookActivityPage() {
     requiredPoints > 0 && requiredPoints >= minRedemption
   );
   const hasEnoughPoints = !!(loyaltyData && loyaltyData.loyaltyPoints >= requiredPoints);
+  // Partial redemption: the toggle redeems as many points as help — the full
+  // requirement when the customer has it, otherwise their ENTIRE balance (they
+  // then pay the remaining cash). Capped at requiredPoints so nothing is burned
+  // past full coverage.
+  const pointsBalance = loyaltyData?.loyaltyPoints ?? 0;
+  const redeemablePoints = Math.min(pointsBalance, requiredPoints);
+  // Usable when the amount actually redeemed clears the configured minimum —
+  // no longer requires covering the FULL price (the old all-or-nothing limit).
+  const canUsePoints = !!(loyaltyData && qarPerPoint > 0 && redeemablePoints >= minRedemption);
+  // Full coverage (fee waived, nothing left to pay) vs partial (pay difference).
+  const isFullCoverage = hasEnoughPoints;
 
   const pointsDiscount = useMemo(() => {
     if (!usePoints || !loyaltyData || redeemPoints <= 0) return 0;
@@ -464,26 +565,26 @@ export default function BookActivityPage() {
   }, [grossPayable, couponPart, pointsDiscount]);
   const isPointsOnly = usePoints && cashDue === 0 && pointsDiscount > 0;
 
-  // Binary Wanasa mode: toggle ON → redeem exactly the points needed to
-  // cover the activity price; toggle OFF → clear. No slider, no partial.
-  // Also defensively clears the selection if the user toggles ON without
-  // enough balance (the button guards against this, but if requiredPoints
-  // shifts afterwards — e.g. guest count bumps the price — we bail out
-  // cleanly rather than submit an insufficient amount).
+  // Wanasa mode: toggle ON → redeem `redeemablePoints` (full requirement if the
+  // customer has it, otherwise their whole balance → partial, pay the rest);
+  // toggle OFF → clear. Defensively clears if the toggle is on but redemption
+  // is no longer usable (e.g. requiredPoints shifts after a guest-count change
+  // and the balance now falls below the minimum) so we never submit an
+  // insufficient amount.
   useEffect(() => {
     if (!usePoints) {
       if (redeemPoints !== 0) setRedeemPoints(0);
       return;
     }
-    if (!hasEnoughPoints) {
+    if (!canUsePoints) {
       if (usePoints) setUsePoints(false);
       if (redeemPoints !== 0) setRedeemPoints(0);
       return;
     }
-    if (redeemPoints !== requiredPoints) {
-      setRedeemPoints(requiredPoints);
+    if (redeemPoints !== redeemablePoints) {
+      setRedeemPoints(redeemablePoints);
     }
-  }, [usePoints, hasEnoughPoints, requiredPoints, redeemPoints]);
+  }, [usePoints, canUsePoints, redeemablePoints, redeemPoints]);
 
   // ─── Max guests ──────────────────────────────────────────
   // When the activity has units, cap at unitCapacity (one booking = one unit)
@@ -506,14 +607,19 @@ export default function BookActivityPage() {
   const maxGuests = useMemo(() => {
     if (isHourly && selectedSlot && hourlySlots && activity?.durationValue) {
       const duration = activity.durationValue;
-      const startH = parseInt(selectedSlot.split(':')[0], 10);
-      const endHour = selectedSlotEnd
-        ? parseInt(selectedSlotEnd.split(':')[0], 10)
-        : startH + duration;
+      // Minute-based so a :30 start (KAN-12) matches the server's 30-min slot
+      // keys. Walk the tiled duration-long slots the range covers.
+      const toMin = (t: string) => {
+        const [h, m] = t.split(':').map(Number);
+        return h * 60 + (m || 0);
+      };
+      const fromMin = (mins: number) =>
+        `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+      const startMin = toMin(selectedSlot);
+      const endMin = selectedSlotEnd ? toMin(selectedSlotEnd) : startMin + duration * 60;
       let minAvail: number | null = null;
-      for (let h = startH; h < endHour; h += duration) {
-        const hh = `${String(h).padStart(2, '0')}:00`;
-        const slot = hourlySlots.slots.find((s) => s.slotStart === hh);
+      for (let mm = startMin; mm < endMin; mm += duration * 60) {
+        const slot = hourlySlots.slots.find((s) => s.slotStart === fromMin(mm));
         const a = slotAvailOf(slot);
         if (a === null) continue;
         minAvail = minAvail === null ? a : Math.min(minAvail, a);
@@ -554,6 +660,27 @@ export default function BookActivityPage() {
     if (isHourly) return !!selectedDate && !!selectedSlot;
     return !!checkIn && !!checkOut;
   }, [activity, guests, isHourly, selectedDate, selectedSlot, checkIn, checkOut]);
+
+  // Points can only apply to a SUBMITTABLE booking. The price card shows a
+  // total before any date/slot is picked (the pre-selection estimate), so
+  // without this guard a user could toggle points to "cover" that estimate →
+  // the summary shows "Paid with points" while Confirm stays (correctly)
+  // disabled for lack of a selection — the "full-points button stuck disabled"
+  // bug. If the selection becomes invalid, drop any applied points so the two
+  // states can never disagree.
+  useEffect(() => {
+    if (!canSubmit && usePoints) setUsePoints(false);
+  }, [canSubmit, usePoints]);
+
+  // Meta Pixel: customer reached checkout. Fired once when the activity loads
+  // (no-ops unless the pixel loaded after cookie consent — see lib/fb-pixel.ts).
+  const checkoutTracked = useRef(false);
+  useEffect(() => {
+    if (activity && !checkoutTracked.current) {
+      checkoutTracked.current = true;
+      fbTrack('InitiateCheckout', { currency, value: bookingCost });
+    }
+  }, [activity, currency, bookingCost]);
 
   // ─── Coupon validation ──────────────────────────────────
   const handleApplyCoupon = async () => {
@@ -613,6 +740,15 @@ export default function BookActivityPage() {
       router.push(`/bookings/${bookingId}`);
     },
     onError: (err) => {
+      // Server-side consent guard (TermsAcceptedGuard) — defense in depth if the
+      // inline accept step below was somehow bypassed. Refresh so the inline
+      // accept prompt surfaces, and show a clear message instead of a generic error.
+      const detail = String((err as { response?: { data?: { message?: unknown } } })?.response?.data?.message ?? '');
+      if (/TERMS_NOT_ACCEPTED/i.test(detail)) {
+        void checkAuth();
+        toast(t('booking.termsRequired', 'Please accept our Terms & Privacy to book.'), 'error');
+        return;
+      }
       toast(getApiError(err, 'Failed to create booking'), 'error');
     },
   });
@@ -745,6 +881,14 @@ export default function BookActivityPage() {
 
   return (
     <div className="min-h-screen bg-jadwal-bg font-outfit text-jadwal-text">
+      {/* Direct-URL defense: a no-consent user who lands here (not via the
+          gated "Book now") still gets the accept popup. Accept → stays & books;
+          cancel → back to the activity page. Server guard remains the boundary. */}
+      <TermsAcceptModal
+        open={!!user?.needsTermsAcceptance}
+        onAccepted={() => { /* needsTermsAcceptance flips false → modal closes */ }}
+        onCancel={() => router.push(`/activity/${slug}`)}
+      />
       <Navbar variant="solid" />
 
       <div className="pt-24 max-w-6xl mx-auto px-4 sm:px-6 pb-16">
@@ -767,7 +911,7 @@ export default function BookActivityPage() {
           <div className="lg:col-span-3 space-y-5">
             {/* Booking Type Badge */}
             <div>
-              <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-jadwal-surface-raised border border-jadwal-border-subtle text-jadwal-text text-sm font-medium shadow-jadwal">
+              <div className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 px-4 py-2.5 rounded-2xl bg-jadwal-surface-raised border border-jadwal-border-subtle text-jadwal-text text-sm font-medium shadow-jadwal">
                 {isHourly ? (
                   <>
                     <Clock className="h-3.5 w-3.5 text-jadwal-primary" aria-hidden="true" />
@@ -780,11 +924,27 @@ export default function BookActivityPage() {
                       {isPerUnit ? t('activity.unit') : t('activity.person')}
                     </span>
                   </>
+                ) : minNights && minNights > 1 ? (
+                  <>
+                    <Calendar className="h-3.5 w-3.5 text-jadwal-primary" aria-hidden="true" />
+                    {`${t('activity.minStay', 'Min')} ${minNights} ${t('activity.nights')}`}
+                    <span className="text-jadwal-text-faint">·</span>
+                    {/* Inclusive minimum total (minNights × price). The headline
+                        used to show ONLY the per-night rate, which reads as the full
+                        price on a min-stay activity (reported bug — e.g. "QAR 2600 /
+                        night" when 3 nights are required = QAR 7800 minimum). */}
+                    <span className="tabular-nums font-semibold">
+                      {currency} {(effectivePrice * minNights).toFixed(0)}
+                    </span>
+                    <span className="text-jadwal-text-faint tabular-nums text-xs">
+                      ({currency} {effectivePrice.toFixed(0)}/{t('activity.night')})
+                    </span>
+                  </>
                 ) : (
                   <>
                     <Calendar className="h-3.5 w-3.5 text-jadwal-primary" aria-hidden="true" />
-                    {fixedNights
-                      ? `${fixedNights} ${fixedNights > 1 ? t('activity.nights') : t('activity.night')}`
+                    {minNights
+                      ? `${t('activity.minStay', 'Min')} ${minNights} ${t('activity.night')}`
                       : t('activity.dailyBooking')}
                     <span className="text-jadwal-text-faint">·</span>
                     <span className="tabular-nums">
@@ -820,7 +980,7 @@ export default function BookActivityPage() {
                   {selectedDate && (
                     <p className="mt-3 text-sm text-gray-600 dark:text-slate-300">
                       <span className="text-gray-400 dark:text-slate-500">{t('booking.date')}: </span>
-                      <span className="font-medium">{formatDate(selectedDate)}</span>
+                      <span className="font-medium">{formatDate(selectedDate, fmtLocale)}</span>
                     </p>
                   )}
                 </div>
@@ -862,6 +1022,7 @@ export default function BookActivityPage() {
                               setSelectedSlot(s);
                               setSelectedSlotEnd(e);
                             }}
+                            onBlockedAttempt={() => toast(t('booking.cantBookOverOffHours', { defaultValue: "Can't book over the host's off-hours — pick a time that doesn't cross a locked slot." }), 'error')}
                             formatTime={formatTime12h}
                             labels={{
                               // i18n interpolation: {{hours}} and {{closing}} are
@@ -877,6 +1038,10 @@ export default function BookActivityPage() {
                                 hours: activity.durationValue,
                                 closing: formatTime12h(activity.checkOutTime),
                                 defaultValue: 'Minimum {{hours}}h. Tap a later hour to extend. Closing: {{closing}}.',
+                              }),
+                              blocked: t('booking.slotBlocked', { defaultValue: 'blocked by host' }),
+                              blockedLegend: t('booking.slotBlockedLegend', {
+                                defaultValue: 'Times marked with a lock are blocked by the host.',
                               }),
                             }}
                           />
@@ -908,9 +1073,10 @@ export default function BookActivityPage() {
                   checkIn={checkIn}
                   checkOut={checkOut}
                   onDateSelect={handleDailyDateSelect}
+                  onBlockedAttempt={() => toast(t('booking.cantBookOverOffDays', { defaultValue: "Can't book over the host's off-days — your stay would cross a locked date." }), 'error')}
                   currency={currency}
-                  showPrices
-                  fixedNights={fixedNights}
+                  showPrices={false}
+                  minNights={minNights}
                   isLoading={calendarLoading}
                 />
                 {(checkIn || checkOut) && (
@@ -918,13 +1084,13 @@ export default function BookActivityPage() {
                     {checkIn && (
                       <span>
                         <span className="text-gray-400 dark:text-slate-500">{t('booking.checkIn')}: </span>
-                        <span className="font-medium">{formatDate(checkIn)}</span>
+                        <span className="font-medium">{formatDate(checkIn, fmtLocale)}</span>
                       </span>
                     )}
                     {checkOut && (
                       <span>
                         <span className="text-gray-400 dark:text-slate-500">{t('booking.checkOut')}: </span>
-                        <span className="font-medium">{formatDate(checkOut)}</span>
+                        <span className="font-medium">{formatDate(checkOut, fmtLocale)}</span>
                       </span>
                     )}
                     {nights > 0 && (
@@ -932,6 +1098,16 @@ export default function BookActivityPage() {
                         {nights} {nights > 1 ? t('activity.nights') : t('activity.night')}
                       </span>
                     )}
+                    {/* Clear/reset — lets the customer change the check-in date or
+                        start the range over (no visible reset was the reported bug). */}
+                    <button
+                      type="button"
+                      onClick={() => { setCheckIn(null); setCheckOut(null); }}
+                      className="ms-auto inline-flex items-center gap-1 text-xs font-medium text-gray-400 hover:text-sky-600 dark:text-slate-500 dark:hover:text-sky-400 transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t('booking.clearDates')}
+                    </button>
                   </div>
                 )}
               </div>
@@ -945,11 +1121,7 @@ export default function BookActivityPage() {
                     3
                   </span>
                 ) : null}
-                <span>
-                  {isHourly
-                    ? t('activity.tickets', { defaultValue: 'Tickets' })
-                    : t('activity.guests')}
-                </span>
+                <span>{t('activity.guests')}</span>
               </h2>
               <div className="rounded-xl border border-jadwal-border-subtle bg-jadwal-surface p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -959,9 +1131,7 @@ export default function BookActivityPage() {
                   />
                   <div>
                     <p className="text-sm font-medium text-jadwal-text">
-                      {isHourly
-                        ? t('activity.tickets', { defaultValue: 'Tickets' })
-                        : t('activity.guests')}
+                      {t('activity.guests')}
                     </p>
                   </div>
                 </div>
@@ -1032,7 +1202,7 @@ export default function BookActivityPage() {
                       <>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500 dark:text-slate-400">{t('booking.date')}</span>
-                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(selectedDate!)}</span>
+                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(selectedDate!, fmtLocale)}</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500 dark:text-slate-400">{t('booking.time')}</span>
@@ -1056,11 +1226,11 @@ export default function BookActivityPage() {
                       <>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500 dark:text-slate-400">{t('booking.checkIn')}</span>
-                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(checkIn!)}</span>
+                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(checkIn!, fmtLocale)}</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500 dark:text-slate-400">{t('booking.checkOut')}</span>
-                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(checkOut!)}</span>
+                          <span className="text-gray-900 dark:text-white font-medium">{formatDate(checkOut!, fmtLocale)}</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500 dark:text-slate-400">{t('activity.duration')}</span>
@@ -1188,8 +1358,12 @@ export default function BookActivityPage() {
                       {isHourly
                         ? isPerUnit
                           ? `${effectivePrice.toFixed(0)} / ${t('activity.unit')}`
-                          : `${effectivePrice.toFixed(0)} × ${guests} ${guests > 1 ? t('activity.tickets') : t('activity.tickets')}`
-                        : `${effectivePrice.toFixed(0)} × ${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`
+                          : `${effectivePrice.toFixed(0)} × ${guests} ${t('activity.guests')}`
+                        : dailyMixedNightly
+                          ? (dailyNightPrices.length <= 6
+                              ? dailyNightPrices.map((p) => p.toFixed(0)).join(' + ')
+                              : `${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`)
+                          : `${effectivePrice.toFixed(0)} × ${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`
                       }
                     </p>
                   )}
@@ -1206,7 +1380,7 @@ export default function BookActivityPage() {
                         <span className="text-emerald-600 dark:text-emerald-400">{t('booking.couponCode')} ({appliedCoupon.code})</span>
                         <button type="button" onClick={handleRemoveCoupon} className="text-xs text-gray-400 hover:text-red-500 transition-colors">{t('booking.remove')}</button>
                       </div>
-                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">-{currency} {appliedCoupon.discount.toFixed(0)}</span>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">-{currency} {appliedCoupon.discount.toFixed(2)}</span>
                     </div>
                   )}
                   {/* Voucher discount */}
@@ -1216,7 +1390,7 @@ export default function BookActivityPage() {
                         <span className="text-purple-600 dark:text-purple-400">{t('booking.useVoucher')}</span>
                         <button type="button" onClick={() => setSelectedVoucher(null)} className="text-xs text-gray-400 hover:text-red-500 transition-colors">{t('booking.remove')}</button>
                       </div>
-                      <span className="text-purple-600 dark:text-purple-400 font-medium">-{currency} {selectedVoucher.discount.toFixed(0)}</span>
+                      <span className="text-purple-600 dark:text-purple-400 font-medium">-{currency} {selectedVoucher.discount.toFixed(2)}</span>
                     </div>
                   )}
                 </div>
@@ -1293,7 +1467,7 @@ export default function BookActivityPage() {
                             {label}
                           </span>
                           <span className={`text-xs ${isSelected ? 'text-purple-600 dark:text-purple-400 font-semibold' : 'text-gray-400 dark:text-slate-500'}`}>
-                            {isSelected ? `-${vDiscount.toFixed(0)} QAR` : tooLow ? `Min. ${v.minOrderAmount}` : t('booking.apply')}
+                            {isSelected ? `-${vDiscount.toFixed(2)} QAR` : tooLow ? `Min. ${v.minOrderAmount}` : t('booking.apply')}
                           </span>
                         </button>
                       );
@@ -1301,12 +1475,12 @@ export default function BookActivityPage() {
                   </div>
                 )}
 
-                {/* Loyalty Points Redemption — binary (toggle only, no
-                    slider). Enough points → toggle enabled, flip to ON uses
-                    exactly requiredPoints to cover the activity and waives
-                    the fee. Not enough → toggle locked with a clear
-                    "you have X, need Y" message. */}
-                {user && canRedeemPoints && bookingCost > 0 && (
+                {/* Loyalty Points Redemption — one toggle, three outcomes:
+                    full coverage (fee waived), PARTIAL (redeem the whole
+                    balance, pay the difference, fee kept), or locked when the
+                    balance is below the minimum. ON redeems min(balance,
+                    requiredPoints) — as much as helps, capped at full. */}
+                {user && canRedeemPoints && bookingCost > 0 && canSubmit && (
                   <div className="mt-4 pt-4 border-t border-gray-100 dark:border-slate-800/60">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0">
@@ -1316,16 +1490,23 @@ export default function BookActivityPage() {
                             {t('loyalty.usePoints', { defaultValue: 'Pay with Wanasa points' })}
                           </p>
                           <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-                            {hasEnoughPoints
+                            {isFullCoverage
                               ? t('loyalty.needsPoints', {
                                   defaultValue: 'Needs {{n}} points · service fee waived',
-                                  n: requiredPoints.toLocaleString(),
+                                  n: requiredPoints.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
                                 })
-                              : t('loyalty.notEnoughPoints', {
-                                  defaultValue: 'You have {{have}} · need {{need}}',
-                                  have: (loyaltyData?.loyaltyPoints ?? 0).toLocaleString(),
-                                  need: requiredPoints.toLocaleString(),
-                                })}
+                              : canUsePoints
+                                ? t('loyalty.partialPoints', {
+                                    defaultValue: 'Use your {{have}} points · save {{currency}} {{save}}, pay the rest',
+                                    have: pointsBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                                    currency,
+                                    save: (redeemablePoints * qarPerPoint).toFixed(2),
+                                  })
+                                : t('loyalty.belowMinPoints', {
+                                    defaultValue: 'You have {{have}} · minimum {{min}} points to redeem',
+                                    have: pointsBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                                    min: minRedemption.toLocaleString(),
+                                  })}
                           </p>
                         </div>
                       </div>
@@ -1333,11 +1514,11 @@ export default function BookActivityPage() {
                         type="button"
                         role="switch"
                         aria-checked={usePoints}
-                        aria-disabled={!hasEnoughPoints}
-                        disabled={!hasEnoughPoints}
-                        onClick={() => hasEnoughPoints && setUsePoints(!usePoints)}
+                        aria-disabled={!canUsePoints}
+                        disabled={!canUsePoints}
+                        onClick={() => canUsePoints && setUsePoints(!usePoints)}
                         className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${
-                          !hasEnoughPoints
+                          !canUsePoints
                             ? 'bg-gray-200 dark:bg-slate-700 cursor-not-allowed opacity-60'
                             : usePoints
                               ? 'bg-amber-500 cursor-pointer'
@@ -1359,7 +1540,7 @@ export default function BookActivityPage() {
                       <span className="text-amber-600 dark:text-amber-400">{t('loyalty.pointsDiscount')}</span>
                       <button type="button" onClick={() => { setUsePoints(false); setRedeemPoints(0); }} className="text-xs text-gray-400 hover:text-red-500 transition-colors">{t('booking.remove')}</button>
                     </div>
-                    <span className="text-amber-600 dark:text-amber-400 font-medium">-{currency} {pointsDiscount.toFixed(0)}</span>
+                    <span className="text-amber-600 dark:text-amber-400 font-medium">-{currency} {pointsDiscount.toFixed(2)}</span>
                   </div>
                 )}
 
@@ -1398,13 +1579,17 @@ export default function BookActivityPage() {
                     {bookingCost > 0
                       ? isPointsOnly
                         ? t('booking.paidWithPoints', { defaultValue: 'Paid with points' })
-                        : `${currency} ${cashDue.toFixed(0)}`
+                        : `${currency} ${cashDue.toFixed(2)}`
                       : '—'}
                   </span>
                 </div>
 
-                {/* Earn-on-complete preview */}
+                {/* Earn-on-complete preview. You earn only on the CASH you pay:
+                    the points-redeemed portion earns nothing (no infinite loop).
+                    A FULL points booking (isPointsOnly) earns 0 → hidden; a
+                    PARTIAL booking still earns on the remaining cash share. */}
                 {user &&
+                !isPointsOnly &&
                 loyaltyData &&
                 loyaltyData.pointsPerQar > 0 &&
                 bookingCost > 0 ? (
@@ -1417,20 +1602,24 @@ export default function BookActivityPage() {
                       {t('booking.earnOnComplete', {
                         defaultValue:
                           "You'll earn {{n}} points when this completes",
-                        n: Math.floor(
-                          // Mirror the backend earn basis EXACTLY (bookings.service):
-                          // points = floor(afterCouponPrice * pointsPerQar), where
-                          // afterCouponPrice = gross - coupon/voucher. The points/cash
-                          // split does NOT reduce what's earned — the customer earns on
-                          // the full service value either way. Rate is pointsPerQar; the
-                          // old code divided by qarPerPoint (a ~100x over-count).
-                          Math.max(
-                            0,
-                            bookingCost -
-                              (appliedCoupon?.discount ?? 0) -
-                              (selectedVoucher?.discount ?? 0),
-                          ) * loyaltyData.pointsPerQar,
-                        ),
+                        // Mirror the backend earn basis EXACTLY (LoyaltyService
+                        // .computeEarnedPoints): earn on the CASH paid only —
+                        // price minus coupon/voucher AND the points-redeemed
+                        // portion. Points are QAR-denominated (1 pt = 1 QAR), so
+                        // this is rounded to 2 dp — NOT floored (a 90 QAR booking
+                        // earns 0.90, not 0). A full-points booking earns 0
+                        // (hidden by isPointsOnly above).
+                        n: (
+                          Math.round(
+                            Math.max(
+                              0,
+                              bookingCost -
+                                (appliedCoupon?.discount ?? 0) -
+                                (selectedVoucher?.discount ?? 0) -
+                                pointsDiscount,
+                            ) * loyaltyData.pointsPerQar * 100,
+                          ) / 100
+                        ).toFixed(2),
                       })}
                     </span>
                   </div>
@@ -1451,7 +1640,7 @@ export default function BookActivityPage() {
                     size="lg"
                     className="mt-5"
                     onClick={handleSubmit}
-                    disabled={!canSubmit || bookMutation.isPending}
+                    disabled={!canSubmit || bookMutation.isPending || !!user?.needsTermsAcceptance}
                     loading={bookMutation.isPending}
                     iconEnd={
                       <ChevronRight className="h-4 w-4" aria-hidden="true" />

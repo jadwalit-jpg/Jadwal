@@ -14,14 +14,13 @@
     "docker:logs": "docker-compose logs -f",
     "db:migrate": "npm run migrate:dev --workspace api",
     "db:studio": "npx prisma studio --schema apps/api/prisma/schema.prisma",
+    "check:api-contract": "node scripts/check-api-contract.mjs",
     "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true"
   },
   "devDependencies": {
-    "turbo": "latest"
+    "turbo": "2.9.14"
   },
   "overrides": {
-    "react": "19.0.0",
-    "react-dom": "19.0.0",
     "picomatch": "^4.0.4",
     "cross-spawn": "^7.0.6",
     "minimatch": "^9.0.7",
@@ -30,7 +29,7 @@
     "@hono/node-server": "^1.19.13",
     "@tootallnate/once": "^3.0.1",
     "ajv": "^8.18.0",
-    "fast-uri": "3.1.2",
+    "fast-uri": "^3.1.5",
     "tmp": "^0.2.5",
     "uuid": "^14.0.0"
   }

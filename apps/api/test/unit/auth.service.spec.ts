@@ -1,3 +1,5 @@
+// Anti-enum constant-time floor off in tests (behaviour verified by inspection; timing is flaky).
+process.env.REGISTER_MIN_RESPONSE_MS = '0';
 /**
  * AuthService unit tests — critical money/identity paths.
  *
@@ -21,12 +23,13 @@ import { EmailService } from '../../src/email/email.service';
 import { EmailQuotaService } from '../../src/email/email-quota.service';
 import { NotificationService } from '../../src/common/services/notification.service';
 import { RedisService } from '../../src/redis/redis.service';
+import { SessionDenylistService } from '../../src/redis/session-denylist.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import {
   makeJwtMock, makeConfigMock, makeUsersMock, makeSecurityLoggerMock,
   makeAuditLoggerMock, makeEmailMock, makeEmailQuotaMock, makeNotificationMock,
   makeRedisMock,
-  makeResponseMock, makeRequestMock,
+  makeResponseMock, makeRequestMock, makeSessionDenylistMock,
 } from '../mocks/auth-deps.mock';
 
 // ─── Setup helpers ──────────────────────────────────────────────────────────
@@ -42,6 +45,7 @@ async function buildSut(configOverrides: Record<string, string> = {}) {
   const emailQuota = makeEmailQuotaMock();
   const notif = makeNotificationMock();
   const redis = makeRedisMock();
+  const sessionDenylist = makeSessionDenylistMock();
 
   const moduleRef = await Test.createTestingModule({
     providers: [
@@ -56,12 +60,13 @@ async function buildSut(configOverrides: Record<string, string> = {}) {
       { provide: EmailQuotaService,     useValue: emailQuota },
       { provide: NotificationService,   useValue: notif },
       { provide: RedisService,          useValue: redis },
+      { provide: SessionDenylistService, useValue: sessionDenylist },
     ],
   }).compile();
 
   return {
     sut: moduleRef.get(AuthService),
-    prisma, jwt, config, users, sec, audit, email, emailQuota, notif, redis,
+    prisma, jwt, config, users, sec, audit, email, emailQuota, notif, redis, sessionDenylist,
   };
 }
 
@@ -441,14 +446,22 @@ describe('AuthService.issueTokens — cookie options', () => {
 
 describe('AuthService.refreshTokens', () => {
   let ctx: Awaited<ReturnType<typeof buildSut>>;
-  beforeEach(async () => { ctx = await buildSut(); });
+  beforeEach(async () => {
+    ctx = await buildSut();
+    // M6 rotation is an atomic conditional `updateMany({ where: { rotatedAt: null } })`;
+    // the shared prisma mock defaults updateMany to { count: 0 } (= "lost the race"),
+    // which would abort every rotation. Default it to the winner here; race tests
+    // can override with mockResolvedValueOnce({ count: 0 }).
+    ctx.prisma._client.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+  });
 
-  test('valid refresh token → deletes old row + issues new tokens', async () => {
+  test('valid refresh token → consumes old row (tombstone) + issues new tokens', async () => {
     const rawToken = 'a'.repeat(64);
     const tokenHash = ctx.sut.getTokenHash(rawToken);
 
     ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce({
-      id: 'rt1', userId: 'u1', tokenHash, expiresAt: futureDate(), sessionStartedAt: new Date(),
+      id: 'rt1', userId: 'u1', tokenHash, familyId: 'fam1', rotatedAt: null,
+      expiresAt: futureDate(), sessionStartedAt: new Date(),
     });
     ctx.prisma._client.user.findUnique.mockResolvedValueOnce({
       id: 'u1', email: 'a@b.com', fullName: 'A', role: 'CUSTOMER', isDeactivated: false,
@@ -456,7 +469,15 @@ describe('AuthService.refreshTokens', () => {
 
     await ctx.sut.refreshTokens(rawToken, makeResponseMock() as any);
 
-    expect(ctx.prisma._client.refreshToken.delete).toHaveBeenCalledWith({ where: { id: 'rt1' } });
+    // Rotation now MARKS the old row rotated (single-use tombstone) via a
+    // conditional updateMany — it does NOT delete it.
+    expect(ctx.prisma._client.refreshToken.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'rt1', rotatedAt: null },
+        data: expect.objectContaining({ rotatedAt: expect.any(Date) }),
+      }),
+    );
+    expect(ctx.prisma._client.refreshToken.delete).not.toHaveBeenCalled();
     expect(ctx.prisma._client.refreshToken.create).toHaveBeenCalled(); // new token issued
     expect(ctx.sec.log).toHaveBeenCalledWith(expect.objectContaining({ event: 'TOKEN_REFRESH' }));
   });
@@ -522,12 +543,56 @@ describe('AuthService.refreshTokens', () => {
     expect(ctx.prisma._client.refreshToken.deleteMany).toHaveBeenCalled();
   });
 
-  test('token reuse after rotation (replay attack) → row is already deleted → 401', async () => {
-    ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce(null); // rotated away
-    // Same generic "Session expired" — replay attempts can't be distinguished
-    // from any other invalid-token state by inspecting the response.
+  test('unknown / never-seen token → generic 401 (indistinguishable from any other bad token)', async () => {
+    ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce(null);
+    // Same generic "Session expired" — a missing/forged token can't be
+    // distinguished from any other invalid-token state by the response.
     await expect(ctx.sut.refreshTokens('a'.repeat(64), makeResponseMock() as any))
       .rejects.toThrow('Session expired');
+  });
+
+  test('M6 reuse: replaying a rotated tombstone BEYOND grace → revoke family + denylist + log + 401', async () => {
+    // The token is found WITH rotatedAt set (a consumed tombstone), rotated long
+    // enough ago to be past the grace window → genuine stolen-token reuse.
+    ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce({
+      id: 'rt1', userId: 'u1', tokenHash: 'h', familyId: 'fam-x',
+      rotatedAt: new Date(Date.now() - 60_000), // 60s ago ≫ 30s default grace
+      expiresAt: futureDate(), sessionStartedAt: new Date(),
+    });
+    const res = makeResponseMock();
+
+    await expect(ctx.sut.refreshTokens('a'.repeat(64), res as any))
+      .rejects.toThrow('Session expired');
+
+    // Whole family wiped, family denylisted, security event logged, cookies cleared.
+    expect(ctx.prisma._client.refreshToken.deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { familyId: 'fam-x' } }),
+    );
+    expect(ctx.sessionDenylist.denylistSession).toHaveBeenCalledWith('fam-x');
+    expect(ctx.sec.log).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'REFRESH_REUSE_DETECTED', userId: 'u1' }),
+    );
+    expect(res.cookie).toHaveBeenCalledWith('Authentication', '', expect.objectContaining({ maxAge: 0 }));
+    // A new token must NOT be issued on a reuse.
+    expect(ctx.prisma._client.refreshToken.create).not.toHaveBeenCalled();
+  });
+
+  test('M6 reuse: replaying a rotated tombstone WITHIN grace → benign 401, NO family revoke', async () => {
+    ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce({
+      id: 'rt1', userId: 'u1', tokenHash: 'h', familyId: 'fam-y',
+      rotatedAt: new Date(), // just now → within the 30s default grace
+      expiresAt: futureDate(), sessionStartedAt: new Date(),
+    });
+
+    await expect(ctx.sut.refreshTokens('a'.repeat(64), makeResponseMock() as any))
+      .rejects.toThrow('Session expired');
+
+    // Benign client race → do NOT revoke the family or log a reuse event.
+    expect(ctx.prisma._client.refreshToken.deleteMany).not.toHaveBeenCalled();
+    expect(ctx.sessionDenylist.denylistSession).not.toHaveBeenCalled();
+    expect(ctx.sec.log).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'REFRESH_REUSE_DETECTED' }),
+    );
   });
 });
 
@@ -551,10 +616,12 @@ describe('AuthService.registerAndLogin', () => {
     expect(ctx.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'CUSTOMER_REGISTER' }));
   });
 
-  test('duplicate email → 409', async () => {
-    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({ id: 'existing' });
-    await expect(ctx.sut.registerAndLogin({ fullName: 'X', email: 'taken@b.com', password: 'pw' }))
-      .rejects.toThrow(ConflictException);
+  test('M3: duplicate email → generic {pending} (no 409 enumeration oracle)', async () => {
+    ctx.prisma._client.user.findUnique.mockResolvedValueOnce({ id: 'existing', fullName: 'Owner', preferredLanguage: 'EN' });
+    // No throw — returns the same generic response a fresh signup would, so a
+    // caller cannot tell the email is already registered.
+    const res = await ctx.sut.registerAndLogin({ fullName: 'X', email: 'taken@b.com', password: 'pw' });
+    expect(res).toEqual({ pending: true, email: 'taken@b.com' });
   });
 
   test('duplicate phone → 409 with NEUTRAL message (anti-enumeration)', async () => {
@@ -975,14 +1042,20 @@ describe('AuthService.logout', () => {
     expect(ctx.sec.log).toHaveBeenCalledWith(expect.objectContaining({ event: 'LOGOUT', userId: 'u1' }));
   });
 
-  test('deletes only the passed refresh token (not all sessions)', async () => {
+  test('revokes only the passed token’s FAMILY (single device) + denylists it, not all sessions', async () => {
+    // M5: logout resolves the presented token to its family, denylists that
+    // family (so its access token dies now), and deletes the whole family
+    // (active + tombstones). It must NOT touch the user's OTHER sessions.
+    ctx.prisma._client.refreshToken.findUnique.mockResolvedValueOnce({ familyId: 'fam-1' });
+
     await ctx.sut.logout('rawtoken', 'u1', makeResponseMock() as any);
+
+    expect(ctx.sessionDenylist.denylistSession).toHaveBeenCalledWith('fam-1');
     expect(ctx.prisma._client.refreshToken.deleteMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ tokenHash: expect.any(String) }) }),
+      expect.objectContaining({ where: { familyId: 'fam-1' } }),
     );
-    // Ensure NOT deleteMany({ userId: ... }) — that would kill other sessions
-    const deleteCalls = ctx.prisma._client.refreshToken.deleteMany.mock.calls;
-    for (const call of deleteCalls) {
+    // Never a user-wide delete — that would kill the user's other devices.
+    for (const call of ctx.prisma._client.refreshToken.deleteMany.mock.calls) {
       expect(call[0].where).not.toHaveProperty('userId');
     }
   });

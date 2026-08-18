@@ -22,6 +22,7 @@ import { AdminService } from '../../src/admin/admin.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { NotificationService } from '../../src/common/services/notification.service';
 import * as crypto from 'crypto';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 const ctx = getTestContext();
 
@@ -48,7 +49,7 @@ function makeAdminService() {
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
 
-  return new AdminService(prismaSvc, notification, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any);
+  return new AdminService(prismaSvc, notification, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any, makeSessionDenylistMock() as any);
 }
 
 /**
@@ -68,7 +69,8 @@ async function seedWithBookings(opts: {
   const seed = await seedReference(ctx.prisma);
 
   // Ensure a loyalty config exists so cascadeCancelFutureBookings doesn't race
-  // to create it mid-cascade. Default qarPerPoint=0.01 → 200 QAR = 20,000 pts.
+  // to create it mid-cascade. Default qarPerPoint=1.0 (1 pt = 1 QAR) →
+  // round2(200 / 1.0) = 200 pts.
   await ctx.prisma.loyaltyConfig.upsert({
     where: { id: 'singleton' },
     create: { id: 'singleton' },
@@ -256,6 +258,37 @@ describe('AdminService.updateVendorStatus — SUSPENDED cascade', () => {
     expect(past.cancelledBy).toBeNull();
   });
 
+  // TIMEZONE boundary: seedReference's activity country is Asia/Qatar (+3).
+  // startDatetime is local-wall-clock tagged-UTC. A booking whose tagged start
+  // is raw-now + 1h is, in Qatar local (raw-now + 3h), 2h in the PAST — i.e. the
+  // customer is already IN the activity. The old `gte: new Date()` filter would
+  // treat it as "future", CANCEL it and 100%-refund a customer who is attending.
+  // The fix (gte: nowInTimezone(activity tz)) must EXCLUDE it.
+  test('TIMEZONE: an in-progress (Qatar-local) booking is NOT cancelled/refunded by the cascade, despite tagged start > raw UTC now', async () => {
+    const { seed, buyer, admin } = await seedWithBookings({ numFutureBookings: 1 });
+    const svc = makeAdminService();
+    const now = Date.now();
+    const inProgress = await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-INPROG-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR',
+        guests: 1, bookingPhone: '+97455123456', totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        status: 'CONFIRMED',
+        startDatetime: new Date(now + 60 * 60 * 1000),      // +1h raw = ~2h ago in Qatar local
+        endDatetime: new Date(now + 3 * 60 * 60 * 1000),
+        activityId: seed.activity.id,
+        customerId: buyer.id,
+        vendorId: seed.vendor.id,
+      },
+    });
+
+    await svc.updateVendorStatus(seed.vendor.id, 'SUSPENDED', admin.id);
+
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: inProgress.id } });
+    expect(b.status).toBe('CONFIRMED'); // NOT cancelled — already started locally
+    expect(b.cancelledBy).toBeNull();
+  });
+
   test('SUCCESS payment → REFUNDED with refundAmount + refundedAt', async () => {
     const { seed, admin, bookings } = await seedWithBookings({ numFutureBookings: 2, paymentAmountQar: 150 });
     const svc = makeAdminService();
@@ -298,7 +331,7 @@ describe('AdminService.updateVendorStatus — SUSPENDED cascade', () => {
   });
 
   test('loyalty ledger row written for paid refund → Wanasa points (paidAmount / qarPerPoint)', async () => {
-    // qarPerPoint default = 0.01 → 200 QAR ≡ 20,000 points
+    // qarPerPoint default = 1.0 (1 pt = 1 QAR) → round2(200 / 1.0) = 200 points
     const { seed, admin, buyer, bookings } = await seedWithBookings({
       numFutureBookings: 1, paymentAmountQar: 200,
     });
@@ -309,14 +342,14 @@ describe('AdminService.updateVendorStatus — SUSPENDED cascade', () => {
       where: { userId: buyer.id, source: 'ADMIN_REFUND_APPROVED' },
     });
     expect(rows).toHaveLength(1);
-    expect(rows[0].delta).toBe(20_000);
+    expect(Number(rows[0].delta)).toBe(200);
     expect(rows[0].bookingId).toBe(bookings[0].id);
     expect(rows[0].actorType).toBe('ADMIN');
     expect(rows[0].actorId).toBe(admin.id);
 
     // User balance increased by the same amount
     const u = await ctx.prisma.user.findUniqueOrThrow({ where: { id: buyer.id } });
-    expect(u.loyaltyPoints).toBe(20_000);
+    expect(Number(u.loyaltyPoints)).toBe(200);
   });
 
   test('redeemed points on the booking are also refunded via CANCEL_REFUND_PAID ledger row', async () => {
@@ -332,7 +365,10 @@ describe('AdminService.updateVendorStatus — SUSPENDED cascade', () => {
       where: { userId: buyer.id, source: 'CANCEL_REFUND_PAID' },
     });
     expect(redemptionRefunds).toHaveLength(1);
-    expect(redemptionRefunds[0].delta).toBe(500);
+    // Redeemed-points refund is a direct passthrough of Booking.pointsRedeemed
+    // (admin.service.ts: `redeemed = Number(bk.pointsRedeemed) || 0`), not run
+    // through qarPerPoint — value is unchanged by the redenomination.
+    expect(Number(redemptionRefunds[0].delta)).toBe(500);
     expect(redemptionRefunds[0].actorType).toBe('ADMIN');
   });
 

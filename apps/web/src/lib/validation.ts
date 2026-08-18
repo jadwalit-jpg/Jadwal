@@ -68,11 +68,43 @@ export function validateFullName(name: string): ValidationResult {
   if (!trimmed) return { valid: false, error: 'Full name is required' };
   if (trimmed.length < 2) return { valid: false, error: 'Name is too short' };
   if (trimmed.length > 100) return { valid: false, error: 'Name is too long' };
-  if (/[<>{}()[\]\\\/;]/.test(trimmed)) return { valid: false, error: 'Name contains invalid characters' };
-  // `\p{Nd}` matches decimal digits across all scripts — ASCII 0-9
-  // AND Arabic-Indic 0-9 (٠١٢٣٤٥٦٧٨٩). Real personal names don't
-  // contain digits in any script; reject defensively.
+  // `\p{Nd}` matches decimal digits across all scripts — ASCII 0-9 AND
+  // Arabic-Indic ٠-٩. Real personal names don't contain digits; checked
+  // first so digit input gets a specific, friendly message.
   if (/\p{Nd}/u.test(trimmed)) return { valid: false, error: 'Name cannot contain numbers' };
+  // Positive whitelist: letters of any script (\p{L} — Arabic + accented
+  // Latin), combining marks (\p{M}), spaces, hyphen, apostrophe (straight +
+  // curly) and period; first char must be a letter. Rejects symbols like
+  // @$#$ and the old unsafe set. Mirrors the server-side @Matches on the DTOs.
+  if (!/^[\p{L}\p{M}][\p{L}\p{M}\s'’.\-]*$/u.test(trimmed))
+    return { valid: false, error: 'Name contains invalid characters' };
+  return { valid: true };
+}
+
+// ── Business names (language-specific) — mirror the server @Matches so the
+// user gets a clear inline message before submit. The English field must be
+// Latin script (Arabic here also breaks the auto-generated URL slug); the
+// Arabic field must contain Arabic text. ──
+export function validateBusinessNameEn(name: string): ValidationResult {
+  const trimmed = name.trim();
+  if (!trimmed) return { valid: false, error: 'Business name (English) is required' };
+  if (trimmed.length > 200) return { valid: false, error: 'Business name is too long' };
+  // Arabic-script anywhere → specific, friendly message (the common mistake).
+  if (/[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/.test(trimmed))
+    return { valid: false, error: 'English business name must use English letters — enter Arabic in the Arabic name field.' };
+  if (!/^(?=.*[\p{Script=Latin}0-9])[\p{Script=Latin}\p{M}0-9 \-'(),.+&:]+$/u.test(trimmed))
+    return { valid: false, error: 'English business name contains invalid characters' };
+  return { valid: true };
+}
+
+export function validateBusinessNameAr(name: string): ValidationResult {
+  const trimmed = name.trim();
+  if (!trimmed) return { valid: false, error: 'Business name (Arabic) is required' };
+  if (trimmed.length > 200) return { valid: false, error: 'Business name is too long' };
+  if (!/\p{Script=Arabic}/u.test(trimmed))
+    return { valid: false, error: 'Arabic business name must include Arabic text — enter English in the English name field.' };
+  if (!/^[\p{L}\p{M}0-9 \-'(),.+&:]+$/u.test(trimmed))
+    return { valid: false, error: 'Arabic business name contains invalid characters' };
   return { valid: true };
 }
 

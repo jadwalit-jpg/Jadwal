@@ -1,5 +1,7 @@
 'use client';
 
+import { pickBadge, type BookingStatus } from '@/lib/status-config';
+
 import React, { useState } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useParams } from 'next/navigation';
@@ -30,7 +32,7 @@ import DatePicker from '@/components/date-picker';
 
 // Visual config only — labels come from t('status.booking.*') via
 // bookingStatusLabel() so they flip with the language toggle.
-const STATUS_CONFIG: Record<string, { classes: string; icon: React.ElementType }> = {
+const STATUS_CONFIG: Record<BookingStatus, { classes: string; icon: React.ElementType }> = {
   PENDING:   { classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',        icon: Clock },
   CONFIRMED: { classes: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',            icon: CheckCircle2 },
   COMPLETED: { classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400', icon: Flag },
@@ -142,7 +144,7 @@ export default function VendorBookingsPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="md:ms-64 p-4 md:p-10 overflow-x-hidden">
+      <main className="md:ms-64 p-4 max-md:pt-16 md:p-10 overflow-x-hidden">
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight">{t('vendor.bookings.title')}</h1>
           <p className="text-gray-500 dark:text-slate-400 mt-1">{t('vendor.bookings.subtitle')}</p>
@@ -226,7 +228,7 @@ export default function VendorBookingsPage() {
               )}
             </div>
           ) : (
-            <table className="w-full">
+            <div className="overflow-x-auto"><table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-slate-800">
                   <th className="text-start px-6 py-4 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">{t('vendor.bookings.thRef')}</th>
@@ -242,7 +244,7 @@ export default function VendorBookingsPage() {
               </thead>
               <tbody>
                 {bookings.map((b: any) => {
-                  const cfg = STATUS_CONFIG[b.status] ?? STATUS_CONFIG.PENDING;
+                  const cfg = pickBadge(STATUS_CONFIG, b.status, STATUS_CONFIG.PENDING);
                   const StatusIcon = cfg.icon;
                   const transitions = ALLOWED_TRANSITIONS[b.status] ?? [];
                   return (
@@ -267,7 +269,7 @@ export default function VendorBookingsPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600 dark:text-slate-300">
-                        <p>{new Date(b.startDatetime).toLocaleDateString()}</p>
+                        <p>{new Date(b.startDatetime).toLocaleDateString(undefined, { timeZone: 'UTC' })}</p>
                         {(() => {
                           // Show the actual booked time range for HOURLY so
                           // the vendor sees when the customer is coming in
@@ -299,7 +301,7 @@ export default function VendorBookingsPage() {
                               {pointsUsed > 0 && (
                                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-600 dark:text-purple-400">
                                   <Sparkles className="h-3 w-3" aria-hidden="true" />
-                                  {t('vendor.bookings.ptsUsed', { count: pointsUsed })}
+                                  {t('vendor.bookings.ptsUsed', { count: pointsUsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })}
                                 </span>
                               )}
                             </div>
@@ -346,15 +348,16 @@ export default function VendorBookingsPage() {
                             <Eye className="h-4 w-4" />
                           </button>
                           {transitions.length > 0 && transitions.map(s => {
-                            // Complete is only meaningful once the event has
-                            // ended. Hiding the button pre-end matches the
-                            // backend guard and the 1 AM auto-complete cron —
-                            // all three agree that "completed" = event occurred.
-                            // Cancel remains available for future bookings
-                            // (no-shows, vendor emergencies).
-                            if (s === 'COMPLETED' && new Date(b.endDatetime).getTime() > Date.now()) {
-                              return null;
-                            }
+                            // NOTE: we deliberately do NOT pre-hide "Complete"
+                            // client-side. endDatetime is local-wall-clock
+                            // tagged-UTC, so a browser `Date.now()` compare here
+                            // is wrong by the activity country's UTC offset
+                            // (+3h GCC) — it used to HIDE the button for ~3h
+                            // AFTER a Qatar event had truly ended, blocking a
+                            // legitimate completion. The backend guard
+                            // (updateBookingStatus → nowInTimezone(activity tz))
+                            // is the single source of truth; a too-early click
+                            // returns a 400 surfaced via the existing toast.
                             return (
                               <button
                                 key={s}
@@ -375,7 +378,7 @@ export default function VendorBookingsPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
           )}
 
           {totalPages > 1 && (
@@ -501,7 +504,9 @@ export default function VendorBookingsPage() {
               <div className="flex items-center justify-between py-2 border-b border-gray-50 dark:border-slate-800/50">
                 <span className="text-sm text-gray-500 dark:text-slate-400">{t('vendor.bookings.details.startDatetime')}</span>
                 <span className="text-sm font-medium text-gray-900 dark:text-white">
-                  {new Date(viewBooking.startDatetime).toLocaleString()}
+                  {/* timeZone:'UTC' — booking times are stored as local-wall-clock tagged UTC;
+                      must match the table row (and every other booking-time display). */}
+                  {new Date(viewBooking.startDatetime).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })}
                 </span>
               </div>
               {/* Guests */}
@@ -542,7 +547,7 @@ export default function VendorBookingsPage() {
                           {t('vendor.bookings.details.pointsUsed')}
                         </span>
                         <span className="text-sm font-medium text-purple-600 dark:text-purple-400">
-                          {t('vendor.dashboard.pts', { count: pointsUsed })} <span className="text-gray-400 dark:text-slate-500 font-normal">(−{currency} {pointsValue.toFixed(2)})</span>
+                          {t('vendor.dashboard.pts', { count: pointsUsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })} <span className="text-gray-400 dark:text-slate-500 font-normal">(−{currency} {pointsValue.toFixed(2)})</span>
                         </span>
                       </div>
                     )}
@@ -590,7 +595,7 @@ export default function VendorBookingsPage() {
               <div className="flex items-center justify-between py-2">
                 <span className="text-sm text-gray-500 dark:text-slate-400">{t('vendor.bookings.details.status')}</span>
                 {(() => {
-                  const cfg = STATUS_CONFIG[viewBooking.status] ?? STATUS_CONFIG.PENDING;
+                  const cfg = pickBadge(STATUS_CONFIG, viewBooking.status, STATUS_CONFIG.PENDING);
                   const StatusIcon = cfg.icon;
                   return (
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${cfg.classes}`}>

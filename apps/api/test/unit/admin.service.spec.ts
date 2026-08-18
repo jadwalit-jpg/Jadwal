@@ -16,10 +16,12 @@ import { NotificationService } from '../../src/common/services/notification.serv
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { AvailabilityCacheService } from '../../src/redis/availability-cache.service';
 import { ReferenceDataCacheService } from '../../src/redis/reference-data-cache.service';
+import { SessionDenylistService } from '../../src/redis/session-denylist.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import {
   makeNotificationMock, makeLoyaltyMock, makeAvailabilityCacheMock, makeReferenceDataCacheMock,
 } from '../mocks/bookings-deps.mock';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 async function buildSut() {
   const prisma = makePrismaMock();
@@ -37,6 +39,7 @@ async function buildSut() {
       { provide: LoyaltyService,            useValue: loyalty },
       { provide: AvailabilityCacheService,  useValue: cache },
       { provide: ReferenceDataCacheService, useValue: refCache },
+      { provide: SessionDenylistService,    useValue: makeSessionDenylistMock() },
     ],
   }).compile();
 
@@ -380,13 +383,24 @@ describe('AdminService.createCoupon', () => {
       .rejects.toThrow(/cannot exceed 100/i);
   });
 
-  test('400 when validTo <= validFrom', async () => {
+  test('400 when validTo is before validFrom (by day)', async () => {
+    // Dates normalise to whole-day UTC bounds (validFrom start-of-day, validTo
+    // end-of-day), so the range must be inverted by CALENDAR DAY to be rejected —
+    // a same-day coupon is now valid (end-of-day > start-of-day).
     const ctx = await buildSut();
     await expect(ctx.sut.createCoupon({
       ...baseDto,
-      validFrom: new Date(Date.now() + 1000).toISOString(),
-      validTo: new Date(Date.now()).toISOString(),
+      validFrom: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days ahead
+      validTo: new Date(Date.now()).toISOString(),                              // today
     } as any)).rejects.toThrow(/after the start date/i);
+  });
+
+  test('ALLOWS a same-day coupon (validFrom and validTo on the same date)', async () => {
+    const ctx = await buildSut();
+    const sameDay = new Date().toISOString().slice(0, 10);
+    await expect(
+      ctx.sut.createCoupon({ ...baseDto, validFrom: sameDay, validTo: sameDay } as any),
+    ).resolves.toBeDefined();
   });
 
   test('400 when code already exists (case-insensitive)', async () => {
@@ -467,5 +481,55 @@ describe('AdminService.getLoyaltyUsers — sort param', () => {
 
     const findCall = ctx.prisma._client.user.findMany.mock.calls[0]?.[0];
     expect(findCall.where).toEqual(expect.objectContaining({ role: 'CUSTOMER' }));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// getVendors — soft-deleted vendors must be hidden from the admin list.
+// Regression (test-team bug 2026-06-15): a "deleted" vendor kept showing as
+// SUSPENDED, so the success toast didn't match the visible state.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('AdminService.getVendors — excludes soft-deleted', () => {
+  test('findMany AND count are scoped to deletedAt: null', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.vendor.findMany.mockResolvedValueOnce([]);
+    ctx.prisma._client.vendor.count.mockResolvedValueOnce(0);
+
+    await ctx.sut.getVendors({} as any);
+
+    const findWhere = ctx.prisma._client.vendor.findMany.mock.calls[0]?.[0]?.where;
+    const countWhere = ctx.prisma._client.vendor.count.mock.calls[0]?.[0]?.where;
+    expect(findWhere).toEqual(expect.objectContaining({ deletedAt: null }));
+    expect(countWhere).toEqual(expect.objectContaining({ deletedAt: null }));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// deleteCountry — blocks only on LIVE (non-soft-deleted) vendors/activities, then
+// SOFT-deletes (sets deletedAt, keeps the row + cities) so soft-deleted children
+// that still reference countryId keep their audit FK intact (Bug C).
+// ═══════════════════════════════════════════════════════════════════════════
+describe('AdminService.deleteCountry', () => {
+  test('blocks when LIVE vendors or activities are still linked', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.country.findFirst.mockResolvedValueOnce({ id: 'c1' });
+    ctx.prisma._client.vendor.count.mockResolvedValueOnce(1);   // a live vendor
+    ctx.prisma._client.activity.count.mockResolvedValueOnce(0);
+    await expect(ctx.sut.deleteCountry('c1')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(ctx.prisma._client.country.update).not.toHaveBeenCalled();
+  });
+
+  test('soft-deletes (sets deletedAt, keeps the row) when no LIVE deps remain', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.country.findFirst.mockResolvedValueOnce({ id: 'c1' });
+    ctx.prisma._client.vendor.count.mockResolvedValueOnce(0);
+    ctx.prisma._client.activity.count.mockResolvedValueOnce(0);
+    ctx.prisma._client.country.update.mockResolvedValueOnce({ id: 'c1', deletedAt: new Date() });
+    await expect(ctx.sut.deleteCountry('c1')).resolves.toEqual(expect.objectContaining({ id: 'c1' }));
+    // soft-delete = update(deletedAt), NOT a hard delete, and cities are kept
+    expect(ctx.prisma._client.country.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ deletedAt: expect.any(Date) }) }),
+    );
+    expect(ctx.prisma._client.country.delete).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,6 @@
 import { IsString, IsOptional, IsEnum, IsNumber, Min, Max, MaxLength, MinLength, Matches } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
+import { IsIanaTimezone } from '../../common/validators/timezone';
 // Shared name-allowlist constants — same regex now reused by city.dto.ts so
 // every short identifier field uses the same defence-in-depth XSS allow-list.
 // Activity titles use the slightly looser `ACTIVITY_TITLE_REGEX` from the
@@ -54,10 +55,16 @@ export class CreateCountryDto {
   @Max(10000)
   serviceFeeFixed?: number;
 
-  @IsOptional()
+  // REQUIRED — the platform's clock for this country. The cancel guard,
+  // refund-window, and availability past-slot logic all trust it; a missing
+  // value would take the schema default "UTC", silently breaking those for a
+  // +offset country. Must be a real IANA zone (validator rejects empty / typo /
+  // sign-inverted Etc/GMT). Trimmed on ingest so "Asia/Qatar " can't slip in.
   @IsString()
   @MaxLength(50)
-  defaultTimezone?: string;
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsIanaTimezone()
+  defaultTimezone!: string;
 
   @IsOptional()
   @IsEnum(['ACTIVE', 'HIDDEN'])
@@ -101,9 +108,13 @@ export class UpdateCountryDto {
   @Max(10000)
   serviceFeeFixed?: number;
 
+  // Optional on update (partial), but if provided it must be a valid IANA zone
+  // (same guard as create — no empty / typo / sign-inverted Etc/GMT).
   @IsOptional()
   @IsString()
   @MaxLength(50)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsIanaTimezone()
   defaultTimezone?: string;
 
   @IsOptional()

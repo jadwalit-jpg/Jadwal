@@ -1,12 +1,14 @@
 'use client';
 
+import { pickBadge, type UserRole } from '@/lib/status-config';
+
 import { useState, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { getApiError } from '@/lib/api-error';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
-import { Search, ChevronLeft, ChevronRight, Shield, UserCircle, ShieldCheck, Ban, CheckCircle, Trash2, AlertTriangle, Download, MailCheck, MailWarning } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, Shield, UserCircle, ShieldCheck, Ban, CheckCircle, Trash2, AlertTriangle, Download, MailCheck, MailWarning, BadgeCheck } from 'lucide-react';
 import CustomSelect from '@/components/custom-select';
 
 interface User {
@@ -18,6 +20,9 @@ interface User {
   isDeactivated: boolean;
   emailVerified: boolean;
   createdAt: string;
+  termsAcceptedAt: string | null;
+  termsAcceptedVersion: string | null;
+  deletedAt: string | null;
 }
 
 interface UsersResponse {
@@ -28,7 +33,7 @@ interface UsersResponse {
   totalPages: number;
 }
 
-const roleBadge: Record<string, { bg: string; text: string; icon: React.ElementType }> = {
+const roleBadge: Record<UserRole, { bg: string; text: string; icon: React.ElementType }> = {
   ADMIN: { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', icon: ShieldCheck },
   VENDOR: { bg: 'bg-violet-500/10', text: 'text-violet-600 dark:text-violet-400', icon: Shield },
   CUSTOMER: { bg: 'bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', icon: UserCircle },
@@ -49,6 +54,7 @@ export default function AdminUsersPage() {
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [verifiedFilter, setVerifiedFilter] = useState<'' | 'verified' | 'unverified'>('');
+  const [showDeleted, setShowDeleted] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id?: string; name?: string; count?: number; ids?: string[] } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -63,7 +69,7 @@ export default function AdminUsersPage() {
   }, []);
 
   const { data, isLoading } = useQuery<UsersResponse>({
-    queryKey: ['admin', 'users', page, debouncedSearch, roleFilter, verifiedFilter],
+    queryKey: ['admin', 'users', page, debouncedSearch, roleFilter, verifiedFilter, showDeleted],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set('page', String(page));
@@ -73,6 +79,7 @@ export default function AdminUsersPage() {
       // accepts the legacy `status` alias). Matches the export call below.
       if (roleFilter) params.set('role', roleFilter);
       if (verifiedFilter) params.set('verified', verifiedFilter);
+      if (showDeleted) params.set('includeDeleted', 'true');
       const { data } = await api.get(`/admin/users?${params}`);
       return data;
     },
@@ -228,6 +235,18 @@ export default function AdminUsersPage() {
               );
             })}
           </div>
+          {/* Reveal soft-deleted (anonymised) users — retained for audit, hidden by default */}
+          <button
+            type="button"
+            onClick={() => { setShowDeleted((v) => !v); setPage(1); }}
+            className={`px-3.5 py-2 rounded-xl border text-xs font-medium transition-all shadow-sm ${
+              showDeleted
+                ? 'border-blue-600 bg-blue-600 text-white'
+                : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            Show deleted
+          </button>
         </div>
         <div className="flex items-center gap-2">
           {selected.size > 0 && (
@@ -285,7 +304,7 @@ export default function AdminUsersPage() {
                   </tr>
                 )}
                 {data?.data.map((user) => {
-                  const badge = roleBadge[user.role];
+                  const badge = pickBadge(roleBadge, user.role, roleBadge.CUSTOMER);
                   const BadgeIcon = badge.icon;
                   return (
                     <tr key={user.id} className="hover:bg-gray-50/50 dark:hover:bg-slate-800/30 transition-colors">
@@ -300,10 +319,27 @@ export default function AdminUsersPage() {
                             {user.fullName.charAt(0).toUpperCase()}
                           </div>
                           <div className="min-w-0">
-                            <p className="font-medium text-gray-900 dark:text-white wrap-break-word max-w-[220px]">{user.fullName}</p>
+                            <div className="flex items-center gap-1.5">
+                              <p className="font-medium text-gray-900 dark:text-white wrap-break-word max-w-[180px]">{user.fullName}</p>
+                              {user.termsAcceptedAt && !user.deletedAt && (
+                                <span
+                                  title={`Accepted Terms & Privacy${user.termsAcceptedVersion ? ` · v${user.termsAcceptedVersion}` : ''} · ${new Date(user.termsAcceptedAt).toLocaleDateString()}`}
+                                  className="inline-flex shrink-0 text-sky-500"
+                                >
+                                  <BadgeCheck className="h-4 w-4" aria-label="Accepted Terms" />
+                                </span>
+                              )}
+                              {user.deletedAt && (
+                                <span className="inline-flex shrink-0 items-center px-1.5 py-0.5 rounded-md bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-300 text-[10px] font-semibold uppercase tracking-wide">
+                                  Deleted
+                                </span>
+                              )}
+                            </div>
                             <div className="flex items-center gap-1.5 max-w-[240px]">
                               <p className="text-xs text-gray-400 dark:text-slate-500 wrap-break-word truncate">{user.email}</p>
-                              {user.emailVerified ? (
+                              {/* Vendors don't go through email verification — only show the
+                                  verified/unverified icon for non-vendor accounts. */}
+                              {user.role !== 'VENDOR' && (user.emailVerified ? (
                                 <span title="Email verified" className="inline-flex shrink-0 text-emerald-500">
                                   <MailCheck className="h-3.5 w-3.5" />
                                 </span>
@@ -311,7 +347,7 @@ export default function AdminUsersPage() {
                                 <span title="Email NOT verified" className="inline-flex shrink-0 text-amber-500">
                                   <MailWarning className="h-3.5 w-3.5" />
                                 </span>
-                              )}
+                              ))}
                             </div>
                           </div>
                         </div>

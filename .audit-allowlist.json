@@ -1,0 +1,27 @@
+{
+  "$comment": [
+    "Known-unfixable production advisories. The audit gate (scripts/audit-gate.mjs)",
+    "fails on ANY high/critical advisory that is NOT listed here, so a NEWLY",
+    "introduced vulnerability still blocks the merge. Entries are keyed by GHSA id,",
+    "never by package name, so a FUTURE different advisory in the same package is",
+    "still caught.",
+    "",
+    "RULES:",
+    "  - Every entry MUST have a reason and a reviewBy date (YYYY-MM-DD).",
+    "  - An entry past its reviewBy date FAILS the gate. That is intentional: it",
+    "    forces a re-check instead of a silent permanent exception.",
+    "  - Remove an entry as soon as an upstream fix ships. The gate warns when an",
+    "    entry no longer matches anything (stale) so it gets cleaned up.",
+    "  - Adding an entry is a security decision and needs review, like any other",
+    "    change to a merge gate."
+  ],
+  "allow": [
+    {
+      "id": "GHSA-ggr8-5vv4-36mx",
+      "package": "deepmerge-ts",
+      "reason": "Reached only via prisma -> @prisma/config -> deepmerge-ts. NO patched prisma release exists: latest stable is 7.9.1 and the advisory's vulnerable range extends past it, so there is nothing to upgrade to. Not reachable from untrusted input (prisma config is loaded from our own repo at build/CLI time, not from user data).",
+      "reviewBy": "2026-09-30",
+      "trackedBy": "monitor prisma releases for >7.10.0 stable, then drop this entry"
+    }
+  ]
+}

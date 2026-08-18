@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Jadwal — Local Development Environment
+# AL Jadwal — Local Development Environment
 # ═══════════════════════════════════════════════════════════════
 # Usage:
 #   1. Create apps/api/.env (copy from DOCUMENTATION.md §4)
@@ -68,6 +68,15 @@ services:
   #                 DATABASE_URL to disable prepared statements, AND
   #                 migrations need a separate direct connection URL.
   pgbouncer:
+    # OPT-IN ONLY. Previously this had no `profiles:` key, so the documented
+    # `npm run docker:up` (= `docker-compose up -d`) tried to start it and died
+    # with `edoburu/pgbouncer:1.23.1: not found` — blocking every fresh setup.
+    # It is not routed by default anyway (the api talks straight to `db`), so it
+    # is now behind a profile:
+    #     docker compose --profile pgbouncer up -d
+    # NOTE: the pinned tag below did not resolve on Docker Hub (2026-07) —
+    # verify a current tag before using this profile.
+    profiles: ["pgbouncer"]
     image: edoburu/pgbouncer:1.23.1
     container_name: jadwal-pgbouncer
     restart: unless-stopped

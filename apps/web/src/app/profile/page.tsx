@@ -593,7 +593,7 @@ export default function ProfilePage() {
                     {t('loyalty.balance')}
                   </div>
                   <div className="font-display text-4xl font-bold tracking-[-1px] leading-none mt-0.5 tabular-nums">
-                    {(pointsData?.loyaltyPoints ?? 0).toLocaleString()}
+                    {(pointsData?.loyaltyPoints ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   {worthQar > 0 ? (
                     <div className="text-[13px] opacity-90 mt-1.5 tabular-nums">

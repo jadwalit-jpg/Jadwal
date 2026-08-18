@@ -23,23 +23,23 @@
  * `role="dialog"`, body-scroll lock, and Escape-to-close.
  */
 
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { LocaleLink as Link } from '@/components/locale-link';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTheme } from 'next-themes';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/auth-context';
+import { useLangSwitch } from '@/context/i18n-provider';
 import api from '@/lib/api';
 import { CountryPicker } from '@/components/country-picker';
 import {
   Sun, Moon, Menu, X, Globe,
-  Home, Compass, Tag, Store,
+  Home, Compass, Tag, Store, BookOpen, Waves,
   Bell, CalendarDays, Heart, User, LogOut, ChevronDown,
 } from 'lucide-react';
 
 export default function Navbar({ variant = 'transparent' }: { variant?: 'transparent' | 'solid' } = {}) {
-  const router = useRouter();
+  const { switchLanguage } = useLangSwitch();
   const { user, logout, loading: authLoading } = useAuth();
   // `resolvedTheme` (not `theme`) is the effective light/dark — `theme` can be
   // the literal `'system'`, so `theme === 'dark'` is false even when the page
@@ -122,12 +122,10 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
   }, [open]);
 
   const toggleLanguage = useCallback(() => {
-    // Same pattern as `<Navbar/>` — flip the i18n singleton (re-translates all
-    // useTranslation consumers), then `router.refresh()` so server-rendered
-    // strings (the hero islands) re-render with the new lang cookie.
-    i18n.changeLanguage(isAr ? 'en' : 'ar');
-    router.refresh();
-  }, [i18n, isAr, router]);
+    // Delegate to the shared switcher (i18n-provider): flips the language and
+    // shows the blur + spinner mask while the RSC refresh settles.
+    switchLanguage(isAr ? 'en' : 'ar');
+  }, [switchLanguage, isAr]);
 
   // Unread-count for the Notifications row inside the mobile menu (customer
   // only). *Same `queryKey` as `<NotificationBell/>` uses on the production
@@ -146,6 +144,8 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
   const links = [
     { href: '/', label: t('nav.home'), icon: Home },
     { href: '/explore', label: t('nav.explore'), icon: Compass },
+    { href: '/blog', label: t('nav.guides'), icon: BookOpen },
+    { href: '/redsea', label: t('nav.redSea'), icon: Waves },
     { href: '/offers', label: t('nav.offers'), icon: Tag },
   ];
 
@@ -170,14 +170,14 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
         }`}
       >
         <nav className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4 gap-3">
-        {/* Wordmark — switches `Al Jadwal` ↔ `الجدول` with the lang. Gated on
+        {/* Wordmark — switches `AL Jadwal` ↔ `الجدول` with the lang. Gated on
             `mounted` to avoid an SSR mismatch (the cookie may not match the
             client-side i18n state on first paint). */}
         <Link
           href="/"
           className="text-lg sm:text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent shrink-0"
         >
-          {!mounted ? 'Al Jadwal' : isAr ? 'الجدول' : 'Al Jadwal'}
+          {!mounted ? 'AL Jadwal' : isAr ? 'الجدول' : 'AL Jadwal'}
         </Link>
 
         {/* Desktop links — Home / Explore / Offers (+ Become a Vendor for
@@ -185,19 +185,19 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
             flash of "Become a Vendor → empty" when the user is actually a
             CUSTOMER. */}
         {authLoading ? (
-          <div className="hidden md:flex items-center gap-1">
+          <div className="hidden lg:flex items-center gap-1">
             <div className={`h-7 w-14 rounded-full animate-pulse ${isOpaque ? 'bg-gray-200/80 dark:bg-slate-700/60' : 'bg-white/15'}`} />
             <div className={`h-7 w-16 rounded-full animate-pulse ${isOpaque ? 'bg-gray-200/80 dark:bg-slate-700/60' : 'bg-white/15'}`} />
             <div className={`h-7 w-16 rounded-full animate-pulse ${isOpaque ? 'bg-gray-200/80 dark:bg-slate-700/60' : 'bg-white/15'}`} />
             <div className={`h-7 w-28 rounded-full animate-pulse ${isOpaque ? 'bg-gray-200/80 dark:bg-slate-700/60' : 'bg-white/15'}`} />
           </div>
         ) : (
-          <div className="hidden md:flex items-center gap-1">
+          <div className="hidden lg:flex items-center gap-1">
             {links.map((l) => (
               <Link
                 key={l.href}
                 href={l.href}
-                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${linkCls}`}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${l.href === '/redsea' ? (isOpaque ? 'text-[#856A21] dark:text-[#D4AF6E] hover:text-[#7D6231] dark:hover:text-[#E6C988]' : 'text-[#D4AF6E] hover:text-[#E6C988]') : linkCls}`}
               >
                 {l.label}
               </Link>
@@ -214,15 +214,17 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
         )}
 
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Desktop language toggle — `EN` / `ع` button, same as `<Navbar/>`.
-              On mobile this lives in the hamburger menu below (keeps the mobile
-              header uncluttered). */}
+          {/* Language toggle — `EN` / `ع`. Shown on the header at EVERY
+              breakpoint (mobile included, alongside the theme toggle) so
+              switching language is a one-tap action that doesn't require
+              opening the hamburger menu. Also mirrored as a labelled row inside
+              the mobile menu below. */}
           <button
             type="button"
             onClick={toggleLanguage}
             aria-label={!mounted ? 'Switch language' : isAr ? 'Switch to English' : 'التبديل إلى العربية'}
             title={!mounted ? '' : isAr ? 'English' : 'العربية'}
-            className={`hidden md:flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${iconBtnCls}`}
+            className={`flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${iconBtnCls}`}
           >
             <span className="text-xs font-bold leading-none">
               {!mounted ? '' : isAr ? 'EN' : 'ع'}
@@ -231,7 +233,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
 
           {/* Country picker — desktop only. Mobile users get the same control
               as a row inside the hamburger menu (see below). Hidden inside the
-              component via `hidden md:block`. */}
+              component via `hidden lg:block`. */}
           <CountryPicker variant="desktop" isOpaque={isOpaque} />
 
           {/* Theme toggle. Icon driven by `dark:` against `<html class>` so the
@@ -251,7 +253,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
           {user && (user.role === 'ADMIN' || user.role === 'VENDOR') && (
             <Link
               href={user.role === 'ADMIN' ? '/admin/dashboard' : `/vendor/${user.vendor?.slug ?? 'portal'}/dashboard`}
-              className={`hidden md:inline-flex px-4 py-2 text-sm font-medium rounded-xl transition-colors border ${
+              className={`hidden lg:inline-flex px-4 py-2 text-sm font-medium rounded-xl transition-colors border ${
                 isOpaque
                   ? 'bg-sky-600 hover:bg-sky-700 text-white border-sky-600 dark:bg-blue-600 dark:hover:bg-blue-700 dark:border-blue-600'
                   : 'bg-white/20 hover:bg-white/30 text-white border-white/20'
@@ -263,7 +265,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
 
           {/* Customer avatar dropdown — desktop only. */}
           {user && user.role === 'CUSTOMER' && (
-            <div ref={userMenuRef} className="relative hidden md:block">
+            <div ref={userMenuRef} className="relative hidden lg:block">
               <button
                 type="button"
                 onClick={() => setUserMenuOpen((v) => !v)}
@@ -365,7 +367,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
               / Logout live inside the hamburger menu), so no mobile skeleton
               is needed here. */}
           {authLoading && (
-            <div className={`hidden md:block w-32 h-9 rounded-xl animate-pulse ${
+            <div className={`hidden lg:block w-32 h-9 rounded-xl animate-pulse ${
               isOpaque ? 'bg-gray-100 dark:bg-slate-700' : 'bg-white/10'
             }`} />
           )}
@@ -377,7 +379,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
             <>
               <Link
                 href="/login"
-                className={`hidden md:inline-flex px-4 py-2 text-sm font-medium transition-colors ${
+                className={`hidden lg:inline-flex px-4 py-2 text-sm font-medium transition-colors ${
                   isOpaque
                     ? 'text-gray-600 hover:text-sky-600 dark:text-slate-400 dark:hover:text-white'
                     : 'text-white/85 hover:text-white'
@@ -387,7 +389,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
               </Link>
               <Link
                 href="/register"
-                className={`hidden md:inline-flex px-4 py-2 text-sm font-semibold rounded-xl transition-colors shadow-md ${
+                className={`hidden lg:inline-flex px-4 py-2 text-sm font-semibold rounded-xl transition-colors shadow-md ${
                   isOpaque
                     ? 'bg-sky-600 hover:bg-sky-700 text-white dark:bg-blue-600 dark:hover:bg-blue-700'
                     : 'bg-white text-sky-700 hover:bg-white/90'
@@ -405,7 +407,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
             aria-label="Toggle menu"
             aria-expanded={open}
             aria-controls="navbar-basic-mobile-menu"
-            className={`md:hidden p-2 rounded-lg border transition-colors ${iconBtnCls}`}
+            className={`lg:hidden p-2 rounded-lg border transition-colors ${iconBtnCls}`}
           >
             {open ? <X className="h-5 w-5" aria-hidden="true" /> : <Menu className="h-5 w-5" aria-hidden="true" />}
           </button>
@@ -422,21 +424,31 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
       {open && (
         <>
           <div
-            className="fixed inset-0 z-99 bg-black/40 md:hidden animate-[fade-in_0.2s_ease-out] motion-reduce:animate-none"
+            className="fixed inset-0 z-99 bg-black/40 lg:hidden animate-[fade-in_0.2s_ease-out] motion-reduce:animate-none"
             onClick={() => setOpen(false)}
             aria-hidden="true"
           />
-          <div className="fixed top-[72px] inset-x-4 z-101 md:hidden animate-[slide-down-in_0.25s_ease-out] motion-reduce:animate-none">
+          <div className="fixed top-[72px] inset-x-4 z-101 lg:hidden animate-[slide-down-in_0.25s_ease-out] motion-reduce:animate-none">
             {/* The overlay is modal-like (locks body scroll, closes on
                 backdrop / Escape), so mark it as such for AT users. Labelled
                 with `aria-label` rather than `aria-labelledby` since the menu
                 has no visible title element — `<Menu>` is the common pattern. */}
+            {/* max-h + overflow-y-auto: the panel used to be `overflow-hidden`
+                with no height cap, so on shorter/taller-content combinations
+                (a signed-in user adds ~6 rows: name, notifications, bookings,
+                likes, profile, LOGOUT) the menu grew past the bottom of the
+                screen, got clipped, and — because the body scroll is locked
+                while it's open — the bottom items were completely unreachable.
+                Reported on iPhone: "couldn't log out". Now it scrolls inside
+                itself. 5.5rem = the 72px top offset + a little breathing room;
+                `svh` (not `vh`) accounts for mobile browser chrome, and
+                `overscroll-contain` stops the scroll chaining to the page. */}
             <div
               id="navbar-basic-mobile-menu"
               role="dialog"
               aria-modal="true"
               aria-label="Menu"
-              className="rounded-2xl bg-white/95 dark:bg-slate-900/95 border border-gray-200/50 dark:border-slate-700/50 shadow-2xl shadow-black/10 dark:shadow-black/30 overflow-hidden"
+              className="rounded-2xl bg-white/95 dark:bg-slate-900/95 border border-gray-200/50 dark:border-slate-700/50 shadow-2xl shadow-black/10 dark:shadow-black/30 max-h-[calc(100svh-5.5rem)] overflow-y-auto overscroll-contain"
             >
               <div className="p-3 space-y-1">
                 {links.map((l) => (
@@ -444,9 +456,9 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
                     key={l.href}
                     href={l.href}
                     onClick={() => setOpen(false)}
-                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-slate-800 hover:text-sky-600 dark:hover:text-white transition-colors"
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium hover:bg-sky-50 dark:hover:bg-slate-800 transition-colors ${l.href === '/redsea' ? 'text-[#856A21] dark:text-[#D4AF6E] hover:text-[#7D6231] dark:hover:text-[#E6C988]' : 'text-gray-700 dark:text-slate-300 hover:text-sky-600 dark:hover:text-white'}`}
                   >
-                    <l.icon aria-hidden="true" className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                    <l.icon aria-hidden="true" className={`h-4 w-4 ${l.href === '/redsea' ? 'text-[#856A21] dark:text-[#D4AF6E]' : 'text-gray-400 dark:text-slate-500'}`} />
                     {l.label}
                   </Link>
                 ))}

@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { User } from '@prisma/client';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { nowInTimezone } from '../common/validators/timezone';
 
 @Injectable()
 export class UsersService {
@@ -37,7 +38,7 @@ export class UsersService {
     } as any) as Promise<User | null>;
   }
 
-  async create(data: { fullName: string; email: string; password: string; phone?: string; role?: string; preferredLanguage?: 'EN' | 'AR' }): Promise<User> {
+  async create(data: { fullName: string; email: string; password: string; phone?: string; role?: string; preferredLanguage?: 'EN' | 'AR'; termsAcceptedAt?: Date; termsAcceptedVersion?: string }): Promise<User> {
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hashedPassword = await bcrypt.hash(data.password, bcryptRounds);
     return this.prisma.client.user.create({
@@ -50,6 +51,10 @@ export class UsersService {
         // Omitted → schema default 'EN'. Set from the Accept-Language header
         // captured at registration (see AuthService.registerAndLogin).
         ...(data.preferredLanguage ? { preferredLanguage: data.preferredLanguage } : {}),
+        // Terms acceptance captured at registration (the register DTO requires
+        // termsAccepted === true). Stamped together so version is never set
+        // without a timestamp.
+        ...(data.termsAcceptedAt ? { termsAcceptedAt: data.termsAcceptedAt, termsAcceptedVersion: data.termsAcceptedVersion } : {}),
       },
     });
   }
@@ -72,12 +77,22 @@ export class UsersService {
     if (!user) throw new NotFoundException('User not found');
 
     // Booking stats — runs in parallel
-    const [totalBookings, upcomingCount, completedCount, totalSpentAgg] = await Promise.all([
+    const [totalBookings, confirmedForUpcoming, completedCount, totalSpentAgg] = await Promise.all([
       this.prisma.client.booking.count({
         where: { customerId: userId },
       }),
-      this.prisma.client.booking.count({
-        where: { customerId: userId, status: 'CONFIRMED', startDatetime: { gt: new Date() } },
+      // "Upcoming" must be judged per-activity-timezone: startDatetime is
+      // local-wall-clock tagged-UTC, and a customer's bookings can span
+      // countries, so a single `> new Date()` (raw UTC) over-counts a
+      // just-started booking by each activity's offset. Fetch the CONFIRMED
+      // bookings + their tz and count in-app (a customer's confirmed set is
+      // small — confirmed bookings become COMPLETED once they pass).
+      this.prisma.client.booking.findMany({
+        where: { customerId: userId, status: 'CONFIRMED' },
+        select: {
+          startDatetime: true,
+          activity: { select: { country: { select: { defaultTimezone: true } } } },
+        },
       }),
       this.prisma.client.booking.count({
         where: { customerId: userId, status: 'COMPLETED' },
@@ -87,6 +102,10 @@ export class UsersService {
         _sum: { totalPrice: true, serviceFee: true },
       }),
     ]);
+
+    const upcomingCount = confirmedForUpcoming.filter(
+      (b) => b.startDatetime.getTime() > nowInTimezone(b.activity?.country?.defaultTimezone ?? 'UTC').getTime(),
+    ).length;
 
     const totalSpent =
       Number(totalSpentAgg._sum.totalPrice ?? 0) +
@@ -155,7 +174,9 @@ export class UsersService {
     }
 
     return {
-      loyaltyPoints: user.loyaltyPoints,
+      // loyaltyPoints is a Decimal column (QAR-denominated) — convert to a JS
+      // number so it serialises as a JSON number, not a Decimal string.
+      loyaltyPoints: Number(user.loyaltyPoints),
       pointsPerQar: config.pointsPerQar.toNumber(),
       qarPerPoint: config.qarPerPoint.toNumber(),
       minRedemption: config.minRedemption,

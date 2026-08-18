@@ -1,5 +1,7 @@
 'use client';
 
+import type { CouponStatus } from '@/lib/status-config';
+
 import { useState, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -34,7 +36,7 @@ interface CouponsResponse {
   totalPages: number;
 }
 
-const statusConfig: Record<string, { bg: string; text: string; icon: React.ElementType; label: string }> = {
+const statusConfig: Record<CouponStatus, { bg: string; text: string; icon: React.ElementType; label: string }> = {
   APPROVED: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', icon: CheckCircle, label: 'active' },
   PENDING: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', icon: Clock, label: 'pending' },
   EXPIRED: { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', icon: XCircle, label: 'expired' },
@@ -249,7 +251,7 @@ export default function AdminCouponsPage() {
                   </tr>
                 )}
                 {filteredCoupons?.map((coupon) => {
-                  const badge = statusConfig[coupon.status];
+                  const badge = statusConfig[coupon.status] ?? statusConfig.PENDING;
                   const BadgeIcon = badge.icon;
                   return (
                     <tr key={coupon.id} className="hover:bg-gray-50/50 dark:hover:bg-slate-800/30 transition-colors">
@@ -383,15 +385,18 @@ export default function AdminCouponsPage() {
                 <div>
                   <label className={labelCls}>Min Order (QAR)</label>
                   <input name="minOrderAmount" type="number" step="0.01" min="0" defaultValue="0" className={inputCls} />
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Smallest booking total before this coupon can be used. 0 = no minimum.</p>
                 </div>
                 <div>
                   <label className={labelCls}>Max Discount (QAR)</label>
                   <input name="maxDiscount" type="number" step="0.01" min="0" defaultValue="0" className={inputCls} />
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Most a customer can save with this coupon. 0 = no cap.</p>
                 </div>
               </div>
               <div>
                 <label className={labelCls}>Usage Limit</label>
                 <input name="usageLimit" type="number" min="1" defaultValue="100" className={inputCls} />
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Total number of times this coupon can be claimed/redeemed across all customers.</p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

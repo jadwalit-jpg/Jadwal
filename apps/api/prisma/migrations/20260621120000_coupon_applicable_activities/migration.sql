@@ -1,0 +1,12 @@
+-- Bug A — coupon activity scoping.
+--
+-- Adds applicableActivityIds to coupons. When the array is NON-EMPTY the coupon
+-- is valid ONLY for those activity ids; EMPTY (the default) = applies to all, so
+-- every existing coupon keeps its current behaviour. The "Applicable Activities"
+-- selector in the vendor/admin UI was collected but never persisted or enforced,
+-- so a coupon "restricted" to one activity actually discounted any activity
+-- (revenue leak) — this column + the validateCoupon/createBooking checks close it.
+--
+-- Purely additive: one new NOT-NULL column with an empty-array default; no data
+-- move, no backfill, can't fail on existing rows.
+ALTER TABLE "coupons" ADD COLUMN "applicableActivityIds" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

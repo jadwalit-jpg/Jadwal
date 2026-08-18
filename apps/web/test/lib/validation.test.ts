@@ -139,6 +139,9 @@ describe('validateFullName', () => {
   it('accepts typical names', () => {
     expect(validateFullName('Naji Khalil')).toEqual({ valid: true });
     expect(validateFullName('لمى العبدالله')).toEqual({ valid: true });
+    expect(validateFullName("O'Brien")).toEqual({ valid: true });
+    expect(validateFullName('Anne-Marie')).toEqual({ valid: true });
+    expect(validateFullName('José')).toEqual({ valid: true });
   });
 
   it('rejects empty / too short', () => {
@@ -151,7 +154,7 @@ describe('validateFullName', () => {
   });
 
   it('rejects names containing unsafe characters', () => {
-    for (const ch of ['<', '>', '{', '}', '(', ')', '[', ']', '\\', '/', ';']) {
+    for (const ch of ['<', '>', '{', '}', '(', ')', '[', ']', '\\', '/', ';', '@', '$', '#', '%', '&', '*', '!']) {
       const r = validateFullName(`Naji${ch}Khalil`);
       expect(r).toEqual({ valid: false, error: 'Name contains invalid characters' });
     }

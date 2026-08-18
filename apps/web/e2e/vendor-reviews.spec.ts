@@ -17,9 +17,16 @@ test.describe('Vendor reviews', () => {
     await expect(page.getByRole('heading', { name: /reviews|المراجعات/i }).first())
       .toBeVisible();
 
-    const hasRows = (await page.locator('tbody tr, article').count()) > 0;
-    const hasEmpty = await page.getByText(/no reviews|empty|لا يوجد|لا توجد/i).first().isVisible().catch(() => false);
-    expect(hasRows || hasEmpty).toBe(true);
+    // Wait for the client-side query to resolve into EITHER a review card or the
+    // empty state. A synchronous count()/isVisible() races the react-query fetch,
+    // which can settle after networkidle → false negative (flaky). Reviews render
+    // as cards (each with a "Reply to review" button), NOT table rows/articles.
+    await expect(
+      page
+        .getByRole('button', { name: /reply/i })
+        .first()
+        .or(page.getByText(/no reviews|empty|لا يوجد|لا توجد/i).first()),
+    ).toBeVisible({ timeout: 10000 });
   });
 
   test('error: cleared session redirects out of vendor area', async ({ page, context }) => {

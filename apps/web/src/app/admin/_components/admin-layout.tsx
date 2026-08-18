@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { AdminSidebar } from './admin-sidebar';
 import NotificationBell from '@/components/notification-bell';
-import { Search, Users, Store, CalendarRange, BookOpen, ExternalLink, Menu } from 'lucide-react';
+import { Search, Users, Store, CalendarRange, BookOpen, ExternalLink, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import Link from 'next/link';
 
 function AdminLayoutSkeleton() {
@@ -74,6 +74,20 @@ interface AdminLayoutProps {
 export default function AdminLayout({ children, title, subtitle }: AdminLayoutProps) {
   const { user, logout, loading } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Desktop icon-rail collapse. Read synchronously from localStorage in the
+  // initializer so a remount (every admin page navigation remounts this layout)
+  // starts in the correct state — otherwise it would mount expanded and visibly
+  // animate closed on each navigation. Safe re: hydration: the real layout only
+  // renders client-side after `loading` resolves (the server renders the
+  // skeleton), so the server never emits a conflicting expanded/collapsed tree.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return localStorage.getItem('admin-sidebar-collapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLDivElement>(null);
@@ -84,6 +98,18 @@ export default function AdminLayout({ children, title, subtitle }: AdminLayoutPr
     setSearchQuery(val);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => setDebouncedQuery(val), 300);
+  }, []);
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('admin-sidebar-collapsed', next ? '1' : '0');
+      } catch {
+        /* ignore persistence failure */
+      }
+      return next;
+    });
   }, []);
 
   const { data: searchResults } = useQuery<SearchResult>({
@@ -113,9 +139,9 @@ export default function AdminLayout({ children, title, subtitle }: AdminLayoutPr
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
-      <AdminSidebar onLogout={handleLogout} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <AdminSidebar onLogout={handleLogout} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} collapsed={collapsed} />
 
-      <div className="md:ms-64 min-h-screen overflow-x-hidden">
+      <div className={`${collapsed ? 'md:ms-20' : 'md:ms-64'} min-h-screen overflow-x-hidden transition-[margin] duration-300 ease-in-out`}>
         {/* Top bar */}
         <header className="sticky top-0 z-10 flex items-center justify-between gap-3 px-4 md:px-8 py-4 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800/80">
           <div className="flex items-center gap-3">
@@ -126,6 +152,16 @@ export default function AdminLayout({ children, title, subtitle }: AdminLayoutPr
               aria-label="Open menu"
             >
               <Menu className="h-5 w-5" />
+            </button>
+            {/* Desktop collapse/expand toggle for the icon rail */}
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              className="hidden md:inline-flex p-2 rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {collapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
             </button>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h2>
           </div>

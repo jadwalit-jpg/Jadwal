@@ -3,13 +3,21 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateActivityDto } from './dto/create-activity.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
+import { CreateActivityBlockDto } from './dto/create-activity-block.dto';
+import { CreateSpecialPriceDto } from './dto/create-special-price.dto';
 import { VendorPaginationDto } from './dto/vendor-query.dto';
 import { Prisma } from '@prisma/client';
 import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
+import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
+import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
+import { createActivityBlockCore } from './activity-blocks.logic';
+import { createSpecialPriceCore, bulkCreateSpecialPricesCore } from './activity-special-prices.logic';
+import { BulkSpecialPriceDto } from './dto/bulk-special-price.dto';
+import { envNumber } from '../common/env';
 
 @Injectable()
 export class VendorService {
@@ -20,6 +28,7 @@ export class VendorService {
     private notificationService: NotificationService,
     private loyalty: LoyaltyService,
     private availabilityCache: AvailabilityCacheService,
+    private sessionDenylist: SessionDenylistService,
   ) {}
 
   /** Resolve vendorId from userId — throws if not found or not ACTIVE */
@@ -249,27 +258,50 @@ export class VendorService {
       throw new BadRequestException('Total capacity (units × capacity per unit) cannot exceed 10000');
     }
 
-    // Strip DTO-only fields before spreading into Prisma create
-    const { capacity: _cap, extraServices, ...restData } = activityData;
+    // Strip DTO-only fields before spreading into Prisma create. `blocks` and
+    // `specialPrices` are nested sub-resources (not Activity columns) — pull them
+    // out here so they don't leak into activity.create, then create them below.
+    const { capacity: _cap, extraServices, blocks, specialPrices, ...restData } = activityData;
 
-    return db.activity.create({
-      data: {
-        ...restData,
-        extraServices: extraServices ? JSON.parse(JSON.stringify(extraServices)) : undefined,
-        vendorId: vendor.id,
-        countryId: vendor.countryId,
-        status: 'PENDING',
-        gallery: dto.gallery ?? [],
-        capacity: capacity ?? null,
-        hasUnits: hasUnits ?? false,
-        unitCount: hasUnits ? (unitCount ?? 0) : 0,
-        unitCapacity: hasUnits ? (unitCapacity ?? 1) : 1,
-      },
-      include: {
-        category: { select: { nameEn: true } },
-        city: { select: { nameEn: true } },
-      },
-    });
+    // Create the activity AND its initial locks + special prices atomically, so
+    // "set them while creating" behaves exactly like every other field — all or
+    // nothing. The blocks/prices run through the SAME core logic the live
+    // sub-resource endpoints use (createActivityBlockCore / createSpecialPriceCore),
+    // so validation + recurring-expansion can never drift between create and edit.
+    // A longer timeout covers a repeat-weekly block that fans out ~6 months of rows.
+    return db.$transaction(async (tx: any) => {
+      const activity = await tx.activity.create({
+        data: {
+          ...restData,
+          extraServices: extraServices ? JSON.parse(JSON.stringify(extraServices)) : undefined,
+          vendorId: vendor.id,
+          countryId: vendor.countryId,
+          status: 'PENDING',
+          gallery: dto.gallery ?? [],
+          capacity: capacity ?? null,
+          hasUnits: hasUnits ?? false,
+          unitCount: hasUnits ? (unitCount ?? 0) : 0,
+          unitCapacity: hasUnits ? (unitCapacity ?? 1) : 1,
+        },
+        include: {
+          category: { select: { nameEn: true } },
+          city: { select: { nameEn: true } },
+        },
+      });
+
+      if (blocks?.length) {
+        for (const b of blocks) {
+          await createActivityBlockCore(tx, activity, b);
+        }
+      }
+      if (specialPrices?.length) {
+        for (const sp of specialPrices) {
+          await createSpecialPriceCore(tx, activity, sp);
+        }
+      }
+
+      return activity;
+    }, { timeout: 20000 });
   }
 
   async updateActivity(userId: string, activityId: string, dto: UpdateActivityDto) {
@@ -308,12 +340,17 @@ export class VendorService {
     // HOURLY activities: duration must fit the operating window. Validated
     // against MERGED next-state fields so partial PATCHes are checked against
     // the current activity's values where the DTO omits them.
-    assertHourlyTimesConsistent({
-      bookingType: dto.bookingType ?? activity.bookingType,
-      checkInTime: dto.checkInTime ?? activity.checkInTime,
-      checkOutTime: dto.checkOutTime ?? activity.checkOutTime,
-      durationValue: dto.durationValue ?? activity.durationValue,
-    });
+    assertHourlyTimesConsistent(
+      {
+        bookingType: dto.bookingType ?? activity.bookingType,
+        checkInTime: dto.checkInTime ?? activity.checkInTime,
+        checkOutTime: dto.checkOutTime ?? activity.checkOutTime,
+        durationValue: dto.durationValue ?? activity.durationValue,
+      },
+      // Grid-check only the times THIS update sets — a legacy off-grid activity
+      // must stay editable on unrelated fields (window check still uses merged).
+      { checkIn: dto.checkInTime !== undefined, checkOut: dto.checkOutTime !== undefined },
+    );
 
     const { hasUnits, unitCount, unitCapacity, ...activityData } = dto;
 
@@ -456,8 +493,8 @@ export class VendorService {
     const booking = await db.booking.findFirst({
       where: { id: bookingId, vendorId: vendor.id },
       select: {
-        id: true, ref: true, vendorId: true, activityId: true, customerId: true, status: true, totalPrice: true, pointsRedeemed: true, pointsAwarded: true, endDatetime: true, couponCode: true,
-        activity: { select: { titleEn: true } },
+        id: true, ref: true, vendorId: true, activityId: true, customerId: true, status: true, totalPrice: true, pointsRedeemed: true, pointsDiscount: true, pointsAwarded: true, endDatetime: true, couponCode: true,
+        activity: { select: { titleEn: true, country: { select: { defaultTimezone: true } } } },
         payment: { select: { id: true, status: true, amount: true } },
       },
     });
@@ -471,11 +508,13 @@ export class VendorService {
     // Guard: COMPLETED means "the event has occurred". Reject the transition
     // if the booking's end time is still in the future — otherwise a vendor
     // clicking Complete early awards loyalty points prematurely AND notifies
-    // the customer their event finished before it actually did. The 1 AM
-    // auto-complete cron (CleanupService.autoCompletePastBookings) enforces
-    // the same constraint for scheduled closures; this mirrors it on the
-    // manual path so backend and cron agree on what "complete" means.
-    if (newStatus === 'COMPLETED' && booking.endDatetime.getTime() > Date.now()) {
+    // the customer their event finished before it actually did. endDatetime is
+    // local-wall-clock tagged-UTC, so we compare against nowInTimezone(activity
+    // tz) — NOT raw Date.now(), which in a +offset country (Qatar +3) would
+    // reject a genuinely-finished booking for ~3h. Matches the auto-complete
+    // cron (CleanupService.autoCompletePastBookings) so backend + cron agree.
+    const completeTz = booking.activity?.country?.defaultTimezone ?? 'UTC';
+    if (newStatus === 'COMPLETED' && booking.endDatetime.getTime() > nowInTimezone(completeTz).getTime()) {
       throw new ForbiddenException(
         'Cannot complete a booking before its end time has passed',
       );
@@ -496,6 +535,23 @@ export class VendorService {
       // twice and the customer is credited their refund points twice. Mirrors
       // the customer cancelBooking guard (bookings.service.ts).
       if (newStatus === 'CANCELLED') {
+        // M9 — a vendor must NOT self-cancel a booking whose payout has already
+        // been PAID. Payout only happens AFTER the activity's end date, so there
+        // is no legitimate reason for a vendor to cancel a completed, paid-out
+        // booking; doing so refunds the customer (points) while the vendor keeps
+        // the cash — a platform double-loss and a collusion vector. Route it
+        // through admin, who can coordinate the clawback. Checked BEFORE the
+        // CANCELLED claim so nothing is mutated on rejection.
+        const paidOut = await tx.booking.findUnique({
+          where: { id: bookingId },
+          select: { payment: { select: { payoutStatus: true } } },
+        });
+        if (paidOut?.payment?.payoutStatus === 'PAID') {
+          throw new ForbiddenException(
+            'This booking has already been paid out and can no longer be cancelled here. Please contact support to arrange it.',
+          );
+        }
+
         const claim = await tx.booking.updateMany({
           where: { id: bookingId, status: { not: 'CANCELLED' } },
           data: {
@@ -553,7 +609,9 @@ export class VendorService {
           let loyaltyConfig = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
           if (!loyaltyConfig) loyaltyConfig = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
           const qarPerPoint = loyaltyConfig.qarPerPoint.toNumber();
-          const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+          // Points are QAR-denominated (1 pt = 1 QAR): round to 2 dp, don't floor
+          // (a 50.75 QAR refund → 50.75 points). Mirrors the customer/admin paths.
+          const refundPoints = qarPerPoint > 0 ? Math.round((paidAmount / qarPerPoint) * 100) / 100 : 0;
           if (refundPoints > 0) {
             await this.loyalty.refund(tx, {
               userId: result.customerId,
@@ -566,10 +624,23 @@ export class VendorService {
             });
           }
         } else if (result.payment.status === 'PENDING') {
-          await tx.payment.update({
-            where: { id: result.payment.id },
+                    // Optimistic lock, NOT a plain update. The `status === 'PENDING'`
+          // above was read earlier; a PAY2M capture can commit in between and
+          // flip the row to SUCCESS. An unguarded update would force that
+          // captured payment back to FAILED while the booking is cancelled,
+          // leaving the customer charged with no REFUND_PENDING row —
+          // recordRefundDecision requires REFUND_PENDING, so the refund queue
+          // could never reach it. Same incident the customer-cancel path was
+          // fixed for; this path was missed.
+          const flipped = await tx.payment.updateMany({
+            where: { id: result.payment.id, status: 'PENDING' },
             data: { status: 'FAILED' },
           });
+          if (flipped.count === 0) {
+            throw new ConflictException(
+              'This booking changed while you were cancelling. Please refresh to see its current state.',
+            );
+          }
         }
 
         // Refund redeemed loyalty points back to customer (ledger: CANCEL_REFUND_PAID)
@@ -586,6 +657,40 @@ export class VendorService {
           });
         }
 
+        // Reverse points AWARDED on a COMPLETED booking the vendor is now
+        // cancelling. Without this the customer keeps the earned points PLUS the
+        // cash-refund-as-points above — a vendor↔customer collusion double-dip
+        // (let it complete → customer earns points → cancel → keep points + get
+        // refunded). Mirrors the admin cancel path (admin.service.ts). Uses the
+        // same cash-only earn basis (LoyaltyService.computeEarnedPoints) as the
+        // award so the reversal matches exactly — a points-paid booking earned 0
+        // and reverses 0; pointsAwarded is flipped false alongside the
+        // debit so it can't double-reverse. reverseAwarded clamps to the current
+        // balance so it never drives the balance negative.
+        if (result.pointsAwarded === true) {
+          // Reverse the EXACT points credited on this booking (its BOOKING_EARN
+          // ledger row), NOT a recompute with the CURRENT earn rate — an admin
+          // rate change between award and cancel would otherwise debit the wrong
+          // amount (or 0, leaving free residual points). 0 → nothing to reverse
+          // (points-paid booking earned 0). pointsAwarded → false so a re-cancel
+          // can't double-reverse.
+          const awardedPoints = await this.loyalty.getEarnedPoints(tx, bookingId);
+          if (awardedPoints > 0) {
+            await this.loyalty.reverseAwarded(tx, {
+              userId: result.customerId,
+              amount: awardedPoints,
+              bookingId,
+              actorType: 'VENDOR',
+              actorId: userId,
+              note: `Vendor cancel of COMPLETED booking ${result.ref} — debiting ${awardedPoints} previously-awarded points`,
+            });
+            await tx.booking.update({
+              where: { id: bookingId },
+              data: { pointsAwarded: false },
+            });
+          }
+        }
+
         // Refund the coupon usage so usage counters stay accurate and
         // platform vouchers become re-applicable on future bookings.
         await refundCouponUsage(tx, result.couponCode, result.customerId);
@@ -597,26 +702,44 @@ export class VendorService {
         if (!config) {
           config = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
         }
-        const points = Math.floor(Number(booking.totalPrice) * config.pointsPerQar.toNumber());
+        // Use the SHARED earn basis (LoyaltyService.computeEarnedPoints): 2-dp
+        // round (not floor, so sub-100 QAR bookings still earn their 1%), on the
+        // CASH paid only (totalPrice − pointsDiscount, so a points-paid booking
+        // earns 0 — no minting loop). Byte-identical to the cron + admin earn so
+        // the later reverse-on-cancel (which also uses computeEarnedPoints) matches
+        // exactly and never leaves a residual balance.
+        const points = this.loyalty.computeEarnedPoints(
+          Number(booking.totalPrice),
+          Number(booking.pointsDiscount),
+          config.pointsPerQar.toNumber(),
+        );
         if (points > 0) {
-          await tx.booking.update({
-            where: { id: bookingId },
+          // Atomically CLAIM the award: flip pointsAwarded false→true only if it
+          // is still false. The status→COMPLETED update above is NOT a claim, so
+          // two concurrent completes (double-click / two tabs) both pass the stale
+          // pre-tx `!booking.pointsAwarded` check and reach here; only ONE wins
+          // this claim → only one earns. (Previously the double-earn was stopped
+          // solely by the conditional, not-in-schema unique ledger index.)
+          const claim = await tx.booking.updateMany({
+            where: { id: bookingId, pointsAwarded: false },
             data: { pointsAwarded: true },
           });
-          await this.loyalty.earn(tx, {
-            userId: booking.customerId,
-            amount: points,
-            bookingId,
-            note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
-          });
-          // Notify customer (fire-and-forget, after transaction)
-          this.notificationService.send({
-            userId: booking.customerId,
-            type: 'SYSTEM' as any,
-            title: 'Points Earned!',
-            message: `You earned ${points} WANASA points for booking ${booking.ref}`,
-            link: '/bookings',
-          });
+          if (claim.count === 1) {
+            await this.loyalty.earn(tx, {
+              userId: booking.customerId,
+              amount: points,
+              bookingId,
+              note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
+            });
+            // Notify customer (fire-and-forget, after transaction)
+            this.notificationService.send({
+              userId: booking.customerId,
+              type: 'SYSTEM' as any,
+              title: 'Points Earned!',
+              message: `You earned ${points} WANASA points for booking ${booking.ref}`,
+              link: '/bookings',
+            });
+          }
         }
       }
 
@@ -902,6 +1025,160 @@ export class VendorService {
     return updated;
   }
 
+  // ─── Activity Blocks (vendor availability locks) ──────────
+  async getActivityBlocks(userId: string, activityId: string) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    // Ownership in the where — same 404 for "not yours" and "doesn't exist".
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    return db.activityBlock.findMany({
+      where: { activityId, deletedAt: null },
+      orderBy: { blockStart: 'asc' },
+      select: { id: true, blockStart: true, blockEnd: true, createdAt: true },
+    });
+  }
+
+  async createActivityBlock(userId: string, activityId: string, dto: CreateActivityBlockDto) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true, vendorId: true, bookingType: true, checkInTime: true, checkOutTime: true, durationValue: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // All validation + the slot/whole-day/recurring branches live in the shared
+    // core so the vendor and admin flows can never validate differently.
+    const result = await createActivityBlockCore(db, activity, dto);
+
+    // Bust the availability cache so customers see the lock immediately.
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async deleteActivityBlock(userId: string, activityId: string, blockId: string) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // Soft-delete, scoped by activity + vendor; updateMany so a double-delete
+    // (or a foreign blockId) is a clean no-op → 404, never another vendor's row.
+    const res = await db.activityBlock.updateMany({
+      where: { id: blockId, activityId, vendorId: vendor.id, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count === 0) throw new NotFoundException('Block not found');
+
+    void this.availabilityCache.invalidate(activityId);
+    return { id: blockId, removed: true };
+  }
+
+  async deleteActivityBlocksBulk(userId: string, activityId: string, ids: string[]) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // Soft-delete the given ids, scoped to this activity + vendor (foreign or
+    // already-deleted ids are simply not matched). One query → no rate-limit
+    // issues even for a long recurring series.
+    const res = await db.activityBlock.updateMany({
+      where: { id: { in: ids }, activityId, vendorId: vendor.id, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count > 0) void this.availabilityCache.invalidate(activityId);
+    return { removed: res.count };
+  }
+
+  // ─── Special prices (per-date price overrides) ───────────────
+  // Same ownership + cache-bust pattern as activity blocks. Shared validation
+  // lives in createSpecialPriceCore so vendor + admin can never diverge.
+  async getActivitySpecialPrices(userId: string, activityId: string) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // Only current/future overrides — past dates can't be booked and the
+    // calendar shows [today, +6mo]. Also bounds the result: old overrides are
+    // never hard-deleted, so without a floor this query would grow over time.
+    const todayUtc = new Date(new Date().toISOString().slice(0, 10));
+    return db.activitySpecialPrice.findMany({
+      where: { activityId, deletedAt: null, date: { gte: todayUtc } },
+      orderBy: { date: 'asc' },
+      select: { id: true, date: true, price: true, createdAt: true },
+    });
+  }
+
+  async createActivitySpecialPrice(userId: string, activityId: string, dto: CreateSpecialPriceDto) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true, vendorId: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    const result = await createSpecialPriceCore(db, activity, dto);
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async bulkCreateActivitySpecialPrices(userId: string, activityId: string, dto: BulkSpecialPriceDto) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true, vendorId: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // One transaction → all dates applied or none (a single bad/past date rolls
+    // the whole batch back). Cache busted once after, not per date.
+    const result = await db.$transaction(
+      (tx: any) => bulkCreateSpecialPricesCore(tx, activity, dto),
+      { timeout: 20000 },
+    );
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async deleteActivitySpecialPrice(userId: string, activityId: string, priceId: string) {
+    const vendor = await this.resolveVendor(userId);
+    const db = this.prisma.client;
+    const activity = await db.activity.findFirst({
+      where: { id: activityId, vendorId: vendor.id },
+      select: { id: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+
+    // Soft-delete, scoped by activity + vendor; updateMany so a double-delete or
+    // a foreign id is a clean no-op → 404, never another vendor's row.
+    const res = await db.activitySpecialPrice.updateMany({
+      where: { id: priceId, activityId, vendorId: vendor.id, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count === 0) throw new NotFoundException('Special price not found');
+
+    void this.availabilityCache.invalidate(activityId);
+    return { id: priceId, removed: true };
+  }
+
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
     const db = this.prisma.client;
     // Opt back into password (globally omitted in PrismaService) for bcrypt compare.
@@ -917,6 +1194,9 @@ export class VendorService {
     if (!valid) throw new ForbiddenException('Current password is incorrect');
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hash = await bcrypt.hash(newPassword, bcryptRounds);
+    // M5 — denylist every live session BEFORE the tx deletes the refresh rows,
+    // so outstanding access tokens die immediately (not just at renewal).
+    await this.sessionDenylist.denylistAllUserSessions(userId);
     // Interactive transaction (function form) — preferred over the array form
     // with Prisma 7 driver adapters; consistent with the rest of the codebase.
     await db.$transaction(async (tx) => {
@@ -965,21 +1245,51 @@ export class VendorService {
     return months;
   }
 
-  async createCoupon(userId: string, body: { code: string; discountType: 'PERCENTAGE' | 'FIXED'; discountValue: number; validFrom: string; validTo: string; usageLimit?: number; minOrderAmount?: number; maxDiscount?: number }) {
+  async createCoupon(userId: string, body: { code: string; discountType: 'PERCENTAGE' | 'FIXED'; discountValue: number; validFrom: string; validTo: string; usageLimit?: number; minOrderAmount?: number; maxDiscount?: number; activityIds?: string[] }) {
     const vendor = await this.resolveVendor(userId);
     const db = this.prisma.client;
 
-    const existing = await db.coupon.findUnique({ where: { code: body.code } });
+    // Normalise to UPPERCASE — every redeem/validate path (validateCoupon +
+    // createBooking) looks the code up uppercased, so a lowercase code stored
+    // verbatim would be permanently unredeemable. Admin createCoupon already
+    // does this; match it here.
+    const code = body.code.toUpperCase().trim();
+    const existing = await db.coupon.findUnique({ where: { code } });
     if (existing) throw new ConflictException('Coupon code already exists');
+
+    // Activity scoping (Bug A): a non-empty list restricts the coupon to those
+    // activities; empty = applies to all of the vendor's activities. Verify the
+    // ids are all THIS vendor's — a vendor must not scope a coupon to another
+    // vendor's activity (defence; it would never match anyway).
+    const activityIds = body.activityIds ?? [];
+    if (activityIds.length > 0) {
+      const owned = await db.activity.count({ where: { id: { in: activityIds }, vendorId: vendor.id } });
+      if (owned !== activityIds.length) {
+        throw new BadRequestException('Applicable activities must all belong to you.');
+      }
+    }
+
+    // Whole-day UTC validity bounds (END-of-day validTo) — same reason as the
+    // admin path: a bare-midnight validTo expires the coupon at 00:00 of the
+    // expiry day, so it never matches `validTo > now` at checkout / listing.
+    const validFrom = new Date(`${String(body.validFrom).slice(0, 10)}T00:00:00.000Z`);
+    const validTo = new Date(`${String(body.validTo).slice(0, 10)}T23:59:59.999Z`);
+    if (Number.isNaN(validFrom.getTime()) || Number.isNaN(validTo.getTime())) {
+      throw new BadRequestException('Invalid validity dates');
+    }
+    if (validTo <= validFrom) {
+      throw new BadRequestException('Expiry date must be after the start date');
+    }
 
     return db.coupon.create({
       data: {
-        code: body.code,
+        code,
         vendorId: vendor.id,
+        applicableActivityIds: activityIds,
         discountType: body.discountType,
         discountValue: body.discountValue,
-        validFrom: new Date(body.validFrom),
-        validTo: new Date(body.validTo),
+        validFrom,
+        validTo,
         usageLimit: body.usageLimit ? Number(body.usageLimit) : null,
         minOrderAmount: body.minOrderAmount || null,
         maxDiscount: body.maxDiscount || null,
@@ -1129,9 +1439,19 @@ export class VendorService {
     });
     const lockedPaymentIds = lockedRequests.flatMap((r) => r.paymentIds ?? []);
 
+    // Escrow: only pay out for activities that have already ENDED (+ an optional
+    // settlement/dispute buffer via PAYOUT_SETTLEMENT_BUFFER_DAYS, default 0). A
+    // customer cannot cancel once the activity has started, so gating payout on
+    // endDatetime closes the "vendor gets paid, then the customer cancels a
+    // still-future booking for a points refund" collusion vector — no cash
+    // leaves while the booking is still reversible.
+    const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
+    const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
+
     const agg = await db.booking.aggregate({
       where: {
         vendorId,
+        endDatetime: { lt: payoutCutoff },
         payment: {
           status: 'SUCCESS',
           payoutStatus: 'UNPAID',

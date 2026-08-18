@@ -88,6 +88,14 @@ function makePaymentService() {
   const availabilityCache = {
     invalidate: jest.fn().mockResolvedValue(undefined),
   } as any;
+  const loyalty = {
+    refund: jest.fn().mockResolvedValue(undefined),
+    redeem: jest.fn().mockResolvedValue(undefined),
+    reverseAwarded: jest.fn().mockResolvedValue(undefined),
+    computeEarnedPoints: jest.fn((total: number, discount: number, rate: number) =>
+      rate <= 0 ? 0 : Math.round(Math.max(0, total - discount) * rate * 100) / 100,
+    ),
+  } as any;
 
   return {
     svc: new PaymentService(
@@ -98,6 +106,7 @@ function makePaymentService() {
       notificationService,
       emailService,
       availabilityCache,
+      loyalty,
     ),
     auditLogger,
     notificationService,
@@ -197,7 +206,7 @@ async function seedOrphanedPayment(opts: OrphanFixtureOpts = {}) {
 describe('§B2 — orphan booking auto-recreates from snapshot', () => {
   test('happy path: booking re-inserted, payment SUCCESS, audit RECREATE, no refund', async () => {
     const { svc, auditLogger, notificationService } = makePaymentService();
-    const { basketId, paymentId, amountStr, snapshot } = await seedOrphanedPayment();
+    const { basketId, paymentId, amountStr, snapshot, originalBookingId } = await seedOrphanedPayment();
 
     const res = await svc.handleCallback({
       err_code: '00',
@@ -217,6 +226,10 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     expect(recreated!.status).toBe('CONFIRMED');
     expect(recreated!.totalPrice.toString()).toBe('200');
     expect(recreated!.paymentId).toBe(paymentId);
+    // H1: re-created under the ORIGINAL booking id (retained on payment.bookingId)
+    // so the redirect/poll/email/notification references all resolve to it
+    // instead of dangling at a now-deleted id.
+    expect(recreated!.id).toBe(originalBookingId);
 
     // Customer's original cancellation window preserved
     expect(recreated!.createdAt.toISOString()).toBe(snapshot.originalCreatedAt);
@@ -235,8 +248,13 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     expect(recreateAudit).toBeDefined();
     expect(recreateAudit.actionCategory).toBe('FINANCIAL');
 
-    // No admin alert (admin only pinged on refund-fallback paths)
-    expect(notificationService.notifyAdmins).not.toHaveBeenCalled();
+    // M4 fix: the recovered booking is found by its PRESERVED original id, so it
+    // now flows through the full confirmation path — customer (PAYMENT_SUCCESS),
+    // vendor + admin (BOOKING_NEW) — exactly like any newly-confirmed booking.
+    // Previously the stale-id lookup returned null and the recovery was SILENT
+    // (no email, no notifications) even though the booking existed.
+    expect(notificationService.notifyAdmins).toHaveBeenCalled();
+    expect(notificationService.send).toHaveBeenCalled();
   });
 
   test('idempotency: replayed callback does NOT create a second booking', async () => {
@@ -292,6 +310,31 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     expect(notificationService.notifyAdmins).toHaveBeenCalledTimes(1);
   });
 
+  test('TZ-discriminating: ended in Qatar-local (tagged end still raw-future) → REFUND_PENDING, NOT recreated', async () => {
+    const { svc, auditLogger } = makePaymentService();
+    // Tagged end +1h vs raw UTC, but ~2h in the PAST in Asia/Qatar (+3, the seed
+    // country) — the window where a raw-Date.now() gate would WRONGLY recreate.
+    // The sibling test's -1h is past under BOTH frames so it can't catch a
+    // raw-now regression; this one can.
+    const { basketId, paymentId, amountStr, snapshot } = await seedOrphanedPayment({
+      startOffsetMs: -1 * 3600_000,
+      endOffsetMs:   +1 * 3600_000,
+    });
+
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'T1',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    expect(await ctx.prisma.booking.findFirst({ where: { ref: snapshot.ref } })).toBeNull(); // NOT recreated
+    const p = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(p!.status).toBe('REFUND_PENDING');
+    const refundAudit = (auditLogger.log as jest.Mock).mock.calls
+      .map((c) => c[0])
+      .find((c: any) => c.action === 'PAYMENT_RECOVERY_REFUND_QUEUED');
+    expect(refundAudit?.details).toMatch(/ACTIVITY_ALREADY_ENDED/);
+  });
+
   test('slot already taken → REFUND_PENDING, audit SLOT_CONFLICT', async () => {
     const { svc, auditLogger } = makePaymentService();
     const { basketId, paymentId, amountStr, snapshot, seed } = await seedOrphanedPayment({
@@ -339,6 +382,57 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
     const reasons = (auditLogger.log as jest.Mock).mock.calls.map(c => c[0]);
     expect(reasons.some((c: any) =>
       c.action === 'PAYMENT_RECOVERY_REFUND_QUEUED' && /SLOT_CONFLICT/.test(c.details))).toBe(true);
+  });
+
+  test('H2: non-concurrent flex-start overlap → RECOVERED (sweep-line), not spuriously refunded', async () => {
+    const { svc } = makePaymentService();
+    const { basketId, paymentId, amountStr, snapshot, seed, originalBookingId } = await seedOrphanedPayment({
+      activityCapacity: 2,
+      guests: 1,
+    });
+    // Two existing bookings that each OVERLAP the recovery window [+24h,+26h]
+    // but are never concurrent with each other (A ends as B starts). Naive
+    // SUM(guests) = 2, + recovery 1 = 3 > cap 2 → the OLD check refunded. True
+    // peak concurrency in the window is 1, so + recovery 1 = 2 <= cap 2 → the
+    // slot genuinely fits → recovery MUST recreate, not refund.
+    const base = Date.now();
+    for (const [suffix, startMs, endMs] of [
+      ['A', 23 * 3600_000, 25 * 3600_000],
+      ['B', 25 * 3600_000, 27 * 3600_000],
+    ] as const) {
+      await ctx.prisma.booking.create({
+        data: {
+          ref: `JDWL-FLEX-${suffix}-${crypto.randomUUID().slice(0, 4)}`,
+          activityId: seed.activity.id,
+          vendorId: seed.vendor.id,
+          customerId: seed.customer.id,
+          guests: 1,
+          bookingPhone: '+97455123456',
+          guestBreakdown: {},
+          startDatetime: new Date(base + startMs),
+          endDatetime: new Date(base + endMs),
+          totalPrice: 100,
+          currencyCode: 'QAR',
+          commissionPct: 10,
+          commissionAmount: 10,
+          serviceFee: 5,
+          status: 'CONFIRMED',
+        },
+      });
+    }
+
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'T-FLEX',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    // Recovered (NOT refunded): re-inserted under the original id, payment SUCCESS.
+    const recreated = await ctx.prisma.booking.findFirst({ where: { ref: snapshot.ref } });
+    expect(recreated).not.toBeNull();
+    expect(recreated!.id).toBe(originalBookingId);
+    const p = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(p!.status).toBe('SUCCESS');
+    expect(p!.refundAmount).toBeNull();
   });
 
   test('activity hard-deleted → REFUND_PENDING, audit ACTIVITY_DELETED', async () => {
@@ -683,6 +777,29 @@ describe('§M6 — callback un-cancels SYSTEM-cancelled booking when safe', () =
     expect(p!.status).toBe('REFUND_PENDING');
     const reasons = (auditLogger.log as jest.Mock).mock.calls.map(c => c[0]);
     expect(reasons.some((c: any) =>
+      c.action === 'PAYMENT_RECOVERY_REFUND_QUEUED' && /ACTIVITY_ALREADY_ENDED/.test(c.details))).toBe(true);
+  });
+
+  test('TZ-discriminating: ended in Qatar-local (tagged end still raw-future) → REFUND_PENDING, no un-cancel', async () => {
+    const { svc, auditLogger } = makePaymentService();
+    // +1h raw UTC = Qatar-local past (+3 seed country); a raw-Date.now() gate
+    // would WRONGLY un-cancel. The -1h sibling is past under both frames.
+    const { basketId, paymentId, bookingId } = await seedSystemCancelledFixture({
+      startOffsetMs: -1 * 3600_000,
+      endOffsetMs:   +1 * 3600_000,
+    });
+
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'T1',
+      Response_Key: signCallback(basketId, '200.00', '00'),
+    });
+
+    const booking = await ctx.prisma.booking.findUnique({ where: { id: bookingId } });
+    expect(booking!.status).toBe('CANCELLED');   // NOT un-cancelled
+    const p = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(p!.status).toBe('REFUND_PENDING');
+    const reasons2 = (auditLogger.log as jest.Mock).mock.calls.map(c => c[0]);
+    expect(reasons2.some((c: any) =>
       c.action === 'PAYMENT_RECOVERY_REFUND_QUEUED' && /ACTIVITY_ALREADY_ENDED/.test(c.details))).toBe(true);
   });
 });

@@ -1,33 +1,11 @@
 'use client';
 
-/**
- * Admin Dashboard — Jadwal platform overview.
- *
- * Data sources (server-paced, all cached via TanStack):
- *   GET /admin/dashboard/stats   — top-level KPIs + financial liability
- *   GET /admin/dashboard/charts  — 6-month revenue series, vendor growth, top activities
- *
- * Layout (matches the design-system brief, adapted to our existing
- * sidebar/topbar which stay untouched):
- *   1. Greeting row — user name, date, sync freshness (computed from
- *      TanStack `dataUpdatedAt`).
- *   2. Platform overview — 4 small KPIs + 3 large KPIs (cash / bookings value / Wanasa).
- *   3. Financial health — 3 KPIs + hero loyalty-liability card (donut) + 2 side KPIs.
- *   4. Trends — 3 cards: revenue sparkline, vendor-growth bars, top-activities table.
- *   5. Queues + Recent activity — pending verifications, moderation queue, platform feed.
- *   6. Quick actions — 4 links to the most-used admin pages.
- *
- * Period selector (30/60/90/All) windows the financial KPIs via the `range`
- * query param on /admin/dashboard/stats (default 30d). Still OUT of scope:
- *   - Period-over-period trend deltas — no prior-period calc on server.
- *   - Platform-wide audit feed — no roll-up endpoint yet.
- */
-
 import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/auth-context';
 import api from '@/lib/api';
+import Link from 'next/link';
 import AdminLayout from '../_components/admin-layout';
 import {
   Users,
@@ -35,35 +13,27 @@ import {
   CalendarRange,
   BookOpen,
   DollarSign,
-  Clock,
-  AlertCircle,
-  Receipt,
+  Shield,
   Sparkles,
   Percent,
   Banknote,
   Wallet,
   Coins,
-  Shield,
   ChevronRight,
-  TrendingUp,
-  CircleCheck,
   Gift,
   Download,
-  Info,
+  TrendingUp,
+  AlertTriangle,
+  Receipt,
 } from 'lucide-react';
 import type { MonthlyRevenue } from './_components/revenue-area-chart';
 
-// Recharts is ~250 kB minified. Keep it out of the dashboard's first-load
-// JS by code-splitting; the chart paints client-side after the data is in.
 const RevenueAreaChart = dynamic(
   () => import('./_components/revenue-area-chart'),
   {
     ssr: false,
     loading: () => (
-      <div
-        className="w-full h-40 rounded-lg bg-gray-100/60 dark:bg-slate-800/40 animate-pulse"
-        aria-hidden="true"
-      />
+      <div className="w-full h-40 rounded-lg bg-gray-200 dark:bg-white/5 animate-pulse" aria-hidden="true" />
     ),
   },
 );
@@ -96,9 +66,6 @@ interface ChartsData {
   topActivities: { name: string; category: string; bookings: number; revenue?: number }[];
 }
 
-// Always returns 6 entries ending with the current month, zero-filled
-// for any month the input map omits. Lets the trend charts render with
-// 6 axis ticks even when the platform has < 6 months of data.
 function padToLast6Months(
   map?: Record<string, number>,
 ): { key: string; value: number }[] {
@@ -112,324 +79,64 @@ function padToLast6Months(
   return out;
 }
 
-// Render "YYYY-MM" → "Mon YY" (e.g. "Apr 26") so the axis reads naturally
-// even when the 6-month window spans a year boundary.
 function monthLabel(key: string): string {
   const [year, month] = key.split('-');
   const d = new Date(Number(year), Number(month) - 1, 1);
   return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 }
 
-// Tone presets extracted from the design brief's palette. Each `fg` pair
-// covers the accent text colour in light and dark mode; `bg` is the soft
-// tinted pill behind the icon. Centralised so every KPI card on the page
-// references the same source of truth.
-type Tone = 'sky' | 'emerald' | 'amber' | 'gold' | 'indigo' | 'slate' | 'red';
+// ─── Skeleton ──────────────────────────────────────────────────
 
-const TONE_CLASSES: Record<Tone, { bg: string; fg: string }> = {
-  sky: { bg: 'bg-sky-500/10 dark:bg-sky-500/15', fg: 'text-sky-600 dark:text-sky-400' },
-  emerald: { bg: 'bg-emerald-500/10 dark:bg-emerald-500/15', fg: 'text-emerald-600 dark:text-emerald-400' },
-  amber: { bg: 'bg-amber-500/10 dark:bg-amber-500/15', fg: 'text-amber-600 dark:text-amber-400' },
-  gold: { bg: 'bg-yellow-500/10 dark:bg-yellow-500/15', fg: 'text-yellow-700 dark:text-yellow-400' },
-  indigo: { bg: 'bg-indigo-500/10 dark:bg-indigo-500/15', fg: 'text-indigo-600 dark:text-indigo-400' },
-  slate: { bg: 'bg-slate-500/10 dark:bg-slate-500/15', fg: 'text-slate-600 dark:text-slate-400' },
-  red: { bg: 'bg-red-500/10 dark:bg-red-500/15', fg: 'text-red-600 dark:text-red-400' },
-};
-
-// ─── KPI Card ──────────────────────────────────────────────────
-
-function KpiCard({
-  label,
-  value,
-  sub,
-  icon: Icon,
-  tone,
-  size = 'md',
-}: {
-  label: string;
-  value: string | number;
-  sub?: string;
-  icon: React.ElementType;
-  tone: Tone;
-  size?: 'md' | 'lg';
-}) {
-  const t = TONE_CLASSES[tone];
-  const valueClass = size === 'lg' ? 'text-3xl sm:text-4xl' : 'text-2xl';
+function StatSkeleton() {
   return (
-    <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-5 sm:p-6 flex flex-col gap-3 hover:shadow-md hover:shadow-gray-200/40 dark:hover:shadow-slate-900/40 transition-shadow duration-200 min-h-[126px]">
-      <div className="flex items-start justify-between">
-        <div className={`h-10 w-10 rounded-xl ${t.bg} ${t.fg} flex items-center justify-center`}>
-          <Icon className="h-5 w-5" aria-hidden="true" />
-        </div>
-      </div>
-      <div>
-        <p className="text-xs font-medium text-gray-500 dark:text-slate-400 tracking-wide">{label}</p>
-        <p className={`mt-1 font-bold tracking-tight text-gray-900 dark:text-white tabular-nums leading-tight ${valueClass}`}>{value}</p>
-        {sub && <p className="mt-1.5 text-xs text-gray-500 dark:text-slate-400">{sub}</p>}
-      </div>
+    <div className="bg-white dark:bg-slate-950 p-6 space-y-2">
+      <div className="h-2.5 w-20 bg-gray-200 dark:bg-white/5 rounded animate-pulse" />
+      <div className="h-8 w-28 bg-gray-200 dark:bg-white/5 rounded animate-pulse" />
+      <div className="h-2 w-16 bg-gray-200 dark:bg-white/5 rounded animate-pulse" />
     </div>
   );
 }
 
-function KpiSkeleton() {
-  return (
-    <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-5 sm:p-6 min-h-[126px]">
-      <div className="h-10 w-10 rounded-xl bg-gray-100 dark:bg-slate-800 animate-pulse" />
-      <div className="mt-4 h-3 w-20 bg-gray-100 dark:bg-slate-800 rounded animate-pulse" />
-      <div className="mt-2 h-7 w-24 bg-gray-100 dark:bg-slate-800 rounded animate-pulse" />
-    </div>
-  );
-}
-
-// ─── Section Header ───────────────────────────────────────────
-
-function SectionHeader({ title, sub, action }: { title: string; sub?: string; action?: React.ReactNode }) {
-  return (
-    <div className="flex items-end justify-between gap-4 mb-4 mt-2 flex-wrap">
-      <div>
-        <h2 className="text-lg font-bold tracking-tight text-gray-900 dark:text-white">{title}</h2>
-        {sub && <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">{sub}</p>}
-      </div>
-      {action}
-    </div>
-  );
-}
-
-// ─── Bar chart (tiny) ────────────────────────────────────────
-
-function BarChart({ data }: { data: { key: string; value: number }[] }) {
-  const max = useMemo(() => Math.max(...data.map((d) => d.value), 1), [data]);
-  // Series is zero-padded to 6 months upstream — show the empty state only
-  // when every month is zero so the chart never collapses to nothing.
-  if (!data.some((d) => d.value > 0)) {
-    return <div className="h-24 flex items-center justify-center text-xs text-gray-400 dark:text-slate-500">No data yet</div>;
-  }
-  return (
-    <div className="flex items-end gap-2 h-24">
-      {data.map((d) => (
-        <div key={d.key} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-          <span className="text-[10px] font-semibold text-gray-700 dark:text-slate-300 tabular-nums">
-            {d.value > 0 ? d.value : ''}
-          </span>
-          <div
-            className={`w-full rounded-md transition-all duration-500 ${d.value > 0 ? 'bg-indigo-500/80 dark:bg-indigo-400/80' : 'bg-gray-100 dark:bg-slate-800'}`}
-            style={{ height: `${Math.max((d.value / max) * 100, 4)}%`, minHeight: 4 }}
-          />
-          <span className="text-[10px] text-gray-400 dark:text-slate-500">{d.key.slice(-2)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ─── Donut (for loyalty liability hero) ──────────────────────
-
-function Donut({ value, cap, label, sub }: { value: number; cap: number; label: string; sub?: string }) {
-  const size = 96;
-  const thickness = 12;
-  const r = (size - thickness) / 2;
-  const c = 2 * Math.PI * r;
-  const pct = cap > 0 ? Math.min(1, value / cap) : 0;
-  return (
-    <div className="relative shrink-0" style={{ width: size, height: size }}>
-      <svg width={size} height={size} aria-hidden="true">
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          className="stroke-yellow-500/15"
-          fill="none"
-          strokeWidth={thickness}
-        />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          className="stroke-yellow-500 dark:stroke-yellow-400"
-          fill="none"
-          strokeWidth={thickness}
-          strokeDasharray={`${(c * pct).toFixed(2)} ${c.toFixed(2)}`}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-        <span className="text-lg font-bold tracking-tight text-gray-900 dark:text-white">{label}</span>
-        {sub && <span className="text-[10px] text-gray-500 dark:text-slate-400 mt-0.5">{sub}</span>}
-      </div>
-    </div>
-  );
-}
-
-// ─── Chart card wrapper ──────────────────────────────────────
-
-function ChartCard({
-  title,
-  sub,
-  total,
-  totalLabel,
-  badge,
-  children,
-  className = '',
-}: {
-  title: string;
-  sub?: string;
-  total?: string;
-  totalLabel?: string;
-  badge?: React.ReactNode;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div className={`rounded-2xl border border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-5 flex flex-col gap-4 ${className}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-gray-900 dark:text-white">{title}</p>
-          {sub && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{sub}</p>}
-        </div>
-        {badge}
-      </div>
-      {total != null && totalLabel && (
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">{totalLabel}</p>
-          <p className="text-2xl font-bold tracking-tight tabular-nums text-gray-900 dark:text-white">{total}</p>
-        </div>
-      )}
-      <div className="mt-auto">{children}</div>
-    </div>
-  );
-}
-
-// ─── Queue empty card ────────────────────────────────────────
-
-function QueueCard({
-  title,
-  sub,
-  icon: Icon,
-  count,
-  emptyMsg,
-}: {
-  title: string;
-  sub: string;
-  icon: React.ElementType;
-  count: number;
-  emptyMsg: string;
-}) {
-  const empty = count === 0;
-  return (
-    <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-5 flex flex-col gap-4 min-h-[220px]">
-      <div className="flex items-center gap-3">
-        <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${empty ? 'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400' : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>
-          <Icon className="h-4 w-4" aria-hidden="true" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-gray-900 dark:text-white">{title}</p>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{sub}</p>
-        </div>
-        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${empty ? 'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400' : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>
-          {count}
-        </span>
-      </div>
-      {empty ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
-          <div className="h-11 w-11 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-            <CircleCheck className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <p className="text-xs text-gray-500 dark:text-slate-400 max-w-[240px]">{emptyMsg}</p>
-        </div>
-      ) : (
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-xs text-amber-700 dark:text-amber-400">{count} item{count === 1 ? '' : 's'} awaiting review</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Top activities table ───────────────────────────────────
+// ─── Top activities table ───────────────────────────────────────
 
 function TopActivitiesTable({ items }: { items: ChartsData['topActivities'] }) {
   if (!items.length) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
-        <div className="h-10 w-10 rounded-xl bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-gray-400">
+      <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+        <div className="h-10 w-10 rounded-xl bg-gray-100 dark:bg-white/5 flex items-center justify-center text-gray-400 dark:text-slate-600">
           <Sparkles className="h-5 w-5" aria-hidden="true" />
         </div>
-        <p className="text-sm font-medium text-gray-700 dark:text-slate-300">No activities yet</p>
-        <p className="text-xs text-gray-500 dark:text-slate-400 max-w-[220px]">Once vendors list activities and get bookings, leaders will show up here.</p>
+        <p className="text-sm font-medium text-gray-500 dark:text-slate-400">No activities yet</p>
+        <p className="text-xs text-gray-400 dark:text-slate-600 max-w-[220px]">Once vendors list activities and get bookings, leaders will show here.</p>
       </div>
     );
   }
-  const max = Math.max(...items.map((i) => i.bookings), 1);
   return (
     <div>
-      <div className="grid grid-cols-[minmax(0,1fr)_96px_72px] gap-3 px-1 pb-2 border-b border-gray-100 dark:border-slate-800 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
-        <div>Activity</div>
-        <div>Share</div>
-        <div className="text-end">Revenue</div>
+      <div className="grid grid-cols-[1fr_auto_auto] gap-4 pb-2 border-b border-gray-200 dark:border-white/5 text-[11px] uppercase tracking-widest text-gray-400 dark:text-slate-600">
+        <span>Activity</span>
+        <span>Bookings</span>
+        <span>Revenue</span>
       </div>
       {items.slice(0, 5).map((a, i) => (
         <div
           key={i}
-          className={`grid grid-cols-[minmax(0,1fr)_96px_72px] gap-3 px-1 py-3 items-center ${i < Math.min(items.length, 5) - 1 ? 'border-b border-gray-50 dark:border-slate-800/50' : ''}`}
+          className={`grid grid-cols-[1fr_auto_auto] gap-4 py-3 text-sm items-center ${i < Math.min(items.length, 5) - 1 ? 'border-b border-gray-100 dark:border-white/4' : ''}`}
         >
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="w-1.5 h-9 rounded bg-sky-500 shrink-0" aria-hidden="true" />
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[11px] font-bold text-gray-300 dark:text-slate-700 w-4 shrink-0">{i + 1}</span>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{a.name}</p>
-              <p className="text-[11px] text-gray-500 dark:text-slate-400 truncate">{a.category}</p>
+              <p className="font-semibold text-gray-900 dark:text-white truncate">{a.name}</p>
+              <p className="text-[11px] text-gray-500 dark:text-slate-500 truncate">{a.category}</p>
             </div>
           </div>
-          <div>
-            <div className="h-1.5 rounded-full bg-gray-100 dark:bg-slate-800 overflow-hidden">
-              <div
-                className="h-full bg-sky-500 rounded-full transition-all duration-500"
-                style={{ width: `${(a.bookings / max) * 100}%` }}
-              />
-            </div>
-            <p className="text-[10px] text-gray-500 dark:text-slate-400 mt-1 tabular-nums">
-              {a.bookings} booking{a.bookings === 1 ? '' : 's'}
-            </p>
-          </div>
-          <p className="text-sm font-bold text-gray-900 dark:text-white text-end tabular-nums">
+          <span className="text-gray-500 dark:text-slate-400 tabular-nums text-end">{a.bookings}</span>
+          <span className="text-gray-700 dark:text-slate-300 font-semibold tabular-nums text-end">
             QAR {Number(a.revenue ?? 0).toLocaleString()}
-          </p>
+          </span>
         </div>
       ))}
     </div>
-  );
-}
-
-// ─── Quick action card ──────────────────────────────────────
-
-function QuickAction({
-  icon: Icon,
-  title,
-  sub,
-  tone,
-  href,
-}: {
-  icon: React.ElementType;
-  title: string;
-  sub: string;
-  tone: Tone;
-  href: string;
-}) {
-  const t = TONE_CLASSES[tone];
-  return (
-    <a
-      href={href}
-      className="rounded-2xl border border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-4 flex items-center gap-3 hover:border-sky-400 dark:hover:border-sky-500/60 transition-colors group"
-    >
-      <div className={`h-10 w-10 rounded-xl ${t.bg} ${t.fg} flex items-center justify-center shrink-0`}>
-        <Icon className="h-5 w-5" aria-hidden="true" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{title}</p>
-        <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{sub}</p>
-      </div>
-      <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-sky-500 transition-colors" aria-hidden="true" />
-    </a>
   );
 }
 
@@ -438,12 +145,8 @@ function QuickAction({
 export default function AdminDashboardPage() {
   const { user } = useAuth();
 
-  // Period window for the financial KPIs — default 30 days so the dashboard
-  // never sums the entire booking/payment history on load; "All" is an explicit
-  // opt-in. Only the transactional cards (revenue / volume / commission / fees /
-  // bookings) react to this; structural counts + liabilities stay current-state.
   const [range, setRange] = useState<'30' | '60' | '90' | 'all'>('30');
-  const periodLabel = range === 'all' ? 'all time' : `last ${range} days`;
+  const periodLabel = range === 'all' ? 'all time' : `last ${range}d`;
 
   const { data: stats, isLoading, dataUpdatedAt } = useQuery<DashboardStats>({
     queryKey: ['admin', 'dashboard-stats', range],
@@ -463,16 +166,6 @@ export default function AdminDashboardPage() {
     staleTime: 60_000,
   });
 
-  // Derived chart series. Shaped as { month, revenue } so the Recharts
-  // AreaChart can bind directly — same shape the vendor analytics page
-  // uses, keeping both dashboards visually and structurally consistent.
-  //
-  // Both series are zero-padded to always span the last 6 months. The
-  // backend's `revenueByMonth` / `vendorsByMonth` maps only contain months
-  // with non-zero data — so without padding, a single-point month renders
-  // as a lonely floating dot under the "Last 6 months" caption. Padding
-  // turns that into a rising-from-zero curve that visually confirms data
-  // exists.
   const revenueSeries: MonthlyRevenue[] = useMemo(
     () =>
       padToLast6Months(charts?.revenueByMonth).map(({ key, value }) => ({
@@ -482,63 +175,57 @@ export default function AdminDashboardPage() {
     [charts],
   );
 
-  const vendorSeries = useMemo(
-    () => padToLast6Months(charts?.vendorsByMonth),
-    [charts],
-  );
-
-  // "Last sync N min ago" — derived from TanStack's dataUpdatedAt so it
-  // reflects the actual last network fetch, not a fake clock.
   const syncLabel = useMemo(() => {
     if (!dataUpdatedAt) return 'syncing…';
     const diffSec = Math.floor((Date.now() - dataUpdatedAt) / 1000);
     if (diffSec < 60) return 'just now';
     const mins = Math.floor(diffSec / 60);
     if (mins < 60) return `${mins} min ago`;
-    const hrs = Math.floor(mins / 60);
-    return `${hrs} hr ago`;
+    return `${Math.floor(mins / 60)} hr ago`;
   }, [dataUpdatedAt]);
 
-  const todayLabel = useMemo(() => {
-    return new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  }, []);
+  const todayLabel = useMemo(
+    () => new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
+    [],
+  );
 
-  // Loyalty liability cap — env-tunable future policy. Display-only,
-  // used to draw the donut proportion. 100_000 is a sensible display
-  // ceiling for a fresh platform; teams can tune via the public env.
-  const loyaltyCap = Number(process.env.NEXT_PUBLIC_LOYALTY_DISPLAY_CAP || 100000);
+  // Gauge ceiling for the loyalty-liability bar, in QAR (points are now
+  // QAR-denominated). Default 1000 QAR preserves the old effective ceiling
+  // (the previous 100000-points default × the old 0.01 rate = 1000 QAR).
+  const loyaltyCap = Number(process.env.NEXT_PUBLIC_LOYALTY_DISPLAY_CAP || 1000);
   const pointsIssued = Number(stats?.totalPointsIssued ?? 0);
   const pointsWorthQar = useMemo(() => {
-    // Rough equivalence — real conversion is settings-driven; this is a
-    // display hint only so admin can reason about cash exposure.
-    const qarPerPoint = Number(process.env.NEXT_PUBLIC_LOYALTY_QAR_PER_POINT || 0.01);
-    return Math.round(pointsIssued * qarPerPoint);
+    // 1 point = 1 QAR (default). Points are QAR-denominated, so the exposure ≈
+    // the points count; keep 2 dp rather than rounding to whole QAR.
+    const qarPerPoint = Number(process.env.NEXT_PUBLIC_LOYALTY_QAR_PER_POINT || 1);
+    return Math.round(pointsIssued * qarPerPoint * 100) / 100;
   }, [pointsIssued]);
+  const loyaltyPct = loyaltyCap > 0 ? Math.min(100, Math.round((pointsIssued / loyaltyCap) * 100)) : 0;
+
+  const totalActionItems = (stats?.pendingVendors ?? 0) + (stats?.pendingActivities ?? 0) + (stats?.refundPendingCount ?? 0);
 
   return (
     <AdminLayout title="Platform Dashboard">
-      {/* ─── Greeting row ───────────────────────────────────── */}
+
+      {/* ─── Greeting + Period selector ────────────────────── */}
       <div className="mb-8 flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-sm text-gray-500 dark:text-slate-400">
+          <p className="text-sm text-gray-500 dark:text-slate-500">
             Welcome back{user?.fullName ? `, ${user.fullName.split(' ')[0]}` : ''} · {todayLabel}
           </p>
-          <div className="flex items-center gap-3 mt-2 text-sm flex-wrap">
+          <div className="flex items-center gap-3 mt-1.5 text-sm">
             <span className="inline-flex items-center gap-2 text-gray-700 dark:text-slate-300">
-              <span className="relative flex h-2 w-2">
+              <span className="relative flex h-1.5 w-1.5">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60 animate-ping" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
               </span>
               All systems operational
             </span>
-            <span className="text-gray-300 dark:text-slate-600">·</span>
-            <span className="text-gray-500 dark:text-slate-400">Last sync {syncLabel}</span>
+            <span className="text-gray-300 dark:text-slate-700">·</span>
+            <span className="text-gray-500 dark:text-slate-500">Last sync {syncLabel}</span>
           </div>
         </div>
-        {/* Period selector — windows the financial KPIs below (revenue / volume /
-            commission / fees / bookings). Default 30d so we never sum the whole
-            history on load; "All" runs the lifetime aggregate on demand. */}
-        <div className="inline-flex items-center gap-1 rounded-xl border border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-1">
+        <div className="inline-flex items-center gap-0.5 rounded-xl border border-gray-200 dark:border-white/5 bg-gray-100 dark:bg-white/3 p-1">
           {(['30', '60', '90', 'all'] as const).map((r) => (
             <button
               key={r}
@@ -548,7 +235,7 @@ export default function AdminDashboardPage() {
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 range === r
                   ? 'bg-sky-500 text-white'
-                  : 'text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800'
+                  : 'text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white'
               }`}
             >
               {r === 'all' ? 'All' : `${r}d`}
@@ -557,252 +244,308 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* ─── Section 1: Platform overview ──────────────────── */}
-      <section className="mb-10">
-        <SectionHeader title="Platform overview" sub="Key metrics at a glance" />
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          {isLoading ? (
-            <>{Array.from({ length: 4 }).map((_, i) => <KpiSkeleton key={i} />)}</>
-          ) : (
-            <>
-              <KpiCard tone="sky" icon={Users} label="Total users" value={stats?.totalUsers ?? 0} />
-              <KpiCard
-                tone="indigo"
-                icon={Store}
-                label="Active vendors"
-                value={stats?.activeVendors ?? 0}
-                sub={`${stats?.pendingVendors ?? 0} pending approval`}
-              />
-              <KpiCard
-                tone="emerald"
-                icon={CalendarRange}
-                label="Total activities"
-                value={stats?.totalActivities ?? 0}
-                sub={`${stats?.pendingActivities ?? 0} pending review`}
-              />
-              <KpiCard
-                tone="gold"
-                icon={BookOpen}
-                label="Bookings"
-                value={stats?.totalBookings ?? 0}
-                sub={`${stats?.confirmedBookings ?? 0} confirmed · ${periodLabel}`}
-              />
-            </>
-          )}
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {isLoading ? (
-            <>{Array.from({ length: 3 }).map((_, i) => <KpiSkeleton key={`l-${i}`} />)}</>
-          ) : (
-            <>
-              <KpiCard
-                tone="emerald"
-                icon={DollarSign}
-                label="Cash revenue"
-                value={`QAR ${Number(stats?.totalRevenue ?? 0).toLocaleString()}`}
-                sub={`Cash settled · ${periodLabel}`}
-                size="lg"
-              />
-              <KpiCard
-                tone="sky"
-                icon={Receipt}
-                label="Bookings value"
-                value={`QAR ${Number(stats?.bookingsValue ?? 0).toLocaleString()}`}
-                sub={`Cash + points + coupons · ${periodLabel}`}
-                size="lg"
-              />
-              <KpiCard
-                tone="gold"
-                icon={Gift}
-                label="Wanasa funded"
-                value={`QAR ${Number(stats?.wanasaFundedValue ?? 0).toLocaleString()}`}
-                sub={`Paid via points · ${periodLabel}`}
-                size="lg"
-              />
-            </>
-          )}
-        </div>
-      </section>
+      {/* ─── Hero stats strip ──────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-gray-200 dark:bg-white/5 rounded-2xl overflow-hidden mb-8">
+        {isLoading ? (
+          Array.from({ length: 4 }).map((_, i) => <StatSkeleton key={i} />)
+        ) : (
+          <>
+            {/* Cash Revenue */}
+            <div className="bg-white dark:bg-slate-950 p-6">
+              <p className="text-[11px] uppercase tracking-widest text-gray-500 dark:text-slate-500 mb-2 flex items-center gap-1.5">
+                <DollarSign className="h-3 w-3" aria-hidden="true" /> Cash Revenue
+              </p>
+              <p className="text-3xl font-black tracking-tight">
+                {Number(stats?.totalRevenue ?? 0).toLocaleString()}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">QAR · {periodLabel}</p>
+            </div>
 
-      {/* ─── Section 2: Financial health ───────────────────── */}
-      <section className="mb-10">
-        <SectionHeader
-          title="Financial health"
-          sub="Platform revenue decomposition + liability exposure"
-          action={
-            <a
-              href="/admin/payouts"
-              className="inline-flex items-center gap-1 text-sm font-semibold text-sky-600 dark:text-sky-400 hover:underline"
-            >
-              Full ledger <ChevronRight className="h-4 w-4" aria-hidden="true" />
-            </a>
-          }
-        />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
-          {isLoading ? (
-            <>{Array.from({ length: 3 }).map((_, i) => <KpiSkeleton key={`fh-${i}`} />)}</>
-          ) : (
-            <>
-              <KpiCard
-                tone="emerald"
-                icon={Percent}
-                label="Platform commission"
-                value={`QAR ${Number(stats?.totalCommission ?? 0).toLocaleString()}`}
-                sub={`Gross margin · ${periodLabel}`}
-              />
-              <KpiCard
-                tone="sky"
-                icon={Banknote}
-                label="Service fees collected"
-                value={`QAR ${Number(stats?.totalServiceFees ?? 0).toLocaleString()}`}
-                sub={`Cash-path · waived for Wanasa · ${periodLabel}`}
-              />
-              <KpiCard
-                tone="amber"
-                icon={Wallet}
-                label="Pending payout owed"
-                value={`QAR ${Number(stats?.pendingPayoutOwed ?? 0).toLocaleString()}`}
-                sub="What admin owes vendors"
-              />
-            </>
-          )}
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-4">
-          {/* Hero loyalty liability card — donut + label */}
-          <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-6 flex items-center gap-5 relative overflow-hidden">
-            {/* soft radial accent */}
-            <div className="absolute -top-10 -right-10 h-40 w-40 rounded-full bg-yellow-500/8 pointer-events-none" aria-hidden="true" />
-            <Donut
-              value={pointsIssued}
-              cap={loyaltyCap}
-              label={pointsIssued >= 1000 ? `${(pointsIssued / 1000).toFixed(0)}k` : String(pointsIssued)}
-              sub={`of ${loyaltyCap / 1000}k cap`}
-            />
-            <div className="flex-1 min-w-0 relative">
-              <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-yellow-700 dark:text-yellow-400">
-                <Coins className="h-3 w-3" aria-hidden="true" /> Loyalty points outstanding
+            {/* Total Bookings */}
+            <div className="bg-white dark:bg-slate-950 p-6">
+              <p className="text-[11px] uppercase tracking-widest text-gray-500 dark:text-slate-500 mb-2 flex items-center gap-1.5">
+                <BookOpen className="h-3 w-3" aria-hidden="true" /> Bookings
               </p>
-              <p className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white mt-1 tabular-nums">
-                {pointsIssued.toLocaleString()}
-                <span className="text-base font-medium text-gray-500 dark:text-slate-400 ms-2">pts</span>
+              <p className="text-3xl font-black tracking-tight">
+                {Number(stats?.totalBookings ?? 0).toLocaleString()}
               </p>
-              <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                Future-booking liability · worth ≈{' '}
-                <span className="font-semibold text-gray-900 dark:text-white">QAR {pointsWorthQar.toLocaleString()}</span>
+              <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">
+                {Number(stats?.confirmedBookings ?? 0).toLocaleString()} confirmed · {periodLabel}
               </p>
             </div>
-          </div>
-          <KpiCard
-            tone={(stats?.refundPendingCount ?? 0) > 0 ? 'red' : 'slate'}
-            icon={Shield}
-            label="Refunds pending"
-            value={stats?.refundPendingCount ?? 0}
-            sub={
-              (stats?.refundPendingAmount ?? 0) > 0
-                ? `QAR ${Number(stats?.refundPendingAmount ?? 0).toLocaleString()} awaiting decision`
-                : 'No refund requests queued'
-            }
-          />
-          <KpiCard
-            tone={(stats?.pendingVendors ?? 0) > 0 ? 'amber' : 'slate'}
-            icon={AlertCircle}
-            label="Pending vendors"
-            value={stats?.pendingVendors ?? 0}
-            sub="Awaiting admin approval"
-          />
-        </div>
-      </section>
 
-      {/* ─── Section 3: Trends ─────────────────────────────── */}
-      <section className="mb-10">
-        <SectionHeader title="Trends" sub="Last 6 months" />
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1.5fr)] gap-4">
-          <ChartCard
-            title="Revenue over time"
-            sub="Cash settled · last 6 months"
-            total={`QAR ${Number(stats?.totalRevenue ?? 0).toLocaleString()}`}
-            totalLabel={periodLabel}
-          >
+            {/* Active Vendors */}
+            <div className="bg-white dark:bg-slate-950 p-6">
+              <p className="text-[11px] uppercase tracking-widest text-gray-500 dark:text-slate-500 mb-2 flex items-center gap-1.5">
+                <Store className="h-3 w-3" aria-hidden="true" /> Active Vendors
+              </p>
+              <p className="text-3xl font-black tracking-tight">
+                {stats?.activeVendors ?? 0}
+              </p>
+              {(stats?.pendingVendors ?? 0) > 0 ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                  {stats?.pendingVendors} pending approval
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">All verified</p>
+              )}
+            </div>
+
+            {/* Total Users */}
+            <div className="bg-white dark:bg-slate-950 p-6">
+              <p className="text-[11px] uppercase tracking-widest text-gray-500 dark:text-slate-500 mb-2 flex items-center gap-1.5">
+                <Users className="h-3 w-3" aria-hidden="true" /> Total Users
+              </p>
+              <p className="text-3xl font-black tracking-tight">
+                {Number(stats?.totalUsers ?? 0).toLocaleString()}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">
+                {stats?.totalActivities ?? 0} activities listed
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ─── Main 2-column grid ────────────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6">
+
+        {/* ── Left column ─────────────────────────────────── */}
+        <div className="space-y-6">
+
+          {/* Revenue chart card + financial breakdown */}
+          <div className="rounded-2xl bg-white dark:bg-white/3 border border-gray-200 dark:border-white/5 p-6">
+            <div className="flex items-start justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-sm font-bold text-gray-900 dark:text-white">Revenue Overview</h2>
+                <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">Cash settled · last 6 months</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <TrendingUp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                  QAR {Number(stats?.totalRevenue ?? 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
             <RevenueAreaChart data={revenueSeries} />
-          </ChartCard>
-          <ChartCard
-            title="New vendors by month"
-            sub="Onboarded & verified"
-            total={String(stats?.activeVendors ?? 0)}
-            totalLabel="Active now"
-          >
-            <BarChart data={vendorSeries} />
-          </ChartCard>
-          <ChartCard title="Top booked activities" sub="By non-cancelled bookings">
+
+            {/* Financial breakdown below chart */}
+            <div className="grid grid-cols-3 gap-4 mt-6 pt-5 border-t border-gray-200 dark:border-white/5">
+              <div>
+                <p className="text-[11px] text-gray-500 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                  <Percent className="h-3 w-3" aria-hidden="true" /> Commission
+                </p>
+                <p className="text-lg font-black mt-1 tracking-tight">
+                  QAR {Number(stats?.totalCommission ?? 0).toLocaleString()}
+                </p>
+                <p className="text-[11px] text-gray-400 dark:text-slate-600">{periodLabel}</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-gray-500 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                  <Banknote className="h-3 w-3" aria-hidden="true" /> Service fees
+                </p>
+                <p className="text-lg font-black mt-1 tracking-tight">
+                  QAR {Number(stats?.totalServiceFees ?? 0).toLocaleString()}
+                </p>
+                <p className="text-[11px] text-gray-400 dark:text-slate-600">{periodLabel}</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-gray-500 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                  <Wallet className="h-3 w-3" aria-hidden="true" /> Vendor owed
+                </p>
+                <p className="text-lg font-black mt-1 tracking-tight text-amber-600 dark:text-amber-400">
+                  QAR {Number(stats?.pendingPayoutOwed ?? 0).toLocaleString()}
+                </p>
+                <p className="text-[11px] text-gray-400 dark:text-slate-600">pending payout</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Top activities table */}
+          <div className="rounded-2xl bg-white dark:bg-white/3 border border-gray-200 dark:border-white/5 p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-sm font-bold text-gray-900 dark:text-white">Top Activities</h2>
+                <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">By bookings · non-cancelled</p>
+              </div>
+              <Link
+                href="/admin/activities"
+                className="text-xs text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300 transition-colors flex items-center gap-0.5"
+              >
+                View all <ChevronRight className="h-3 w-3" aria-hidden="true" />
+              </Link>
+            </div>
             <TopActivitiesTable items={charts?.topActivities ?? []} />
-          </ChartCard>
+          </div>
         </div>
-      </section>
 
-      {/* ─── Section 4: Queues ─────────────────────────────── */}
-      <section className="mb-10">
-        <SectionHeader title="Queues" sub="Work waiting on admin" />
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <QueueCard
-            title="Pending vendor verifications"
-            sub="New vendors awaiting KYC review"
-            icon={Shield}
-            count={stats?.pendingVendors ?? 0}
-            emptyMsg="No pending verifications. You're all caught up."
-          />
-          <QueueCard
-            title="Activity moderation queue"
-            sub="Listings awaiting first-review"
-            icon={Sparkles}
-            count={stats?.pendingActivities ?? 0}
-            emptyMsg="No activities awaiting moderation."
-          />
+        {/* ── Right column ────────────────────────────────── */}
+        <div className="space-y-5">
+
+          {/* Action queue */}
+          <div className="rounded-2xl bg-white dark:bg-white/3 border border-gray-200 dark:border-white/5 overflow-hidden">
+            <div className="px-5 py-4 flex items-center justify-between border-b border-gray-200 dark:border-white/5">
+              <h2 className="text-sm font-bold text-gray-900 dark:text-white">Action Required</h2>
+              {totalActionItems > 0 ? (
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  {totalActionItems}
+                </span>
+              ) : (
+                <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">All clear</span>
+              )}
+            </div>
+
+            {/* Vendor verifications */}
+            <Link
+              href="/admin/vendors"
+              className="flex items-center gap-4 px-5 py-4 border-b border-gray-100 dark:border-white/4 hover:bg-gray-50 dark:hover:bg-white/3 transition-colors group"
+            >
+              <div className={`h-9 w-9 shrink-0 rounded-xl flex items-center justify-center ${(stats?.pendingVendors ?? 0) > 0 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : 'bg-gray-100 dark:bg-white/5 text-gray-400 dark:text-slate-600'}`}>
+                <Shield className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">Vendor verifications</p>
+                <p className="text-xs text-gray-500 dark:text-slate-500">KYC awaiting review</p>
+              </div>
+              <span className={`text-lg font-black ${(stats?.pendingVendors ?? 0) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-300 dark:text-slate-700'}`}>
+                {stats?.pendingVendors ?? 0}
+              </span>
+              <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 dark:text-slate-700 dark:group-hover:text-slate-400 transition-colors" aria-hidden="true" />
+            </Link>
+
+            {/* Activity moderation */}
+            <Link
+              href="/admin/activities"
+              className="flex items-center gap-4 px-5 py-4 border-b border-gray-100 dark:border-white/4 hover:bg-gray-50 dark:hover:bg-white/3 transition-colors group"
+            >
+              <div className={`h-9 w-9 shrink-0 rounded-xl flex items-center justify-center ${(stats?.pendingActivities ?? 0) > 0 ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400' : 'bg-gray-100 dark:bg-white/5 text-gray-400 dark:text-slate-600'}`}>
+                <CalendarRange className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">Activity moderation</p>
+                <p className="text-xs text-gray-500 dark:text-slate-500">Listings awaiting review</p>
+              </div>
+              <span className={`text-lg font-black ${(stats?.pendingActivities ?? 0) > 0 ? 'text-sky-600 dark:text-sky-400' : 'text-gray-300 dark:text-slate-700'}`}>
+                {stats?.pendingActivities ?? 0}
+              </span>
+              <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 dark:text-slate-700 dark:group-hover:text-slate-400 transition-colors" aria-hidden="true" />
+            </Link>
+
+            {/* Refunds */}
+            <Link
+              href="/admin/bookings"
+              className="flex items-center gap-4 px-5 py-4 hover:bg-gray-50 dark:hover:bg-white/3 transition-colors group"
+            >
+              <div className={`h-9 w-9 shrink-0 rounded-xl flex items-center justify-center ${(stats?.refundPendingCount ?? 0) > 0 ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-gray-100 dark:bg-white/5 text-gray-300 dark:text-slate-700'}`}>
+                <Receipt className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-semibold ${(stats?.refundPendingCount ?? 0) > 0 ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-slate-600'}`}>
+                  Refund requests
+                </p>
+                <p className="text-xs text-gray-400 dark:text-slate-600">
+                  {(stats?.refundPendingCount ?? 0) > 0
+                    ? `QAR ${Number(stats?.refundPendingAmount ?? 0).toLocaleString()} queued`
+                    : 'Nothing queued'}
+                </p>
+              </div>
+              <span className={`text-lg font-black ${(stats?.refundPendingCount ?? 0) > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-300 dark:text-slate-800'}`}>
+                {stats?.refundPendingCount ?? 0}
+              </span>
+              <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 dark:text-slate-800 dark:group-hover:text-slate-600 transition-colors" aria-hidden="true" />
+            </Link>
+          </div>
+
+          {/* Loyalty liability */}
+          <div className="rounded-2xl bg-white dark:bg-white/3 border border-gray-200 dark:border-white/5 p-5">
+            <div className="flex items-center gap-1.5 mb-3">
+              <Coins className="h-3.5 w-3.5 text-yellow-500 dark:text-yellow-400" aria-hidden="true" />
+              <p className="text-[11px] uppercase tracking-widest text-gray-500 dark:text-slate-500">Loyalty liability</p>
+            </div>
+            <div className="flex items-end justify-between mb-3">
+              <div>
+                <p className="text-2xl font-black tracking-tight">
+                  {pointsIssued.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className="text-sm font-normal text-gray-500 dark:text-slate-500 ms-1.5">pts</span>
+                </p>
+                <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">≈ QAR {pointsWorthQar.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} exposure</p>
+              </div>
+              <span className="text-sm font-bold text-yellow-600 dark:text-yellow-400">{loyaltyPct}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-gray-200 dark:bg-white/5 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-linear-to-r from-yellow-500 to-amber-400 transition-all duration-700"
+                style={{ width: `${loyaltyPct}%` }}
+              />
+            </div>
+            <p className="text-[11px] text-gray-400 dark:text-slate-700 mt-1.5">
+              {pointsIssued.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} of {loyaltyCap.toLocaleString()} cap
+            </p>
+          </div>
+
+          {/* Bookings value + Wanasa funded mini stats */}
+          <div className="grid grid-cols-2 gap-px bg-gray-200 dark:bg-white/5 rounded-2xl overflow-hidden">
+            <div className="bg-white dark:bg-slate-950 p-5">
+              <p className="text-[11px] uppercase tracking-widest text-gray-500 dark:text-slate-500 mb-1">Bookings value</p>
+              <p className="text-xl font-black tracking-tight">
+                QAR {Number(stats?.bookingsValue ?? 0).toLocaleString()}
+              </p>
+              <p className="text-[11px] text-gray-400 dark:text-slate-600 mt-0.5">Cash + points + coupons</p>
+            </div>
+            <div className="bg-white dark:bg-slate-950 p-5">
+              <p className="text-[11px] uppercase tracking-widest text-gray-500 dark:text-slate-500 mb-1">Wanasa funded</p>
+              <p className="text-xl font-black tracking-tight text-yellow-600 dark:text-yellow-400">
+                QAR {Number(stats?.wanasaFundedValue ?? 0).toLocaleString()}
+              </p>
+              <p className="text-[11px] text-gray-400 dark:text-slate-600 mt-0.5">Paid via points</p>
+            </div>
+          </div>
+
+          {/* Quick actions */}
+          <div className="rounded-2xl bg-white dark:bg-white/3 border border-gray-200 dark:border-white/5 p-5">
+            <p className="text-[11px] uppercase tracking-widest text-gray-500 dark:text-slate-500 mb-4">Quick actions</p>
+            <div className="space-y-1">
+              <Link
+                href="/admin/vendors"
+                className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-white/5 transition-colors group"
+              >
+                <div className="h-8 w-8 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0">
+                  <Store className="h-4 w-4" aria-hidden="true" />
+                </div>
+                <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 dark:text-slate-300 dark:group-hover:text-white transition-colors flex-1">
+                  Review vendors
+                </span>
+                <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 dark:text-slate-700 dark:group-hover:text-slate-400 transition-colors" aria-hidden="true" />
+              </Link>
+              <Link
+                href="/admin/loyalty"
+                className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-white/5 transition-colors group"
+              >
+                <div className="h-8 w-8 rounded-lg bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 flex items-center justify-center shrink-0">
+                  <Gift className="h-4 w-4" aria-hidden="true" />
+                </div>
+                <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 dark:text-slate-300 dark:group-hover:text-white transition-colors flex-1">
+                  Loyalty points
+                </span>
+                <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 dark:text-slate-700 dark:group-hover:text-slate-400 transition-colors" aria-hidden="true" />
+              </Link>
+              <Link
+                href="/admin/payouts"
+                className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-white/5 transition-colors group"
+              >
+                <div className="h-8 w-8 rounded-lg bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400 flex items-center justify-center shrink-0">
+                  <Download className="h-4 w-4" aria-hidden="true" />
+                </div>
+                <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 dark:text-slate-300 dark:group-hover:text-white transition-colors flex-1">
+                  Export payouts CSV
+                </span>
+                <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 dark:text-slate-700 dark:group-hover:text-slate-400 transition-colors" aria-hidden="true" />
+              </Link>
+            </div>
+          </div>
         </div>
-      </section>
-
-      {/* ─── Section 5: Quick actions ──────────────────────── */}
-      {/* Parked: the "Refund requests" quick action was removed because no
-          dedicated page exists for it — refund decisions are recorded inline
-          on /admin/bookings and the shortcut-to-inline-modal pattern was
-          confusing. Restore if/when a standalone refund queue ships. */}
-      <section className="mb-4">
-        <SectionHeader title="Quick actions" sub="Jump to the most-used admin pages" />
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <QuickAction
-            icon={Store}
-            title="Review vendors"
-            sub="Approve or reject pending vendor accounts"
-            tone="sky"
-            href="/admin/vendors"
-          />
-          <QuickAction
-            icon={Gift}
-            title="Loyalty points"
-            sub="Grant or deduct Wanasa points"
-            tone="gold"
-            href="/admin/loyalty"
-          />
-          <QuickAction
-            icon={Download}
-            title="Payouts CSV"
-            sub="Export payouts and financial reports"
-            tone="slate"
-            href="/admin/payouts"
-          />
-        </div>
-      </section>
-
-      {/* Help note: call out what's out-of-scope so admin doesn't hunt
-          for features we haven't shipped yet. Quiet typography, easy
-          to ignore once admin is trained. */}
-      <div className="mt-8 rounded-xl border border-gray-100 dark:border-slate-800/60 bg-gray-50/60 dark:bg-slate-900/40 p-4 flex items-start gap-3">
-        <Info className="h-4 w-4 text-gray-400 dark:text-slate-500 mt-0.5 shrink-0" aria-hidden="true" />
-        <p className="text-xs text-gray-500 dark:text-slate-400 leading-relaxed">
-          Financial KPIs (revenue, bookings value, commission, fees, bookings) reflect the selected period — default {periodLabel};
-          use the range selector at the top. Structural counts (users, vendors, activities) and current liabilities (payout owed,
-          loyalty points, refunds) are always live totals. <TrendingUp className="inline h-3 w-3" /> For finer-grained numbers, open the
-          relevant page via Quick actions.
-        </p>
       </div>
     </AdminLayout>
   );

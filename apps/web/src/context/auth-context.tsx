@@ -21,6 +21,10 @@ interface User {
   phone?: string;
   role: 'CUSTOMER' | 'VENDOR' | 'ADMIN';
   vendor?: VendorProfile;
+  // True when the user hasn't accepted the current Terms version (Google-OAuth
+  // signups, pre-feature accounts, or after a Terms bump). Drives the one-time
+  // post-login consent gate. From GET /auth/me.
+  needsTermsAcceptance?: boolean;
 }
 
 interface AuthContextType {
@@ -79,6 +83,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (email: string, password: string) => {
     const { data } = await api.post('/auth/login', { email, password });
     setUser(data);
+    // Note: the login response doesn't carry `needsTermsAcceptance` (computed by
+    // GET /auth/me). It's filled in by the `checkAuth()` that runs on the
+    // post-login route change, so the consent gate appears on the redirect. The
+    // server-side TermsAcceptedGuard blocks any transaction in the interim.
     return data;
   };
 

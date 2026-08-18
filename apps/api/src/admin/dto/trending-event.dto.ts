@@ -21,6 +21,31 @@ function IsNotPastDate(validationOptions?: ValidationOptions) {
   };
 }
 
+/** Validates that this date field is on or after a sibling date field (e.g.
+ *  eventEndDate >= eventDate). Passes when either value is absent — the
+ *  comparison only fires when both are present in the same payload. */
+function IsOnOrAfter(siblingProp: string, validationOptions?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'isOnOrAfter',
+      target: (object as any).constructor,
+      propertyName,
+      options: { message: `${propertyName} must be on or after ${siblingProp}`, ...validationOptions },
+      validator: {
+        validate(value: unknown, args: any) {
+          if (value === undefined || value === null) return true;
+          const start = args?.object?.[siblingProp];
+          if (start === undefined || start === null) return true;
+          const end = new Date(value as string);
+          const startDate = new Date(start as string);
+          if (isNaN(end.getTime()) || isNaN(startDate.getTime())) return false;
+          return end >= startDate;
+        },
+      },
+    });
+  };
+}
+
 export class CreateTrendingEventDto {
   @IsString()
   @MinLength(1)
@@ -52,6 +77,13 @@ export class CreateTrendingEventDto {
   @IsDateString()
   @IsNotPastDate()
   eventDate?: string;
+
+  /** Optional END date for multi-day events. NULL = single-day (unchanged). */
+  @IsOptional()
+  @IsDateString()
+  @IsNotPastDate({ message: 'eventEndDate must not be in the past' })
+  @IsOnOrAfter('eventDate', { message: 'eventEndDate must be on or after eventDate' })
+  eventEndDate?: string;
 
   @IsOptional()
   @IsString()
@@ -96,6 +128,13 @@ export class UpdateTrendingEventDto {
   @IsDateString()
   @IsNotPastDate()
   eventDate?: string;
+
+  /** Optional END date for multi-day events. NULL = single-day (unchanged). */
+  @IsOptional()
+  @IsDateString()
+  @IsNotPastDate({ message: 'eventEndDate must not be in the past' })
+  @IsOnOrAfter('eventDate', { message: 'eventEndDate must be on or after eventDate' })
+  eventEndDate?: string;
 
   @IsOptional()
   @IsString()

@@ -106,6 +106,12 @@ function CountriesTab() {
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // A country's timezone drives the booking cancel guard + availability clocks;
+    // it must never be blank (would default to UTC and break +offset countries).
+    if (!timezoneVal) {
+      toast('Please select a timezone', 'error');
+      return;
+    }
     const fd = new FormData(e.currentTarget);
     const payload: any = {
       nameEn: sanitize(fd.get('nameEn') as string),
@@ -262,7 +268,7 @@ function CountriesTab() {
                   className={inputCls}
                 />
                 <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">
-                  Added on top of the activity price at checkout. Jadwal&apos;s revenue; invisible to the vendor.
+                  Added on top of the activity price at checkout. AL Jadwal&apos;s revenue; invisible to the vendor.
                 </p>
               </div>
               <div>

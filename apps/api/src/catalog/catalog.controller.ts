@@ -6,6 +6,7 @@ import { Public } from '../auth/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReferenceDataCacheService } from '../redis/reference-data-cache.service';
 import { RATE_LIMIT_VENDOR } from '../common/throttle-config';
+import { nowInTimezone } from '../common/validators/timezone';
 
 /**
  * Cache-Control values for public catalog GETs (Stream D, perf sprint).
@@ -106,7 +107,7 @@ export class CatalogController {
     const cached = await this.refCache.get<unknown[]>('countries', 'active');
     if (cached) return cached;
     const data = await this.prisma.client.country.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: 'ACTIVE', deletedAt: null },
       select: { id: true, nameEn: true, nameAr: true, isoCode: true, currencyCode: true, defaultTimezone: true },
       orderBy: { nameEn: 'asc' },
     });
@@ -179,7 +180,7 @@ export class CatalogController {
       select: {
         id: true, titleEn: true, titleAr: true,
         description: true, descriptionAr: true,
-        image: true, eventDate: true, countryId: true,
+        image: true, eventDate: true, eventEndDate: true, countryId: true,
       },
       orderBy: { createdAt: 'desc' },
       // Defensive cap — trendingEvent is admin-curated (homepage banners,
@@ -379,8 +380,14 @@ export class CatalogController {
     //   HOURLY → peak concurrent guests across the day (sweep-line)
     //   DAILY  → total guests occupying inventory today (flat sum)
     const activityIds = rawData.map((a) => a.id);
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+    // start/endDatetime are local-wall-clock tagged-UTC, and this list can mix
+    // activities from different countries, so "today" is per-activity (its own
+    // timezone's calendar day), NOT a single server-UTC day. We fetch a widened
+    // ±1-day window (covers any tz offset), then clip per activity to ITS local
+    // day below. bookedToday is a display-only scarcity hint; the authoritative
+    // capacity check in createBooking is separate and exact.
+    const fetchStart = new Date(); fetchStart.setUTCHours(0, 0, 0, 0); fetchStart.setUTCDate(fetchStart.getUTCDate() - 1);
+    const fetchEnd = new Date(); fetchEnd.setUTCHours(23, 59, 59, 999); fetchEnd.setUTCDate(fetchEnd.getUTCDate() + 1);
 
     const bookedMap = new Map<string, number>();
     if (activityIds.length > 0) {
@@ -388,29 +395,35 @@ export class CatalogController {
         where: {
           activityId: { in: activityIds },
           status: { in: ['PENDING', 'CONFIRMED'] },
-          startDatetime: { lte: todayEnd },
-          endDatetime: { gte: todayStart },
+          startDatetime: { lte: fetchEnd },
+          endDatetime: { gte: fetchStart },
         },
         select: { activityId: true, startDatetime: true, endDatetime: true, guests: true },
         // DoS cap for the whole catalog-page aggregate (all activities combined).
-        // Realistic page-size upper bound: 100 activities × 50 bookings/day = 5k.
+        // ±1-day window → realistic upper bound ~100 activities × 3 days.
         take: Number(process.env.AVAILABILITY_MAX_CATALOG_BOOKINGS || 10000),
       });
       const typeById = new Map(rawData.map((a) => [a.id, a.bookingType]));
+      const tzById = new Map(rawData.map((a) => [a.id, a.country?.defaultTimezone ?? 'UTC']));
       const byActivity = new Map<string, typeof todayBookings>();
       for (const b of todayBookings) {
         const arr = byActivity.get(b.activityId) ?? [];
         arr.push(b); byActivity.set(b.activityId, arr);
       }
       for (const [aid, rows] of byActivity) {
+        // This activity's OWN local-today window (tagged-UTC frame). nowInTimezone
+        // gives "now" as the activity's wall-clock; its calendar date bounds today.
+        const localNow = nowInTimezone(tzById.get(aid) ?? 'UTC');
+        const dayStart = new Date(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate(), 0, 0, 0, 0));
+        const dayEnd = new Date(Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate(), 23, 59, 59, 999));
         if (typeById.get(aid) === 'HOURLY') {
-          // Sweep-line peak concurrent across today — same algorithm as
-          // bookings.service.ts maxConcurrentInWindow. Inlined here to avoid
-          // importing service internals into a controller.
+          // Sweep-line peak concurrent across the activity's local today — same
+          // algorithm as bookings.service.ts maxConcurrentInWindow. Inlined here
+          // to avoid importing service internals into a controller.
           const events: Array<{ t: number; d: number; isStart: number }> = [];
           for (const b of rows) {
-            const s = b.startDatetime > todayStart ? b.startDatetime : todayStart;
-            const e = b.endDatetime < todayEnd ? b.endDatetime : todayEnd;
+            const s = b.startDatetime > dayStart ? b.startDatetime : dayStart;
+            const e = b.endDatetime < dayEnd ? b.endDatetime : dayEnd;
             if (s.getTime() >= e.getTime()) continue;
             events.push({ t: s.getTime(), d: b.guests, isStart: 1 });
             events.push({ t: e.getTime(), d: -b.guests, isStart: 0 });
@@ -420,7 +433,14 @@ export class CatalogController {
           for (const ev of events) { cur += ev.d; if (cur > peak) peak = cur; }
           bookedMap.set(aid, peak);
         } else {
-          bookedMap.set(aid, rows.reduce((s, r) => s + r.guests, 0));
+          // DAILY: sum guests of rows overlapping THIS activity's local today
+          // (the widened fetch can include neighbouring days — clip them out).
+          bookedMap.set(
+            aid,
+            rows
+              .filter((r) => r.startDatetime <= dayEnd && r.endDatetime >= dayStart)
+              .reduce((s, r) => s + r.guests, 0),
+          );
         }
       }
     }
@@ -589,7 +609,7 @@ export class CatalogController {
         aboutText: true,
       },
     });
-    const data = settings ?? { platformName: 'Jadwal', supportEmail: null, supportPhone: null, aboutText: null };
+    const data = settings ?? { platformName: "AL Jadwal", supportEmail: null, supportPhone: null, aboutText: null };
     await this.refCache.set('platform-info', 'default', data);
     return data;
   }

@@ -2,6 +2,7 @@ import {
   IsString,
   IsNotEmpty,
   IsInt,
+  IsNumber,
   IsOptional,
   IsUUID,
   IsArray,
@@ -51,14 +52,14 @@ export class CreateBookingDto {
   checkInDate!: string;
 
   /**
-   * HOURLY: the slot start time — MUST be on the hour (HH:00).
-   * Flex-start booking: any hour within the activity's operating window is
-   * valid, subject to end ≤ checkOutTime. Server re-validates regardless.
+   * HOURLY: the slot start time — on the hour OR half-hour (HH:00 or HH:30).
+   * Flex-start booking: any :00/:30 slot within the activity's operating window
+   * is valid, subject to end ≤ checkOutTime. Server re-validates regardless.
    * DAILY: omit (not used)
    */
   @IsString()
   @IsOptional()
-  @Matches(/^([01]\d|2[0-3]):00$/, { message: 'slotTime must start on the hour (HH:00)' })
+  @Matches(/^([01]\d|2[0-3]):(00|30)$/, { message: 'slotTime must be on the hour or half-hour (HH:00 or HH:30)' })
   slotTime?: string;
 
   /**
@@ -74,7 +75,7 @@ export class CreateBookingDto {
    */
   @IsString()
   @IsOptional()
-  @Matches(/^([01]\d|2[0-3]):00$/, { message: 'slotEndTime must start on the hour (HH:00)' })
+  @Matches(/^([01]\d|2[0-3]):(00|30)$/, { message: 'slotEndTime must be on the hour or half-hour (HH:00 or HH:30)' })
   slotEndTime?: string;
 
   /**
@@ -149,9 +150,12 @@ export class CreateBookingDto {
   @IsUUID('4')
   voucherId?: string;
 
-  /** Number of loyalty points to redeem for a discount on this booking */
+  /**
+   * Loyalty points to redeem for a discount on this booking. Points are
+   * QAR-denominated (1 point = 1 QAR), so fractional amounts (2 dp) are valid.
+   */
   @IsOptional()
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(10000000)
   redeemPoints?: number;

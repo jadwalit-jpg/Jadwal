@@ -152,7 +152,7 @@ export class CustomerInteractionController {
           activityId: dto.activityId,
           customerId: user.id,
           rating: dto.rating,
-          text: dto.text?.trim() || null,
+          // Rating-only: no customer free text is collected or stored.
         },
         include: {
           customer: { select: { fullName: true } },

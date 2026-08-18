@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   UnauthorizedException,
   ConflictException,
   ForbiddenException,
@@ -18,16 +19,19 @@ import { UsersService } from '../users/users.service';
 import { User } from '@prisma/client';
 import { TokenPayload } from './interfaces/token-payload.interface';
 import { RegisterVendorDto } from './dto/register-vendor.dto';
-import { resolveLanguageFromRequest } from '../common/utils/locale';
+import { resolveLanguageFromRequest, type EmailLanguage } from '../common/utils/locale';
+import { TERMS_VERSION } from '../common/terms';
 import { SecurityLoggerService } from '../common/services/security-logger.service';
 import { AuditLoggerService } from '../common/services/audit-logger.service';
 import { EmailService } from '../email/email.service';
 import { EmailQuotaService } from '../email/email-quota.service';
 import { NotificationService } from '../common/services/notification.service';
 import { RedisService } from '../redis/redis.service';
+import { SessionDenylistService } from '../redis/session-denylist.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly accessExpiry: number;
   private readonly refreshExpiry: number;
   private readonly sessionMaxDays: number;
@@ -36,6 +40,13 @@ export class AuthService {
   private readonly globalLoginThreshold: number;
   private readonly globalLoginWindowSec: number;
   private readonly forgotPasswordCooldownSec: number;
+  private readonly refreshReuseGraceMs: number;
+  // Timing-equalisation hash for "user not found" / OAuth-only / locked branches.
+  // MUST be computed at the SAME bcrypt cost as real passwords — a hardcoded
+  // literal at a lower cost makes the not-found branch measurably faster than a
+  // real bcrypt.compare, turning the timing-equaliser into an email-enumeration
+  // oracle. Computed once at boot (hashSync is fine here — startup only).
+  private readonly dummyHash: string;
 
   constructor(
     private usersService: UsersService,
@@ -48,6 +59,7 @@ export class AuthService {
     private emailQuota: EmailQuotaService,
     private notificationService: NotificationService,
     private redisService: RedisService,
+    private sessionDenylist: SessionDenylistService,
   ) {
     this.accessExpiry = Number(this.configService.get('JWT_EXPIRATION', '900'));
     this.refreshExpiry = Number(this.configService.get('REFRESH_TOKEN_EXPIRY_DAYS', '7'));
@@ -60,6 +72,9 @@ export class AuthService {
     this.sessionMaxDays = Number(this.configService.get('SESSION_MAX_DAYS', '7'));
     this.lockoutThreshold = Number(this.configService.get('LOCKOUT_THRESHOLD', '5'));
     this.lockoutDuration = Number(this.configService.get('LOCKOUT_DURATION_MINUTES', '15'));
+    // Same cost as real password hashing (users.service uses BCRYPT_ROUNDS||12),
+    // so bcrypt.compare against it takes the same time as against a real hash.
+    this.dummyHash = bcrypt.hashSync('timing-equalizer', Number(process.env.BCRYPT_ROUNDS || 12));
     // G1 — multi-IP credential-stuffing defence. Counts ALL login attempts
     // on a given email across ALL source IPs. Above this in N seconds → 429.
     // Closes the gap where per-IP throttle (3/min) and per-account DB
@@ -69,6 +84,17 @@ export class AuthService {
     // G6 — per-recipient cooldown on /forgot-password. A given email can
     // only receive 1 reset request per N seconds regardless of source IP.
     this.forgotPasswordCooldownSec = Number(this.configService.get('FORGOT_PASSWORD_COOLDOWN_SEC', '300'));
+    // M6 — grace window for refresh-token reuse detection. A rotated token
+    // re-presented WITHIN this window is treated as a benign client race (two
+    // tabs / a retry), not a stolen-token replay, so we don't nuke the session.
+    // Beyond it, re-presentation is a genuine reuse → revoke the whole family.
+    // Guard against a misconfigured value silently disabling M6 reuse detection:
+    // a non-numeric/negative env → NaN, and `sinceRotationMs > NaN` is ALWAYS
+    // false, so every replayed (stolen) token would be treated as a benign
+    // within-grace race and never revoke the family. Fall back to the 30s default
+    // if the configured value isn't a finite, non-negative number.
+    const graceRaw = Number(this.configService.get('REFRESH_REUSE_GRACE_MS', '30000'));
+    this.refreshReuseGraceMs = Number.isFinite(graceRaw) && graceRaw >= 0 ? graceRaw : 30000;
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -103,6 +129,17 @@ export class AuthService {
    */
   private hashEmail(email: string): string {
     return crypto.createHash('sha256').update(email.toLowerCase().trim()).digest('hex').slice(0, 32);
+  }
+
+  // M5/M6 session-family denylist — thin delegations to the shared
+  // SessionDenylistService (single source of truth for key format + TTL, shared
+  // with AdminService / VendorService / the session endpoints / JwtStrategy).
+  private denylistSession(familyId: string | null | undefined): Promise<void> {
+    return this.sessionDenylist.denylistSession(familyId);
+  }
+
+  private denylistAllUserSessions(userId: string): Promise<void> {
+    return this.sessionDenylist.denylistAllUserSessions(userId);
   }
 
   /**
@@ -236,9 +273,6 @@ export class AuthService {
 
     const db = this.prisma.client;
 
-    // Dummy hash for timing-safe responses when user not found
-    const DUMMY_HASH = '$2b$10$dummyhashfortimingequaliz0000000000000000000000000';
-
     // 1. Find user — only select fields needed for auth flow
     const user = await db.user.findUnique({
       where: { email },
@@ -248,21 +282,33 @@ export class AuthService {
       },
     });
     if (!user) {
-      await bcrypt.compare(password, DUMMY_HASH); // equalize timing
+      await bcrypt.compare(password, this.dummyHash); // equalize timing (same cost as a real hash)
       await this.securityLogger.log({ event: 'LOGIN_FAILED', email, ip, userAgent, details: 'User not found' });
       throw new UnauthorizedException('Invalid credentials');
     }
 
     // 2. Check lockout — return generic message to prevent account enumeration
     if (user.lockedUntil && user.lockedUntil > new Date()) {
-      await bcrypt.compare(password, user.password || DUMMY_HASH); // equalize timing
+      await bcrypt.compare(password, user.password || this.dummyHash); // equalize timing
       await this.securityLogger.log({ event: 'LOGIN_FAILED', userId: user.id, email, ip, userAgent, details: 'Account locked' });
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    // 2b. Lock has EXPIRED (lockedUntil is set but not in the future, per the
+    // check above). Reset the attempt budget to zero so the account gets a fresh
+    // N attempts this cycle. Without this, failedLoginAttempts still holds
+    // ≥threshold, so the very next wrong password re-locks immediately — letting
+    // an attacker keep a victim permanently locked out with one attempt every
+    // lock-duration (well under any rate limit). One-time write per lock cycle.
+    if (user.lockedUntil) {
+      await db.user.update({ where: { id: user.id }, data: { failedLoginAttempts: 0, lockedUntil: null } });
+      user.failedLoginAttempts = 0;
+      user.lockedUntil = null;
+    }
+
     // 3. Verify password (null password = OAuth-only account)
     if (!user.password) {
-      await bcrypt.compare(password, DUMMY_HASH); // equalize timing
+      await bcrypt.compare(password, this.dummyHash); // equalize timing
       throw new UnauthorizedException('Invalid credentials');
     }
     const validPassword = await bcrypt.compare(password, user.password);
@@ -350,11 +396,18 @@ export class AuthService {
     // measured from when the user first logged in, not from the latest
     // rotation. Fresh logins omit this and get `new Date()` below.
     sessionStartedAt?: Date,
+    // Session-family id, carried across rotations like sessionStartedAt. A fresh
+    // login omits it → a new family is minted below; rotation passes the existing
+    // one so the whole session shares one family (for logout/reuse revocation).
+    familyId?: string,
   ) {
-    const payload: TokenPayload = { email: user.email, sub: user.id, role: user.role };
-    const accessToken = this.jwtService.sign(payload);
     const db = this.prisma.client;
     const { ip, userAgent } = this.extractClientInfo(req);
+    // One family per session, stable across every rotation (M5/M6).
+    const family = familyId ?? crypto.randomUUID();
+
+    const payload: TokenPayload = { email: user.email, sub: user.id, role: user.role, sid: family };
+    const accessToken = this.jwtService.sign(payload);
 
     // Set access token cookie
     response.cookie('Authentication', accessToken, this.cookieOptions(this.accessExpiry * 1000));
@@ -364,9 +417,12 @@ export class AuthService {
       where: { userId: user.id, expiresAt: { lt: new Date() } },
     });
 
-    // Enforce max active tokens (oldest gets evicted)
+    // Enforce max active tokens (oldest gets evicted). Count only ACTIVE
+    // (non-rotated) tokens — M6 keeps rotated tokens as reuse-detection tombstones
+    // (rotatedAt set); those are historical, not live sessions, and must not count
+    // toward the concurrent-session cap or be evicted here (they self-expire).
     const activeTokens = await db.refreshToken.findMany({
-      where: { userId: user.id },
+      where: { userId: user.id, rotatedAt: null },
       orderBy: { createdAt: 'desc' },
       select: { id: true },
     });
@@ -388,6 +444,8 @@ export class AuthService {
         // Carry the original session start across rotations so the
         // absolute session lifetime cap is measured from first login.
         sessionStartedAt: sessionStartedAt ?? new Date(),
+        // Stable session-family id, shared by every rotation of this session.
+        familyId: family,
         userAgent: userAgent ?? null,
         ipAddress: ip ?? null,
         lastUsedAt: new Date(),
@@ -431,6 +489,35 @@ export class AuthService {
       throw new UnauthorizedException('Session expired — please log in again');
     }
 
+    // M6 — REFRESH-TOKEN REUSE DETECTION. A token with rotatedAt set was already
+    // consumed (rotation now marks instead of deleting — see below). Its
+    // re-presentation is one of two things:
+    //   (a) a benign client race within the grace window — two tabs / a retry
+    //       both send the just-rotated token; the winner already rotated it. We
+    //       do NOT nuke the session; the racing tab's next request uses the fresh
+    //       cookie the winner set.
+    //   (b) a genuine REUSE beyond the grace window — a stolen, already-rotated
+    //       token replayed. This is a compromise signal: revoke the ENTIRE family
+    //       (kills the attacker's AND the legit user's current session), denylist
+    //       it so any outstanding access token dies now, log it, force re-auth.
+    // Either way the presented token is spent → generic 401 (same message).
+    if (storedToken.rotatedAt) {
+      const sinceRotationMs = Date.now() - storedToken.rotatedAt.getTime();
+      if (sinceRotationMs > this.refreshReuseGraceMs) {
+        await this.denylistSession(storedToken.familyId);
+        await db.refreshToken.deleteMany({ where: { familyId: storedToken.familyId } });
+        this.clearAllCookies(response);
+        await this.securityLogger.log({
+          event: 'REFRESH_REUSE_DETECTED',
+          userId: storedToken.userId,
+          ip,
+          userAgent,
+          details: `Reused a rotated refresh token — session family ${storedToken.familyId.slice(0, 8)} revoked`,
+        });
+      }
+      throw new UnauthorizedException('Session expired — please log in again');
+    }
+
     if (storedToken.expiresAt < new Date()) {
       await db.refreshToken.delete({ where: { id: storedToken.id } });
       throw new UnauthorizedException('Session expired — please log in again');
@@ -445,13 +532,40 @@ export class AuthService {
     const sessionAgeMs = Date.now() - storedToken.sessionStartedAt.getTime();
     const sessionMaxMs = this.sessionMaxDays * 24 * 60 * 60 * 1000;
     if (sessionAgeMs > sessionMaxMs) {
-      await db.refreshToken.delete({ where: { id: storedToken.id } });
+      // Absolute-cap hit — end this session and kill its outstanding access token.
+      await this.denylistSession(storedToken.familyId);
+      await db.refreshToken.deleteMany({ where: { familyId: storedToken.familyId } });
       this.clearAllCookies(response);
       throw new UnauthorizedException('Session expired — please log in again');
     }
 
-    // Rotation: delete used token immediately (single-use)
-    await db.refreshToken.delete({ where: { id: storedToken.id } });
+    // Rotation: atomically CONSUME the token — mark it rotated (single-use) and
+    // KEEP it as a reuse-detection tombstone (M6); it self-expires at its
+    // original expiresAt. The new token issued below inherits the same familyId,
+    // so the whole session shares one family for logout/reuse revocation.
+    //
+    // CONCURRENCY GATE: the conditional `where: { rotatedAt: null }` makes this a
+    // single atomic compare-and-set. Under two simultaneous refreshes of the SAME
+    // token, Postgres row-locks serialise them and exactly ONE sees rotatedAt=null
+    // → count 1 (winner); the other re-evaluates the predicate post-commit →
+    // count 0 (loser). The loser aborts WITHOUT revoking the family — this is a
+    // benign client race (two tabs / a retry), not a stolen-token reuse; the
+    // winner already minted the new pair, and the loser's next call uses that
+    // fresh cookie. This replaces the previous delete-throws-P2025 gate while
+    // preserving strict single-use.
+    const consumed = await db.refreshToken.updateMany({
+      where: { id: storedToken.id, rotatedAt: null },
+      data: { rotatedAt: new Date() },
+    });
+    if (consumed.count === 0) {
+      // Benign race loser: another concurrent request rotated this exact token
+      // microseconds ago and already set the fresh cookie on ITS response. Do
+      // NOT clear cookies here — that would log out a legitimate second tab;
+      // let the winner's new cookie stand and the client retry. (A genuine
+      // stolen-token REUSE is caught earlier by the rotatedAt tombstone branch,
+      // which DOES revoke + clear.) Fail this one request with the generic 401.
+      throw new UnauthorizedException('Session expired — please log in again');
+    }
 
     // Verify user is still valid — select only what issueTokens needs
     const user = await db.user.findUnique({
@@ -459,6 +573,7 @@ export class AuthService {
       select: { id: true, email: true, fullName: true, role: true, isDeactivated: true },
     });
     if (!user || user.isDeactivated) {
+      await this.denylistSession(storedToken.familyId);
       await db.refreshToken.deleteMany({ where: { userId: storedToken.userId } });
       this.clearAllCookies(response);
       // Unified with the other refresh-flow exceptions to avoid leaking
@@ -470,6 +585,7 @@ export class AuthService {
     if (user.role === 'VENDOR') {
       const vendor = await db.vendor.findUnique({ where: { userId: user.id }, select: { status: true } });
       if (!vendor || vendor.status === 'SUSPENDED') {
+        await this.denylistAllUserSessions(user.id);
         await db.refreshToken.deleteMany({ where: { userId: user.id } });
         this.clearAllCookies(response);
         throw new ForbiddenException('Your vendor account has been suspended');
@@ -484,13 +600,48 @@ export class AuthService {
     // Pass the original session start time through to the new token row.
     // Without this, every rotation would reset the 7-day absolute cap and
     // we'd be back to indefinite sessions.
-    return this.issueTokens(user, response, req, storedToken.sessionStartedAt);
+    // Carry BOTH the original session-start (absolute-cap) AND the family id
+    // (M5/M6) into the new token, so the whole session stays one family.
+    return this.issueTokens(user, response, req, storedToken.sessionStartedAt, storedToken.familyId);
   }
 
   // ─── Register (customer) — sends verification email, does NOT issue cookies ─
 
+  /**
+   * Anti-enumeration constant-time floor for /auth/register. The fresh-signup
+   * path awaits DB writes + (previously) a network email send that the
+   * already-registered path skips, so response TIME leaked whether an email
+   * exists — a bigger oracle than the response body, which is already identical.
+   * Padding every branch up to a fixed floor makes all outcomes return at the
+   * same time. Pair this with a bcrypt equaliser (CPU cost) and a fire-and-forget
+   * email send (removes the variable network delay) so the natural time of every
+   * branch stays UNDER the floor. Env-tunable; default comfortably above the
+   * slowest branch (~1 bcrypt + a couple of writes).
+   */
+  private async padRegisterConstantTime(startedAt: number): Promise<void> {
+    // Floor raised 600 → 1000: the equaliser only hides the "email exists" oracle
+    // while EVERY branch's natural time stays UNDER the floor. The fresh-signup
+    // branch (bcrypt + user insert + verification-token insert + quota + logs) is
+    // heavier than the existing-email branch (bcrypt + one log) and, under DB/CPU
+    // load, its p99 can approach/exceed 600ms — at which point it returns late
+    // while the light branch pads to the floor, re-opening the timing delta.
+    // 1000ms keeps the heavy branch comfortably under the floor at realistic load;
+    // raise REGISTER_MIN_RESPONSE_MS further if prod p99 ever approaches it.
+    // Validate the configured floor: a non-numeric env → NaN, and `elapsed < NaN`
+    // is always false, which would SILENTLY DISABLE the constant-time pad and
+    // re-open the email-enumeration oracle this method exists to close. Fall back
+    // to 1000ms unless the value is a finite, non-negative number.
+    const floorRaw = Number(process.env.REGISTER_MIN_RESPONSE_MS || 1000);
+    const floorMs = Number.isFinite(floorRaw) && floorRaw >= 0 ? floorRaw : 1000;
+    const elapsed = Date.now() - startedAt;
+    if (elapsed < floorMs) {
+      await new Promise((r) => setTimeout(r, floorMs - elapsed));
+    }
+  }
+
   async registerAndLogin(data: { fullName: string; email: string; password: string; phone?: string; website?: string }, req?: Request) {
     const db = this.prisma.client;
+    const startedAt = Date.now();
 
     // Honeypot trip — `website` is a hidden CSS-offscreen field (see
     // register-form.tsx). Real users never see or fill it. A non-empty
@@ -506,12 +657,42 @@ export class AuthService {
         ip: botIp,
         details: 'Honeypot tripped on /auth/register',
       });
+      await this.padRegisterConstantTime(startedAt);
       return { pending: true, email: data.email };
     }
 
-    // Pre-check email uniqueness → clean 409 instead of raw Prisma P2002
-    const existingEmail = await db.user.findUnique({ where: { email: data.email }, select: { id: true } });
-    if (existingEmail) throw new ConflictException('Email already registered');
+    // M3 — ANTI-ENUMERATION on an already-registered email. Do NOT throw
+    // "Email already registered" (a direct existence oracle). Return the SAME
+    // generic {pending,email} response a fresh signup returns, and email the
+    // OWNER "you already have an account" so a legitimate person who forgot is
+    // guided back in (log in / reset) rather than left with a verification mail
+    // that never comes. This mirrors the anti-enumeration already used by
+    // forgot-password / resend-verification. The honeypot path above returns the
+    // exact same response.
+    const existingEmail = await db.user.findUnique({
+      where: { email: data.email },
+      select: { id: true, fullName: true, preferredLanguage: true },
+    });
+    if (existingEmail) {
+      // Burn ~one bcrypt so this branch isn't measurably faster than the
+      // fresh-signup path (which hashes the password) — closes the timing side
+      // channel the response-shape match leaves open. dummyHash is cost-matched.
+      await bcrypt.compare('timing-equalizer', this.dummyHash).catch(() => undefined);
+      void this.emailService
+        .sendAccountExistsNotification(
+          data.email,
+          { userName: existingEmail.fullName || '' },
+          (existingEmail.preferredLanguage as EmailLanguage) || undefined,
+        )
+        .catch(() => undefined);
+      await this.securityLogger.log({
+        event: 'LOGIN_FAILED',
+        email: data.email,
+        details: 'Register attempt on an already-registered email',
+      });
+      await this.padRegisterConstantTime(startedAt);
+      return { pending: true, email: data.email };
+    }
 
     // Phone is @unique in the schema. Pre-check gives a clean 409 instead of
     // a raw Prisma P2002. Use a NEUTRAL message (not "phone already registered")
@@ -528,9 +709,20 @@ export class AuthService {
     // verification email (and all later transactional mail) renders in the
     // language the user registered in.
     const preferredLanguage = resolveLanguageFromRequest(req);
-    const user = await this.usersService.create({ ...data, preferredLanguage });
+    // The RegisterDto requires termsAccepted === true (enforced by ValidationPipe
+    // before we reach here), so record the acceptance + current version now.
+    const user = await this.usersService.create({
+      ...data,
+      preferredLanguage,
+      termsAcceptedAt: new Date(),
+      termsAcceptedVersion: TERMS_VERSION,
+    });
 
     const { ip: regIp } = this.extractClientInfo(req);
+    // Still awaited so the token is persisted + quota is checked before we
+    // respond — but the actual network SEND inside is fire-and-forget (see
+    // sendVerificationEmail), so the variable Resend round-trip no longer extends
+    // the response and can't re-open the enumeration oracle by timing.
     await this.sendVerificationEmail(db, user.id, user.email, user.fullName, regIp);
 
     await this.securityLogger.log({ event: 'LOGIN_SUCCESS', userId: user.id, email: user.email, details: 'Customer registered, pending verification' });
@@ -548,6 +740,7 @@ export class AuthService {
       details: 'New customer account, pending email verification',
     });
 
+    await this.padRegisterConstantTime(startedAt);
     return { pending: true, email: user.email };
   }
 
@@ -734,10 +927,31 @@ export class AuthService {
     const ipAllowed = await this.emailQuota.tryConsumePerIp(ip);
     if (!ipAllowed) return;
 
-    await this.emailService.sendEmailVerification(email, { userName: fullName, verificationLink });
+    // Fire-and-forget the network SEND: awaiting the Resend round-trip here made
+    // the fresh-signup path measurably slower than the already-registered path,
+    // re-opening the email-enumeration oracle by timing. The token is already
+    // persisted above; a failed send is recoverable via /auth/resend-verification.
+    // (The call is still INVOKED synchronously — only its result isn't awaited —
+    // so callers/tests observing "was a verification email dispatched?" are
+    // unaffected.)
+    void this.emailService.sendEmailVerification(email, { userName: fullName, verificationLink }).catch(() => undefined);
   }
 
   // ─── Register vendor ───────────────────────────────────────────────────────
+
+  /**
+   * Record the current user's acceptance of the latest Terms (TERMS_VERSION).
+   * Called by the post-login consent gate (Google-OAuth signups, pre-feature
+   * accounts, and anyone after a version bump). Idempotent — re-accepting just
+   * refreshes the timestamp + version.
+   */
+  async acceptTerms(userId: string) {
+    await this.prisma.client.user.update({
+      where: { id: userId },
+      data: { termsAcceptedAt: new Date(), termsAcceptedVersion: TERMS_VERSION },
+    });
+    return { accepted: true, version: TERMS_VERSION };
+  }
 
   async registerVendor(dto: RegisterVendorDto, req?: Request) {
     const db = this.prisma.client;
@@ -762,8 +976,18 @@ export class AuthService {
     const existingBusiness = await db.vendor.findUnique({ where: { businessId: dto.businessId } });
     if (existingBusiness) throw new ConflictException('Business ID already registered');
 
-    const existingSlug = await db.vendor.findUnique({ where: { slug: dto.slug } });
-    if (existingSlug) throw new ConflictException('Slug already taken');
+    // The slug is auto-derived from the business name on the client and is
+    // READ-ONLY, so a collision (two vendors with the same business name) can't
+    // be fixed by the user. Auto-resolve to the next free variant (base, base-2,
+    // base-3, …) so vendor registration never dead-ends. The vendor.slug unique
+    // index is the final integrity backstop — a rare concurrent-registration
+    // race surfaces as the standard duplicate error and the vendor just retries.
+    let resolvedSlug = dto.slug;
+    for (let n = 2; n <= 1000; n++) {
+      const taken = await db.vendor.findUnique({ where: { slug: resolvedSlug }, select: { id: true } });
+      if (!taken) break;
+      resolvedSlug = `${dto.slug}-${n}`;
+    }
 
     if (dto.phone) {
       // Neutral anti-enumeration message — must match the customer-register
@@ -791,6 +1015,9 @@ export class AuthService {
           phone: dto.phone ?? null,
           role: 'VENDOR',
           preferredLanguage,
+          // RegisterVendorDto requires termsAccepted === true → record consent.
+          termsAcceptedAt: new Date(),
+          termsAcceptedVersion: TERMS_VERSION,
         },
       });
 
@@ -800,7 +1027,7 @@ export class AuthService {
           businessNameEn: dto.businessNameEn,
           businessNameAr: dto.businessNameAr,
           businessId: dto.businessId,
-          slug: dto.slug,
+          slug: resolvedSlug,
           phone: dto.phone ?? null,
           countryId: dto.countryId,
           status: 'PENDING',
@@ -832,7 +1059,7 @@ export class AuthService {
     // G6 — Per-recipient cooldown. Without this, an attacker rotating
     // source IPs (defeating per-IP 3/min throttle) can demand reset
     // emails for a victim every few seconds — flooding their inbox and
-    // damaging Jadwal's sender reputation. SET NX is atomic: returns
+    // damaging AL Jadwal's sender reputation. SET NX is atomic: returns
     // 'OK' on first set, null when key already exists. Email is
     // sha256-hashed (no plaintext PII in cache keys).
     //
@@ -971,6 +1198,16 @@ export class AuthService {
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hash = await bcrypt.hash(newPassword, bcryptRounds);
 
+    // Snapshot every live session family BEFORE the tx so we can denylist them
+    // AFTER it commits: reading here still sees the rows, and deferring the
+    // denylist to post-commit means a tx ROLLBACK leaves NO stranded markers
+    // (which would otherwise self-lock the reused family id for the TTL).
+    const liveFamilies = await db.refreshToken.findMany({
+      where: { userId: user.id, rotatedAt: null },
+      select: { familyId: true },
+      distinct: ['familyId'],
+    });
+
     // Interactive transaction (function form) — preferred over the array
     // form with Prisma 7 driver adapters.
     await db.$transaction(async (tx) => {
@@ -984,9 +1221,14 @@ export class AuthService {
           lockedUntil: null,
         },
       });
-      // Invalidate all sessions — forces re-login everywhere
+      // Invalidate all sessions — forces re-login everywhere.
       await tx.refreshToken.deleteMany({ where: { userId: user.id } });
     });
+
+    // Password reset committed — kill every session's outstanding ACCESS token
+    // too (M5), not just the refresh tokens. Post-commit + snapshot = no
+    // stranded markers on rollback.
+    await Promise.all(liveFamilies.map((f) => this.denylistSession(f.familyId)));
 
     this.securityLogger.log({
       event: 'PASSWORD_RESET_COMPLETED',
@@ -1058,13 +1300,38 @@ export class AuthService {
     const hash = await bcrypt.hash(newPassword, bcryptRounds);
 
     // Identify the current session's refresh token so we can keep it alive
-    // while killing every other session. If the cookie is missing (shouldn't
-    // happen — JwtAuthGuard implies an access token was present, and access
-    // tokens travel alongside refresh) we revoke EVERYTHING and let the
-    // controller issue a fresh pair before responding.
+    // while killing every other session. If the RefreshToken cookie is missing
+    // (rare — JwtAuthGuard only proves an access token was present, and the
+    // refresh cookie can have expired independently), currentFamilyId stays null
+    // below, so we revoke EVERYTHING including this device: all families are
+    // denylisted + all rows deleted. The caller is fully logged out and must log
+    // in again — fail-SAFE (never leaves a session alive), and acceptable UX
+    // right after a password change. The controller does NOT re-issue a pair.
     const currentTokenHash = currentRefreshTokenRaw
       ? this.hashToken(currentRefreshTokenRaw)
       : null;
+
+    // Identify the CURRENT session's family so we don't denylist it (this device
+    // stays logged in), then snapshot every OTHER live family BEFORE the tx —
+    // once the tx deletes those rows we could no longer discover them. We
+    // denylist them AFTER the tx commits so a rollback doesn't log anyone out.
+    const currentFamilyId = currentTokenHash
+      ? (
+          await db.refreshToken.findUnique({
+            where: { tokenHash: currentTokenHash },
+            select: { familyId: true },
+          })
+        )?.familyId ?? null
+      : null;
+    const otherFamilies = await db.refreshToken.findMany({
+      where: {
+        userId: user.id,
+        rotatedAt: null,
+        ...(currentFamilyId ? { familyId: { not: currentFamilyId } } : {}),
+      },
+      select: { familyId: true },
+      distinct: ['familyId'],
+    });
 
     await db.$transaction(async (tx) => {
       await tx.user.update({
@@ -1085,6 +1352,10 @@ export class AuthService {
           : { userId: user.id },
       });
     });
+
+    // Password rotated — kill the outstanding ACCESS tokens of every OTHER
+    // session too (M5). The current device's family is deliberately excluded.
+    await Promise.all(otherFamilies.map((f) => this.denylistSession(f.familyId)));
 
     this.securityLogger.log({
       event: 'PASSWORD_CHANGE_COMPLETED',
@@ -1126,7 +1397,19 @@ export class AuthService {
 
     if (refreshTokenRaw) {
       const tokenHash = this.hashToken(refreshTokenRaw);
-      await this.prisma.client.refreshToken.deleteMany({ where: { tokenHash } });
+      // Look up the family (a rotated token is kept as a tombstone, so this still
+      // resolves after a rotation), denylist it so this device's outstanding
+      // ACCESS token stops working immediately (M5 — was the ≤15-min gap), then
+      // delete the whole family (active token + tombstones). Single-device only:
+      // logging out one device leaves the user's other sessions untouched.
+      const tok = await this.prisma.client.refreshToken.findUnique({
+        where: { tokenHash },
+        select: { familyId: true },
+      });
+      if (tok) {
+        await this.denylistSession(tok.familyId);
+        await this.prisma.client.refreshToken.deleteMany({ where: { familyId: tok.familyId } });
+      }
     }
 
     this.clearAllCookies(response);
@@ -1139,7 +1422,7 @@ export class AuthService {
   // ─── W.127 Self-service account management (PDPL §14 / GDPR Art.17 + 20) ──
 
   /**
-   * Export every piece of data Jadwal stores about the calling user.
+   * Export every piece of data AL Jadwal stores about the calling user.
    *
    * Returns a single JSON bundle that includes the user's profile,
    * bookings (with payment summaries), reviews, likes, claimed coupons,
@@ -1293,12 +1576,19 @@ export class AuthService {
     return {
       generatedAt: new Date().toISOString(),
       schemaVersion: 1,
-      user,
+      // loyaltyPoints + ledger delta/balanceAfter became Decimal columns in the
+      // QAR redenomination; Number() them so the export keeps emitting them as
+      // JSON numbers (as it did when they were Int), not Decimal strings.
+      user: { ...user, loyaltyPoints: Number(user.loyaltyPoints) },
       bookings,
       reviews,
       likes,
       claimedCoupons,
-      loyaltyLedger,
+      loyaltyLedger: loyaltyLedger.map((r) => ({
+        ...r,
+        delta: Number(r.delta),
+        balanceAfter: Number(r.balanceAfter),
+      })),
       notifications,
       sessions,
     };
@@ -1379,6 +1669,16 @@ export class AuthService {
       );
     }
 
+    // Snapshot live session families BEFORE the tx so we can denylist them AFTER
+    // it commits: reading here still sees the rows, and deferring the denylist to
+    // post-commit means a tx ROLLBACK strands no markers (which would otherwise
+    // self-lock the reused family id for the TTL). Mirrors resetPassword.
+    const liveFamilies = await db.refreshToken.findMany({
+      where: { userId, rotatedAt: null },
+      select: { familyId: true },
+      distinct: ['familyId'],
+    });
+
     // Anonymise + revoke in a single transaction. Pattern mirrors
     // AdminService.deleteUser:455-483 — keep them in sync if you change
     // either side.
@@ -1408,6 +1708,10 @@ export class AuthService {
         },
       });
     });
+
+    // Account torn down — kill every session's outstanding ACCESS token too (M5),
+    // AFTER the tx commits (rollback then leaves no stranded denylist markers).
+    await Promise.all(liveFamilies.map((f) => this.denylistSession(f.familyId)));
 
     this.clearAllCookies(response);
 

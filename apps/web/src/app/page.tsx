@@ -40,13 +40,13 @@ import HomeBelowFoldLoader from './_home-islands/home-below-fold-loader';
  *    instead of the heavier `<HeroBrowseCta/>`.
  */
 export const metadata: Metadata = {
-  title: 'Jadwal — Book Activities & Experiences in Qatar & the GCC',
+  title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
   description:
     'Book activities, tours & experiences across Qatar and the GCC — desert safaris, water sports, caravans, resorts & more, from trusted local vendors.',
   openGraph: {
     type: 'website',
-    siteName: 'Jadwal',
-    title: 'Jadwal — Book Activities & Experiences in Qatar & the GCC',
+    siteName: 'AL Jadwal',
+    title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
     description:
       'Book activities, tours and experiences across Qatar and the GCC — desert safaris, water activities, caravans, resorts and more, from trusted local vendors.',
     images: [
@@ -54,13 +54,13 @@ export const metadata: Metadata = {
         url: '/android-chrome-512x512.png',
         width: 512,
         height: 512,
-        alt: 'Jadwal',
+        alt: 'AL Jadwal',
       },
     ],
   },
   twitter: {
     card: 'summary',
-    title: 'Jadwal — Book Activities & Experiences in Qatar & the GCC',
+    title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
     description:
       'Book activities, tours and experiences across Qatar and the GCC, from trusted local vendors.',
     images: ['/android-chrome-512x512.png'],
@@ -176,16 +176,23 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Hero content. Same pt/pb scale as `/home` (`pt-16 sm:pt-20 md:pt-0
-            pb-56 md:pb-64`): the asymmetric bottom padding lifts the centered
-            block well above the waves and the boat at the bottom of the
-            section, on every breakpoint. On md+ we drop pt to 0 so the
-            content centers naturally in the larger viewport. */}
-        <div className="relative z-20 flex-1 flex flex-col items-center justify-center max-w-6xl mx-auto w-full px-6 pt-16 sm:pt-20 md:pt-0 pb-56 md:pb-64 text-center">
-          <HeroTitle />
-          <HeroSearchBar />
-          <HeroTrustMetrics />
-          <HeroBrowseCtaBasic />
+        {/* Hero content. The navbar is a TRANSPARENT OVERLAY on top of this
+            section, so the content needs a top floor that clears it. `pt-*`
+            provides that floor at every breakpoint; the asymmetric `pb-56
+            md:pb-64` lifts the block above the waves + boat at the bottom.
+            The inner `my-auto` block centres the content when the viewport has
+            room, but PINS it to the top floor (below the navbar) when the
+            viewport is too short to centre — so on short / zoomed desktop
+            windows the title can never slide up under the navbar (it overflows
+            downward instead). Replaces the old `justify-center` + `md:pt-0`,
+            which let a too-tall centred block overflow UPWARD into the navbar. */}
+        <div className="relative z-20 flex-1 flex flex-col items-center max-w-6xl mx-auto w-full px-6 pt-20 sm:pt-24 md:pt-28 pb-56 md:pb-64 text-center">
+          <div className="my-auto w-full flex flex-col items-center">
+            <HeroTitle />
+            <HeroSearchBar />
+            <HeroTrustMetrics />
+            <HeroBrowseCtaBasic />
+          </div>
         </div>
 
         {/* Waves (light) */}
@@ -216,7 +223,7 @@ export default function HomePage() {
 
         {/* Boat — same split-div pattern as `/home` (outer owns centering;
             inner owns the float animation, so the two transforms don't fight). */}
-        <div aria-hidden="true" className="absolute bottom-10 md:bottom-14 left-1/2 -translate-x-1/2 z-20 w-28 sm:w-36 md:w-44 pointer-events-none">
+        <div aria-hidden="true" className="absolute bottom-10 md:bottom-14 left-1/2 -translate-x-1/2 z-10 w-28 sm:w-36 md:w-44 pointer-events-none">
           <div className="hero-boat">
             <Image
               src="/images/userhero/boat.svg"

@@ -10,11 +10,14 @@ import { localized } from '@/lib/localize';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { ACTIVITY_WIZARD_ERR, wizardSteps, daysOfWeek } from '../../../_lib/vendor-activity-wizard-copy';
+import ActivitySpecialPricesManager from '@/components/activity-special-prices-manager';
+import ActivityBlocksManager from '@/components/activity-blocks-manager';
 import { getApiError } from '@/lib/api-error';
 import { sanitize, sanitizeObject } from '@/lib/validation';
 import { VendorSidebar } from '../../../_components/vendor-sidebar';
 import { Check, Loader2, X, BookmarkIcon, AlertCircle, ImagePlus } from 'lucide-react';
 import { useToast } from '@/components/toast';
+import TermsAcceptModal from '@/components/terms-accept-modal';
 import CustomSelect from '@/components/custom-select';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
 
@@ -238,7 +241,10 @@ export default function CreateActivityPage() {
       ] as const,
     [t],
   );
-  const { user } = useAuth();
+  const { user, checkAuth } = useAuth();
+  // Pre-Terms vendors (created before the consent rule) must accept before the
+  // server lets them create a listing. This modal pops at submit time.
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
   const router = useRouter();
   const { slug } = useParams() as { slug: string };
   const { toast } = useToast();
@@ -281,6 +287,11 @@ export default function CreateActivityPage() {
   const [unitCount, setUnitCount] = useState('');
   const [unitCapacity, setUnitCapacity] = useState('');
 
+  // Lockouts + per-date special prices collected DURING create (draft — no
+  // activity exists yet). Sent with the create payload and saved atomically.
+  const [specialPrices, setSpecialPrices] = useState<Array<{ date: string; price: number }>>([]);
+  const [blocks, setBlocks] = useState<Array<{ date: string; endDate?: string; slotTimes?: string[]; repeatWeekly?: boolean }>>([]);
+
   const { data: categories } = useQuery({
     queryKey: [user?.id, 'public-categories'],
     queryFn: () => api.get('/catalog/categories').then(r => r.data),
@@ -305,6 +316,15 @@ export default function CreateActivityPage() {
       router.push(`/vendor/${slug}/activities`);
     },
     onError: (err) => {
+      // Server consent guard (defense in depth if the submit-time modal was
+      // bypassed). Surface the accept modal + a clear message instead of the
+      // raw "TERMS_NOT_ACCEPTED" code.
+      const detail = String((err as { response?: { data?: { message?: unknown } } })?.response?.data?.message ?? '');
+      if (/TERMS_NOT_ACCEPTED/i.test(detail)) {
+        void checkAuth();
+        setTermsModalOpen(true);
+        return;
+      }
       toast(getApiError(err, t('vendor.activities.wizard.toast.createFailed')), 'error');
     },
   });
@@ -340,6 +360,9 @@ export default function CreateActivityPage() {
       } else {
         if (!form.checkInTime) errs.checkInTime = t(ACTIVITY_WIZARD_ERR.checkInRequired);
         if (!form.checkOutTime) errs.checkOutTime = t(ACTIVITY_WIZARD_ERR.checkOutRequired);
+        // Minimum nights is OPTIONAL for DAILY (empty = flexible). If set, bound 1–90 (same as edit).
+        if (form.durationValue && (Number(form.durationValue) < 1 || Number(form.durationValue) > 90))
+          errs.durationValue = t('vendor.activities.wizard.errors.minNightsRange', 'Minimum nights must be between 1 and 90');
       }
     }
     if (step === 3) {
@@ -399,6 +422,17 @@ export default function CreateActivityPage() {
   };
 
   const handleSubmit = () => {
+    // Terms gate: a pre-Terms vendor must accept first. Pop the modal; its
+    // onAccepted re-runs the real submit (doSubmit), which now passes the
+    // server guard. The server remains the hard boundary regardless.
+    if (user?.needsTermsAcceptance) {
+      setTermsModalOpen(true);
+      return;
+    }
+    doSubmit();
+  };
+
+  const doSubmit = () => {
     // Auto-calculate capacity from units if hasUnits
     const totalCapacity = hasUnits && Number(unitCount) > 0
       ? Number(unitCount) * (Number(unitCapacity) || 1)
@@ -413,9 +447,9 @@ export default function CreateActivityPage() {
       categoryId: form.categoryId,
       subCategoryId: form.subCategoryId || undefined,
       pricePerPerson: Number(form.pricePerPerson),
-      durationValue: form.bookingType === 'HOURLY'
-        ? (Number(form.durationValue) || undefined)
-        : undefined,
+      // HOURLY: duration in hours. DAILY: minimum nights (optional). Same field,
+      // same as the edit page — send it whenever set.
+      durationValue: form.durationValue ? Number(form.durationValue) : undefined,
       pricingModel: form.bookingType === 'DAILY' ? 'PER_UNIT' : form.pricingModel,
       capacity: totalCapacity,
       locationLat: Number(form.locationLat),
@@ -434,6 +468,10 @@ export default function CreateActivityPage() {
       extraServices: extraServices.length > 0 ? extraServices : undefined,
       activeDays,
     });
+    // Nested sub-resources — added AFTER sanitizeObject so the date/price values
+    // pass through untouched. The create endpoint saves them atomically.
+    if (specialPrices.length > 0) (payload as Record<string, unknown>).specialPrices = specialPrices;
+    if (blocks.length > 0) (payload as Record<string, unknown>).blocks = blocks;
     createMutation.mutate(payload);
   };
 
@@ -475,9 +513,14 @@ export default function CreateActivityPage() {
 
   return (
     <div className="min-h-screen bg-stone-50 dark:bg-slate-950 font-outfit">
+      <TermsAcceptModal
+        open={termsModalOpen}
+        onAccepted={() => { setTermsModalOpen(false); doSubmit(); }}
+        onCancel={() => setTermsModalOpen(false)}
+      />
       <VendorSidebar />
 
-      <main className="md:ms-64 min-h-screen overflow-x-hidden">
+      <main className="md:ms-64 max-md:pt-16 min-h-screen overflow-x-hidden">
         {/* Top bar */}
         <div className="flex items-center justify-between px-10 py-6 border-b border-stone-200 dark:border-slate-800 bg-stone-50 dark:bg-slate-950">
           <div>
@@ -661,6 +704,7 @@ export default function CreateActivityPage() {
                       onChange={val => updateField('checkInTime', val)}
                       hasError={!!errors.checkInTime}
                       placeholder={t('vendor.activities.wizard.ui.phSelectStartTime')}
+                      minuteStep={30}
                     />
                   </FieldGroup>
                   <FieldGroup label={t('vendor.activities.wizard.ui.fieldEndTime')} required error={errors.checkOutTime}>
@@ -669,6 +713,7 @@ export default function CreateActivityPage() {
                       onChange={val => updateField('checkOutTime', val)}
                       hasError={!!errors.checkOutTime}
                       placeholder={t('vendor.activities.wizard.ui.phSelectEndTime')}
+                      minuteStep={30}
                     />
                   </FieldGroup>
                 </div>
@@ -687,6 +732,7 @@ export default function CreateActivityPage() {
                         onChange={val => updateField('checkInTime', val)}
                         hasError={!!errors.checkInTime}
                         placeholder={t('vendor.activities.wizard.ui.phSelectCheckInTime')}
+                        minuteStep={30}
                       />
                     </FieldGroup>
                     <FieldGroup label={t('vendor.activities.wizard.ui.fieldCheckOutTime')} required error={errors.checkOutTime}
@@ -696,9 +742,21 @@ export default function CreateActivityPage() {
                         onChange={val => updateField('checkOutTime', val)}
                         hasError={!!errors.checkOutTime}
                         placeholder={t('vendor.activities.wizard.ui.phSelectCheckOutTime')}
+                        minuteStep={30}
                       />
                     </FieldGroup>
                   </div>
+
+                  {/* Minimum nights — optional (empty = flexible day-by-day). Reuses
+                      durationValue, exactly like the edit page. */}
+                  <FieldGroup label={t('vendor.activities.wizard.ui.fieldMinNights', 'Minimum nights')}
+                    hint={t('vendor.activities.wizard.ui.hintMinNights', 'Leave empty for flexible day-by-day booking. Set a number to require at least that many nights (guests can still book more).')}
+                    error={errors.durationValue}>
+                    <input type="number" min="1" max="90" inputMode="numeric" value={form.durationValue}
+                      onChange={e => updateField('durationValue', e.target.value)}
+                      className={inputCls(!!errors.durationValue)}
+                      placeholder={t('vendor.activities.wizard.ui.phMinNights', 'e.g. 3 (or leave empty)')} />
+                  </FieldGroup>
                 </div>
               )}
 
@@ -724,6 +782,20 @@ export default function CreateActivityPage() {
                   {activeDays.length === 0 ? t('vendor.activities.wizard.ui.anyDay') : activeDays.join(', ')}
                 </p>
               </div>
+
+              {/* Blocked dates & times — set DURING create (draft mode), same place
+                  + same UI as the edit page (between Active Days and Units). Saved
+                  with the activity. Recurring-weekly locks are added later in edit. */}
+              <ActivityBlocksManager
+                draft
+                collapsible
+                value={blocks}
+                onChange={setBlocks}
+                bookingType={form.bookingType as 'HOURLY' | 'DAILY'}
+                checkInTime={form.checkInTime || null}
+                checkOutTime={form.checkOutTime || null}
+                durationValue={form.durationValue ? Number(form.durationValue) : null}
+              />
 
               {/* Units */}
               <div className="mt-8 pt-6 border-t border-gray-200 dark:border-slate-800">
@@ -890,6 +962,14 @@ export default function CreateActivityPage() {
                   </div>
                 </div>
               </div>
+              {/* Per-date special prices — set DURING create (draft mode), saved
+                  with the activity. Same UI + logic as the edit page. */}
+              <ActivitySpecialPricesManager
+                draft
+                collapsible
+                value={specialPrices}
+                onChange={setSpecialPrices}
+              />
             </div>
           )}
 

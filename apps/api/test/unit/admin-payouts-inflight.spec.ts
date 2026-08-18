@@ -21,10 +21,12 @@ import { NotificationService } from '../../src/common/services/notification.serv
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { AvailabilityCacheService } from '../../src/redis/availability-cache.service';
 import { ReferenceDataCacheService } from '../../src/redis/reference-data-cache.service';
+import { SessionDenylistService } from '../../src/redis/session-denylist.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import {
   makeNotificationMock, makeLoyaltyMock, makeAvailabilityCacheMock, makeReferenceDataCacheMock,
 } from '../mocks/bookings-deps.mock';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 async function buildSut() {
   const prisma = makePrismaMock();
@@ -41,6 +43,7 @@ async function buildSut() {
       { provide: LoyaltyService,            useValue: loyalty },
       { provide: AvailabilityCacheService,  useValue: cache },
       { provide: ReferenceDataCacheService, useValue: refCache },
+      { provide: SessionDenylistService,    useValue: makeSessionDenylistMock() },
     ],
   }).compile();
   return { sut: mod.get(AdminService), prisma, notif };
@@ -92,19 +95,142 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
     ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([
       { vendorId: 'vA', status: 'APPROVED', paymentIds: ['other-id'], vendor: { businessNameEn: 'Alpha' } },
     ]);
+    // Escrow probe — nothing in escrow, so the batch is not rejected.
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
     ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
-    // Second findMany is for the notification lookup.
+    // Third findMany is for the notification lookup.
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
       { booking: { vendorId: 'vA', vendor: { userId: 'u1', slug: 'alpha-tours' } } },
     ]);
 
     const result = await ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF');
     expect(result).toEqual({ updated: 1 });
-    // Must flip SUCCESS + still-UNPAID payments ONLY (optimistic, one-way)
+    // Must flip SUCCESS + still-UNPAID payments ONLY (optimistic, one-way),
+    // AND only for bookings whose activity has already ended (escrow buffer).
+    // Without the endDatetime filter a future booking could be paid out and
+    // then cancelled+refunded — money out twice with no clawback.
     expect(ctx.prisma._client.payment.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['p1'] }, status: 'SUCCESS', payoutStatus: 'UNPAID' },
+      where: {
+        id: { in: ['p1'] },
+        status: 'SUCCESS',
+        payoutStatus: 'UNPAID',
+        booking: { endDatetime: { lt: expect.any(Date) } },
+      },
       data: expect.objectContaining({ payoutStatus: 'PAID' }),
     });
+  });
+
+  // ── Escrow guard on the RELEASE path ──────────────────────────────────────
+  // evaluatePayoutEligibility and the approve-payout path both filter on
+  // `booking.endDatetime < payoutCutoff`. markPayoutsPaid omitted it, so a
+  // future booking could be marked PAID; the customer could then cancel before
+  // start (cancelBooking only blocks AFTER start) and the refund would be
+  // approved with the vendor already holding the money.
+  describe('escrow buffer', () => {
+    async function setupUnblocked() {
+      const ctx = await buildSut();
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
+        { id: 'p1', booking: { vendor: { id: 'vA', businessNameEn: 'Alpha', status: 'ACTIVE' } } },
+      ]);
+      ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]);
+      return ctx;
+    }
+
+    test('restricts the update to bookings whose activity has ENDED', async () => {
+      const ctx = await setupUnblocked();
+      // Escrow probe finds nothing in escrow…
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
+      ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
+      // …then the notification lookup.
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
+        { booking: { vendorId: 'vA', vendor: { userId: 'u1', slug: 'alpha' } } },
+      ]);
+
+      await ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF');
+
+      const where = ctx.prisma._client.payment.updateMany.mock.calls[0][0].where;
+      expect(where.booking.endDatetime.lt).toBeInstanceOf(Date);
+      // Cutoff is "now" minus the configured buffer — never in the future,
+      // which would let unfinished bookings settle.
+      expect(where.booking.endDatetime.lt.getTime()).toBeLessThanOrEqual(Date.now());
+    });
+
+    // Marking paid records a wire that ALREADY LEFT the bank, and the admin UI
+    // toasts success unconditionally. Settling a subset would leave the skipped
+    // rows UNPAID, so they reappear next cycle and get wired a SECOND time.
+    // Reject the whole batch instead, writing nothing.
+    // Escrow rows are OFFERED by the payouts list (it does not filter on
+    // endDatetime) and marking paid records a wire that already left the bank.
+    // Silently skipping them would leave them UNPAID -> re-wired next cycle.
+    // Genuinely-invalid states (REFUNDED/REJECTED/...) are still skipped
+    // silently: the list never offers those, so no human acts on them.
+    test('REJECTS the batch when a selected row is still in escrow — nothing is written', async () => {
+      const ctx = await setupUnblocked();
+      // The escrow probe finds p2 still in escrow.
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([{ id: 'p2' }]);
+
+      await expect(ctx.sut.markPayoutsPaid(['p1', 'p2'], 'TEST-WIRE-REF'))
+        .rejects.toThrow(/still in payout escrow[\s\S]*No payments were changed/i);
+
+      // Critical: no partial settlement.
+      expect(ctx.prisma._client.payment.updateMany).not.toHaveBeenCalled();
+    });
+
+    test('the rejection names the in-escrow payment ids so the admin can fix the selection', async () => {
+      const ctx = await setupUnblocked();
+      ctx.prisma._client.payment.findMany.mockResolvedValueOnce([{ id: 'p2' }]);
+
+      await expect(ctx.sut.markPayoutsPaid(['p1', 'p2'], 'TEST-WIRE-REF'))
+        .rejects.toThrow(/p2/);
+    });
+
+    test('honours PAYOUT_SETTLEMENT_BUFFER_DAYS by pushing the cutoff further back', async () => {
+      const prev = process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS;
+      process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS = '3';
+      try {
+        const ctx = await setupUnblocked();
+        // escrow probe (empty), then the update, then the notification lookup
+        ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
+        ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
+        ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
+
+        await ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF');
+
+        const cutoff = ctx.prisma._client.payment.updateMany.mock.calls[0][0].where.booking.endDatetime.lt;
+        // ~3 days back, allowing a second of execution slack.
+        const expected = Date.now() - 3 * 86_400_000;
+        expect(Math.abs(cutoff.getTime() - expected)).toBeLessThan(5_000);
+      } finally {
+        if (prev === undefined) delete process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS;
+        else process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS = prev;
+      }
+    });
+  });
+
+  // A vendor being told "your payout has been sent" for a payment that was
+  // NOT settled is worse than silence — they chase a transfer that never
+  // happened. updateMany returns only a count, so the notification pass must
+  // re-query the rows this transfer actually stamped.
+  test('notifies only the rows THIS transfer marked paid, not everything submitted', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
+      { id: 'p1', booking: { vendor: { id: 'vA', businessNameEn: 'Alpha', status: 'ACTIVE' } } },
+      { id: 'p2', booking: { vendor: { id: 'vB', businessNameEn: 'Beta', status: 'ACTIVE' } } },
+    ]);
+    ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]);
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);          // escrow probe: clear
+    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 2 });
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([             // notification lookup
+      { booking: { vendorId: 'vA', vendor: { userId: 'uA', slug: 'alpha' } } },
+    ]);
+
+    await ctx.sut.markPayoutsPaid(['p1', 'p2'], 'WIRE-REF-1');
+
+    // The notification query must be scoped to rows stamped by THIS wire ref.
+    const notifyWhere = ctx.prisma._client.payment.findMany.mock.calls[2][0].where;
+    expect(notifyWhere).toEqual(
+      expect.objectContaining({ payoutStatus: 'PAID', bankTransferRef: 'WIRE-REF-1' }),
+    );
   });
 
   test('names up to 3 offending vendors and appends "and N more" for the rest', async () => {
@@ -137,8 +263,10 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
       { id: 'p2', booking: { vendor: { id: 'vA', businessNameEn: 'Alpha', status: 'ACTIVE' } } },
     ]);
     ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]); // no inflight
+    // Escrow probe — nothing in escrow, so nothing is rejected.
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
     ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 2 });
-    // Second findMany for notifications.
+    // Third findMany for notifications.
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
       { booking: { vendorId: 'vA', vendor: { userId: 'uA', slug: 'alpha-tours' } } },
       { booking: { vendorId: 'vA', vendor: { userId: 'uA', slug: 'alpha-tours' } } },
@@ -356,5 +484,81 @@ describe('AdminService.getPayouts — inflightRequest enrichment', () => {
         }),
       }),
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// getPayouts — the list means "PAYABLE NOW"
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A vendor is paid only after the activity has taken place; the customer can
+// still cancel before it starts. Enforcing that only in markPayoutsPaid is not
+// enough — if the list still OFFERS in-escrow rows, "select all" trips the
+// guard and the entire batch is refused, so nothing settles at all. The filter
+// has to be here, and the escrowed money still has to be VISIBLE or a missing
+// payout is indistinguishable from lost money.
+
+describe('AdminService.getPayouts — escrow filtering + upcoming visibility', () => {
+  function seed(ctx: any, rows: any[], upcoming = 0, nextDate: Date | null = null) {
+    ctx.prisma._client.payment.findMany.mockResolvedValueOnce(rows);   // page query
+    ctx.prisma._client.payment.count.mockResolvedValueOnce(rows.length); // total
+    ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]); // no inflight
+    ctx.prisma._client.payment.count.mockResolvedValueOnce(upcoming);    // upcomingCount
+    ctx.prisma._client.payment.findFirst.mockResolvedValueOnce(
+      nextDate ? { booking: { endDatetime: nextDate } } : null,
+    );
+  }
+
+  test('restricts the query to bookings whose activity has ENDED', async () => {
+    const ctx = await buildSut();
+    seed(ctx, []);
+
+    await ctx.sut.getPayouts({});
+
+    const where = ctx.prisma._client.payment.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe('SUCCESS');
+    expect(where.booking.endDatetime.lt).toBeInstanceOf(Date);
+    // Cutoff is never in the future — that would offer unfinished bookings.
+    expect(where.booking.endDatetime.lt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  test('search still works AND stays inside the escrow filter (cannot widen it)', async () => {
+    const ctx = await buildSut();
+    seed(ctx, []);
+
+    await ctx.sut.getPayouts({ search: 'alpha' } as any);
+
+    const b = ctx.prisma._client.payment.findMany.mock.calls[0][0].where.booking;
+    // Both must be present: a search that dropped endDatetime would re-expose
+    // in-escrow rows through the search box.
+    expect(b.endDatetime.lt).toBeInstanceOf(Date);
+    expect(Array.isArray(b.OR)).toBe(true);
+  });
+
+  test('reports upcoming (in-escrow) money so it is visible but not payable', async () => {
+    const ctx = await buildSut();
+    const soon = new Date(Date.now() + 3 * 86_400_000);
+    seed(ctx, [], 12, soon);
+
+    const res: any = await ctx.sut.getPayouts({});
+
+    expect(res.upcomingCount).toBe(12);
+    expect(res.upcomingFrom).toEqual(soon);
+    // ...and none of it leaked into the payable list.
+    expect(res.data).toHaveLength(0);
+    expect(res.total).toBe(0);
+  });
+
+  test('upcoming counts only UNPAID rows on not-yet-ended bookings', async () => {
+    const ctx = await buildSut();
+    seed(ctx, [], 3, new Date(Date.now() + 86_400_000));
+
+    await ctx.sut.getPayouts({});
+
+    // 2nd count call is the upcoming probe.
+    const upcomingWhere = ctx.prisma._client.payment.count.mock.calls[1][0].where;
+    expect(upcomingWhere.status).toBe('SUCCESS');
+    expect(upcomingWhere.payoutStatus).toBe('UNPAID');
+    expect(upcomingWhere.booking.endDatetime.gte).toBeInstanceOf(Date);
   });
 });

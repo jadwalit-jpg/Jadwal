@@ -16,6 +16,9 @@ import { useAuth } from '@/context/auth-context';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { sanitize, validateEmail, validatePassword, validateFullName, validatePhone } from '@/lib/validation';
+import { fbTrack } from '@/lib/fb-pixel';
+import PasswordStrengthMeter from '@/components/password-strength-meter';
+import { evaluatePassword } from '@/lib/password-strength';
 import { getApiError } from '@/lib/api-error';
 import api, { API_BASE } from '@/lib/api';
 
@@ -43,6 +46,7 @@ export default function RegisterForm() {
   // any non-empty value as bot signup → silent fake-success (no user row
   // created, same response shape as anti-enumeration login flow).
   const [website, setWebsite] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingEmail, setPendingEmail] = useState('');
@@ -69,6 +73,18 @@ export default function RegisterForm() {
     const pwCheck = validatePassword(password);
     if (!pwCheck.valid) { setError(pwCheck.error); return; }
 
+    // Same zxcvbn strength gate as the server — catch a weak password here with a
+    // clear reason instead of an opaque prod 400.
+    const strength = await evaluatePassword(password, [email, fullName, phone]);
+    if (!strength.ok) {
+      setError(
+        strength.warning ||
+        strength.suggestions[0] ||
+        t('auth.passwordStrength.tooWeak', { defaultValue: 'Password is too weak. Use a longer, less common password.' }),
+      );
+      return;
+    }
+
     if (password !== confirmPassword) {
       setError(t('auth.toast.passwordsNoMatch'));
       return;
@@ -79,6 +95,11 @@ export default function RegisterForm() {
       if (!phoneCheck.valid) { setError(phoneCheck.error); return; }
     }
 
+    if (!termsAccepted) {
+      setError(t('auth.mustAgreeTerms', 'You must accept the Terms and Privacy Policy'));
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await api.post('/auth/register', {
@@ -86,11 +107,16 @@ export default function RegisterForm() {
         email: sanitize(email),
         password,
         phone: phone ? sanitize(phone) : undefined,
+        // Explicit Terms + Privacy consent — gated above; also confirms 18+.
+        termsAccepted: true,
         // Honeypot — empty for humans (input is hidden + aria-hidden so
         // it can't be tabbed into or filled by password managers); naive
         // bots that auto-fill every input will populate it.
         website: website || undefined,
       });
+      // Meta Pixel conversion — customer signup. No-ops unless the pixel loaded
+      // after cookie consent (see lib/fb-pixel.ts).
+      fbTrack('CompleteRegistration');
       setPendingEmail(sanitize(email));
     } catch (err: unknown) {
       setError(getApiError(err, 'Registration failed. Please try again.'));
@@ -170,9 +196,12 @@ export default function RegisterForm() {
   return (
     <>
       <div className="flex justify-center mb-8">
-        <Link href="/" className="flex items-center gap-1 font-bold">
-          <span className="text-2xl text-white">Jadwal</span>
-          <span className="text-2xl text-blue-400">جدول</span>
+        <Link
+          href="/"
+          aria-label="AL Jadwal"
+          className="text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent"
+        >
+          AL Jadwal الجدول
         </Link>
       </div>
 
@@ -204,7 +233,7 @@ export default function RegisterForm() {
         )}
 
         <div className="space-y-1.5">
-          <label htmlFor="register-full-name" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.fullName')}</label>
+          <label htmlFor="register-full-name" className="text-sm font-medium text-white/70 ms-0.5">{t('auth.fullName')}</label>
           <input
             id="register-full-name"
             name="fullName"
@@ -215,12 +244,12 @@ export default function RegisterForm() {
             placeholder="John Doe"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="register-email" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.emailAddress')}</label>
+          <label htmlFor="register-email" className="text-sm font-medium text-white/70 ms-0.5">{t('auth.emailAddress')}</label>
           <input
             id="register-email"
             name="email"
@@ -231,12 +260,12 @@ export default function RegisterForm() {
             placeholder="name@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="register-password" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.password')}</label>
+          <label htmlFor="register-password" className="text-sm font-medium text-white/70 ms-0.5">{t('auth.password')}</label>
           <input
             id="register-password"
             name="password"
@@ -248,12 +277,13 @@ export default function RegisterForm() {
             placeholder={t('auth.passwordHint')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
+          {password && <PasswordStrengthMeter password={password} identityParts={[email, fullName, phone]} />}
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="register-confirm-password" className="text-sm font-medium text-white/50 ms-0.5">{t('auth.confirmPassword')}</label>
+          <label htmlFor="register-confirm-password" className="text-sm font-medium text-white/70 ms-0.5">{t('auth.confirmPassword')}</label>
           <input
             id="register-confirm-password"
             name="confirmPassword"
@@ -265,12 +295,12 @@ export default function RegisterForm() {
             placeholder={t('auth.confirmPassword')}
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="register-phone" className="text-sm font-medium text-white/50 ms-0.5">
+          <label htmlFor="register-phone" className="text-sm font-medium text-white/70 ms-0.5">
             {t('auth.phone')} <span className="text-white/20">({t('auth.optional')})</span>
           </label>
           <input
@@ -282,7 +312,7 @@ export default function RegisterForm() {
             placeholder="+974 1234 5678"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/25"
+            className="glass-input w-full px-4 py-3 text-sm text-white outline-none placeholder:text-white/45"
           />
         </div>
 
@@ -303,10 +333,30 @@ export default function RegisterForm() {
           />
         </div>
 
+        {/* Explicit Terms + Privacy consent — required; gates the submit button.
+            Accepting also confirms the user is 18+ (stated in the Terms). */}
+        <label className="flex items-start gap-2.5 text-xs text-white/60 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={termsAccepted}
+            onChange={(e) => setTermsAccepted(e.target.checked)}
+            className="mt-0.5 h-5 w-5 shrink-0 rounded border border-white/40 bg-white/10 accent-blue-600"
+          />
+          <span>
+            {t('auth.agreeTermsCheckbox', 'I agree to the')}{' '}
+            <Link href="/terms" className="underline text-blue-400 hover:text-blue-300">{t('terms.title')}</Link>
+            {' '}{t('auth.and')}{' '}
+            <Link href="/privacy" className="underline text-blue-400 hover:text-blue-300">{t('privacy.title')}</Link>
+            {' '}{t('auth.and18Plus', 'and confirm I am 18 or older')}
+          </span>
+        </label>
+
+        {/* Disabled state is a clearly-inactive grey (not a dimmed blue) so the
+            button doesn't read as clickable while the consent box is unchecked. */}
         <button
           type="submit"
-          disabled={isSubmitting}
-          className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 shadow-lg shadow-blue-600/25"
+          disabled={isSubmitting || !termsAccepted}
+          className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl transition-all active:scale-[0.98] shadow-lg shadow-blue-600/25 disabled:bg-white/10 disabled:text-white/40 disabled:shadow-none disabled:cursor-not-allowed disabled:active:scale-100"
         >
           {isSubmitting ? t('auth.creatingAccount') : t('auth.createAccountBtn')}
         </button>
@@ -317,13 +367,6 @@ export default function RegisterForm() {
         <Link href="/login" className="text-blue-400 font-semibold hover:text-blue-300 transition-colors">
           {t('auth.signInLink')}
         </Link>
-      </p>
-
-      <p className="mt-4 text-center text-xs text-white/20">
-        {t('auth.agreeTerms')}{' '}
-        <Link href="/terms" className="underline hover:text-white/40">{t('terms.title')}</Link>
-        {' '}{t('auth.and')}{' '}
-        <Link href="/privacy" className="underline hover:text-white/40">{t('privacy.title')}</Link>
       </p>
     </>
   );

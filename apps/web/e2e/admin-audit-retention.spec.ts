@@ -1,86 +1,58 @@
 /**
  * E2E — §B8 financial audit-log retention (≥ 7 years).
  *
- * Wave 2 changed cleanup.service to keep FINANCIAL audit entries far
- * longer than the 180-day default (Qatar PDPL §14, GDPR Art.30, finance-
- * records standard). This spec mocks the audit-log GET to return a row
- * older than 180 days for a FINANCIAL action, and asserts the page can
- * still query and render it.
+ * Wave 2 changed cleanup.service to keep FINANCIAL audit entries far longer
+ * than the 180-day default (Qatar PDPL §14, GDPR Art.30, finance-records
+ * standard). seed-e2e-data seeds a REAL FINANCIAL row (PAYOUT_MARK_PAID) dated
+ * 4 years ago; this spec asserts that row is still returned by the audit-logs
+ * API when filtered to FINANCIAL — i.e. it survived the OPERATIONAL retention
+ * window. (Uses the real seeded row rather than a route mock so it can't drift
+ * from the current audit-log response contract.)
  */
-import { test, expect, type Page, type Route } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { fetchFromPage } from './_fixtures/fetch';
 
 const ADMIN_STATE = 'e2e/.auth/admin.json';
-
-const FOUR_YEARS_AGO = new Date(Date.now() - 365 * 86400_000 * 4).toISOString();
+const RETENTION_FLOOR_DAYS = 180;
 
 interface AuditRow {
   id: string;
-  actorEmail: string;
   actionCategory: string;
   action: string;
-  resourceId: string;
+  createdAt: string;
 }
-
-const OLD_FINANCIAL_ROW: AuditRow & { actorId: string; resourceType: string; details: object; createdAt: string } = {
-  id: 'audit-old-financial',
-  actorId: 'admin-1',
-  actorEmail: 'admin@jadwal.qa',
-  actionCategory: 'FINANCIAL',
-  action: 'PAYOUT_MARK_PAID',
-  resourceType: 'PAYMENT',
-  resourceId: 'pay-historical',
-  details: { amount: '1500.00', bankTransferRef: 'SWIFT-LEGACY-001' },
-  createdAt: FOUR_YEARS_AGO,
-};
-
 interface AuditList {
   data: AuditRow[];
-}
-
-async function setupRoutes(page: Page) {
-  await page.route('**/api/admin/audit-logs**', async (route: Route) => {
-    if (route.request().method() === 'GET') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          data: [OLD_FINANCIAL_ROW],
-          total: 1,
-          page: 1,
-          limit: 20,
-          totalPages: 1,
-        }),
-      });
-      return;
-    }
-    await route.fallback();
-  });
 }
 
 test.describe('Admin audit logs — §B8 financial retention', () => {
   test.use({ storageState: ADMIN_STATE });
 
   test('financial entries older than 180 days remain queryable', async ({ page }) => {
-    await setupRoutes(page);
+    // Page renders without crashing on real data.
     await page.goto('/admin/audit-logs');
     await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('heading', { name: /audit/i }).first()).toBeVisible({ timeout: 10000 });
 
-    // The page may render the row's resourceId, action, or actor — accept
-    // any signal that the historical row landed.
-    await expect(
-      page.getByText(/PAYOUT_MARK_PAID|pay-historical|admin@jadwal\.qa/i).first(),
-    ).toBeVisible({ timeout: 15000 });
-
-    // API contract: same row reachable via the audit-logs endpoint when
-    // filtered to FINANCIAL.
+    // API contract: the 4-year-old seeded FINANCIAL row (PAYOUT_MARK_PAID) is
+    // still returned — it outlived the 180-day OPERATIONAL retention. The endpoint
+    // has no category filter; use `search` (matches the action) to fetch it.
     const res = await fetchFromPage<AuditList>(
       page,
-      '/api/admin/audit-logs?actionCategory=FINANCIAL&page=1',
+      '/api/admin/audit-logs?search=PAYOUT_MARK_PAID&page=1&limit=20',
     );
     expect(res.ok).toBeTruthy();
-    const found = (res.body?.data ?? []).find((r) => r.id === OLD_FINANCIAL_ROW.id);
-    expect(found).toBeTruthy();
-    expect(found?.actionCategory).toBe('FINANCIAL');
+
+    const rows = res.body?.data ?? [];
+    // A FINANCIAL PAYOUT_MARK_PAID row older than the 180-day floor proves
+    // financial entries are NOT purged on the standard OPERATIONAL schedule.
+    const floor = Date.now() - RETENTION_FLOOR_DAYS * 86400_000;
+    const oldFinancial = rows.find(
+      (r) =>
+        r.action === 'PAYOUT_MARK_PAID' &&
+        r.actionCategory === 'FINANCIAL' &&
+        new Date(r.createdAt).getTime() < floor,
+    );
+    expect(oldFinancial, 'expected a FINANCIAL PAYOUT_MARK_PAID audit row older than 180 days (seeded)').toBeTruthy();
   });
 });

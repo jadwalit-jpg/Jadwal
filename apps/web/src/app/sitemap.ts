@@ -1,4 +1,7 @@
 import type { MetadataRoute } from 'next';
+import { launchedLandings } from '@/lib/seo-landings';
+import { publishedGuides } from '@/lib/seo-guides';
+import { localePath } from '@/lib/locale-path';
 
 /**
  * sitemap.xml — static routes + dynamic per-activity / per-category URLs.
@@ -34,6 +37,18 @@ const MAX_SITEMAP_URLS = 50000;
 // Cache the generated sitemap for 1h (ISR) — not regenerated per crawl.
 export const revalidate = 3600;
 
+/**
+ * hreflang alternates for a public path (bilingual /ar URLs, SEO P1#4). The
+ * entry's `url` stays the English (canonical) URL; Google discovers the Arabic
+ * twin via the `xhtml:link` alternates Next.js emits from this. `path` is the
+ * English app-relative path ('' = home, '/explore', `/activity/x`, …).
+ */
+function langAlternates(path: string): { languages: Record<string, string> } {
+  const en = `${BASE_URL}${path}`;
+  const ar = `${BASE_URL}${localePath(path || '/', 'ar')}`;
+  return { languages: { en, ar, 'x-default': en } };
+}
+
 interface SitemapUrls {
   activities: Array<{ slug: string; updatedAt: string }>;
   categories: Array<{ slug: string; updatedAt: string }>;
@@ -47,6 +62,8 @@ const STATIC_ROUTES: Array<{
   { path: '', changeFrequency: 'daily', priority: 1.0 },
   { path: '/explore', changeFrequency: 'daily', priority: 0.9 },
   { path: '/offers', changeFrequency: 'weekly', priority: 0.8 },
+  { path: '/blog', changeFrequency: 'weekly', priority: 0.7 },
+  { path: '/redsea', changeFrequency: 'monthly', priority: 0.8 },
   { path: '/about', changeFrequency: 'monthly', priority: 0.7 },
   { path: '/privacy', changeFrequency: 'yearly', priority: 0.5 },
   { path: '/terms', changeFrequency: 'yearly', priority: 0.5 },
@@ -84,7 +101,31 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     lastModified: now,
     changeFrequency: r.changeFrequency,
     priority: r.priority,
+    alternates: langAlternates(r.path),
   }));
+
+  // Keyword SEO landing pages — only the LAUNCHED ones (real inventory). Dormant
+  // (noindex) landings are intentionally excluded so nothing thin gets indexed.
+  for (const l of launchedLandings()) {
+    entries.push({
+      url: `${BASE_URL}/${l.slug}`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: l.priority,
+      alternates: langAlternates(`/${l.slug}`),
+    });
+  }
+
+  // Published Tier-2 guides (dormant/unpublished excluded).
+  for (const g of publishedGuides()) {
+    entries.push({
+      url: `${BASE_URL}/blog/${g.slug}`,
+      lastModified: g.updated ? new Date(g.updated) : now,
+      changeFrequency: 'monthly',
+      priority: g.priority,
+      alternates: langAlternates(`/blog/${g.slug}`),
+    });
+  }
 
   const dynamic = await fetchSitemapUrls();
   if (dynamic) {
@@ -95,6 +136,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         lastModified: a.updatedAt ? new Date(a.updatedAt) : now,
         changeFrequency: 'weekly',
         priority: 0.8,
+        alternates: langAlternates(`/activity/${encodeURIComponent(a.slug)}`),
       });
     }
     for (const c of dynamic.categories ?? []) {

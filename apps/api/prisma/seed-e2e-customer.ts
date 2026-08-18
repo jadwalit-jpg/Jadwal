@@ -14,6 +14,7 @@ import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { createSeedPrisma } from './_db-helper';
+import { TERMS_VERSION } from '../src/common/terms';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
@@ -37,6 +38,13 @@ async function main() {
       role: 'CUSTOMER',
       emailVerified: true,
       lockedUntil: null,
+      // Established test user has accepted the current Terms — otherwise the
+      // soft terms-consent banner (fixed bottom-4 end-4, terms-consent-gate.tsx)
+      // renders on every page and intercepts clicks on bottom-corner buttons
+      // (proceed-to-payment, etc.). Its dismiss flag lives in sessionStorage,
+      // which Playwright storageState can't seed — so accept at the data level.
+      termsAcceptedAt: new Date(),
+      termsAcceptedVersion: TERMS_VERSION,
     },
     update: {
       password: hash,
@@ -45,6 +53,8 @@ async function main() {
       lockedUntil: null,
       verificationToken: null,
       verificationTokenExpiry: null,
+      termsAcceptedAt: new Date(),
+      termsAcceptedVersion: TERMS_VERSION,
     },
   });
 

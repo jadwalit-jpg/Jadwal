@@ -6,7 +6,7 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'My Bookings — Jadwal',
+  title: 'My Bookings — AL Jadwal',
   robots: { index: false, follow: false },
 };
 

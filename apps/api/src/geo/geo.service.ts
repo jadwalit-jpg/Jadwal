@@ -48,6 +48,7 @@ export class GeoService {
       where: {
         isoCode: { equals: lookupIso, mode: 'insensitive' },
         status: 'ACTIVE',
+        deletedAt: null,
       },
       select: { id: true, nameEn: true, nameAr: true, isoCode: true, currencyCode: true },
     });
@@ -62,7 +63,7 @@ export class GeoService {
     // user-fixable soft default, not a silent misrepresentation.
     if (!country) {
       const fallbackCountry = await this.prisma.client.country.findFirst({
-        where: { isoCode: { equals: 'QA', mode: 'insensitive' }, status: 'ACTIVE' },
+        where: { isoCode: { equals: 'QA', mode: 'insensitive' }, status: 'ACTIVE', deletedAt: null },
         select: { id: true, nameEn: true, nameAr: true, isoCode: true, currencyCode: true },
       });
       if (!fallbackCountry) {

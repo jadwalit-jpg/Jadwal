@@ -7,7 +7,7 @@
  * Full fetch → PAY2M network path is exercised at the integration tier.
  */
 
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as crypto from 'crypto';
 import { PaymentService } from '../../src/payment/payment.service';
@@ -17,11 +17,12 @@ import { RedisLockService } from '../../src/redis/redis-lock.service';
 import { AvailabilityCacheService } from '../../src/redis/availability-cache.service';
 import { AuditLoggerService } from '../../src/common/services/audit-logger.service';
 import { NotificationService } from '../../src/common/services/notification.service';
+import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { EmailService } from '../../src/email/email.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import { makeConfigMock, makeEmailMock } from '../mocks/auth-deps.mock';
 import {
-  makeAuditLoggerMock, makeNotificationMock, makeRedisLockMock, makeAvailabilityCacheMock,
+  makeAuditLoggerMock, makeNotificationMock, makeRedisLockMock, makeAvailabilityCacheMock, makeLoyaltyMock,
 } from '../mocks/bookings-deps.mock';
 
 const PAY2M_CFG = {
@@ -42,6 +43,7 @@ async function buildSut(enabled = true) {
   const audit   = makeAuditLoggerMock();
   const notif   = makeNotificationMock();
   const email   = makeEmailMock();
+  const loyalty = makeLoyaltyMock();
 
   const mod = await Test.createTestingModule({
     providers: [
@@ -53,10 +55,11 @@ async function buildSut(enabled = true) {
       { provide: AuditLoggerService,       useValue: audit },
       { provide: NotificationService,      useValue: notif },
       { provide: EmailService,             useValue: email },
+      { provide: LoyaltyService,           useValue: loyalty },
     ],
   }).compile();
 
-  return { sut: mod.get(PaymentService), prisma, config, lock, cache, audit, notif, email };
+  return { sut: mod.get(PaymentService), prisma, config, lock, cache, audit, notif, email, loyalty };
 }
 
 /**
@@ -116,6 +119,94 @@ describe('PaymentService.verifyCallbackHash', () => {
     // canonical numeric forms, so a caller passing "1.00" still matches.
     const key = buildResponseKey('JDWL-ABC', '1', '00');
     expect(ctx.sut.verifyCallbackHash('JDWL-ABC', '1.00', '00', key)).toBe(true);
+  });
+
+  // ── NAPS/QPay rail (err+amount order) is ACCEPTED for AUTHENTICITY ──
+  // PAY2M signs NAPS as merchant+basket+secret+err+amount (proven from live
+  // recipeMatch diagnostics 2026-06-10). Accepting the order lets us READ
+  // genuine NAPS callbacks (rejecting them destroyed PAID bookings — the
+  // money-taken-no-booking incident). Success handling stays rail-aware:
+  // handleCallback HOLDS a NAPS success instead of confirming it, because the
+  // rail can emit success-signed callbacks pre-capture (basket 939bd325).
+  test('NAPS swapped order (err+amount, integer amount) verifies as AUTHENTIC', async () => {
+    const ctx = await buildSut();
+    const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}JDWL-NAPS${PAY2M_CFG.PAY2M_SECRET_WORD}001`; // err"00"+amt"1"
+    const key = crypto.createHash('sha256').update(raw).digest('hex');
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '001', key)).toBe(true);
+  });
+
+  test('success-code spelling: hash built with "00" verifies when callback echoes "000"', async () => {
+    const ctx = await buildSut();
+    const key = buildResponseKey('JDWL-NAPS', '100.00', '00');
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '100.00', '000', key)).toBe(true);
+  });
+
+  test('success-code spelling: hash built with "000" verifies when callback echoes "00"', async () => {
+    const ctx = await buildSut();
+    const key = buildResponseKey('JDWL-NAPS', '100.00', '000');
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '100.00', '00', key)).toBe(true);
+  });
+
+  // SECURITY: trying extra amount forms / both field orders must NOT let a
+  // wrong amount or a non-success code masquerade as a valid success.
+  test('SECURITY: genuinely wrong amount still fails', async () => {
+    const ctx = await buildSut();
+    const key = buildResponseKey('JDWL-NAPS', '100.00', '00'); // signed for 100.00
+    // We only ever charged 1.00 — no rendering/order of "1" equals "100.00".
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '1.00', '00', key)).toBe(false);
+  });
+
+  test('SECURITY: a failure-code signature cannot be replayed as a success', async () => {
+    const ctx = await buildSut();
+    // PAY2M signed this Response_Key for failure code "42"; a forged callback
+    // claims success "000". We only ever try {received, "00", "000"} — never
+    // "42" with a swapped amount — so the hash cannot match as success.
+    const key = buildResponseKey('JDWL-NAPS', '100.00', '42');
+    expect(ctx.sut.verifyCallbackHash('JDWL-NAPS', '100.00', '000', key)).toBe(false);
+  });
+
+  // ── resolveSignedErrCode: returns the SIGNED code + the RAIL that signed it
+  //    (private, accessed via `as any`). handleCallback trusts the code that
+  //    cryptographically signed the hash — NOT the raw err_code field — and
+  //    uses the rail to decide confirm (card) vs hold (naps).
+  test('signed code: NAPS swapped-order success resolves to {errCode 00, rail naps}', async () => {
+    const ctx = await buildSut();
+    const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}JDWL-NAPS${PAY2M_CFG.PAY2M_SECRET_WORD}001`; // err"00"+amt"1"
+    const key = crypto.createHash('sha256').update(raw).digest('hex');
+    const signed = (ctx.sut as any).resolveSignedErrCode('JDWL-NAPS', '1.00', '001', key);
+    expect(signed).toEqual({ errCode: '00', rail: 'naps' });
+  });
+
+  test('signed code: card success resolves to {errCode, rail card}', async () => {
+    const ctx = await buildSut();
+    const key = buildResponseKey('JDWL-ABC', '100.00', '000'); // amount+err order
+    const signed = (ctx.sut as any).resolveSignedErrCode('JDWL-ABC', '100.00', '000', key);
+    expect(signed).toEqual({ errCode: '000', rail: 'card' });
+  });
+
+  test('signed code: NAPS-order FAILURE resolves to its failure code on the naps rail', async () => {
+    const ctx = await buildSut();
+    // Genuine NAPS cancel ("901"), err+amount order — must resolve so the
+    // failure path can clean up, and must never read as success.
+    const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}JDWL-NAPS${PAY2M_CFG.PAY2M_SECRET_WORD}901100`; // err"901"+amt"100"
+    const key = crypto.createHash('sha256').update(raw).digest('hex');
+    const signed = (ctx.sut as any).resolveSignedErrCode('JDWL-NAPS', '100.00', '901', key);
+    expect(signed).toEqual({ errCode: '901', rail: 'naps' });
+  });
+
+  test('SECURITY signed code: a failure-signed hash resolves to the FAILURE code, never success', async () => {
+    const ctx = await buildSut();
+    // Real decline ("97" insufficient balance), amount+err order.
+    const key = buildResponseKey('JDWL-ABC', '100.00', '97');
+    const signed = (ctx.sut as any).resolveSignedErrCode('JDWL-ABC', '100.00', '97', key);
+    expect(signed?.errCode).toBe('97');                         // resolves to the failure code
+    expect(signed?.errCode === '00' || signed?.errCode === '000').toBe(false); // → NOT success
+  });
+
+  test('SECURITY signed code: forged/invalid hash resolves to null (neither rail matches)', async () => {
+    const ctx = await buildSut();
+    const signed = (ctx.sut as any).resolveSignedErrCode('JDWL-ABC', '100.00', '000', 'a'.repeat(64));
+    expect(signed).toBeNull();
   });
 
   // Regression (2026-04-22): defence-in-depth format gate.
@@ -452,5 +543,135 @@ describe('PaymentService.getPaymentStatus', () => {
     });
     const r = await ctx.sut.getPaymentStatus('b1', 'u1');
     expect(r.errorMessage).toBeUndefined();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// handleCallback — NAPS-rail HOLD semantics
+//
+// A verified NAPS success is AUTHENTIC (secret-gated hash) but capture-
+// ambiguous: the rail can sign "00" pre-capture (basket 939bd325 booked with
+// no money under #369) AND post-capture (Apple Pay/Fawran lost bookings under
+// #370). So handleCallback must neither confirm nor delete — it holds the
+// payment+booking PENDING, extends the reservation, audits, and returns
+// 'pending'. Confirmation arrives in a follow-up (IPN/status inquiry).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** NAPS/QPay rail Response_Key: SHA256(merchant + basket + secret + err + amount). */
+function buildResponseKeyNaps(basketId: string, amount: string, errCode: string): string {
+  const raw = `${PAY2M_CFG.PAY2M_MERCHANT_ID}${basketId}${PAY2M_CFG.PAY2M_SECRET_WORD}${errCode}${amount}`;
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+describe('PaymentService.handleCallback — NAPS-rail hold', () => {
+  test('verified NAPS success (PENDING payment) → held: returns pending, NO confirm/delete tx, audit row, reservation extended', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
+      id: 'p1', bookingId: 'b1', amount: 1, status: 'PENDING',
+      bookingSnapshot: null, bookingRecreatedAt: null,
+      booking: { couponCode: null, couponDiscount: null, status: 'PENDING', cancelledBy: null },
+    });
+
+    // Real NAPS shape: field echoes "001", hash signed err"00"+integer amount.
+    const r = await ctx.sut.handleCallback({
+      err_code: '001', basket_id: 'JDWL-NAPS-HOLD',
+      Response_Key: buildResponseKeyNaps('JDWL-NAPS-HOLD', '1', '00'),
+    });
+
+    expect(r).toEqual({ bookingId: 'b1', status: 'pending' });
+    // Neither the confirm nor the delete transaction may run.
+    expect(ctx.prisma.$transaction).not.toHaveBeenCalled();
+    // Booking reservation extended — forward-only, PENDING-only guard in the where.
+    expect(ctx.prisma._client.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'b1', status: 'PENDING' }),
+        data: { reservedUntil: expect.any(Date) },
+      }),
+    );
+    // Audited as awaiting capture — not as success, not as failure.
+    expect(ctx.audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_NAPS_AWAITING_CAPTURE', actionCategory: 'FINANCIAL' }),
+    );
+    expect(ctx.audit.log).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_SUCCESS' }),
+    );
+  });
+
+  test('verified NAPS success on a cron-FAILED payment → held (no recovery on capture-ambiguous signal)', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
+      id: 'p1', bookingId: 'b1', amount: 1, status: 'FAILED',
+      bookingSnapshot: null, bookingRecreatedAt: null,
+      booking: { couponCode: null, couponDiscount: null, status: 'PENDING', cancelledBy: null },
+    });
+
+    const r = await ctx.sut.handleCallback({
+      err_code: '001', basket_id: 'JDWL-NAPS-LATE',
+      Response_Key: buildResponseKeyNaps('JDWL-NAPS-LATE', '1', '00'),
+    });
+
+    expect(r).toEqual({ bookingId: 'b1', status: 'pending' });
+    expect(ctx.prisma.$transaction).not.toHaveBeenCalled();
+    expect(ctx.audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_NAPS_AWAITING_CAPTURE' }),
+    );
+  });
+
+  test('verified NAPS FAILURE (901 customer-cancel) → normal failure path runs (cleanup allowed)', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
+      id: 'p1', bookingId: 'b1', amount: 100, status: 'PENDING',
+      bookingSnapshot: null, bookingRecreatedAt: null,
+      booking: { couponCode: null, couponDiscount: null, status: 'PENDING', cancelledBy: null },
+    });
+    // The failure tx deletes payment+booking; the $transaction mock executes
+    // the callback against the model mocks, so just let it run.
+    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
+    ctx.prisma._client.booking.findUnique.mockResolvedValueOnce({
+      activityId: 'act1', customerId: 'u1', couponCode: null,
+    });
+
+    const r = await ctx.sut.handleCallback({
+      err_code: '901', basket_id: 'JDWL-NAPS-FAIL',
+      Response_Key: buildResponseKeyNaps('JDWL-NAPS-FAIL', '100', '901'),
+    });
+
+    expect(r.status).toBe('failed');
+    expect(ctx.prisma.$transaction).toHaveBeenCalled(); // cleanup ran
+    expect(ctx.audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_FAILED' }),
+    );
+    expect(ctx.audit.log).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_NAPS_AWAITING_CAPTURE' }),
+    );
+  });
+
+  test('SECURITY: forged callback (random key) is still rejected — accepting the NAPS order opens no forgery hole', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
+      id: 'p1', bookingId: 'b1', amount: 1, status: 'PENDING',
+      bookingSnapshot: null, bookingRecreatedAt: null,
+      booking: { couponCode: null, couponDiscount: null, status: 'PENDING', cancelledBy: null },
+    });
+
+    await expect(ctx.sut.handleCallback({
+      err_code: '001', basket_id: 'JDWL-NAPS-FORGED', Response_Key: 'a'.repeat(64),
+    })).rejects.toThrow(/verification failed/i);
+
+    expect(ctx.audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'PAYMENT_HASH_MISMATCH' }),
+    );
+    expect(ctx.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  test('card success is UNCHANGED by the rail logic (amount+err order still confirms; already-SUCCESS idempotent)', async () => {
+    const ctx = await buildSut();
+    ctx.prisma._client.payment.findUnique.mockResolvedValueOnce({
+      id: 'p1', bookingId: 'b1', amount: 100, status: 'SUCCESS',
+    });
+    const r = await ctx.sut.handleCallback({
+      err_code: '00', basket_id: 'B1', Response_Key: buildResponseKey('B1', '100.00', '00'),
+    });
+    expect(r).toEqual({ bookingId: 'b1', status: 'success' });
   });
 });

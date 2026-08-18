@@ -64,3 +64,51 @@ export class Pay2mCallbackDto {
   @MaxLength(200)
   Rdv_Message_Key?: string;
 }
+
+/**
+ * PAY2M's server-to-server IPN payload — DISTINCT from the browser callback:
+ * the IPN names its hash `responseKey` (not `Response_Key`), carries NO
+ * `amount`, and adds `rdv_message_key` — so it would fail Pay2mCallbackDto.
+ * We do NOT verify the IPN hash (no amount to hash with); trust comes from the
+ * allow-listed source IP (see PaymentService.isTrustedIpnSource). All fields
+ * are bounded; only basket_id / err_code / transaction_id are used downstream.
+ */
+export class Pay2mIpnDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  @Matches(/^JDWL-[a-f0-9-]{12}$/i, { message: 'Invalid basket id format' })
+  basket_id!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(10)
+  err_code!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  err_msg?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  order_date?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  transaction_id?: string;
+
+  // PAY2M's IPN hash field (camelCase). Accepted + bounded but NOT verified
+  // (the IPN has no amount to hash); trust is the source-IP allow-list.
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  responseKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  rdv_message_key?: string;
+}

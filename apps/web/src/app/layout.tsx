@@ -3,10 +3,16 @@ import { Inter, Tajawal, Outfit } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 import { AuthProvider } from "@/context/auth-context";
+import TermsConsentGate from "@/components/terms-consent-gate";
 import { I18nProvider } from "@/context/i18n-provider";
 import { ThemeProvider } from "next-themes";
 import { QueryProvider } from "@/lib/query-provider";
 import { ToastProvider } from "@/components/toast";
+import { CookieConsentProvider } from "@/context/cookie-consent";
+import CookieConsentBanner from "@/components/cookie-consent-banner";
+import MetaPixel from "@/components/meta-pixel";
+import GoogleAds from "@/components/google-ads";
+import { Suspense } from "react";
 // CustomerShell conditionally wraps children with GeoProvider + LazyPrompts
 // based on pathname. Staff (admin / vendor) and auth routes skip both —
 // they don't need country detection or "verify your phone" prompts.
@@ -14,7 +20,7 @@ import { ToastProvider } from "@/components/toast";
 import { CustomerShell } from "@/components/customer-shell";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { JsonLd } from "@/components/json-ld";
-import { readLangCookieServer } from "@/lib/lang-cookie.server";
+import { readLangServer } from "@/lib/lang-cookie.server";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -71,26 +77,28 @@ const siteUrl = (() => {
 export const metadata: Metadata = {
   metadataBase: siteUrl,
   title: {
-    default: "Jadwal — Discover and book experiences in Qatar",
-    template: "%s · Jadwal",
+    default: "AL Jadwal — Discover and book experiences in Qatar",
+    template: "%s · AL Jadwal",
   },
   description: "Discover and book experiences in your city.",
-  applicationName: "Jadwal",
+  applicationName: "AL Jadwal",
   manifest: "/site.webmanifest",
   // Per-page canonical = the page's own URL (resolved against metadataBase).
   // Each page can override `metadata.alternates.canonical` explicitly when
   // needed (e.g. when serving paginated lists or filtered queries that
   // should canonicalize to the un-filtered root).
   alternates: {
+    // "./" resolves to the page's OWN URL (against metadataBase), so the home
+    // canonical is self-referential per language: `/` on English, `/ar` on
+    // Arabic. This is the fallback for pages without their own `alternates`
+    // (chiefly the home `/`); every other public page sets `localeAlternates`.
     canonical: "./",
-    // Jadwal serves both languages from the SAME URL set (locale is
-    // cookie-driven, not path-prefixed like /ar/*), so every hreflang
-    // points at the same canonical. This tells search engines the page
-    // exists for en + ar and prevents duplicate-content flags. Revisit
-    // if locale-pathed routes (/ar/...) are ever introduced.
+    // Bilingual /ar URLs (SEO P1#4): English home = `/`, Arabic home = `/ar`,
+    // x-default = English. Per-page metadata overrides this with the page's own
+    // en/ar twins via lib/locale-path `localeAlternates`.
     languages: {
       en: "/",
-      ar: "/",
+      ar: "/ar",
       "x-default": "/",
     },
   },
@@ -106,8 +114,8 @@ export const metadata: Metadata = {
   },
   openGraph: {
     type: "website",
-    siteName: "Jadwal",
-    title: "Jadwal — Discover and book experiences in Qatar",
+    siteName: "AL Jadwal",
+    title: "AL Jadwal — Discover and book experiences in Qatar",
     description: "Discover and book experiences in your city.",
     locale: "en_US",
     alternateLocale: ["ar_QA"],
@@ -117,13 +125,13 @@ export const metadata: Metadata = {
         url: "/android-chrome-512x512.png",
         width: 512,
         height: 512,
-        alt: "Jadwal",
+        alt: "AL Jadwal",
       },
     ],
   },
   twitter: {
     card: "summary",
-    title: "Jadwal — Discover and book experiences in Qatar",
+    title: "AL Jadwal — Discover and book experiences in Qatar",
     description: "Discover and book experiences in your city.",
     images: ["/android-chrome-512x512.png"],
   },
@@ -144,7 +152,7 @@ export default async function RootLayout({
   // the client hydration pass pick the same value. This is the only reliable
   // way to avoid the "English flash → Arabic" flicker + hydration mismatch
   // that localStorage-based i18n produces.
-  const lang = await readLangCookieServer();
+  const lang = await readLangServer();
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
 
   // Preconnect / DNS-prefetch for the API origin. Saves ~100-200ms on the
@@ -168,7 +176,7 @@ export default async function RootLayout({
   const orgJsonLd = {
     "@context": "https://schema.org",
     "@type": "Organization",
-    name: "Jadwal",
+    name: "AL Jadwal",
     url: siteUrl.toString(),
     logo: new URL("/android-chrome-512x512.png", siteUrl).toString(),
     sameAs: ["https://www.instagram.com/jadwal.qtr/"],
@@ -176,7 +184,7 @@ export default async function RootLayout({
   const webSiteJsonLd = {
     "@context": "https://schema.org",
     "@type": "WebSite",
-    name: "Jadwal",
+    name: "AL Jadwal",
     url: siteUrl.toString(),
     potentialAction: {
       "@type": "SearchAction",
@@ -211,13 +219,28 @@ export default async function RootLayout({
                   new theme instead of crossfading every transitioned element (the
                   navbar's transitions + the hero's `dark:` swaps were the "theme
                   toggle lag" on /home). */}
-              <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange nonce={nonce}>
-                <AuthProvider>
-                  <ToastProvider>
-                    <CustomerShell>{children}</CustomerShell>
-                  </ToastProvider>
-                </AuthProvider>
-              </ThemeProvider>
+              <CookieConsentProvider>
+                <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange nonce={nonce}>
+                  <AuthProvider>
+                    <ToastProvider>
+                      <CustomerShell>{children}</CustomerShell>
+                      {/* One-time post-login Terms consent gate (OAuth signups,
+                          pre-feature accounts, Terms version bumps). Renders null
+                          unless the logged-in customer/vendor must accept. */}
+                      <TermsConsentGate />
+                      {/* Cookie-consent banner + ad platforms (Meta Pixel +
+                          Google Ads). Both load under the SAME opt-out consent
+                          and skip staff routes. Suspense wraps them because they
+                          read useSearchParams (route-change page-view tracking). */}
+                      <CookieConsentBanner />
+                      <Suspense fallback={null}>
+                        <MetaPixel />
+                        <GoogleAds />
+                      </Suspense>
+                    </ToastProvider>
+                  </AuthProvider>
+                </ThemeProvider>
+              </CookieConsentProvider>
             </I18nProvider>
           </QueryProvider>
         </ErrorBoundary>

@@ -10,6 +10,8 @@ export { passwordChangedTemplate } from './password-changed';
 export type { PasswordChangedData } from './password-changed';
 export { emailVerificationTemplate } from './email-verification';
 export type { EmailVerificationData } from './email-verification';
+export { accountExistsTemplate } from './account-exists';
+export type { AccountExistsData } from './account-exists';
 export { bookingOtpTemplate } from './booking-otp';
 export type { BookingOtpData } from './booking-otp';
 export { vendorBookingNotificationTemplate } from './vendor-booking-notification';

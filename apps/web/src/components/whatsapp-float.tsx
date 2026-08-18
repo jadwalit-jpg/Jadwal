@@ -31,6 +31,7 @@
  */
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { usePathname } from 'next/navigation';
 
@@ -41,6 +42,12 @@ const WHATSAPP_NUMBER = '97477499399';
 export function WhatsAppFloat() {
   const { i18n } = useTranslation();
   const pathname = usePathname();
+  // The href/aria-label/title are language-dependent, and the client i18n
+  // language can differ from the SSR snapshot (cookie vs client detector),
+  // which React can't patch on attributes → hydration error. Render this
+  // floating CTA only after mount so server + first client render match.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const isRtl = i18n.dir() === 'rtl';
 
   // Activity detail (`/activity/[slug]`) has a mobile-only sticky Book Now
@@ -55,7 +62,7 @@ export function WhatsAppFloat() {
 
   const greeting = isRtl
     ? 'مرحبًا، لدي سؤال بخصوص الجدول'
-    : 'Hi, I have a question about Jadwal';
+    : 'Hi, I have a question about AL Jadwal';
 
   const href = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(greeting)}`;
   const label = isRtl ? 'تواصل معنا على واتساب' : 'Chat with us on WhatsApp';
@@ -64,6 +71,8 @@ export function WhatsAppFloat() {
   //   - non-activity-detail: always show (`grid`).
   //   - activity-detail: hide on mobile/tablet, show on desktop (`hidden lg:grid`).
   const visibility = isActivityDetail ? 'hidden lg:grid' : 'grid';
+
+  if (!mounted) return null;
 
   return (
     <a

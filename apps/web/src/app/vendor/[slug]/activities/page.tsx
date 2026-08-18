@@ -1,5 +1,7 @@
 'use client';
 
+import { pickBadge, type ActivityStatus } from '@/lib/status-config';
+
 import React, { useState } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useRouter, useParams } from 'next/navigation';
@@ -34,8 +36,9 @@ import {
   X,
 } from 'lucide-react';
 import CustomSelect from '@/components/custom-select';
+import ActivityBlocksSummary from '@/components/activity-blocks-summary';
 
-const STATUS_VIS: Record<string, { classes: string; icon: React.ElementType }> = {
+const STATUS_VIS: Record<ActivityStatus, { classes: string; icon: React.ElementType }> = {
   PENDING: { classes: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400', icon: Clock },
   ACTIVE: { classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400', icon: CheckCircle2 },
   INACTIVE: { classes: 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400', icon: EyeOff },
@@ -114,7 +117,7 @@ export default function VendorActivitiesPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="md:ms-64 p-4 md:p-10 overflow-x-hidden">
+      <main className="md:ms-64 p-4 max-md:pt-16 md:p-10 overflow-x-hidden">
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{t('vendor.activities.list.title')}</h1>
@@ -166,7 +169,7 @@ export default function VendorActivitiesPage() {
               <p className="text-gray-400 dark:text-slate-500 text-sm mt-1">{t('vendor.activities.list.emptySubtitle')}</p>
             </div>
           ) : (
-            <table className="w-full">
+            <div className="overflow-x-auto"><table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-slate-800">
                   <th className="text-start px-6 py-4 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
@@ -191,7 +194,7 @@ export default function VendorActivitiesPage() {
               </thead>
               <tbody>
                 {activities.map((activity: any) => {
-                  const statusCfg = STATUS_VIS[activity.status] ?? STATUS_VIS.PENDING;
+                  const statusCfg = pickBadge(STATUS_VIS, activity.status, STATUS_VIS.PENDING);
                   const StatusIcon = statusCfg.icon;
                   const isExpanded = expandedId === activity.id;
                   const currency = activity.country?.currencyCode ?? 'QAR';
@@ -357,6 +360,13 @@ export default function VendorActivitiesPage() {
                                       </p>
                                     )}
                                   </div>
+                                </div>
+
+                                <div>
+                                  <p className="text-xs font-semibold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5">
+                                    {t('vendor.activities.list.blockedTitle', 'Blocked dates & times')}
+                                  </p>
+                                  <ActivityBlocksSummary activityId={activity.id} />
                                 </div>
 
                                 <div>
@@ -542,7 +552,7 @@ export default function VendorActivitiesPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
           )}
 
           {totalPages > 1 && (

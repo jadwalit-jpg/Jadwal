@@ -5,27 +5,27 @@
  */
 
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localeAlternates } from '@/lib/locale-path';
 
 export async function generateMetadata(): Promise<Metadata> {
-  const cookieStore = await cookies();
-  const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  const lang = await readLangServer();
 
   const title = lang === 'ar' ? 'سياسة الخصوصية' : 'Privacy Policy';
   const description =
     lang === 'ar'
       ? 'كيف تجمع منصة جدول بياناتك وتستخدمها وتحميها، وحقوقك بموجب قانون حماية البيانات الشخصية القطري (PDPPL).'
-      : 'How Jadwal collects, uses and protects your data, and your rights under Qatar’s Personal Data Privacy Protection Law (PDPPL).';
+      : 'How AL Jadwal collects, uses and protects your data, and your rights under Qatar’s Personal Data Privacy Protection Law (PDPPL).';
 
   return {
     title,
     description,
-    alternates: { canonical: '/privacy' },
+    alternates: localeAlternates('/privacy', lang),
     openGraph: {
       title,
       description,
       type: 'website',
-      siteName: 'Jadwal',
+      siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
     },
     twitter: { card: 'summary', title, description },

@@ -61,7 +61,7 @@ const nextConfig: NextConfig = {
   // also: it's been removed from the always-loaded navbar/notification-bell/
   // custom-select/animated-counter so it's no longer in the shared chunk.)
   experimental: {
-    optimizePackageImports: ["framer-motion", "lucide-react", "date-fns"],
+    optimizePackageImports: ["framer-motion", "lucide-react"],
   },
   // Strip `X-Powered-By: Next.js` header. ZAP baseline flagged it as a
   // low-risk software-version disclosure; removing it makes drive-by
@@ -92,12 +92,15 @@ const nextConfig: NextConfig = {
       // 301 them to the closest live page to preserve link equity.
       { source: "/collections/:path*", destination: "/explore", permanent: true },
       { source: "/products/:path*", destination: "/explore", permanent: true },
-      { source: "/ar/collections/:path*", destination: "/explore", permanent: true },
-      { source: "/ar/products/:path*", destination: "/explore", permanent: true },
-      // Other legacy Arabic paths → homepage (new app is cookie-locale,
-      // there is no /ar route). Specific /ar/collections|products handled above.
-      { source: "/ar/:path*", destination: "/", permanent: true },
-      { source: "/ar", destination: "/", permanent: true },
+      { source: "/ar/collections/:path*", destination: "/ar/explore", permanent: true },
+      { source: "/ar/products/:path*", destination: "/ar/explore", permanent: true },
+      // NOTE: the old catch-all `"/ar/:path* → /"` (+ `"/ar → /"`) was REMOVED
+      // here — `/ar` is now a VALID Arabic locale prefix (bilingual URLs, P1#4),
+      // served by the middleware rewrite in src/middleware.ts. Keeping the
+      // catch-all would intercept every Arabic URL before the middleware runs.
+      // Legacy Shopify `/ar/collections|/ar/products` equity is still recovered
+      // above (now to the Arabic /ar/explore). Genuinely-dead legacy /ar paths
+      // now correctly 404 instead of 301→/.
     ];
   },
   async rewrites() {
@@ -123,6 +126,11 @@ const nextConfig: NextConfig = {
   images: {
     // Modern formats first — Next.js negotiates based on Accept header
     formats: ["image/avif", "image/webp"],
+    // Cache optimized variants for 30 days (default is 60s → the slow AVIF
+    // re-encode kept recurring for new visitors). Long-lived so an image is
+    // encoded once and then served from cache (origin + Cloudflare). Static
+    // public assets are content-stable; uploaded assets get hashed URLs.
+    minimumCacheTTL: 2592000,
     remotePatterns: [
       {
         protocol: "https",

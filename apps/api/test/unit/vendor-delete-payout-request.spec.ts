@@ -15,10 +15,12 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { NotificationService } from '../../src/common/services/notification.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { AvailabilityCacheService } from '../../src/redis/availability-cache.service';
+import { SessionDenylistService } from '../../src/redis/session-denylist.service';
 import { makePrismaMock } from '../mocks/prisma.mock';
 import {
   makeNotificationMock, makeLoyaltyMock, makeAvailabilityCacheMock,
 } from '../mocks/bookings-deps.mock';
+import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 
 async function buildSut() {
   const prisma = makePrismaMock();
@@ -29,6 +31,7 @@ async function buildSut() {
       { provide: NotificationService,       useValue: makeNotificationMock() },
       { provide: LoyaltyService,            useValue: makeLoyaltyMock() },
       { provide: AvailabilityCacheService,  useValue: makeAvailabilityCacheMock() },
+      { provide: SessionDenylistService,    useValue: makeSessionDenylistMock() },
     ],
   }).compile();
   return { sut: mod.get(VendorService), prisma };

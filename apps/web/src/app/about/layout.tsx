@@ -7,26 +7,27 @@
  */
 
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localeAlternates } from '@/lib/locale-path';
 
 export async function generateMetadata(): Promise<Metadata> {
-  const cookieStore = await cookies();
-  const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  const lang = await readLangServer();
 
-  const title = lang === 'ar' ? 'عن جدول' : 'About Jadwal';
+  const title = lang === 'ar' ? 'عن الجدول' : 'About AL Jadwal';
   const description =
     lang === 'ar'
-      ? 'منصة جدول هي وجهتك لاكتشاف وحجز أفضل التجارب والأنشطة في قطر ودول الخليج، بشركاء موثوقين ودعم على مدار الساعة.'
-      : 'Jadwal is the GCC marketplace for discovering and booking handpicked experiences and activities — vetted partners, instant confirmation, 24/7 support.';
+      ? 'منصة الجدول هي وجهتك لاكتشاف وحجز أفضل التجارب والأنشطة في قطر ودول الخليج، بشركاء موثوقين ودعم على مدار الساعة.'
+      : 'AL Jadwal is the GCC marketplace for discovering and booking handpicked experiences and activities — vetted partners, instant confirmation, 24/7 support.';
 
   return {
     title,
     description,
+    alternates: localeAlternates('/about', lang),
     openGraph: {
       title,
       description,
       type: 'website',
-      siteName: 'Jadwal',
+      siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
       images: [{ url: '/images/login-bg.webp', width: 1200, height: 630, alt: title }],
     },

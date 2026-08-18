@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches, IsBoolean, Equals } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { IsStrongPassword } from '../../common/validators/password-strength';
 import { IsNotDisposableEmail } from '../../common/validators/disposable-email';
@@ -7,11 +7,14 @@ export class RegisterDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
-  // `\P{Nd}` (capital P) matches anything EXCEPT a decimal digit across
-  // every script — rejects ASCII 0-9 AND Arabic-Indic ٠-٩. Real personal
-  // names don't contain digits; this is the server-side authority for
-  // the same rule enforced client-side by `validateFullName`.
-  @Matches(/^\P{Nd}*$/u, { message: 'Full name cannot contain numbers' })
+  // Positive whitelist: letters of ANY script (\p{L} — Arabic + accented
+  // Latin included), combining marks (\p{M}), spaces, hyphen, apostrophe
+  // (straight + curly) and period. Rejects digits AND symbols like @$#$;
+  // the first character must be a letter. Server-side authority for the
+  // same rule enforced client-side by `validateFullName`.
+  @Matches(/^[\p{L}\p{M}][\p{L}\p{M}\s'’.\-]*$/u, {
+    message: 'Full name may only contain letters, spaces, hyphens and apostrophes',
+  })
   @Transform(({ value }) => typeof value === 'string' ? value.replace(/[<>]/g, '').trim() : value)
   fullName!: string;
 
@@ -59,4 +62,11 @@ export class RegisterDto {
   @IsOptional()
   @Transform(({ value }) => value == null ? undefined : String(value))
   website?: string;
+
+  // Explicit Terms & Privacy consent — required to be `true`. Accepting also
+  // confirms the user is 18+ (the minimum age is stated in the Terms). The
+  // service records termsAcceptedAt + the current TERMS_VERSION on success.
+  @IsBoolean()
+  @Equals(true, { message: 'You must accept the Terms and Privacy Policy' })
+  termsAccepted!: boolean;
 }

@@ -12,12 +12,20 @@ import { CreateTrendingEventDto, UpdateTrendingEventDto } from './dto/trending-e
 import { CreateCouponDto } from './dto/create-coupon.dto';
 import { UpdatePlatformSettingsDto } from './dto/platform-settings.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
+import { CreateActivityBlockDto } from '../vendor/dto/create-activity-block.dto';
+import { CreateSpecialPriceDto } from '../vendor/dto/create-special-price.dto';
+import { BulkSpecialPriceDto } from '../vendor/dto/bulk-special-price.dto';
+import { createActivityBlockCore } from '../vendor/activity-blocks.logic';
+import { createSpecialPriceCore, bulkCreateSpecialPricesCore } from '../vendor/activity-special-prices.logic';
 import { NotificationService } from '../common/services/notification.service';
 import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { ReferenceDataCacheService } from '../redis/reference-data-cache.service';
+import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
+import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
+import { envNumber } from '../common/env';
 
 @Injectable()
 export class AdminService {
@@ -29,6 +37,7 @@ export class AdminService {
     private loyalty: LoyaltyService,
     private availabilityCache: AvailabilityCacheService,
     private refCache: ReferenceDataCacheService,
+    private sessionDenylist: SessionDenylistService,
   ) {}
 
   // ─── Admin Profile ──────────────────────────────────────────
@@ -63,6 +72,9 @@ export class AdminService {
     if (!valid) throw new ForbiddenException('Current password is incorrect');
     const bcryptRounds = Number(process.env.BCRYPT_ROUNDS || 12);
     const hash = await bcrypt.hash(newPassword, bcryptRounds);
+    // M5 — denylist every live session BEFORE the tx deletes the refresh rows,
+    // so outstanding access tokens die immediately too (not just at renewal).
+    await this.sessionDenylist.denylistAllUserSessions(userId);
     // Interactive transaction (function form) — preferred over the array form
     // with Prisma 7 driver adapters.
     await db.$transaction(async (tx) => {
@@ -114,7 +126,10 @@ export class AdminService {
       }),
       db.user.count({ where }),
     ]);
-    return { data: users, total, page, limit, totalPages: Math.ceil(total / limit) };
+    // loyaltyPoints is a Decimal column (QAR-denominated) — normalise to a JS
+    // number so the admin table receives a JSON number, not a Decimal string.
+    const data = users.map((u) => ({ ...u, loyaltyPoints: Number(u.loyaltyPoints) }));
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   /**
@@ -141,7 +156,7 @@ export class AdminService {
         where: { id: userId },
         select: { id: true, fullName: true, loyaltyPoints: true },
       });
-      return { ...fresh, appliedDelta: result.appliedDelta };
+      return { ...fresh, loyaltyPoints: Number(fresh.loyaltyPoints), appliedDelta: result.appliedDelta };
     });
   }
 
@@ -276,10 +291,14 @@ export class AdminService {
   // ─── Users ──────────────────────────────────────────────────
   async getUsers(query: PaginationDto) {
     const db = this.prisma.client;
-    const { page = 1, limit = 20, search, status, role, verified } = query;
+    const { page = 1, limit = 20, search, status, role, verified, includeDeleted } = query;
     const skip = (page - 1) * limit;
 
     const where: Prisma.UserWhereInput = {};
+    // Hide soft-deleted (anonymised) users unless explicitly requested. The
+    // rows are retained for PDPL/GDPR financial-audit, but they shouldn't
+    // clutter the default admin list.
+    if (includeDeleted !== 'true') where.deletedAt = null;
     if (search) {
       where.OR = [
         { fullName: { contains: search, mode: 'insensitive' } },
@@ -301,6 +320,7 @@ export class AdminService {
         select: {
           id: true, fullName: true, email: true, phone: true,
           role: true, isDeactivated: true, emailVerified: true, createdAt: true,
+          termsAcceptedAt: true, termsAcceptedVersion: true, deletedAt: true,
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -324,7 +344,10 @@ export class AdminService {
       data: { role },
       select: { id: true, fullName: true, email: true, role: true },
     });
-    // Invalidate all sessions so the user gets a new JWT with the updated role
+    // Invalidate all sessions so the user gets a new JWT with the updated role.
+    // Denylist FIRST (M5) so any already-issued access token carrying the OLD
+    // role is rejected immediately, not ≤JWT_EXPIRATION later.
+    await this.sessionDenylist.denylistAllUserSessions(userId);
     await db.refreshToken.deleteMany({ where: { userId } });
     return result;
   }
@@ -343,6 +366,7 @@ export class AdminService {
     });
     // When deactivating, kill all sessions so the user is immediately logged out
     if (isDeactivated) {
+      await this.sessionDenylist.denylistAllUserSessions(userId);
       await db.refreshToken.deleteMany({ where: { userId } });
     }
     return result;
@@ -410,6 +434,10 @@ export class AdminService {
         `Cannot delete user: ${totalBlocking} unresolved booking(s) (${asCustomer} as customer, ${asVendor} as vendor). Cancel or refund them first.`,
       );
     }
+
+    // M5 — denylist every live session BEFORE the tx deletes the refresh rows,
+    // so the soft-deleted account's outstanding access tokens die immediately.
+    await this.sessionDenylist.denylistAllUserSessions(userId);
 
     const affectedActivityIds = await db.$transaction(async (tx: any) => {
       let activityIdsTouched: string[] = [];
@@ -533,7 +561,9 @@ export class AdminService {
     const { page = 1, limit = 20, search, status } = query;
     const skip = (page - 1) * limit;
 
-    const where: Prisma.VendorWhereInput = {};
+    // Exclude soft-deleted vendors — once an admin deletes a vendor it must
+    // disappear from the list (the row is kept only for booking/payment audit).
+    const where: Prisma.VendorWhereInput = { deletedAt: null };
     if (search) {
       where.OR = [
         { businessNameEn: { contains: search, mode: 'insensitive' } },
@@ -573,8 +603,10 @@ export class AdminService {
       // 404s because vendor pages are namespaced under /vendor/[slug]/*.
       include: { user: { select: { id: true, fullName: true, email: true } } },
     });
-    // When suspending a vendor, kill all their sessions immediately
+    // When suspending a vendor, kill all their sessions immediately —
+    // denylist FIRST (M5) so any outstanding access token dies at once.
     if (status === 'SUSPENDED') {
+      await this.sessionDenylist.denylistAllUserSessions(vendor.user.id);
       await db.refreshToken.deleteMany({ where: { userId: vendor.user.id } });
     }
 
@@ -716,6 +748,10 @@ export class AdminService {
         `Cannot delete vendor: ${blockingPayoutRequests} payout request(s) still in flight. Approve / reject / complete those first, then delete.`,
       );
     }
+
+    // M5 — denylist the vendor's live sessions BEFORE the tx deletes the
+    // refresh rows, so the soft-deleted account's access tokens die at once.
+    await this.sessionDenylist.denylistAllUserSessions(vendor.userId);
 
     const activityIdsTouched = await db.$transaction(async (tx: any) => {
       // Soft-delete every active activity, freeing each slug.
@@ -882,6 +918,114 @@ export class AdminService {
     };
   }
 
+  // ─── Activity availability blocks (admin can manage ANY activity's locks) ──
+  // Reuses the same shared core as the vendor flow, so validation can't drift.
+  // No vendor-ownership scoping (admin is platform-wide); blocks are stamped
+  // with the activity's owning vendorId.
+  async getActivityBlocks(activityId: string) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    return db.activityBlock.findMany({
+      where: { activityId, deletedAt: null },
+      orderBy: { blockStart: 'asc' },
+      select: { id: true, blockStart: true, blockEnd: true, createdAt: true },
+    });
+  }
+
+  async createActivityBlock(activityId: string, dto: CreateActivityBlockDto) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({
+      where: { id: activityId },
+      select: { id: true, vendorId: true, bookingType: true, checkInTime: true, checkOutTime: true, durationValue: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const result = await createActivityBlockCore(db, activity, dto);
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async deleteActivityBlock(activityId: string, blockId: string) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const res = await db.activityBlock.updateMany({
+      where: { id: blockId, activityId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count === 0) throw new NotFoundException('Block not found');
+    void this.availabilityCache.invalidate(activityId);
+    return { id: blockId, removed: true };
+  }
+
+  async deleteActivityBlocksBulk(activityId: string, ids: string[]) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const res = await db.activityBlock.updateMany({
+      where: { id: { in: ids }, activityId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count > 0) void this.availabilityCache.invalidate(activityId);
+    return { removed: res.count };
+  }
+
+  // ─── Special prices (per-date price overrides; admin = any activity) ──
+  async getActivitySpecialPrices(activityId: string) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    // Only current/future overrides — past dates can't be booked and the
+    // calendar shows [today, +6mo]. Also bounds the result: old overrides are
+    // never hard-deleted, so without a floor this query would grow over time.
+    const todayUtc = new Date(new Date().toISOString().slice(0, 10));
+    return db.activitySpecialPrice.findMany({
+      where: { activityId, deletedAt: null, date: { gte: todayUtc } },
+      orderBy: { date: 'asc' },
+      select: { id: true, date: true, price: true, createdAt: true },
+    });
+  }
+
+  async createActivitySpecialPrice(activityId: string, dto: CreateSpecialPriceDto) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({
+      where: { id: activityId },
+      select: { id: true, vendorId: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const result = await createSpecialPriceCore(db, activity, dto);
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async bulkCreateActivitySpecialPrices(activityId: string, dto: BulkSpecialPriceDto) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({
+      where: { id: activityId },
+      select: { id: true, vendorId: true },
+    });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const result = await db.$transaction(
+      (tx: any) => bulkCreateSpecialPricesCore(tx, activity, dto),
+      { timeout: 20000 },
+    );
+    void this.availabilityCache.invalidate(activityId);
+    return result;
+  }
+
+  async deleteActivitySpecialPrice(activityId: string, priceId: string) {
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!activity) throw new NotFoundException('Activity not found');
+    const res = await db.activitySpecialPrice.updateMany({
+      where: { id: priceId, activityId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (res.count === 0) throw new NotFoundException('Special price not found');
+    void this.availabilityCache.invalidate(activityId);
+    return { id: priceId, removed: true };
+  }
+
   /**
    * Cascade-cancel every future PENDING/CONFIRMED booking for an activity
    * that was just deactivated or blocked. Each booking runs in its own
@@ -903,11 +1047,24 @@ export class AdminService {
     const db = this.prisma.client;
     const CASCADE_MAX = 1000;
 
+    // Only cancel bookings that have NOT yet started. startDatetime is local-
+    // wall-clock tagged-UTC, so "started" must be judged in the activity's OWN
+    // timezone — a raw `gte: new Date()` would treat an in-progress booking (up
+    // to the country's +offset, ~3h GCC) as "future" and cancel + 100% refund a
+    // customer who is currently attending. This is a single activity, so it has
+    // exactly one timezone (no multi-tz aggregate concern). nowInTimezone('UTC')
+    // === raw now, so UTC-country activities are unchanged.
+    const act = await db.activity.findUnique({
+      where: { id: activityId },
+      select: { country: { select: { defaultTimezone: true } } },
+    });
+    const activityTz = act?.country?.defaultTimezone ?? 'UTC';
+
     const bookings = await db.booking.findMany({
       where: {
         activityId,
         status: { in: ['PENDING', 'CONFIRMED'] },
-        startDatetime: { gte: new Date() },
+        startDatetime: { gte: nowInTimezone(activityTz) },
       },
       select: {
         id: true,
@@ -975,7 +1132,7 @@ export class AdminService {
                 },
               });
               const refundPoints =
-                qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+                qarPerPoint > 0 ? Math.round((paidAmount / qarPerPoint) * 100) / 100 : 0;
               if (refundPoints > 0) {
                 await this.loyalty.refund(tx, {
                   userId: bk.customerId,
@@ -988,10 +1145,29 @@ export class AdminService {
                 });
               }
             } else if (bk.payment.status === 'PENDING') {
-              await tx.payment.update({
-                where: { id: bk.payment.id },
+                            // Optimistic lock, NOT a plain update. The `status === 'PENDING'`
+              // above was read earlier; a PAY2M capture can commit in between and
+              // flip the row to SUCCESS. An unguarded update would force that
+              // captured payment back to FAILED while the booking is cancelled,
+              // leaving the customer charged with no REFUND_PENDING row —
+              // recordRefundDecision requires REFUND_PENDING, so the refund queue
+              // could never reach it. Same incident the customer-cancel path was
+              // fixed for; this path was missed.
+              const flipped = await tx.payment.updateMany({
+                where: { id: bk.payment.id, status: 'PENDING' },
                 data: { status: 'FAILED' },
               });
+              if (flipped.count === 0) {
+                // State-neutral on purpose: a zero-row update does NOT prove a
+                // capture completed. A PAY2M failure callback or the
+                // stale-PENDING cleanup cron can flip the row out of PENDING
+                // first, and in those cases the booking may be gone entirely.
+                // Naming only the capture case would tell an admin the booking
+                // is paid when it is not.
+                throw new ConflictException(
+                  'This booking changed while you were cancelling. Please refresh to see its current state.',
+                );
+              }
             }
           }
 
@@ -1022,7 +1198,7 @@ export class AdminService {
           userId: bk.customerId,
           type: 'BOOKING_CANCELLED',
           title: 'Your booking was cancelled',
-          message: `"${activityTitle}" was ${reasonText} by Jadwal support, and your booking ${bk.ref} has been cancelled.${refundLine}`,
+          message: `"${activityTitle}" was ${reasonText} by AL Jadwal support, and your booking ${bk.ref} has been cancelled.${refundLine}`,
           link: `/bookings/${bk.id}`,
         });
       } catch (err: unknown) {
@@ -1067,7 +1243,7 @@ export class AdminService {
       if (!bk.payment) continue;
       try {
         const paidAmount = Number(bk.payment.amount);
-        const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+        const refundPoints = qarPerPoint > 0 ? Math.round((paidAmount / qarPerPoint) * 100) / 100 : 0;
         const committed = await db.$transaction(async (tx: any) => {
           // Optimistic lock — only the first writer flips REFUND_PENDING.
           const upd = await tx.payment.updateMany({
@@ -1204,7 +1380,7 @@ export class AdminService {
       where: { id: bookingId },
       select: {
         id: true, ref: true, activityId: true, customerId: true, status: true, totalPrice: true,
-        pointsRedeemed: true, pointsAwarded: true, couponCode: true,
+        pointsRedeemed: true, pointsDiscount: true, pointsAwarded: true, couponCode: true,
         activity: { select: { titleEn: true } },
         payment: { select: { id: true, status: true, amount: true } },
       },
@@ -1317,7 +1493,7 @@ export class AdminService {
           let loyaltyConfig = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
           if (!loyaltyConfig) loyaltyConfig = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
           const qarPerPoint = loyaltyConfig.qarPerPoint.toNumber();
-          const refundPoints = qarPerPoint > 0 ? Math.floor(paidAmount / qarPerPoint) : 0;
+          const refundPoints = qarPerPoint > 0 ? Math.round((paidAmount / qarPerPoint) * 100) / 100 : 0;
           if (refundPoints > 0) {
             await this.loyalty.refund(tx, {
               userId: result.customerId,
@@ -1330,10 +1506,23 @@ export class AdminService {
             });
           }
         } else if (result.payment.status === 'PENDING') {
-          await tx.payment.update({
-            where: { id: result.payment.id },
+                    // Optimistic lock, NOT a plain update. The `status === 'PENDING'`
+          // above was read earlier; a PAY2M capture can commit in between and
+          // flip the row to SUCCESS. An unguarded update would force that
+          // captured payment back to FAILED while the booking is cancelled,
+          // leaving the customer charged with no REFUND_PENDING row —
+          // recordRefundDecision requires REFUND_PENDING, so the refund queue
+          // could never reach it. Same incident the customer-cancel path was
+          // fixed for; this path was missed.
+          const flipped = await tx.payment.updateMany({
+            where: { id: result.payment.id, status: 'PENDING' },
             data: { status: 'FAILED' },
           });
+          if (flipped.count === 0) {
+            throw new ConflictException(
+              'This booking changed while you were cancelling. Please refresh to see its current state.',
+            );
+          }
         }
 
         // Refund redeemed loyalty points back to customer (separate from refund-to-points above)
@@ -1354,22 +1543,19 @@ export class AdminService {
         // admin is now cancelling. Without this, the customer keeps the
         // earned points (8+ QAR per 100 in store credit) plus gets a
         // cash refund — repeatable double-dip exploit. Computed using the
-        // same earn-rate formula as awardLoyaltyPoints so reversal mirrors
+        // same earn-rate formula (LoyaltyService.computeEarnedPoints) so reversal mirrors
         // exactly what was credited. Idempotent — `pointsAwarded` is
         // flipped to false alongside the debit so re-cancel attempts (which
         // shouldn't happen because of the double-cancel guard, but defence
         // in depth) don't double-reverse.
         if (result.pointsAwarded === true) {
-          let loyaltyConfigForReverse = await tx.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
-          if (!loyaltyConfigForReverse) loyaltyConfigForReverse = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
-          // Mirrors the formula in bookings.service.ts awardLoyaltyPoints —
-          // floor(totalPrice × pointsPerQar). Same config, same totalPrice
-          // (frozen on the booking row at creation), so the reversal
-          // exactly matches what the cron credited.
-          const pointsPerQar = loyaltyConfigForReverse.pointsPerQar.toNumber();
-          const awardedPoints = pointsPerQar > 0
-            ? Math.floor(Number(result.totalPrice) * pointsPerQar)
-            : 0;
+          // Reverse the EXACT points credited on this booking (its BOOKING_EARN
+          // ledger row), NOT a recompute with the CURRENT earn rate — an admin
+          // rate change between award and cancel would otherwise debit the wrong
+          // amount (or 0, leaving free residual points). 0 → nothing to reverse
+          // (points-paid booking earned 0). pointsAwarded → false so a re-cancel
+          // can't double-reverse.
+          const awardedPoints = await this.loyalty.getEarnedPoints(tx, bookingId);
           if (awardedPoints > 0) {
             await this.loyalty.reverseAwarded(tx, {
               userId: result.customerId,
@@ -1399,26 +1585,36 @@ export class AdminService {
         if (!config) {
           config = await tx.loyaltyConfig.create({ data: { id: 'singleton' } });
         }
-        const points = Math.floor(Number(booking.totalPrice) * config.pointsPerQar.toNumber());
+        const points = this.loyalty.computeEarnedPoints(
+          Number(booking.totalPrice),
+          Number(booking.pointsDiscount),
+          config.pointsPerQar.toNumber(),
+        );
         if (points > 0) {
-          await tx.booking.update({
-            where: { id: bookingId },
+          // Atomically CLAIM the award: flip pointsAwarded false→true only if it
+          // is still false, so two concurrent completes can't both earn. (See the
+          // matching guard in vendor.service.ts — status→COMPLETED above is not a
+          // claim, and the stale pre-tx check let both through.)
+          const claim = await tx.booking.updateMany({
+            where: { id: bookingId, pointsAwarded: false },
             data: { pointsAwarded: true },
           });
-          await this.loyalty.earn(tx, {
-            userId: booking.customerId,
-            amount: points,
-            bookingId,
-            note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
-          });
-          // Notify customer (fire-and-forget, after transaction)
-          this.notificationService.send({
-            userId: booking.customerId,
-            type: 'SYSTEM' as any,
-            title: 'Points Earned!',
-            message: `You earned ${points} WANASA points for booking ${booking.ref}`,
-            link: '/bookings',
-          });
+          if (claim.count === 1) {
+            await this.loyalty.earn(tx, {
+              userId: booking.customerId,
+              amount: points,
+              bookingId,
+              note: `Earned on booking ${booking.ref} (${Number(booking.totalPrice)})`,
+            });
+            // Notify customer (fire-and-forget, after transaction)
+            this.notificationService.send({
+              userId: booking.customerId,
+              type: 'SYSTEM' as any,
+              title: 'Points Earned!',
+              message: `You earned ${points} WANASA points for booking ${booking.ref}`,
+              link: '/bookings',
+            });
+          }
         }
       }
 
@@ -1441,7 +1637,7 @@ export class AdminService {
         userId: booking.customerId,
         type: 'BOOKING_CANCELLED',
         title: 'Your booking was cancelled',
-        message: `Booking ${booking.ref} for "${booking.activity.titleEn}" was cancelled by Jadwal support.${refundLine}`,
+        message: `Booking ${booking.ref} for "${booking.activity.titleEn}" was cancelled by AL Jadwal support.${refundLine}`,
         link: `/bookings/${bookingId}`,
       });
 
@@ -1476,17 +1672,36 @@ export class AdminService {
     const { page = 1, limit = 20, search } = query;
     const skip = (page - 1) * limit;
 
-    const where: Prisma.PaymentWhereInput = { status: 'SUCCESS' };
+    // ── This list means "what is PAYABLE NOW", not "every successful payment" ──
+    //
+    // A vendor is only paid once their activity has actually happened. Showing
+    // future bookings here offered money the platform must not release yet: the
+    // customer can still cancel before the activity starts, and a payout already
+    // sent would leave the platform out of pocket with no clawback path.
+    //
+    // The escrow rule is enforced again in markPayoutsPaid, but enforcement
+    // alone is not enough — if the list still OFFERS in-escrow rows, "select
+    // all" trips the guard and the whole batch is refused, so nothing settles
+    // and the admin has no way to tell which rows to deselect. Filtering here
+    // makes the mistake unofferable; the guard downstream becomes a backstop
+    // that should never fire in normal use.
+    //
+    // Side effect, deliberate: a payment whose booking row is gone (a B2 orphan
+    // awaiting recovery) no longer appears. It has no vendor and no payable
+    // share, so it was never actionable — the reconciliation cron owns it.
+    const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
+    const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
+
+    const bookingFilter: Prisma.BookingWhereInput = { endDatetime: { lt: payoutCutoff } };
     if (search) {
-      where.booking = {
-        OR: [
-          { ref: { contains: search, mode: 'insensitive' } },
-          { vendor: { businessNameEn: { contains: search, mode: 'insensitive' } } },
-          { customer: { fullName: { contains: search, mode: 'insensitive' } } },
-          { activity: { titleEn: { contains: search, mode: 'insensitive' } } },
-        ],
-      };
+      bookingFilter.OR = [
+        { ref: { contains: search, mode: 'insensitive' } },
+        { vendor: { businessNameEn: { contains: search, mode: 'insensitive' } } },
+        { customer: { fullName: { contains: search, mode: 'insensitive' } } },
+        { activity: { titleEn: { contains: search, mode: 'insensitive' } } },
+      ];
     }
+    const where: Prisma.PaymentWhereInput = { status: 'SUCCESS', booking: bookingFilter };
 
     const [payments, total] = await Promise.all([
       db.payment.findMany({
@@ -1546,7 +1761,40 @@ export class AdminService {
       return { ...p, inflightRequest };
     });
 
-    return { data: enriched, total, page, limit, totalPages: Math.ceil(total / limit) };
+    // ── Upcoming (in escrow) — visible, but not payable ─────────────────────
+    // Filtering the list to payable-only would otherwise make future money
+    // vanish entirely: a vendor asks "where is my payout?" and the admin sees
+    // nothing at all, with no way to tell "not earned yet" from "we lost it".
+    // Surface the count and the earliest date it becomes payable, WITHOUT
+    // making any of it selectable. Counts only UNPAID rows — an already-PAID
+    // future booking (possible on rows settled before the escrow rule existed)
+    // is not upcoming money.
+    const upcomingWhere: Prisma.PaymentWhereInput = {
+      status: 'SUCCESS',
+      payoutStatus: 'UNPAID',
+      booking: { endDatetime: { gte: payoutCutoff } },
+    };
+    const [upcomingCount, nextPayable] = await Promise.all([
+      db.payment.count({ where: upcomingWhere }),
+      db.payment.findFirst({
+        where: upcomingWhere,
+        select: { booking: { select: { endDatetime: true } } },
+        orderBy: { booking: { endDatetime: 'asc' } },
+      }),
+    ]);
+
+    return {
+      data: enriched,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      // `total` counts payable rows only. These two describe money that exists
+      // but is still in escrow, so the UI can say "12 bookings become payable
+      // from 20 Aug" instead of silently showing nothing.
+      upcomingCount,
+      upcomingFrom: nextPayable?.booking?.endDatetime ?? null,
+    };
   }
 
   // ─── Countries CRUD ─────────────────────────────────────────
@@ -1557,6 +1805,7 @@ export class AdminService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     return this.prisma.client.country.findMany({
+      where: { deletedAt: null }, // hide soft-deleted countries (Bug C)
       include: { _count: { select: { cities: true, vendors: true, activities: true } } },
       // Stable pagination: id as secondary key breaks ties on nameEn so
       // a page-1+page-2 fetch can't double-return or skip rows.
@@ -1580,18 +1829,28 @@ export class AdminService {
   }
 
   async deleteCountry(id: string) {
-    const country = await this.prisma.client.country.findUnique({
-      where: { id },
-      include: { _count: { select: { vendors: true, activities: true, cities: true } } },
-    });
+    const db = this.prisma.client;
+    const country = await db.country.findFirst({ where: { id, deletedAt: null }, select: { id: true } });
     if (!country) throw new NotFoundException('Country not found');
-    if (country._count.vendors > 0 || country._count.activities > 0) {
-      throw new ForbiddenException('Cannot delete a country that has vendors or activities. Remove them first.');
+
+    // Bug C — count only LIVE (non-soft-deleted) vendors/activities. Vendor &
+    // activity "delete" is itself a soft-delete (the row + its countryId are
+    // kept for the 7-year audit window), so the old check (which counted ALL
+    // rows) meant a country could never be deleted once any vendor/activity had
+    // ever existed there. Only genuinely-active dependencies should block it.
+    const [liveVendors, liveActivities] = await Promise.all([
+      db.vendor.count({ where: { countryId: id, deletedAt: null } }),
+      db.activity.count({ where: { countryId: id, deletedAt: null } }),
+    ]);
+    if (liveVendors > 0 || liveActivities > 0) {
+      throw new ForbiddenException('Cannot delete a country that still has active vendors or activities. Remove them first.');
     }
-    // Delete associated cities first, then the country
-    await this.prisma.client.city.deleteMany({ where: { countryId: id } });
-    const result = await this.prisma.client.country.delete({ where: { id } });
-    // Country delete cascades cities deletion → invalidate both namespaces.
+
+    // Soft-delete (NOT hard-delete): keep the row + its cities so soft-deleted
+    // vendors/activities that still reference countryId retain their audit
+    // linkage and the FK never dangles. A non-null deletedAt removes the country
+    // from every admin/public list (see getCountries + catalog + geo filters).
+    const result = await db.country.update({ where: { id }, data: { deletedAt: new Date() } });
     void this.refCache.invalidate('countries');
     void this.refCache.invalidate('cities');
     return result;
@@ -1720,8 +1979,17 @@ export class AdminService {
     if (dto.discountType === 'PERCENTAGE' && dto.discountValue > 100) {
       throw new BadRequestException('Percentage discount cannot exceed 100%');
     }
-    // Expiry must be after start
-    if (new Date(dto.validTo) <= new Date(dto.validFrom)) {
+    // Normalise the validity window to whole-day UTC bounds — start-of-day for
+    // validFrom, END-of-day for validTo — so a coupon "valid to <date>" stays
+    // usable through that entire day. The /offers + checkout queries filter
+    // `validTo > now`; a bare-midnight validTo expired the coupon at 00:00 of
+    // the expiry day, so it never showed (the reported "coupon not showing").
+    const validFrom = new Date(`${String(dto.validFrom).slice(0, 10)}T00:00:00.000Z`);
+    const validTo = new Date(`${String(dto.validTo).slice(0, 10)}T23:59:59.999Z`);
+    if (Number.isNaN(validFrom.getTime()) || Number.isNaN(validTo.getTime())) {
+      throw new BadRequestException('Invalid validity dates');
+    }
+    if (validTo <= validFrom) {
       throw new BadRequestException('Expiry date must be after the start date');
     }
     // Check for duplicate code
@@ -1731,10 +1999,13 @@ export class AdminService {
     return this.prisma.client.coupon.create({
       data: {
         code: dto.code.toUpperCase(),
+        // Activity scoping (Bug A): empty = applies to all. Admin/platform
+        // coupons may scope to any activity (no vendor-ownership restriction).
+        applicableActivityIds: dto.activityIds ?? [],
         discountType: dto.discountType,
         discountValue: dto.discountValue,
-        validFrom: new Date(dto.validFrom),
-        validTo: new Date(dto.validTo),
+        validFrom,
+        validTo,
         usageLimit: dto.usageLimit ?? null,
         minOrderAmount: dto.minOrderAmount ?? null,
         maxDiscount: dto.maxDiscount ?? null,
@@ -1881,12 +2152,17 @@ export class AdminService {
 
     // HOURLY time config must remain internally consistent (duration ≤ window).
     // Merge DTO values with existing values so partial PATCHes still validate.
-    assertHourlyTimesConsistent({
-      bookingType: dto.bookingType ?? activity.bookingType,
-      checkInTime: dto.checkInTime ?? activity.checkInTime,
-      checkOutTime: dto.checkOutTime ?? activity.checkOutTime,
-      durationValue: dto.durationValue ?? activity.durationValue,
-    });
+    assertHourlyTimesConsistent(
+      {
+        bookingType: dto.bookingType ?? activity.bookingType,
+        checkInTime: dto.checkInTime ?? activity.checkInTime,
+        checkOutTime: dto.checkOutTime ?? activity.checkOutTime,
+        durationValue: dto.durationValue ?? activity.durationValue,
+      },
+      // Grid-check only the times THIS update sets — a legacy off-grid activity
+      // must stay editable on unrelated fields (window check still uses merged).
+      { checkIn: dto.checkInTime !== undefined, checkOut: dto.checkOutTime !== undefined },
+    );
 
     const { categoryId, subCategoryId, cityId, ...rest } = dto;
     const data: any = { ...rest };
@@ -1992,19 +2268,131 @@ export class AdminService {
       throw new BadRequestException('bankTransferRef is required — record the bank-side wire confirmation number before marking paid.');
     }
 
+    // Escrow buffer — MUST mirror evaluatePayoutEligibility and the
+    // approve-payout path (both filter `booking.endDatetime < payoutCutoff`).
+    // This release path used to omit it, so a payment could be marked PAID
+    // while its activity was still in the future. The customer could then
+    // cancel before start (cancelBooking only blocks AFTER start) and the
+    // refund would be approved with no awareness that the vendor had already
+    // been paid — money out twice, with no clawback and no alert anywhere.
+    // Filtering here means an ineligible row is simply not marked, and the
+    // count check below surfaces the discrepancy to the caller.
+    const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
+    const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
+
+    // ── Pre-validate BEFORE writing anything ────────────────────────────────
+    // Marking paid is the system's record that a bank wire ALREADY LEFT
+    // (bankTransferRef is mandatory above). If some rows silently fail to
+    // match, the admin has wired money the DB still considers UNPAID — those
+    // rows resurface in the next payout cycle and get wired a SECOND time.
+    // The UI cannot save us here: payments-tab.tsx discards the return value
+    // and toasts success unconditionally.
+    //
+    // So refuse the whole batch and name the offenders instead of settling a
+    // subset. Nothing is written, and the admin can correct the selection
+    // before (or after) the wire rather than discovering a double-payment on
+    // a bank statement.
+    // Scope the rejection to ESCROW only, deliberately.
+    //
+    // Rows in a genuinely invalid state (REFUNDED / REJECTED / REFUND_PENDING,
+    // or already PAID) are still skipped silently — that is the existing,
+    // tested contract, and it is safe because the payouts list only ever
+    // offers `status: SUCCESS, payoutStatus: UNPAID` rows, so an admin cannot
+    // select them from the UI. Skipping there is defence-in-depth against a
+    // crafted API call, not something a human will act on.
+    //
+    // Escrow is different: those rows ARE offered by the list (it does not
+    // filter on endDatetime), they look completely normal, and marking paid
+    // records a bank wire that has ALREADY LEFT. Silently skipping them leaves
+    // them UNPAID, so they resurface next cycle and get wired a SECOND time —
+    // and payments-tab.tsx discards the return value and toasts success
+    // regardless. So refuse the batch and name them.
+    const inEscrow = await db.payment.findMany({
+      where: {
+        id: { in: paymentIds },
+        status: 'SUCCESS',
+        payoutStatus: 'UNPAID',
+        booking: { endDatetime: { gte: payoutCutoff } },
+      },
+      select: { id: true },
+    });
+    if (inEscrow.length > 0) {
+      const ids = inEscrow.map((p) => p.id);
+      this.logger.warn({
+        event: 'PAYOUT_MARK_PAID_REJECTED_ESCROW',
+        requested: paymentIds.length,
+        inEscrow: ids.length,
+      });
+      // The message must describe the ACTUAL cutoff. With
+      // PAYOUT_SETTLEMENT_BUFFER_DAYS=3 an activity that ended two days ago is
+      // still in escrow, so "has not ended yet" would be plainly false and
+      // send the admin looking for a problem that isn't there.
+      const bufferNote = payoutBufferDays > 0
+        ? `their activity has not yet cleared the ${payoutBufferDays}-day settlement buffer`
+        : 'their activity has not ended yet';
+      const retryNote = payoutBufferDays > 0
+        ? `Retry once ${payoutBufferDays} day(s) have passed since the activity ended.`
+        : 'Retry once the activities have ended.';
+      throw new BadRequestException(
+        `${ids.length} of ${paymentIds.length} selected payment(s) are still in payout escrow — ` +
+          `${bufferNote}. No payments were changed. Paying these out now risks ` +
+          'the customer cancelling before the activity starts and being refunded while the vendor ' +
+          `already holds the money. ${retryNote} Payment ids: ${ids.slice(0, 10).join(', ')}` +
+          (ids.length > 10 ? ` (+${ids.length - 10} more)` : ''),
+      );
+    }
+
     // `payoutStatus: 'UNPAID'` in the where makes this a one-way transition:
     // a row already marked PAID is skipped, so a concurrent / repeated call
-    // can't overwrite its original `paidAt` + `bankTransferRef`.
+    // can't overwrite its original `paidAt` + `bankTransferRef`. The same
+    // predicate is repeated here (not just relied on from the check above)
+    // because a concurrent mark-paid could land between the two statements.
     const result = await db.payment.updateMany({
-      where: { id: { in: paymentIds }, status: 'SUCCESS', payoutStatus: 'UNPAID' },
+      where: {
+        id: { in: paymentIds },
+        status: 'SUCCESS',
+        payoutStatus: 'UNPAID',
+        booking: { endDatetime: { lt: payoutCutoff } },
+      },
       data: { payoutStatus: 'PAID', paidAt: new Date(), bankTransferRef: trimmedRef },
     });
+
+    // Lost the race against a concurrent mark-paid between the check and the
+    // write. Surface it — the count is what the caller acts on.
+    if (result.count < paymentIds.length) {
+      // The bank transfer has ALREADY been sent (bankTransferRef is required
+      // above), so a short write is money out with no matching PAID row.
+      // Causes are wider than a concurrent mark-paid: a cancellation or refund
+      // landing between the escrow probe and this update also flips a row out
+      // of SUCCESS/UNPAID. Either way it needs a human, not a debug line —
+      // this is the same class of exposure as REFUND_ON_PAID_OUT_BOOKING.
+      this.logger.error({
+        event: 'PAYOUT_MARK_PAID_PARTIAL',
+        requested: paymentIds.length,
+        marked: result.count,
+        unmarked: paymentIds.length - result.count,
+        bankTransferRef: trimmedRef,
+        reason: 'rows changed between the eligibility probe and the write (concurrent mark-paid, cancellation, or refund)',
+      });
+      this.notificationService.notifyAdmins({
+        type: 'SYSTEM',
+        title: 'Payout partially recorded — reconcile manually',
+        message: `A bank transfer (${trimmedRef}) covered ${paymentIds.length} payment(s) but only ${result.count} were marked PAID. The remaining ${paymentIds.length - result.count} changed state mid-operation and must be reconciled by hand.`,
+        link: '/admin/payouts',
+      });
+    }
 
     // Notify each vendor whose payments were marked as paid. Pull the slug
     // here too so the notification link resolves to a real route (the vendor
     // portal lives under /vendor/[slug]/*, not /vendor/*).
+    // Re-query the rows this call ACTUALLY settled, not everything submitted.
+    // updateMany returns a count and no ids, so filtering on
+    // `bankTransferRef` + PAID identifies exactly the rows this transfer just
+    // stamped. Notifying on the submitted list instead would tell a vendor
+    // "your payout has been sent" for payments that were skipped — escrow,
+    // already-paid, or state-changed — which is worse than staying silent.
     const payments = await this.prisma.client.payment.findMany({
-      where: { id: { in: paymentIds } },
+      where: { id: { in: paymentIds }, payoutStatus: 'PAID', bankTransferRef: trimmedRef },
       select: { booking: { select: { vendorId: true, vendor: { select: { userId: true, slug: true } } } } },
     });
     const notifiedVendors = new Set<string>();
@@ -2282,11 +2670,17 @@ export class AdminService {
     // PayoutRequest.
     if (action === 'APPROVED' && request.status === 'PENDING') {
       const updated = await db.$transaction(async (tx) => {
+        // Escrow buffer — mirror evaluatePayoutEligibility: only settle bookings
+        // whose activity has ENDED (+ optional PAYOUT_SETTLEMENT_BUFFER_DAYS), so
+        // the FIFO lock (ordered by payment.createdAt, which does NOT track the
+        // activity date) can't tie up a still-cancellable future booking.
+        const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
+        const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
         const eligible = await tx.payment.findMany({
           where: {
             status: 'SUCCESS',
             payoutStatus: 'UNPAID',
-            booking: { vendorId: request.vendorId },
+            booking: { vendorId: request.vendorId, endDatetime: { lt: payoutCutoff } },
           },
           select: {
             id: true,

@@ -43,8 +43,33 @@ function makeCtx(req: any) {
 async function runOk(interceptor: AdminAuditInterceptor, req: any, result: any = { ok: true }) {
   const obs = interceptor.intercept(makeCtx(req), { handle: () => of(result) });
   await firstValueFrom(obs);
-  // The audit write is fire-and-forget inside the tap — give it a tick
+  // The audit write is fire-and-forget inside the tap — give it a tick.
+  // NOTE: tests that EXPECT a row must use waitForAuditRow() rather than relying
+  // on this sleep (see below).
   await new Promise(r => setTimeout(r, 100));
+}
+
+/**
+ * The interceptor writes the audit row fire-and-forget (deliberately — it must
+ * not block the HTTP response). Tests used to `sleep(100)` and then immediately
+ * `findFirstOrThrow()`, which is a race: on a loaded CI runner the insert takes
+ * longer than 100ms, the row is not there yet, and Prisma throws
+ * "No record was found for a query". That is exactly the flake we kept seeing on
+ * `VendorAuditInterceptor -> sensitive key "password" redacted`.
+ *
+ * Poll for the row instead of guessing a timeout. Condition-based waiting is
+ * both faster (returns as soon as it lands) and immune to runner load.
+ */
+async function waitForAuditRow(timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const row = await ctx.prisma.auditLog.findFirst();
+    if (row) return row;
+    if (Date.now() > deadline) {
+      throw new Error(`audit row never landed within ${timeoutMs}ms (fire-and-forget write lost?)`);
+    }
+    await new Promise(r => setTimeout(r, 25));
+  }
 }
 
 /** Drive the interceptor's RxJS pipeline for a failing handler. */
@@ -70,6 +95,10 @@ describe('AdminAuditInterceptor — HTTP method filtering', () => {
       params: {},
     });
 
+    // The interceptor writes the audit row FIRE-AND-FORGET, so a direct findMany
+    // here races the write (intermittent "Received length: 0"). Poll until it
+    // lands, THEN read the set — the length-1 assertion still catches extras.
+    await waitForAuditRow();
     const rows = await ctx.prisma.auditLog.findMany();
     expect(rows).toHaveLength(1);
     expect(rows[0].actorType).toBe('ADMIN');
@@ -90,7 +119,7 @@ describe('AdminAuditInterceptor — HTTP method filtering', () => {
       params: { id: 'vendor-1' },
     });
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.action).toBe('UPDATE_VENDOR_STATUS');
     expect(row.entity).toBe('Vendor');
     expect(row.entityId).toBe('vendor-1');
@@ -107,7 +136,7 @@ describe('AdminAuditInterceptor — HTTP method filtering', () => {
       params: { id: 'vendor-1' },
     });
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.action).toBe('DELETE_VENDOR');
     expect(row.entityId).toBe('vendor-1');
   });
@@ -148,7 +177,7 @@ describe('AdminAuditInterceptor — redactKeys', () => {
       params: {},
     });
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).toContain('[REDACTED]');
     expect(row.details).not.toContain('super-secret-value-xyz');
   });
@@ -164,7 +193,7 @@ describe('AdminAuditInterceptor — redactKeys', () => {
       params: {},
     });
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).not.toContain('customer@example.com');
     expect(row.details).toContain('[REDACTED]');
   });
@@ -180,7 +209,7 @@ describe('AdminAuditInterceptor — redactKeys', () => {
       params: {},
     });
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).toContain('Oman');
     expect(row.details).toContain('OM');
     expect(row.details).toContain('ACTIVE');
@@ -202,7 +231,7 @@ describe('AdminAuditInterceptor — redactKeys', () => {
       params: {},
     });
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).toContain('Oman');
     expect(row.details).toContain('ACTIVE');
     expect(row.details).not.toContain('hunter2');
@@ -226,7 +255,7 @@ describe('AdminAuditInterceptor — image collapse', () => {
       params: {},
     });
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).toContain('[image]');
     expect(row.details).not.toContain('cdn.jadwal.app');
   });
@@ -242,7 +271,7 @@ describe('AdminAuditInterceptor — image collapse', () => {
       params: {},
     });
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).toContain('[3 images]');
     expect(row.details).not.toContain('a.jpg');
   });
@@ -258,7 +287,7 @@ describe('AdminAuditInterceptor — image collapse', () => {
       params: {},
     });
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).toContain('[base64 image]');
     expect(row.details).not.toContain('iVBORw0KGgo');
   });
@@ -280,7 +309,7 @@ describe('AdminAuditInterceptor — failure still writes an audit row', () => {
       params: {},
     }, new Error('Country already exists'));
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).toMatch(/^FAILED: Country already exists \|/);
     expect(row.details).toContain('Oman');
   });
@@ -296,7 +325,7 @@ describe('AdminAuditInterceptor — failure still writes an audit row', () => {
       params: {},
     }, new Error('Current password is incorrect'));
 
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details).toContain('FAILED:');
     expect(row.details).toContain('[REDACTED]');
     expect(row.details).not.toContain('oldpass!');
@@ -333,7 +362,7 @@ describe('AdminAuditInterceptor — edge cases', () => {
       user: { id: 'admin-1', fullName: 'Alice' },
       params: {},
     });
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.details!.length).toBeLessThanOrEqual(1000);
   });
 
@@ -347,7 +376,7 @@ describe('AdminAuditInterceptor — edge cases', () => {
       user: { id: 'admin-1', fullName: 'Alice' },
       params: {},
     });
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.action).toMatch(/^POST_/);
     expect(row.action).toContain('WEIRD');
   });
@@ -362,7 +391,7 @@ describe('AdminAuditInterceptor — edge cases', () => {
       user: { id: 'abcdef1234567890' },
       params: {},
     });
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.actorName).toBe('user:abcdef12');
   });
 
@@ -376,7 +405,7 @@ describe('AdminAuditInterceptor — edge cases', () => {
       user: { id: 'admin-1', fullName: 'Alice' },
       params: { id: 'abc-123' },
     });
-    const row = await ctx.prisma.auditLog.findFirstOrThrow();
+    const row = await waitForAuditRow();
     expect(row.entityId).toBe('abc-123');
     expect(row.entity).toBe('Coupon');
     expect(row.action).toBe('UPDATE_COUPON_STATUS');

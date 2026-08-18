@@ -17,6 +17,7 @@ import {
 import { Type } from 'class-transformer';
 import { ExtraServiceItem } from './create-activity.dto';
 import { ACTIVITY_TITLE_REGEX, ACTIVITY_TITLE_MESSAGE } from '../../common/validators/name-allowlist';
+import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
 
 enum BookingType {
   HOURLY = 'HOURLY',
@@ -43,9 +44,12 @@ export class UpdateActivityDto {
   @IsOptional()
   titleAr?: string;
 
+  // Same slug contract as create: lowercase a-z/0-9/hyphen, not a reserved word.
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)
+  @Matches(/^[a-z0-9-]+$/, { message: 'URL slug may only contain lowercase letters, numbers, and hyphens' })
+  @IsNotReservedSlug()
   @IsOptional()
   slug?: string;
 
@@ -88,12 +92,16 @@ export class UpdateActivityDto {
   @IsOptional()
   pricingModel?: PricingModel;
 
+  // Format only (any valid HH:MM). The 30-min-grid rule for HOURLY is enforced in
+  // assertHourlyTimesConsistent so DAILY check-in/out isn't over-restricted.
   @IsString()
   @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkInTime must be a valid time (HH:MM)' })
   checkInTime?: string;
 
   @IsString()
   @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkOutTime must be a valid time (HH:MM)' })
   checkOutTime?: string;
 
   @IsInt()

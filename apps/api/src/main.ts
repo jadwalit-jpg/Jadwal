@@ -96,6 +96,33 @@ async function bootstrap() {
       process.exit(1);
     }
 
+    // Rate limiting must be ON in production.
+    //
+    // `THROTTLE_ENABLED=false` collapses every tier to 100_000/min (see
+    // app.module.ts + throttle-config.ts), i.e. no rate limiting at all —
+    // including on /auth/login, OTP send and password-reset. `false` is the
+    // documented value for the E2E workflow, so one copied task-def env var
+    // (or a mistyped SSM parameter) silently disables platform-wide abuse
+    // protection with NO startup signal and nothing failing.
+    //
+    // The default is already 'true' when unset, so this only rejects an
+    // explicit opt-out. Fail loudly rather than boot unprotected: an outage
+    // is recoverable in minutes, a silently unthrottled auth endpoint is not.
+    // Compare the RAW value, exactly as app.module.ts does
+    // (`config.get('THROTTLE_ENABLED', 'true') === 'true'`). Do NOT trim and do
+    // NOT treat '' as absent: @nestjs/config returns '' for an explicitly-empty
+    // env var rather than falling back to the default, so THROTTLE_ENABLED=""
+    // and THROTTLE_ENABLED=" true " both DISABLE the throttler. A guard that
+    // normalises more loosely than its consumer waves through precisely the
+    // values it exists to catch.
+    const throttleRaw = process.env.THROTTLE_ENABLED;
+    if (throttleRaw !== undefined && throttleRaw !== 'true') {
+      console.error(
+        `\n[FATAL] THROTTLE_ENABLED must be exactly "true" in production (got ${JSON.stringify(throttleRaw)}). Any other value disables rate limiting platform-wide — all tiers become 100000/min, including /auth/login, OTP send and password reset. Set it to "true" or remove the variable entirely.\n`,
+      );
+      process.exit(1);
+    }
+
     // DB connection — strict in production.
     //
     // We're already inside `if (NODE_ENV === 'production')` (outer block at
@@ -153,7 +180,10 @@ async function bootstrap() {
     // SMS_ENABLED is no longer injected by the task definition.
     const requiredServices: Array<{ key: string; name: string }> = [
       { key: 'EMAIL_ENABLED', name: 'Email (Resend)' },
-      { key: 'PAYMENT_ENABLED', name: 'Payment (PAY2M)' },
+      // PAYMENT_ENABLED is intentionally NOT in this "must be true" list. It may
+      // be deliberately set to 'false' to PAUSE payments (e.g. during a gateway
+      // incident) WITHOUT taking the whole API down — it is validated as an
+      // explicit boolean just below, so a missing/garbage value still fails fast.
     ];
     const disabled = requiredServices.filter((s) => process.env[s.key] !== 'true');
     if (disabled.length) {
@@ -163,6 +193,19 @@ async function bootstrap() {
           .join('\n  ')}\n`,
       );
       process.exit(1);
+    }
+
+    // Payment toggle: must be an explicit boolean. 'true' = live; 'false' =
+    // intentionally paused (initiate + callback return "Payment service is not
+    // available", but the rest of the API keeps running normally). A missing or
+    // typo'd value is a misconfiguration and still fails fast.
+    const paymentFlag = process.env.PAYMENT_ENABLED;
+    if (paymentFlag !== 'true' && paymentFlag !== 'false') {
+      console.error(`\n[FATAL] PAYMENT_ENABLED must be 'true' or 'false' (got: ${paymentFlag ?? 'unset'}).\n`);
+      process.exit(1);
+    }
+    if (paymentFlag === 'false') {
+      console.warn('\n[BOOT] PAYMENT_ENABLED=false — payments are PAUSED; the rest of the API is running normally.\n');
     }
   }
 

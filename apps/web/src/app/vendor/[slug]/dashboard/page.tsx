@@ -1,5 +1,7 @@
 'use client';
 
+import { pickBadge, type ActivityStatus, type BookingStatus } from '@/lib/status-config';
+
 import React, { useMemo } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { useRouter, useParams } from 'next/navigation';
@@ -89,7 +91,7 @@ export default function VendorDashboardPage() {
     [chartData],
   );
 
-  const BOOKING_STATUS_CLASSES: Record<string, string> = {
+  const BOOKING_STATUS_CLASSES: Record<BookingStatus, string> = {
     PENDING:   'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
     CONFIRMED: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
     COMPLETED: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
@@ -100,15 +102,19 @@ export default function VendorDashboardPage() {
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 font-outfit text-gray-900 dark:text-white">
       <VendorSidebar />
 
-      <main className="md:ms-64 p-4 md:p-10 overflow-x-hidden">
-        <header className="flex justify-between items-center mb-10">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
+      <main className="md:ms-64 p-4 max-md:pt-16 md:p-10 overflow-x-hidden">
+        {/* Stacks on mobile. It was `flex justify-between` with no wrap, so a long
+            business name and the New Activity button were forced onto one row and
+            collided (reported on iPhone). `min-w-0` lets the heading actually
+            shrink instead of pushing the buttons off-screen. */}
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-10">
+          <div className="min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-white break-words">
               {t('vendor.dashboard.welcomeBack', { name: (user?.vendor ? localized(user.vendor, 'businessName') : '') || user?.fullName })}
             </h1>
             <p className="text-gray-500 dark:text-slate-400 mt-1">{t('vendor.dashboard.manageListings')}</p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 shrink-0">
             <button
               onClick={() => router.push(`/vendor/${slug}/activities/new`)}
               className="flex items-center gap-2 px-5 py-2.5 bg-linear-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white rounded-xl font-semibold transition-all shadow-lg shadow-teal-600/20 dark:shadow-teal-900/40 cursor-pointer"
@@ -275,7 +281,7 @@ export default function VendorDashboardPage() {
                   </thead>
                   <tbody>
                     {recentBookings.map((b: any) => {
-                      const statusClass = BOOKING_STATUS_CLASSES[b.status] ?? BOOKING_STATUS_CLASSES.PENDING;
+                      const statusClass = pickBadge(BOOKING_STATUS_CLASSES, b.status, BOOKING_STATUS_CLASSES.PENDING);
                       // Nominal = totalPrice + couponDiscount. Under the
                       // new accounting, totalPrice already carries the full
                       // vendor value for every payment method (cash, Wanasa,
@@ -287,7 +293,7 @@ export default function VendorDashboardPage() {
                         <tr key={b.id} className="border-b border-gray-50 dark:border-slate-800/50 last:border-0 hover:bg-gray-50/50 dark:hover:bg-slate-800/20 transition-colors">
                           <td className="px-6 py-3 text-sm text-gray-900 dark:text-white">{b.customer?.fullName}</td>
                           <td className="px-6 py-3 text-xs text-gray-500 dark:text-slate-400 max-w-[100px] truncate">{localized(b.activity, 'title')}</td>
-                          <td className="px-6 py-3 text-xs text-gray-500 dark:text-slate-400">{new Date(b.startDatetime).toLocaleDateString()}</td>
+                          <td className="px-6 py-3 text-xs text-gray-500 dark:text-slate-400">{new Date(b.startDatetime).toLocaleDateString(undefined, { timeZone: 'UTC' })}</td>
                           <td className="px-6 py-3">
                             <div className="flex flex-col gap-0.5">
                               <span className="text-sm font-medium text-gray-900 dark:text-white">
@@ -301,7 +307,7 @@ export default function VendorDashboardPage() {
                               ) : pts > 0 ? (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-medium text-purple-600 dark:text-purple-400 w-fit">
                                   <Sparkles className="h-2.5 w-2.5" aria-hidden="true" />
-                                  {t('vendor.dashboard.pts', { count: pts })}
+                                  {t('vendor.dashboard.pts', { count: pts.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })}
                                 </span>
                               ) : null}
                             </div>
@@ -353,13 +359,13 @@ export default function VendorDashboardPage() {
             ) : (
               <div className="divide-y divide-gray-50 dark:divide-slate-800/50">
                 {activities.map((activity: any) => {
-                  const ACTIVITY_STATUS_CLASSES: Record<string, string> = {
+                  const ACTIVITY_STATUS_CLASSES: Record<ActivityStatus, string> = {
                     PENDING:  'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
                     ACTIVE:   'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
                     INACTIVE: 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400',
                     BLOCKED:  'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
                   };
-                  const statusClass = ACTIVITY_STATUS_CLASSES[activity.status] ?? ACTIVITY_STATUS_CLASSES.PENDING;
+                  const statusClass = pickBadge(ACTIVITY_STATUS_CLASSES, activity.status, ACTIVITY_STATUS_CLASSES.PENDING);
                   const statusLabel = t(`vendor.dashboard.activityStatus.${activity.status}`, { defaultValue: activity.status });
                   return (
                     <div

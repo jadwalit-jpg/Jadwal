@@ -16,7 +16,7 @@ import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import {
   makeJwtMock, makeConfigMock, makeSecurityLoggerMock, makeAuditLoggerMock,
   makeEmailMock, makeEmailQuotaMock, makeNotificationMock, makeRedisMock,
-  makeResponseMock, makeRequestMock,
+  makeResponseMock, makeRequestMock, makeSessionDenylistMock,
 } from '../mocks/auth-deps.mock';
 import { UnauthorizedException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
@@ -40,6 +40,7 @@ function makeAuth() {
     makeEmailQuotaMock() as any,
     makeNotificationMock() as any,
     makeRedisMock() as any,
+    makeSessionDenylistMock() as any,
   );
 }
 
@@ -52,6 +53,7 @@ function makeAdmin() {
     loyalty,
     { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any,
     { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any,
+    makeSessionDenylistMock() as any,
   );
 }
 

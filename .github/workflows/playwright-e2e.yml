@@ -18,11 +18,12 @@ name: Playwright E2E
 
 on:
   pull_request:
+    # No `paths:` filter — E2E runs on EVERY PR to main/develop. This is required
+    # for E2E to be a branch-protection REQUIRED check: a path-filtered workflow
+    # that doesn't trigger never reports its check, which would deadlock any PR
+    # that doesn't touch the filtered paths (docs/config-only). Matches how the
+    # repo's other required checks (ci.yml) run on all PRs.
     branches: [main, develop]
-    paths:
-      - 'apps/web/**'
-      - 'apps/api/**'
-      - '.github/workflows/playwright-e2e.yml'
   workflow_dispatch:
     inputs:
       grep_pattern:
@@ -39,10 +40,28 @@ permissions:
 
 env:
   NODE_VERSION: 22
+  # Total shard count — single source of truth for the `--shard=N/TOTAL`
+  # denominator (the value that actually decides which tests each job runs).
+  # Keep the `matrix.shard` list length in sync with this (GitHub Actions can't
+  # generate a matrix list from an env value); the job name mirrors it too.
+  TOTAL_SHARDS: 3
   # Test-only secrets — never used in production. The auth layer
   # accepts any 32+ char value here; rotating is fine and expected.
   JWT_SECRET: ci-only-test-secret-do-not-use-in-prod-eeeeeeeeeeeeeeeeeee
   JWT_REFRESH_SECRET: ci-only-test-refresh-secret-do-not-use-eeeeeeeeeeeeeee
+  # Access-token TTL. Default is 900s (15 min); a sharded run is ~12 min and the
+  # auth storageState is captured up-front in the setup project, so late-running
+  # specs (vendor-* sort last) would hit an EXPIRED token → the page redirects to
+  # login before the axios refresh lands → flaky "heading not visible". A 2-hour
+  # TTL keeps the seeded session valid for the whole run. TEST-ONLY — prod sets
+  # JWT_EXPIRATION via the ECS task definition, never this file.
+  JWT_EXPIRATION: '7200'
+  # Disable rate limiting for the E2E run. In CI every request originates from
+  # 127.0.0.1, so the whole serial suite shares ONE rate-limit bucket → the auth
+  # (5/min) and write tiers trip constantly → intermittent 429s on whichever
+  # specs happen to hit the ceiling first (the random, shifting failure set we
+  # saw). TEST-ONLY — production sets THROTTLE_ENABLED=true via the ECS task def.
+  THROTTLE_ENABLED: 'false'
   DATABASE_URL: postgresql://jadwal:jadwal@localhost:5432/jadwal_e2e
   REDIS_URL: redis://localhost:6379
   NEXT_PUBLIC_API_URL: http://localhost:4000/api
@@ -86,24 +105,29 @@ env:
 
 jobs:
   e2e:
-    name: E2E (${{ matrix.project }})
+    name: E2E (${{ matrix.project }} ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # NOT job-level continue-on-error — that makes the check display ❌
-    # on the PR even though the workflow conclusion is success. Instead
-    # we mark the single failure-prone step (Run Playwright) with
-    # continue-on-error and always-run the artefact uploads. End result:
-    # job conclusion = success → check shows ✓ on the PR, while spec
-    # failures still surface via the uploaded report artefact.
+    # A spec failure fails the job (the Run Playwright step is no longer
+    # continue-on-error) → E2E is a real green/red check. Report + trace
+    # artefacts still upload on failure via `if: always()` on the upload steps.
     strategy:
       fail-fast: false
       matrix:
-        # mobile-chrome temporarily removed (2026-05-03) — runtime was ~12 min
-        # per project, doubling PR wall-clock; both projects fail consistently
-        # on prod-targeted PRs because no staging stack exists yet. Re-add
-        # mobile-chrome once a dedicated staging environment is wired up so
-        # the suite can actually pass green and the wait is justified.
-        project: [chromium]
+        # Desktop Chrome + mobile Chrome (Pixel 7). Jadwal is a GCC marketplace
+        # where most customer traffic is on phones, so mobile coverage matters.
+        # mobile-chrome skips the admin/vendor spec families (desktop-only
+        # dashboards, see playwright.config.ts testIgnore) and the visual-
+        # regression spec is CI-skipped, so it runs the customer + landing flows.
+        project: [chromium, mobile-chrome]
+        # Shard the suite across 3 parallel jobs (each spins up its OWN
+        # isolated Postgres+Redis+API+Web below, so there is NO cross-shard
+        # shared-state race — within a shard workers=1 keeps it serial too).
+        # This is what lets the full suite FINISH well inside the 30-min job
+        # timeout (a single unsharded run overran it and got cancelled) and is
+        # the prerequisite for turning E2E into a required merge gate. Keep the
+        # denominator here in sync with `--shard=.../N` in the Run step below.
+        shard: [1, 2, 3]
 
     services:
       postgres:
@@ -130,7 +154,7 @@ jobs:
           - 6379:6379
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -257,11 +281,13 @@ jobs:
 
       - name: Run Playwright (${{ matrix.project }})
         working-directory: apps/web
-        # Step-level continue-on-error so the job conclusion is success
-        # (and the check shows ✓ on the PR) even when individual specs
-        # fail. Failure context is preserved via the report + traces
-        # artefacts, which now upload on success too via if: always().
-        continue-on-error: true
+        # NOTE: no continue-on-error — a spec failure now FAILS the job, so E2E
+        # is a real green/red signal (the prerequisite for making it a required
+        # merge gate). The report + trace artefacts still upload on failure via
+        # `if: always()` on the upload steps below. If this proves flaky in
+        # practice, re-add `continue-on-error: true` here to make it advisory
+        # again rather than blocking (once it's a required branch-protection
+        # check, an advisory revert also means removing it from that list).
         env:
           CI: '1'
           PLAYWRIGHT_BASE_URL: http://localhost:3000
@@ -273,16 +299,16 @@ jobs:
           GREP_PATTERN: ${{ inputs.grep_pattern }}
         run: |
           if [ -n "$GREP_PATTERN" ]; then
-            npx playwright test --project=${{ matrix.project }} --grep "$GREP_PATTERN"
+            npx playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ env.TOTAL_SHARDS }} --grep "$GREP_PATTERN"
           else
-            npx playwright test --project=${{ matrix.project }}
+            npx playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ env.TOTAL_SHARDS }}
           fi
 
       - name: Upload Playwright report (on success or failure)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: playwright-report-${{ matrix.project }}
+          name: playwright-report-${{ matrix.project }}-shard${{ matrix.shard }}
           path: apps/web/playwright-report/
           retention-days: 14
 
@@ -290,6 +316,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: playwright-traces-${{ matrix.project }}
+          name: playwright-traces-${{ matrix.project }}-shard${{ matrix.shard }}
           path: apps/web/test-results/
           retention-days: 14

@@ -1,9 +1,18 @@
 {
-  "brand": "Jadwal",
-  "brandAr": "جدول",
+  "brand": "AL Jadwal",
+  "brandAr": "الجدول",
+  "cookies": {
+    "title": "Cookies",
+    "message": "We use cookies to analyze traffic and improve your experience. You can accept or decline analytics and marketing cookies.",
+    "learnMore": "Learn more",
+    "accept": "Accept",
+    "decline": "Decline"
+  },
   "nav": {
     "home": "Home",
     "explore": "Explore",
+    "guides": "Guides",
+    "redSea": "Red Sea",
     "offers": "Offers & Coupons",
     "becomeVendor": "Become a Vendor",
     "login": "Login",
@@ -21,6 +30,7 @@
     "allActivities": "All Activities",
     "featured": "Featured",
     "trending": "Trending",
+    "guides": "Guides",
     "company": "Company",
     "about": "About",
     "contactUs": "Contact Us",
@@ -30,6 +40,7 @@
     "contact": "Contact",
     "address": "AL Jadwal · Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar",
     "legalEntity": "AL Jadwal",
+    "tagline": "Your ideal destination for exceptional events, exciting activities and unforgettable experiences - all in one place.",
     "rights": "All rights reserved."
   },
   "home": {
@@ -38,6 +49,9 @@
     "heroSubtitle": "Discover and book the best activities, tours, and experiences across Qatar",
     "searchPlaceholder": "Search activities, tours, experiences...",
     "search": "Search",
+    "searching": "Searching…",
+    "noSuggestions": "No matches found",
+    "viewAllResults": "See all results",
     "allCategories": "All Categories",
     "averageRating": "Average Rating",
     "bookings": "Bookings",
@@ -46,13 +60,15 @@
     "trendingSubtitle": "Popular experiences people are loving right now",
     "readMore": "Read more",
     "close": "Close",
+    "showLess": "Show less",
     "categories": "Browse Categories",
     "categoriesSubtitle": "Find the perfect activity for you",
     "featured": "Featured Activities",
     "featuredSubtitle": "Handpicked experiences you'll love",
     "nearYou": "Near You",
+    "nearYouIn": "Near You in",
     "nearYouSubtitle": "Activities happening in your area",
-    "whyChoose": "Why Choose Jadwal?",
+    "whyChoose": "Why Choose AL Jadwal?",
     "verifiedPartners": "Verified Partners",
     "verifiedPartnersDesc": "Every vendor is vetted and approved by our team",
     "instantConfirmation": "Instant Confirmation",
@@ -60,7 +76,7 @@
     "securePayments": "Secure Payments",
     "securePaymentsDesc": "Your payment is protected with bank-level encryption",
     "easyCancellation": "Easy Cancellation",
-    "easyCancellationDesc": "Free cancellation up to 24 hours before. Full refund guaranteed",
+    "easyCancellationDesc": "Many activities offer free cancellation — each activity's policy is shown before you book",
     "viewAll": "View All",
     "bookNow": "Book Now",
     "perPerson": "per person",
@@ -69,7 +85,7 @@
     "findNearMe": "Find Near Me",
     "locationDenied": "Location access denied",
     "ctaTitle": "Ready to Explore Qatar?",
-    "ctaSubtitle": "Book your next adventure and create lasting memories with Jadwal.",
+    "ctaSubtitle": "Book your next adventure and create lasting memories with AL Jadwal.",
     "getStarted": "Get Started"
   },
   "activity": {
@@ -112,6 +128,7 @@
     "hour": "hour",
     "nights": "nights",
     "night": "night",
+    "minStay": "Min",
     "days": "days",
     "day": "day",
     "person": "person",
@@ -189,12 +206,15 @@
       "verifyToPay": "Verify your email to pay",
       "reopenCta": "Enter verification code"
     },
+    "refundQueuedTitle": "We couldn't confirm your booking",
+    "refundQueuedDesc": "The spot became unavailable before your payment could be confirmed. Your payment of {{amount}} {{cur}} is safe — a refund has been queued and will be added to your balance as Wanasa points once processed. No action needed.",
     "cancel": "Cancel",
     "bookAgain": "Book again",
     "date": "Date",
     "time": "Time",
     "checkIn": "Check-in",
     "checkOut": "Check-out",
+    "clearDates": "Clear dates",
     "guests": "Guests",
     "statusLabel": "Status",
     "subtotal": "Subtotal",
@@ -230,11 +250,17 @@
     "useVoucher": "Use a voucher",
     "noVouchers": "No vouchers available",
     "priceBreakdown": "Price Breakdown",
+    "specialPriceDay": "Special price",
     "basePrice": "Base price",
     "extras": "Extras",
     "loginToBook": "Login to book",
+    "termsRequired": "Please accept our Terms & Privacy to book.",
     "selectStartTime": "Tap an hour to start — the next {{hours}}h are auto-selected",
     "hourRangeHint": "Minimum {{hours}}h. Tap a later hour to extend. Closing: {{closing}}.",
+    "slotBlocked": "blocked by host",
+    "slotBlockedLegend": "Times marked with a lock are blocked by the host.",
+    "cantBookOverOffHours": "Can't book over the host's off-hours — pick a time that doesn't cross a locked slot.",
+    "cantBookOverOffDays": "Can't book over the host's off-days — your stay would cross a locked date.",
     "clear": "Clear",
     "duration": "Duration",
     "toast": {
@@ -283,11 +309,37 @@
     "createAccountBtn": "Create Account",
     "agreeTerms": "By signing up you agree to our",
     "and": "and",
+    "agreeTermsCheckbox": "I agree to the",
+    "and18Plus": "and confirm I am 18 or older",
+    "mustAgreeTerms": "You must accept the Terms and Privacy Policy",
+    "termsGate": {
+      "title": "One more step",
+      "body": "Please review and accept our Terms and Privacy Policy to continue using Jadwal.",
+      "accept": "Accept",
+      "signOut": "Sign out",
+      "failed": "Could not record your acceptance. Please try again.",
+      "accepted": "Thanks — you can now book.",
+      "dismiss": "Dismiss",
+      "bannerTitle": "Review our Terms",
+      "bannerBody": "Browse freely — to book, please accept our",
+      "modalTitle": "Accept our Terms to continue",
+      "modalBody": "To continue, please accept our",
+      "cancel": "Cancel"
+    },
     "checkInbox": "Check your inbox",
     "sentVerificationTo": "We sent a verification link to",
     "linkExpires": "Click the link in the email to activate your account. It expires in 24 hours.",
     "backToLogin": "Back to login",
     "passwordHint": "Min. 8 chars, A-Z, a-z, 0-9",
+    "passwordStrength": {
+      "veryWeak": "Very weak",
+      "weak": "Weak",
+      "fair": "Fair",
+      "good": "Good",
+      "strong": "Strong",
+      "minHint": "Use a stronger password",
+      "tooWeak": "Password is too weak. Use a longer, less common password."
+    },
     "forgotPasswordTitle": "Forgot your password?",
     "forgotPasswordDesc": "Enter your email and we'll send you a reset link.",
     "emailPlaceholder": "Email address",
@@ -372,12 +424,14 @@
     "emailLabel": "Email",
     "phoneLabel": "Phone",
     "instagramLabel": "Instagram",
+    "whatsappLabel": "WhatsApp",
+    "whatsappGreeting": "Hi, I have a question about AL Jadwal",
     "addressLabel": "Office",
     "addressValue": "AL Jadwal · Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar"
   },
   "about": {
     "title": "About",
-    "fallbackDesc": "Your premier platform for discovering and booking unforgettable experiences across the GCC.",
+    "fallbackDesc": "Your ideal destination for exceptional events, exciting activities and unforgettable experiences - all in one place.",
     "gccWide": "GCC-Wide",
     "gccWideDesc": "Connecting customers with the best activities across Qatar, Saudi Arabia, UAE, and more.",
     "securePayments": "Secure Payments",
@@ -416,7 +470,7 @@
   "vendor": {
     "portalTitle": "Vendor Portal",
     "signInDesc": "Sign in to your vendor account",
-    "joinDesc": "Join Jadwal as a vendor and list your experiences",
+    "joinDesc": "Join AL Jadwal as a vendor and list your experiences",
     "signIn": "Sign In",
     "register": "Register",
     "accountDetails": "Account Details",
@@ -435,11 +489,11 @@
     "pendingApproval": "Your vendor account is pending admin approval. You will be able to sign in once your account is approved.",
     "goToLogin": "Go to Login",
     "growBusiness": "Grow Your Business",
-    "growBusinessDesc": "List your activities and experiences on Jadwal. Reach thousands of customers across Qatar and the GCC.",
+    "growBusinessDesc": "List your activities and experiences on AL Jadwal. Reach thousands of customers across Qatar and the GCC.",
     "toast": {
       "registrationSubmitted": "Registration submitted successfully"
     },
-    "portalBrand": "Jadwal Vendor",
+    "portalBrand": "AL Jadwal Vendor",
     "nav": {
       "dashboard": "Dashboard",
       "activities": "My Activities",
@@ -729,7 +783,11 @@
       "thExpiry": "Expiry",
       "thUsage": "Usage",
       "thStatus": "Status",
+      "thAppliesTo": "Applies To",
       "usageUnlimited": "∞",
+      "allActivities": "All activities",
+      "appliesToCountOne": "{{count}} activity",
+      "appliesToCount": "{{count}} activities",
       "paginationSummary": "Page {{page}} of {{total}} ({{count}} total)",
       "prev": "Prev",
       "next": "Next",
@@ -898,6 +956,8 @@
         "subtitle": "Create and manage your event listings",
         "newActivity": "New Activity",
         "searchPlaceholder": "Search activities...",
+        "noBlocks": "No blocked dates",
+        "blockedTitle": "Blocked dates & times",
         "filterAllStatuses": "All Status",
         "thTitle": "Title",
         "thCategory": "Category",
@@ -966,6 +1026,82 @@
         }
       },
       "wizard": {
+        "blocked": {
+          "title": "Blocked dates & times",
+          "hint": "Lock specific dates or times so customers cannot book them (maintenance, private events, breaks).",
+          "dateLabel": "Date",
+          "selectDate": "Select date",
+          "endDateLabel": "End date (optional)",
+          "sameDay": "Same day",
+          "repeatWeekly": "Repeat every week for 6 months (these weekdays)",
+          "repeatNote": "Blocks every",
+          "repeatNote2": "for the next 6 months (whole day).",
+          "wholeDay": "Block the whole day",
+          "pickTimes": "Tap the start times to lock",
+          "pickDateFirst": "Pick a date first.",
+          "noSlots": "This activity has no bookable time slots.",
+          "lock": "Lock",
+          "fromTime": "From",
+          "startTime": "Start",
+          "toTime": "To",
+          "endTime": "End",
+          "timeOrder": "End time must be after start time.",
+          "reasonLabel": "Reason (optional)",
+          "reasonPlaceholder": "e.g. Maintenance",
+          "add": "Add block",
+          "added": "Block added",
+          "addedRecurring": "Recurring blocks added",
+          "affectedNote": "existing booking(s) in this period are not cancelled",
+          "addFailed": "Could not add block",
+          "removed": "Block removed",
+          "removeFailed": "Could not remove block",
+          "every": "Every",
+          "daysWord": "days",
+          "none": "No blocked dates yet.",
+          "remove": "Remove",
+          "legendBlocked": "Blocked",
+          "legendSelected": "Selected",
+          "legendPartial": "Has time blocks",
+          "helpDay": "Tap days to select · Shift-tap to fill a range · tap a red day to unblock.",
+          "helpSlot": "Tap a day to manage its time slots. Red days are fully blocked — tap to unblock.",
+          "tapUnlock": "Tap to unblock",
+          "lockRecurring": "Lock recurring",
+          "weekdaysWord": "weekday(s)",
+          "datesWord": "date(s)",
+          "timesWord": "time(s)",
+          "recurringHeading": "Recurring blocks",
+          "open": "Open",
+          "close": "Close"
+        },
+        "specialPrice": {
+          "title": "Special prices by date",
+          "hint": "Override the price on specific dates (e.g. weekends or holidays). Customers booking those dates pay the special price; all other dates use the base price.",
+          "open": "Open",
+          "close": "Close",
+          "help": "Tap a date to set its special price. Green dates already have one; locked (blocked) dates can’t be priced.",
+          "legendPriced": "Has price",
+          "legendLocked": "Locked",
+          "lockedTitle": "This date is locked (blocked) and cannot be booked",
+          "priceForDate": "Special price for",
+          "saved": "Special price saved",
+          "saveFailed": "Could not save special price",
+          "removed": "Special price removed",
+          "removeFailed": "Could not remove special price",
+          "listHeading": "Special prices set",
+          "previous": "Previous",
+          "next": "Next",
+          "save": "Save",
+          "update": "Update",
+          "remove": "Remove",
+          "cancel": "Cancel",
+          "invalid": "Enter a price greater than 0.",
+          "helpMulti": "Press a day to select it. Press a weekday to select the whole column. Shift-click for a range.",
+          "selectColumn": "Select every {{day}}",
+          "priceForN": "Special price for {{count}} selected dates",
+          "saveN": "Save {{count}} dates",
+          "savedN": "Saved {{count}} special price(s)",
+          "maxDates": "You can price up to {{max}} dates at once."
+        },
         "steps": {
           "basicInfo": "Basic Info",
           "details": "Details",
@@ -1007,6 +1143,7 @@
           "endAfterStart": "End time must be after start time",
           "checkInRequired": "Check-in time is required",
           "checkOutRequired": "Check-out time is required",
+          "minNightsRange": "Minimum nights must be between 1 and 90",
           "priceRequired": "Valid price is required",
           "priceTooHigh": "Price seems too high",
           "capacityRequired": "Capacity is required when units are not enabled",
@@ -1076,6 +1213,9 @@
           "bookingDailyDesc": "Charge per day",
           "fieldDurationHours": "Duration (Hours)",
           "phDurationExample": "e.g., 3",
+          "fieldMinNights": "Minimum nights",
+          "hintMinNights": "Leave empty for flexible day-by-day booking. Set a number to require at least that many nights (guests can still book more).",
+          "phMinNights": "e.g. 3 (or leave empty)",
           "fieldStartTime": "Start Time",
           "fieldEndTime": "End Time",
           "phSelectStartTime": "Select start time",
@@ -1175,6 +1315,10 @@
     "viewBooking": "View Booking",
     "failed": "Payment Failed",
     "failedDesc": "Your payment could not be processed. Please try again.",
+    "pendingTitle": "Verifying Your Payment",
+    "pendingDesc": "We received your payment details and are confirming them with the bank. Your booking will be confirmed automatically once verified — you'll get an email. No need to pay again.",
+    "unconfirmedTitle": "Payment Not Confirmed",
+    "unconfirmedDesc": "We couldn't confirm this payment in time, so no booking was created. If your payment did go through, your booking will appear in My Bookings shortly — otherwise you have not been charged. Please contact support if you were charged.",
     "tryAgain": "Try Again",
     "backToBookings": "Back to My Bookings"
   },
@@ -1183,11 +1327,11 @@
     "lastUpdated": "Last updated",
     "acceptance": {
       "title": "1. Acceptance of Terms",
-      "p1": "By accessing or using the Jadwal platform (\"Platform\"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Platform."
+      "p1": "By accessing or using the AL Jadwal platform (\"Platform\"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Platform. You must be at least 18 years old to register for or use the Platform; by accepting these Terms you confirm that you are 18 years of age or older and legally able to enter into a binding contract."
     },
     "platform": {
       "title": "2. Platform Description",
-      "p1": "Jadwal is an online marketplace that connects customers with vendors who offer activities, experiences, tours, and events across the GCC region. Jadwal acts as an intermediary and does not itself provide any activities."
+      "p1": "AL Jadwal is an online marketplace that connects customers with vendors who offer activities, experiences, tours, and events across the GCC region. AL Jadwal acts as an intermediary and does not itself provide any activities."
     },
     "accounts": {
       "title": "3. User Accounts",
@@ -1201,27 +1345,27 @@
     },
     "bookings": {
       "title": "5. Bookings & Payments",
-      "p1": "All bookings are subject to availability and vendor confirmation. Prices displayed include the activity fee and a platform service fee. Payment is processed securely through our payment gateway — Jadwal never stores your card details.",
+      "p1": "All bookings are subject to availability and vendor confirmation. Prices displayed include the activity fee and a platform service fee. Payment is processed securely through our payment gateway — AL Jadwal never stores your card details.",
       "p2": "Upon successful payment, you will receive a booking confirmation with a reference number, activity details, and location information."
     },
     "cancellation": {
       "title": "6. Cancellation & Refunds",
       "p1": "Cancellation policies are set by individual vendors and displayed on each activity page. If you cancel a confirmed booking, the applicable refund amount depends on the vendor's cancellation policy.",
-      "p2": "Jadwal reserves the right to cancel bookings in cases of fraud, vendor unavailability, or force majeure events. In such cases, a full refund will be processed. These cancellation and refund practices operate in compliance with the Qatar Consumer Protection Law (Law No. 8 of 2008), which sets minimum protections for consumers in commercial transactions."
+      "p2": "AL Jadwal reserves the right to cancel bookings in cases of fraud, vendor unavailability, or force majeure events. In such cases, a full refund will be processed. These cancellation and refund practices operate in compliance with the Qatar Consumer Protection Law (Law No. 8 of 2008), which sets minimum protections for consumers in commercial transactions."
     },
     "forceMajeure": {
       "title": "7. Force Majeure",
-      "p1": "Neither Jadwal nor vendors shall be liable for any failure or delay in performing their obligations under these Terms when such failure or delay arises from circumstances beyond their reasonable control — including but not limited to acts of God, natural disasters, severe weather, war, terrorism, civil unrest, governmental action or restrictions, pandemics or public-health emergencies, strikes or labour disputes, network or utility failures, or any other event of force majeure. In such circumstances, affected bookings may be cancelled or rescheduled and any payments made will be refunded in accordance with the cancellation policy in effect at the time."
+      "p1": "Neither AL Jadwal nor vendors shall be liable for any failure or delay in performing their obligations under these Terms when such failure or delay arises from circumstances beyond their reasonable control — including but not limited to acts of God, natural disasters, severe weather, war, terrorism, civil unrest, governmental action or restrictions, pandemics or public-health emergencies, strikes or labour disputes, network or utility failures, or any other event of force majeure. In such circumstances, affected bookings may be cancelled or rescheduled and any payments made will be refunded in accordance with the cancellation policy in effect at the time."
     },
     "vendorResp": {
       "title": "8. Vendor Responsibilities",
-      "p1": "Vendors are responsible for the accuracy of their activity listings, pricing, availability, and the quality of service delivered. Jadwal moderates listings but does not guarantee vendor performance."
+      "p1": "Vendors are responsible for the accuracy of their activity listings, pricing, availability, and the quality of service delivered. AL Jadwal moderates listings but does not guarantee vendor performance."
     },
     "vendorCommercial": {
       "title": "9. Vendor Commercial Terms",
-      "p1": "Vendors who list activities on Jadwal agree to a platform commission on each completed booking. The applicable commission rate and any additional fees are disclosed in the vendor onboarding agreement and displayed in the vendor dashboard. Jadwal may adjust commission rates with prior notice communicated through the vendor portal.",
-      "p2": "Payouts to vendors are processed on a regular schedule (typically weekly), subject to a minimum payout threshold and verified bank details. Jadwal may withhold payouts in cases of pending disputes, suspected fraud, regulatory inquiries, or where required by court order. Bank-detail changes are subject to a security cool-down period before the next payout request can be approved.",
-      "p3": "Jadwal may suspend or terminate a vendor account for violations of these Terms, repeated customer complaints, regulatory non-compliance, or actions that damage the platform's reputation. Suspended vendors may appeal via the support channel. Earnings on completed bookings remain due to the vendor (subject to clawback for fraud or chargebacks), and pending bookings will be cancelled and refunded to customers in line with the cancellation policy."
+      "p1": "Vendors who list activities on AL Jadwal agree to a platform commission on each completed booking. The applicable commission rate and any additional fees are disclosed in the vendor onboarding agreement and displayed in the vendor dashboard. AL Jadwal may adjust commission rates with prior notice communicated through the vendor portal.",
+      "p2": "Payouts to vendors are processed on a regular schedule (typically weekly), subject to a minimum payout threshold and verified bank details. AL Jadwal may withhold payouts in cases of pending disputes, suspected fraud, regulatory inquiries, or where required by court order. Bank-detail changes are subject to a security cool-down period before the next payout request can be approved.",
+      "p3": "AL Jadwal may suspend or terminate a vendor account for violations of these Terms, repeated customer complaints, regulatory non-compliance, or actions that damage the platform's reputation. Suspended vendors may appeal via the support channel. Earnings on completed bookings remain due to the vendor (subject to clawback for fraud or chargebacks), and pending bookings will be cancelled and refunded to customers in line with the cancellation policy."
     },
     "prohibited": {
       "title": "10. Prohibited Conduct",
@@ -1229,11 +1373,11 @@
     },
     "ip": {
       "title": "11. Intellectual Property",
-      "p1": "All content on the Platform (logos, design, text, software) is owned by Jadwal or its licensors. You may not reproduce, distribute, or create derivative works without written permission."
+      "p1": "All content on the Platform (logos, design, text, software) is owned by AL Jadwal or its licensors. You may not reproduce, distribute, or create derivative works without written permission."
     },
     "liability": {
       "title": "12. Limitation of Liability",
-      "p1": "Jadwal is not liable for any direct, indirect, or consequential damages arising from your use of the Platform or from any activity booked through the Platform. Our total liability is limited to the amount you paid for the specific booking in question."
+      "p1": "AL Jadwal is not liable for any direct, indirect, or consequential damages arising from your use of the Platform or from any activity booked through the Platform. Our total liability is limited to the amount you paid for the specific booking in question."
     },
     "law": {
       "title": "13. Governing Law",
@@ -1242,7 +1386,7 @@
     "loyalty": {
       "title": "14. Wanasa Loyalty Points",
       "p1": "Customers earn Wanasa loyalty points on completed bookings according to the rate published in the Loyalty section of the Platform. Points have no cash value, are non-transferable, and cannot be exchanged for currency outside of the Platform's redemption flow.",
-      "p2": "Jadwal reserves the right to adjust the earning rate, redemption rate, minimum redemption threshold, and expiry policy at any time, with reasonable notice posted on the Platform. Points obtained through fraud, refunded bookings, or violation of these Terms may be revoked without notice."
+      "p2": "AL Jadwal reserves the right to adjust the earning rate, redemption rate, minimum redemption threshold, and expiry policy at any time, with reasonable notice posted on the Platform. Points obtained through fraud, refunded bookings, or violation of these Terms may be revoked without notice."
     },
     "changes": {
       "title": "15. Changes to Terms",
@@ -1250,7 +1394,7 @@
     },
     "contact": {
       "title": "16. Contact",
-      "p1": "For questions about these Terms, contact AL Jadwal at jadwalit@gmail.com or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
+      "p1": "For questions about these Terms, contact AL Jadwal at Management@jadwal.qa or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
     }
   },
   "privacy": {
@@ -1302,17 +1446,21 @@
     },
     "payment": {
       "title": "3. Payment Data",
-      "p1": "Jadwal does not store credit card numbers, CVVs, or bank card details. All payment processing is handled by our PCI-compliant payment gateway (PAY2M). We only store payment references and transaction status for your booking history."
+      "p1": "AL Jadwal does not store credit card numbers, CVVs, or bank card details. All payment processing is handled by our PCI-compliant payment gateway (PAY2M). We only store payment references and transaction status for your booking history."
     },
     "sharing": {
       "title": "4. Data Sharing",
       "vendors": {
         "label": "With Vendors:",
-        "text": "Your name, phone number, and booking details are shared with the vendor providing the activity."
+        "text": "Your name, email address, phone number, and booking details are shared with the vendor providing the activity (including when you request a refund)."
       },
       "gateway": {
         "label": "Payment Providers:",
         "text": "Transaction data is shared with our payment gateway for processing."
+      },
+      "processors": {
+        "label": "Service Providers (Sub-processors):",
+        "text": "We rely on vetted third parties that process data on our behalf under data-processing agreements, each receiving only what its function requires: Amazon Web Services (hosting, database, and backups — Frankfurt, Germany), Cloudflare (CDN, DNS, and edge security — global), Resend (transactional email delivery), PAY2M (payment processing — Qatar), and Google (Sign-In / OAuth, for users who choose it)."
       },
       "legal": {
         "label": "Legal Requirements:",
@@ -1331,7 +1479,8 @@
         "Regular security audits of our codebase",
         "PII masking in free-text logs (emails and phone numbers are never logged in full)",
         "IP address and session metadata stored in dedicated security tables only — never scattered across free-text logs"
-      ]
+      ],
+      "breach": "In the event of a personal-data breach that is likely to affect your rights, we will notify the affected users and the competent Qatar authority without undue delay after becoming aware of it, in line with the Qatar Personal Data Privacy Protection Law (Law No. 13 of 2016). The notice will describe the nature of the breach, the data involved, and the measures taken to address it and limit its effects."
     },
     "retention": {
       "title": "6. Data Retention",
@@ -1339,7 +1488,7 @@
     },
     "cookies": {
       "title": "7. Cookies",
-      "p1": "We use essential cookies for authentication (login sessions). We use localStorage for UI preferences (theme, language). We do not use tracking cookies or third-party advertising cookies."
+      "p1": "We use essential cookies for authentication (login sessions) and localStorage for UI preferences (theme, language). We also use analytics and marketing cookies — including the Meta (Facebook) Pixel — to measure our advertising and understand how visitors use the site. You can decline these at any time via the cookie banner; declining does not affect core functionality."
     },
     "rights": {
       "title": "8. Your Rights",
@@ -1356,11 +1505,11 @@
     },
     "children": {
       "title": "9. Children's Privacy",
-      "p1": "Jadwal is not intended for users under the age of 18. We do not knowingly collect data from minors. If we discover that we have collected data from a child, we will delete it promptly."
+      "p1": "AL Jadwal is not intended for users under the age of 18. We do not knowingly collect data from minors. If we discover that we have collected data from a child, we will delete it promptly."
     },
     "intlTransfer": {
       "title": "10. International Data Transfers",
-      "p1": "Jadwal is a Qatar-based platform, but for technical reasons our infrastructure runs on cloud providers outside Qatar. Specifically: (a) our database, application servers, and backups are hosted in Amazon Web Services Frankfurt (Germany) region; (b) our content delivery network and DNS are operated by Cloudflare globally; (c) push notifications are routed through Apple, Google, or Mozilla push services depending on your browser. By using the Platform, you acknowledge that your personal data is transferred and processed outside of Qatar. We rely on contractual safeguards (AWS Data Processing Addendum, Cloudflare Data Processing Addendum) to maintain confidentiality and integrity in transit and at rest. We process your personal data in compliance with the Qatar Personal Data Privacy Protection Law (Law No. 13 of 2016) ('PDPPL'), and we apply the appropriate safeguards required by Article 8 of the PDPPL when transferring personal data outside the State of Qatar."
+      "p1": "AL Jadwal is a Qatar-based platform, but for technical reasons our infrastructure runs on cloud providers outside Qatar. Specifically: (a) our database, application servers, and backups are hosted in Amazon Web Services Frankfurt (Germany) region; (b) our content delivery network and DNS are operated by Cloudflare globally; (c) push notifications are routed through Apple, Google, or Mozilla push services depending on your browser; (d) transactional and account emails are delivered through Resend; (e) if you sign in with Google, Google processes your authentication data. By using the Platform, you acknowledge that your personal data is transferred and processed outside of Qatar. We rely on contractual safeguards (AWS Data Processing Addendum, Cloudflare Data Processing Addendum) to maintain confidentiality and integrity in transit and at rest. We process your personal data in compliance with the Qatar Personal Data Privacy Protection Law (Law No. 13 of 2016) ('PDPPL'), and we apply the appropriate safeguards required by Article 8 of the PDPPL when transferring personal data outside the State of Qatar."
     },
     "changes": {
       "title": "11. Changes to This Policy",
@@ -1368,7 +1517,7 @@
     },
     "contact": {
       "title": "12. Contact Us",
-      "p1": "For privacy-related inquiries, contact AL Jadwal's Data Protection team at jadwalit@gmail.com or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
+      "p1": "For privacy-related inquiries, contact AL Jadwal's Data Protection team at Management@jadwal.qa or by mail at Apt 18, Floor 1, Building 60, Street 840, Zone 39, Doha, Qatar."
     }
   },
   "explore": {
@@ -1393,6 +1542,8 @@
     "fullyBookedToday": "Fully booked today",
     "spotLeft": "{{count}} spot left",
     "spotsLeft": "{{count}} spots left",
+    "capacity": "Up to {{count}}",
+    "each": "each",
     "review": "review",
     "reviews": "reviews",
     "from": "From",
@@ -1423,6 +1574,9 @@
     "worth": "Worth",
     "usePoints": "Use loyalty points",
     "pointsDiscount": "Points discount",
+    "needsPoints": "Needs {{n}} points · service fee waived",
+    "partialPoints": "Use your {{have}} points · save {{currency}} {{save}}, pay the rest",
+    "belowMinPoints": "You have {{have}} · minimum {{min}} points to redeem",
     "minRedemption": "Minimum redemption",
     "notEnough": "Not enough points",
     "config": "Loyalty Config",
@@ -1436,11 +1590,20 @@
     "earnedOnBooking": "Earned from booking",
     "wanasa": "WANASA"
   },
+  "error": {
+    "title": "Something went wrong",
+    "message": "An unexpected error occurred. You can try again, or head back to the home page.",
+    "reference": "Reference",
+    "tryAgain": "Try again",
+    "goHome": "Go home"
+  },
   "common": {
     "loading": "Loading...",
     "error": "Something went wrong",
     "retry": "Try Again",
     "back": "Back",
+    "prev": "Prev",
+    "next": "Next",
     "save": "Save",
     "delete": "Delete",
     "confirm": "Confirm",

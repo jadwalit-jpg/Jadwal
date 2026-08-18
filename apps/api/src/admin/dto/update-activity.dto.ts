@@ -16,6 +16,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ACTIVITY_TITLE_REGEX, ACTIVITY_TITLE_MESSAGE } from '../../common/validators/name-allowlist';
+import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
 
 enum BookingType {
   HOURLY = 'HOURLY',
@@ -64,7 +65,8 @@ export class UpdateActivityDto {
   @IsString() @IsNotEmpty() @MaxLength(200) @Matches(ACTIVITY_TITLE_REGEX, { message: ACTIVITY_TITLE_MESSAGE }) @IsOptional()
   titleAr?: string;
 
-  @IsString() @IsNotEmpty() @MaxLength(120) @IsOptional()
+  // Same slug contract as vendor create/update: a-z/0-9/hyphen, not reserved.
+  @IsString() @IsNotEmpty() @MaxLength(120) @Matches(/^[a-z0-9-]+$/, { message: 'URL slug may only contain lowercase letters, numbers, and hyphens' }) @IsNotReservedSlug() @IsOptional()
   slug?: string;
 
   @IsString() @IsNotEmpty() @MaxLength(5000) @IsOptional()
@@ -91,10 +93,14 @@ export class UpdateActivityDto {
   @IsEnum(PricingModel) @IsOptional()
   pricingModel?: PricingModel;
 
+  // Format only (any valid HH:MM). The 30-min-grid rule for HOURLY is enforced in
+  // assertHourlyTimesConsistent so DAILY check-in/out isn't over-restricted.
   @IsString() @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkInTime must be a valid time (HH:MM)' })
   checkInTime?: string;
 
   @IsString() @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'checkOutTime must be a valid time (HH:MM)' })
   checkOutTime?: string;
 
   @IsInt() @Min(1) @Max(10000) @IsOptional()

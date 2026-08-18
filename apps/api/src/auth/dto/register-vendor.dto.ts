@@ -1,19 +1,26 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches, IsUUID } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength, IsOptional, Matches, IsUUID, IsBoolean, Equals } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { IsStrongPassword } from '../../common/validators/password-strength';
 import { IsNotDisposableEmail } from '../../common/validators/disposable-email';
+import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
+import {
+  BUSINESS_NAME_EN_REGEX, BUSINESS_NAME_EN_MESSAGE,
+  BUSINESS_NAME_AR_REGEX, BUSINESS_NAME_AR_MESSAGE,
+} from '../../common/validators/name-allowlist';
 
 export class RegisterVendorDto {
   @IsString()
   @IsNotEmpty({ message: 'Full name is required' })
   @MinLength(2, { message: 'Full name must be at least 2 characters' })
   @MaxLength(100, { message: 'Full name is too long' })
-  // `\P{Nd}` (capital P) matches anything EXCEPT a decimal digit across
-  // every script — rejects ASCII 0-9 AND Arabic-Indic ٠-٩ together. Real
-  // personal names don't contain digits in any script. Defence-in-depth
-  // server-side: the frontend has the same check in `validateFullName`,
-  // this DTO is the canonical authority.
-  @Matches(/^\P{Nd}*$/u, { message: 'Full name cannot contain numbers' })
+  // Positive whitelist: letters of ANY script (\p{L} — Arabic + accented
+  // Latin included), combining marks (\p{M}), spaces, hyphen, apostrophe
+  // (straight + curly) and period. Rejects digits AND symbols like @$#$;
+  // the first character must be a letter. Canonical server-side authority;
+  // the frontend mirrors it in `validateFullName`.
+  @Matches(/^[\p{L}\p{M}][\p{L}\p{M}\s'’.\-]*$/u, {
+    message: 'Full name may only contain letters, spaces, hyphens and apostrophes',
+  })
   @Transform(({ value }) => typeof value === 'string' ? value.replace(/[<>]/g, '').trim() : value)
   fullName!: string;
 
@@ -36,11 +43,15 @@ export class RegisterVendorDto {
   @IsString()
   @IsNotEmpty({ message: 'Business name (English) is required' })
   @MaxLength(200, { message: 'Business name is too long' })
+  @Matches(BUSINESS_NAME_EN_REGEX, { message: BUSINESS_NAME_EN_MESSAGE })
+  @Transform(({ value }) => typeof value === 'string' ? value.replace(/[<>]/g, '').trim() : value)
   businessNameEn!: string;
 
   @IsString()
   @IsNotEmpty({ message: 'Business name (Arabic) is required' })
   @MaxLength(200, { message: 'Business name is too long' })
+  @Matches(BUSINESS_NAME_AR_REGEX, { message: BUSINESS_NAME_AR_MESSAGE })
+  @Transform(({ value }) => typeof value === 'string' ? value.replace(/[<>]/g, '').trim() : value)
   businessNameAr!: string;
 
   @IsString()
@@ -52,6 +63,7 @@ export class RegisterVendorDto {
   @IsNotEmpty({ message: 'URL slug is required' })
   @Matches(/^[a-z0-9-]+$/, { message: 'Slug must contain only lowercase letters, numbers, and hyphens' })
   @MaxLength(60, { message: 'Slug is too long' })
+  @IsNotReservedSlug()
   slug!: string;
 
   @IsOptional()
@@ -71,4 +83,11 @@ export class RegisterVendorDto {
   @IsOptional()
   @Transform(({ value }) => value == null ? undefined : String(value))
   website?: string;
+
+  // Explicit Terms & Privacy consent — required to be `true`. The vendor signup
+  // already shows this checkbox; the service records termsAcceptedAt + the
+  // current TERMS_VERSION on success.
+  @IsBoolean()
+  @Equals(true, { message: 'You must accept the Terms and Privacy Policy' })
+  termsAccepted!: boolean;
 }

@@ -52,7 +52,7 @@ export default function AdminLoginPage() {
             <div className="flex size-7 items-center justify-center rounded-lg bg-blue-600 text-white">
               <ShieldCheck className="size-4" />
             </div>
-            <span>Jadwal</span>
+            <span>AL Jadwal</span>
             <span className="text-blue-600">Admin</span>
           </div>
           <Link
@@ -71,7 +71,7 @@ export default function AdminLoginPage() {
             <div className="mb-8">
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Admin Sign In</h1>
               <p className="text-sm text-gray-500 dark:text-slate-400">
-                Sign in to manage the Jadwal platform
+                Sign in to manage the AL Jadwal platform
               </p>
             </div>
 
@@ -126,7 +126,7 @@ export default function AdminLoginPage() {
             </form>
 
             <p className="mt-8 text-center text-xs text-gray-400 dark:text-slate-600">
-              &copy; 2026 Jadwal Platform. Secure Infrastructure Enabled.
+              &copy; 2026 AL Jadwal Platform. Secure Infrastructure Enabled.
             </p>
           </div>
         </div>
@@ -142,7 +142,7 @@ export default function AdminLoginPage() {
           <div className="w-16 h-16 rounded-2xl bg-white/10 backdrop-blur-sm flex items-center justify-center mb-6">
             <ShieldCheck className="h-8 w-8 text-white" />
           </div>
-          <h2 className="text-3xl font-bold text-white mb-3">Jadwal Admin Panel</h2>
+          <h2 className="text-3xl font-bold text-white mb-3">AL Jadwal Admin Panel</h2>
           <p className="text-blue-100 max-w-sm leading-relaxed">
             Manage vendors, activities, bookings, and platform settings from a single dashboard.
           </p>

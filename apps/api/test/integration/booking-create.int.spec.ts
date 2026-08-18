@@ -242,12 +242,12 @@ describe('BookingsService.createBooking — guards', () => {
     await expect(
       svc.createBooking(seed.customer.id, {
         activityId: seed.activity.id,
-        checkInDate: futureDate(365 * 3), // 3 years out (max is 2)
+        checkInDate: futureDate(365 * 3), // 3 years out (max is 6 months)
         slotTime: '10:00',
         guests: 1,
       bookingPhone: '+97455123456',
       }),
-    ).rejects.toThrow(/more than.*year/i);
+    ).rejects.toThrow(/more than.*month/i);
   });
 });
 
@@ -449,43 +449,43 @@ describe('BookingsService.createBooking — loyalty redemption', () => {
     });
     await ctx.prisma.user.update({
       where: { id: seed.customer.id },
-      data: { loyaltyPoints: 100_000 },
+      data: { loyaltyPoints: 1_000 },
     });
     await ctx.prisma.loyaltyLedger.create({
       data: {
-        userId: seed.customer.id, delta: 100_000, balanceAfter: 100_000,
+        userId: seed.customer.id, delta: 1_000, balanceAfter: 1_000,
         source: 'ADMIN_ADJUST', actorType: 'SYSTEM', reason: 'genesis',
       },
     });
 
-    // Redeem 5,000 points = 50 QAR off (qarPerPoint default 0.01)
+    // Redeem 50 points = 50 QAR off (qarPerPoint new default 1.0 — 1 point = 1 QAR)
     const res = await svc.createBooking(seed.customer.id, {
       activityId: seed.activity.id,
       checkInDate: futureDate(7),
       slotTime: '10:00',
       guests: 2,
       bookingPhone: '+97455123456',
-      redeemPoints: 5_000,
+      redeemPoints: 50,
       idempotencyKey: crypto.randomUUID(),
     });
 
     const b = await ctx.prisma.booking.findUniqueOrThrow({
       where: { id: res.booking.id },
     });
-    expect(Number(b.pointsRedeemed)).toBe(5_000);
+    expect(Number(b.pointsRedeemed)).toBe(50);
     expect(Number(b.pointsDiscount)).toBe(50);
 
     // User balance debited
     const user = await ctx.prisma.user.findUniqueOrThrow({
       where: { id: seed.customer.id },
     });
-    expect(user.loyaltyPoints).toBe(95_000);
+    expect(Number(user.loyaltyPoints)).toBe(950);
 
     // Ledger row with BOOKING_REDEEM source
     const redeemRow = await ctx.prisma.loyaltyLedger.findFirstOrThrow({
       where: { userId: seed.customer.id, source: 'BOOKING_REDEEM' },
     });
-    expect(redeemRow.delta).toBe(-5_000);
+    expect(Number(redeemRow.delta)).toBe(-50);
     expect(redeemRow.bookingId).toBe(b.id);
   });
 
@@ -498,7 +498,7 @@ describe('BookingsService.createBooking — loyalty redemption', () => {
     });
     await ctx.prisma.user.update({
       where: { id: seed.customer.id },
-      data: { loyaltyPoints: 100 }, // only 100 available
+      data: { loyaltyPoints: 1 }, // only 1 available
     });
 
     await expect(
@@ -508,7 +508,7 @@ describe('BookingsService.createBooking — loyalty redemption', () => {
         slotTime: '10:00',
         guests: 1,
       bookingPhone: '+97455123456',
-        redeemPoints: 10_000, // way more than available
+        redeemPoints: 100, // way more than available
         idempotencyKey: crypto.randomUUID(),
       }),
     ).rejects.toThrow(/insufficient/i);
@@ -521,7 +521,7 @@ describe('BookingsService.createBooking — loyalty redemption', () => {
     const user = await ctx.prisma.user.findUniqueOrThrow({
       where: { id: seed.customer.id },
     });
-    expect(user.loyaltyPoints).toBe(100);
+    expect(Number(user.loyaltyPoints)).toBe(1);
   });
 });
 
@@ -537,14 +537,14 @@ describe('BookingsService.createBooking — full points coverage (WANASA-only)',
     await ctx.prisma.loyaltyConfig.upsert({
       where: { id: 'singleton' }, create: { id: 'singleton' }, update: {},
     });
-    // 1 guest × 100 + 5 service fee = 105 QAR → need 10,500 points
+    // 1 guest × 100 + 5 service fee = 105 QAR → need 105 points
     await ctx.prisma.user.update({
       where: { id: seed.customer.id },
-      data: { loyaltyPoints: 20_000 },
+      data: { loyaltyPoints: 200 },
     });
     await ctx.prisma.loyaltyLedger.create({
       data: {
-        userId: seed.customer.id, delta: 20_000, balanceAfter: 20_000,
+        userId: seed.customer.id, delta: 200, balanceAfter: 200,
         source: 'ADMIN_ADJUST', actorType: 'SYSTEM', reason: 'genesis',
       },
     });
@@ -555,7 +555,7 @@ describe('BookingsService.createBooking — full points coverage (WANASA-only)',
       slotTime: '10:00',
       guests: 1,
       bookingPhone: '+97455123456',
-      redeemPoints: 15_000, // more than 10,500 needed
+      redeemPoints: 150, // more than 105 needed
       idempotencyKey: crypto.randomUUID(),
     });
 
@@ -579,11 +579,11 @@ describe('BookingsService.createBooking — full points coverage (WANASA-only)',
       where: { id: 'singleton' }, create: { id: 'singleton' }, update: {},
     });
     await ctx.prisma.user.update({
-      where: { id: seed.customer.id }, data: { loyaltyPoints: 20_000 },
+      where: { id: seed.customer.id }, data: { loyaltyPoints: 200 },
     });
     await ctx.prisma.loyaltyLedger.create({
       data: {
-        userId: seed.customer.id, delta: 20_000, balanceAfter: 20_000,
+        userId: seed.customer.id, delta: 200, balanceAfter: 200,
         source: 'ADMIN_ADJUST', actorType: 'SYSTEM', reason: 'genesis',
       },
     });
@@ -594,7 +594,7 @@ describe('BookingsService.createBooking — full points coverage (WANASA-only)',
       slotTime: '10:00',
       guests: 1,
       bookingPhone: '+97455199999',
-      redeemPoints: 15_000,
+      redeemPoints: 150,
       idempotencyKey: crypto.randomUUID(),
     });
 
@@ -655,11 +655,11 @@ describe('BookingsService.createBooking — full points coverage (WANASA-only)',
       where: { id: 'singleton' }, create: { id: 'singleton' }, update: {},
     });
     await ctx.prisma.user.update({
-      where: { id: seed.customer.id }, data: { loyaltyPoints: 40_000 },
+      where: { id: seed.customer.id }, data: { loyaltyPoints: 400 },
     });
     await ctx.prisma.loyaltyLedger.create({
       data: {
-        userId: seed.customer.id, delta: 40_000, balanceAfter: 40_000,
+        userId: seed.customer.id, delta: 400, balanceAfter: 400,
         source: 'ADMIN_ADJUST', actorType: 'SYSTEM', reason: 'genesis',
       },
     });
@@ -667,13 +667,13 @@ describe('BookingsService.createBooking — full points coverage (WANASA-only)',
     const r1 = await svc.createBooking(seed.customer.id, {
       activityId: seed.activity.id,
       checkInDate: futureDate(7), slotTime: '10:00', guests: 1,
-      bookingPhone: '+97455100001', redeemPoints: 15_000,
+      bookingPhone: '+97455100001', redeemPoints: 150,
       idempotencyKey: crypto.randomUUID(),
     });
     const r2 = await svc.createBooking(seed.customer.id, {
       activityId: activity2.id,
       checkInDate: futureDate(7), slotTime: '14:00', guests: 1,
-      bookingPhone: '+97455100002', redeemPoints: 15_000,
+      bookingPhone: '+97455100002', redeemPoints: 150,
       idempotencyKey: crypto.randomUUID(),
     });
 
@@ -705,11 +705,11 @@ describe('BookingsService.createBooking — full points coverage (WANASA-only)',
       where: { id: 'singleton' }, create: { id: 'singleton' }, update: {},
     });
     await ctx.prisma.user.update({
-      where: { id: seed.customer.id }, data: { loyaltyPoints: 20_000 },
+      where: { id: seed.customer.id }, data: { loyaltyPoints: 200 },
     });
     await ctx.prisma.loyaltyLedger.create({
       data: {
-        userId: seed.customer.id, delta: 20_000, balanceAfter: 20_000,
+        userId: seed.customer.id, delta: 200, balanceAfter: 200,
         source: 'ADMIN_ADJUST', actorType: 'SYSTEM', reason: 'genesis',
       },
     });
@@ -717,7 +717,7 @@ describe('BookingsService.createBooking — full points coverage (WANASA-only)',
     const res = await svc.createBooking(seed.customer.id, {
       activityId: seed.activity.id,
       checkInDate: futureDate(7), slotTime: '10:00', guests: 1,
-      bookingPhone: '+97455100099', redeemPoints: 15_000,
+      bookingPhone: '+97455100099', redeemPoints: 150,
       idempotencyKey: crypto.randomUUID(),
     });
 
@@ -877,5 +877,129 @@ describe('BookingsService.createBooking — activeDays restriction', () => {
       bookingPhone: '+97455123456',
       }),
     ).rejects.toThrow(/not available on/i);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// KAN-12 — 30-minute slots. A :30 START is bookable; a half-hour SPAN is not
+// (whole-hour lengths only, so the server's hour rounding can't overcharge vs
+// the client preview — the MEDIUM defect the security audit caught).
+// Seeded activity: HOURLY, duration 2h, window 09:00–21:00, 100/person.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('BookingsService.createBooking — HOURLY 30-minute slots (KAN-12)', () => {
+  test('accepts a :30 start time', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+
+    const res = await svc.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7),
+      slotTime: '10:30',
+      guests: 1,
+      bookingPhone: '+97455123456',
+    });
+
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    expect(b.status).toBe('PENDING');
+    // 10:30 + 2h duration → 12:30; the :30 start is preserved.
+    expect(b.startDatetime.getUTCHours()).toBe(10);
+    expect(b.startDatetime.getUTCMinutes()).toBe(30);
+    expect(b.endDatetime.getUTCHours()).toBe(12);
+    expect(b.endDatetime.getUTCMinutes()).toBe(30);
+  });
+
+  test('rejects a half-hour SPAN (10:00→12:30) — whole-hour lengths only', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+
+    await expect(
+      svc.createBooking(seed.customer.id, {
+        activityId: seed.activity.id,
+        checkInDate: futureDate(7),
+        slotTime: '10:00',
+        slotEndTime: '12:30', // 2.5h span — server would round up + overcharge
+        guests: 1,
+        bookingPhone: '+97455123456',
+      }),
+    ).rejects.toThrow(/whole number of hours/i);
+  });
+
+  test('accepts a whole-hour extended span from a :30 start (10:30→14:30 = 4h)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+
+    const res = await svc.createBooking(seed.customer.id, {
+      activityId: seed.activity.id,
+      checkInDate: futureDate(7),
+      slotTime: '10:30',
+      slotEndTime: '14:30', // 4h = 2 × duration, whole-hour span
+      guests: 1,
+      bookingPhone: '+97455123456',
+    });
+    const b = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    expect(b.status).toBe('PENDING');
+    expect(b.startDatetime.getUTCMinutes()).toBe(30);
+    expect(b.endDatetime.getUTCHours()).toBe(14);
+    expect(b.endDatetime.getUTCMinutes()).toBe(30);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX #12 — an EXPIRED pending booking (abandoned checkout; slot already free)
+// must NOT block the same customer from re-booking that slot. Regression for the
+// widened cleanup grace: without this the owner would be locked out of their own
+// slot for the whole grace window. A still-active PENDING must still block.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('BookingsService.createBooking — expired PENDING must not block re-booking (FIX #12)', () => {
+  test('same customer can re-book the exact slot when their prior PENDING has expired', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+    const checkInDate = futureDate(7);
+    const start = new Date(`${checkInDate}T10:00:00.000Z`);
+    const end = new Date(start.getTime() + 2 * 3600_000);
+
+    const abandoned = await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-ABAND-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456',
+        totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        status: 'PENDING', startDatetime: start, endDatetime: end,
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+        reservedUntil: new Date(Date.now() - 60 * 60 * 1000), // expired 1h ago → slot already free
+      },
+    });
+
+    const res = await svc.createBooking(seed.customer.id, {
+      activityId: seed.activity.id, checkInDate, slotTime: '10:00', guests: 1, bookingPhone: '+97455123456',
+    });
+    expect(res.booking).toBeDefined();
+    expect(res.booking.id).not.toBe(abandoned.id); // a NEW booking, not the abandoned one
+  });
+
+  test('a still-active PENDING for the same slot still blocks a duplicate (guard intact)', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { svc } = makeBookingsService();
+    const checkInDate = futureDate(7);
+    const start = new Date(`${checkInDate}T10:00:00.000Z`);
+    const end = new Date(start.getTime() + 2 * 3600_000);
+
+    await ctx.prisma.booking.create({
+      data: {
+        ref: `JDWL-ACTIVE-${crypto.randomUUID().slice(0, 6)}`,
+        currencyCode: 'QAR', guests: 1, bookingPhone: '+97455123456',
+        totalPrice: 100, serviceFee: 5, commissionAmount: 10,
+        status: 'PENDING', startDatetime: start, endDatetime: end,
+        activityId: seed.activity.id, customerId: seed.customer.id, vendorId: seed.vendor.id,
+        reservedUntil: new Date(Date.now() + 30 * 60 * 1000), // still held (future)
+      },
+    });
+
+    await expect(
+      svc.createBooking(seed.customer.id, {
+        activityId: seed.activity.id, checkInDate, slotTime: '10:00', guests: 1, bookingPhone: '+97455123456',
+      }),
+    ).rejects.toThrow(/already have a booking/i);
   });
 });

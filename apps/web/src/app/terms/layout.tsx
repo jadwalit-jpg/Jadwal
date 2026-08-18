@@ -5,27 +5,27 @@
  */
 
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localeAlternates } from '@/lib/locale-path';
 
 export async function generateMetadata(): Promise<Metadata> {
-  const cookieStore = await cookies();
-  const lang = cookieStore.get('jadwal_lang')?.value === 'ar' ? 'ar' : 'en';
+  const lang = await readLangServer();
 
   const title = lang === 'ar' ? 'الشروط والأحكام' : 'Terms & Conditions';
   const description =
     lang === 'ar'
       ? 'شروط استخدام منصة جدول لحجز الأنشطة والتجارب: الحسابات، الحجوزات، الإلغاء، مسؤوليات البائعين، والامتثال للقوانين القطرية.'
-      : 'The terms for using Jadwal to book activities and experiences: accounts, bookings, cancellations, vendor responsibilities and Qatar legal compliance.';
+      : 'The terms for using AL Jadwal to book activities and experiences: accounts, bookings, cancellations, vendor responsibilities and Qatar legal compliance.';
 
   return {
     title,
     description,
-    alternates: { canonical: '/terms' },
+    alternates: localeAlternates('/terms', lang),
     openGraph: {
       title,
       description,
       type: 'website',
-      siteName: 'Jadwal',
+      siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
     },
     twitter: { card: 'summary', title, description },

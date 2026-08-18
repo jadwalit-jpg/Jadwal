@@ -1,12 +1,14 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
+import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
 export interface HourRangePickerSlot {
   slotStart: string;
   slotEnd: string;
   isPast?: boolean;
+  isBlocked?: boolean;
   capacity?: number | null;
   booked?: number;
   available?: number;
@@ -23,12 +25,17 @@ export interface HourRangePickerProps {
   start: string | null;
   end: string | null;
   onChange: (start: string | null, end: string | null) => void;
+  // Called when the user taps a host-locked time — drives the "can't book over
+  // off-hours" toast in the parent.
+  onBlockedAttempt?: () => void;
   formatTime: (hhmm: string) => string;
   labels?: {
     selectStart?: string;
     selectEnd?: string;
     clear?: string;
     hint?: string;
+    blocked?: string;
+    blockedLegend?: string;
   };
 }
 
@@ -39,6 +46,12 @@ function toMinutes(hhmm: string): number {
 function fromMinutes(mins: number): string {
   return `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
 }
+
+// Slot-start granularity in minutes — mirrors the server's
+// HOURLY_SLOT_GRANULARITY_MINUTES (30 = half-hour slots so a customer can pick
+// e.g. 3:30 PM). The range/lock/capacity walks step by this so every 30-min
+// slot in a range is checked, not just the top of each hour.
+const TICK_MINUTES = 30;
 
 function availOf(s: HourRangePickerSlot | undefined): number | null {
   if (!s) return null;
@@ -57,10 +70,13 @@ export function HourRangePicker({
   start,
   end,
   onChange,
+  onBlockedAttempt,
   formatTime,
   labels,
 }: HourRangePickerProps) {
   const [hoverHour, setHoverHour] = useState<string | null>(null);
+  // Hour currently playing the "earthquake" shake after a blocked tap.
+  const [shakeHour, setShakeHour] = useState<string | null>(null);
 
   const unitMins = durationValue * 60;
   const checkInMins = useMemo(() => toMinutes(checkInTime), [checkInTime]);
@@ -70,7 +86,7 @@ export function HourRangePicker({
   // These are the only clickable "tick" positions.
   const hours = useMemo(() => {
     const out: string[] = [];
-    for (let m = checkInMins; m <= checkOutMins; m += 60) {
+    for (let m = checkInMins; m <= checkOutMins; m += TICK_MINUTES) {
       out.push(fromMinutes(m));
     }
     return out;
@@ -91,18 +107,45 @@ export function HourRangePicker({
     return set;
   }, [slots]);
 
+  // Ticks whose slot is unavailable specifically because the vendor LOCKED it
+  // (not capacity, not past, not too-close-to-closing). Shown with a distinct
+  // lock treatment so customers can tell a vendor block apart from a slot that
+  // simply doesn't fit before closing time.
+  const blockedByStart = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of slots) if (s.isBlocked) set.add(s.slotStart);
+    return set;
+  }, [slots]);
+
+  // Does the half-open hour range [fromM, toM) cross any host-locked hour?
+  // blockedByStart holds the raw locked hour-starts (per-hour signal from the
+  // server), so a booking of ANY length is checked against every hour it covers
+  // — matching the server's range rejection. Used by both start + end validity.
+  const hitsLock = useCallback(
+    (fromM: number, toM: number) => {
+      for (let m = fromM; m < toM; m += TICK_MINUTES) {
+        if (blockedByStart.has(fromMinutes(m))) return true;
+      }
+      return false;
+    },
+    [blockedByStart],
+  );
+
   // A tick is a valid START if the activity fits before close, the slot
-  // starting here isn't in the past, and it has capacity for the guest count.
+  // starting here isn't in the past, its duration-long window doesn't cross a
+  // lock, and it has capacity for the guest count.
   const isValidStart = useCallback(
     (hh: string) => {
       const m = toMinutes(hh);
       if (m + unitMins > checkOutMins) return false;
       if (pastByStart.has(hh)) return false;
+      // Range check: the baseline booking [m, m+duration) must not cross a lock.
+      if (hitsLock(m, m + unitMins)) return false;
       const a = availByStart.get(hh);
       if (a !== null && a !== undefined && a < guests) return false;
       return true;
     },
-    [unitMins, checkOutMins, pastByStart, availByStart, guests],
+    [unitMins, checkOutMins, pastByStart, hitsLock, availByStart, guests],
   );
 
   // A tick is a valid END from a given start iff the resulting window is
@@ -118,6 +161,10 @@ export function HourRangePicker({
       const startM = toMinutes(fromStart);
       const endM = toMinutes(hh);
       const span = endM - startM;
+      // Whole-hour booking lengths only (server enforces span % 60 === 0). A :30
+      // START is allowed, but a half-hour SPAN would be rounded up server-side and
+      // overcharge vs this preview — so never offer a half-hour-span end.
+      if (span % 60 !== 0) return false;
       if (span < unitMins) return false;
       if (endM > checkOutMins) return false;
       const maxMins = maxSlotUnits * unitMins;
@@ -128,15 +175,18 @@ export function HourRangePicker({
       // reject a range that would actually fit (because slots past the
       // end of our range also contribute), but never approves an impossible
       // one. The server's peak-concurrent sweep is authoritative at POST.
-      for (let m = startM; m < endM; m += 60) {
+      for (let m = startM; m < endM; m += TICK_MINUTES) {
         const slotHh = fromMinutes(m);
         if (pastByStart.has(slotHh)) return false;
+        // A locked hour anywhere inside the range makes the whole booking invalid
+        // — you can't extend the END across a host lock.
+        if (blockedByStart.has(slotHh)) return false;
         const a = availByStart.get(slotHh);
         if (a !== null && a !== undefined && a < guests) return false;
       }
       return true;
     },
-    [unitMins, checkOutMins, maxSlotUnits, pastByStart, availByStart, guests],
+    [unitMins, checkOutMins, maxSlotUnits, pastByStart, blockedByStart, availByStart, guests],
   );
 
   const startM = start ? toMinutes(start) : null;
@@ -248,22 +298,46 @@ export function HourRangePicker({
             enabled = isValidEnd(hh, start);
           }
 
+          // Would tapping here cross a host lock — either as a NEW start (its
+          // duration-long baseline) or as an END-extension of the current start?
+          // Either way it's not a valid pick; the cell renders as a normal chip
+          // (no red) but stays clickable (below) so the tap shakes + warns.
+          const wouldHitLock =
+            !start || startM === null || m <= startM
+              ? hitsLock(m, m + unitMins)
+              : hitsLock(startM, m);
+          const isLocked =
+            wouldHitLock && !enabled && !isStart && !isEnd && !inSelectedRange;
           // "Unavailable" means the cell would never be bookable (past, over
           // capacity, beyond close). Shown as a greyed-out chip. Distinct
-          // from "inside range, not clickable" which uses the range color.
+          // from "inside range, not clickable" which uses the range color, and
+          // from "locked" (a lock-crossing pick), which stays a normal clickable
+          // chip that shakes on tap.
           const isUnreachable =
-            !enabled && !inSelectedRange && !inPreviewRange && !isPreviewEnd && !isStart && !isEnd;
+            !enabled && !isLocked && !inSelectedRange && !inPreviewRange && !isPreviewEnd && !isStart && !isEnd;
 
           return (
-            <button
+            <motion.button
               key={hh}
               type="button"
               role="gridcell"
-              disabled={!enabled}
-              onClick={() => handleClick(hh)}
+              // Locked cells stay clickable so a tap can shake + warn; other
+              // unavailable cells (past / no capacity / beyond close) are inert.
+              disabled={!enabled && !isLocked}
+              animate={shakeHour === hh ? { x: [0, -6, 6, -5, 5, -3, 3, 0] } : { x: 0 }}
+              transition={{ duration: 0.45 }}
+              onClick={() => {
+                if (isLocked) {
+                  setShakeHour(hh);
+                  onBlockedAttempt?.();
+                  window.setTimeout(() => setShakeHour((c) => (c === hh ? null : c)), 500);
+                  return;
+                }
+                handleClick(hh);
+              }}
               onMouseEnter={() => setHoverHour(hh)}
               onFocus={() => setHoverHour(hh)}
-              aria-label={formatTime(hh)}
+              aria-label={isLocked ? `${formatTime(hh)} — ${labels?.blocked ?? 'blocked by host'}` : formatTime(hh)}
               aria-pressed={isStart || isEnd}
               className={cn(
                 'min-w-[62px] px-3 py-2.5 rounded-lg border-2 text-sm font-semibold tabular-nums transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400',
@@ -277,6 +351,11 @@ export function HourRangePicker({
                 (inPreviewRange || isPreviewEnd) &&
                   !(isStart || isEnd || inSelectedRange) &&
                   'border-sky-200 bg-sky-50 text-sky-600 dark:bg-sky-900/20 dark:border-sky-800 dark:text-sky-300',
+                // Host-locked / off-hours — rendered RED so the customer sees it's
+                // unavailable BEFORE tapping. Stays clickable: a tap shakes + shows
+                // the "can't book over off-hours" toast as the explanation (KAN-10).
+                isLocked &&
+                  'border-red-300 bg-red-50 text-red-600 dark:border-red-800/70 dark:bg-red-900/20 dark:text-red-300',
                 // Truly unavailable (past, no capacity, beyond close) — muted
                 isUnreachable &&
                   'opacity-40 cursor-not-allowed bg-gray-50 dark:bg-slate-900/30 border-gray-100 dark:border-slate-800 text-gray-400',
@@ -291,7 +370,7 @@ export function HourRangePicker({
               )}
             >
               {formatTime(hh)}
-            </button>
+            </motion.button>
           );
         })}
       </div>

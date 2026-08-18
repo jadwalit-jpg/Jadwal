@@ -10,10 +10,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { AuditLoggerService } from '../common/services/audit-logger.service';
-import { refundCouponUsage } from '../bookings/bookings.service';
+import { refundCouponUsage, maxConcurrentInWindow, rentsWholeUnit, activeBookingFilter } from '../bookings/bookings.service';
 import { NotificationService } from '../common/services/notification.service';
+import { LoyaltyService } from '../common/services/loyalty.service';
 import { EmailService } from '../email/email.service';
 import { CircuitBreaker, CircuitBreakerOpenError, withTimeout } from '../common/utils/circuit-breaker';
+import { nowInTimezone } from '../common/validators/timezone';
 import * as crypto from 'crypto';
 
 interface Pay2mTokenResponse {
@@ -22,6 +24,12 @@ interface Pay2mTokenResponse {
   NAME: string;
   GENERATED_DATE_TIME: string;
 }
+
+// How long a "we already alerted for this (payment, secondary txn)" marker lives
+// in Redis. A duplicate capture re-delivered within this window is deduped; a
+// re-delivery after it (astronomically unlikely for a payment callback) would
+// re-page — harmless. 30 days comfortably covers any realistic gateway retry.
+const DUP_CAPTURE_DEDUP_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class PaymentService {
@@ -64,6 +72,17 @@ export class PaymentService {
   //     PAY2M when it's recovering.
   private readonly breaker: CircuitBreaker;
 
+  // ── IPN capture-confirmation gate (server-to-server) ──────────────────────
+  // PAY2M's IPN is the authoritative "captured" signal for NAPS, where the
+  // browser callback is hash-unverifiable (no amount) and capture-ambiguous.
+  // The IPN carries no amount either, so its hash can't be verified our way —
+  // the trust anchor is the SOURCE IP (Cloudflare-set cf-connecting-ip, which a
+  // client cannot forge while the ALB security group is locked to Cloudflare's
+  // ranges). Ships behind a flag (default OFF) so merging is a no-op until the
+  // allow-list + a live test are confirmed. Empty allow-list ⇒ fail-closed.
+  private readonly ipnConfirmEnabled: boolean;
+  private readonly ipnAllowedIps: ReadonlySet<string>;
+
   constructor(
     private config: ConfigService,
     private prisma: PrismaService,
@@ -72,6 +91,7 @@ export class PaymentService {
     private notificationService: NotificationService,
     private emailService: EmailService,
     private availabilityCache: AvailabilityCacheService,
+    private loyalty: LoyaltyService,
   ) {
     this.enabled = this.config.get('PAYMENT_ENABLED', 'false') === 'true';
     this.merchantId = this.config.getOrThrow<string>('PAY2M_MERCHANT_ID');
@@ -83,6 +103,18 @@ export class PaymentService {
     this.returnUrl = this.config.getOrThrow<string>('PAY2M_RETURN_URL');
     this.apiUrl = this.config.getOrThrow<string>('PAY2M_API_URL');
     this.merchantName = this.config.getOrThrow<string>('PAY2M_MERCHANT_NAME');
+
+    // IPN capture-confirmation gate. OFF by default — when off, an IPN is
+    // logged but never confirms a booking. The allow-list defaults to the
+    // observed PAY2M IPN source (34.18.115.33); override via SSM with a
+    // comma-separated list. An empty list ⇒ NO IPN is ever trusted (fail-closed).
+    this.ipnConfirmEnabled = this.config.get('PAY2M_IPN_CONFIRM_ENABLED', 'false') === 'true';
+    this.ipnAllowedIps = new Set(
+      (this.config.get<string>('PAY2M_IPN_ALLOWED_IPS', '34.18.115.33') ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
 
     // Resilience config — explicit per-attempt timeout + circuit breaker.
     // Mirrors `EmailService` / `SmsService`: defaults are paranoid (10
@@ -169,7 +201,7 @@ export class PaymentService {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/x-www-form-urlencoded',
-                  'User-Agent': 'Jadwal-API/1.0',
+                  'User-Agent': 'AL Jadwal-API/1.0',
                 },
                 body: body.toString(),
                 signal,
@@ -324,7 +356,7 @@ export class PaymentService {
       // crypto.randomUUID() satisfies the "random string" requirement
       // without exposing any internal state.
       SIGNATURE: crypto.randomUUID(),
-      VERSION: 'Jadwal-1.0',
+      VERSION: 'AL Jadwal-1.0',
       TXNDESC: params.description,
       SUCCESS_URL: this.returnUrl,
       FAILURE_URL: this.returnUrl,
@@ -338,52 +370,88 @@ export class PaymentService {
 
   // ─── Verify Callback Response ───────────────────────────────────────────
 
-  verifyCallbackHash(basketId: string, amount: string, errCode: string, responseKey: string): boolean {
-    // Upfront format gate — rejects obvious garbage (wrong length, non-hex)
-    // in O(1) before we spend O(n) on hashing + buffer construction.
+  /**
+   * Resolves PAY2M's Response_Key to the err_code that cryptographically SIGNED
+   * it plus the RAIL that produced it — or null if no candidate matches
+   * (invalid / forged / foreign hash).
+   *
+   * Recipe: SHA256(merchant_id + basket_id + <secret word> + <amount/err pair>).
+   * The card rail signs `amount + err_code`; the NAPS/QPay rail signs
+   * `err_code + amount` (fields swapped — proven from live production logs
+   * 2026-06-10: the recipeMatch diagnostic printed `recipe=m+b+s+e+a amount=d0
+   * err=00` on real NAPS callbacks, i.e. err-first with the integer amount,
+   * signed "00" while the visible err_code field echoed "001"). We try BOTH
+   * orders, the canonical amount renderings (PAY2M strips trailing zeros), and
+   * the success spellings "00"/"000".
+   *
+   * BOTH orders verify AUTHENTICITY only — every attempt is gated by the secret
+   * word, so a forger can't produce a match for either order, and a genuine
+   * failure is signed with its own failure code (no spelling we try can read it
+   * as success). What the orders additionally tell us is WHICH RAIL sent the
+   * callback, and the rails differ in what a success signature MEANS:
+   *   - card  (amount+err): a signed "00" is only emitted post-capture → safe
+   *     to confirm the booking on it.
+   *   - naps  (err+amount): a signed "00" can be emitted at a PENDING/session
+   *     stage BEFORE the money moves (observed live 2026-06-09: basket
+   *     JDWL-939bd325-fa3 verified as success while PAY2M's status stayed
+   *     "Pending" and no card was charged). So a NAPS success proves the
+   *     message is genuine — NOT that the money was captured. handleCallback
+   *     therefore HOLDS NAPS successes instead of confirming them.
+   *
+   * ⚠ SECURITY: when the secret word is EMPTY the hash carries no secret — every
+   * other input is visible in the customer's browser, so the callback is
+   * forgeable. main.ts fails-fast in production if PAY2M_SECRET_WORD is empty.
+   */
+  private resolveSignedErrCode(
+    basketId: string,
+    amount: string,
+    receivedErrCode: string,
+    responseKey: string,
+  ): { errCode: string; rail: 'card' | 'naps' } | null {
+    // Format gate — reject obvious garbage in O(1) before hashing.
     if (typeof responseKey !== 'string' || !/^[a-f0-9]{64}$/i.test(responseKey)) {
-      return false;
+      return null;
     }
-    // PAY2M's Response_Key recipe (PAY2M Merchant Integration Guide, Table
-    // 1.2): SHA256(merchant_id + basket_id + <secret word> + amount +
-    // err_code). The recipe + SHA256 algorithm were confirmed against a
-    // live callback (2026-05-16).
-    //
-    // <secret word> is configured in the PAY2M merchant portal and mirrored
-    // into SSM as PAY2M_SECRET_WORD — `this.secretWord`. The two MUST match
-    // exactly or every callback mismatches.
-    //
-    // ⚠ SECURITY: when the secret word is EMPTY the hash carries no secret —
-    // every other input (MERCHANT_ID, BASKET_ID, TXNAMT, err_code) is
-    // visible in the customer's own browser, so the callback is forgeable
-    // (a customer could confirm an unpaid booking). A NON-EMPTY secret word
-    // makes it a real authentication signature. main.ts requires
-    // PAY2M_SECRET_WORD non-empty in production for exactly this reason.
-    //
-    // PAY2M normalises the amount (strips trailing zeros): a transaction
-    // sent as "1.00" comes back hashed as "1". We try the canonical numeric
-    // forms so the check is robust to that normalisation.
     const n = Number(amount);
     const amountForms = new Set<string>([String(amount)]);
     if (Number.isFinite(n)) {
-      amountForms.add(n.toString());   // "1.00" → "1", "1.50" → "1.5"
-      amountForms.add(n.toFixed(2));   // → "1.00"
+      amountForms.add(n.toString());  // "1.00" → "1" (PAY2M strips trailing zeros)
+      amountForms.add(n.toFixed(0));  // → "1"   (NAPS uses the integer form)
+      amountForms.add(n.toFixed(2));  // → "1.00" (card form)
     }
+    // We try the received code plus the canonical success spellings ("00" vs
+    // "000"). The secret word gates every attempt, so a forger can't verify and
+    // a genuine failure only matches its own failure code.
+    const errForms = new Set<string>([receivedErrCode, '00', '000']);
     const target = Buffer.from(responseKey.toLowerCase(), 'hex');
-    for (const amt of amountForms) {
-      const expected = Buffer.from(
-        crypto
-          .createHash('sha256')
-          .update(`${this.merchantId}${basketId}${this.secretWord}${amt}${errCode}`)
-          .digest('hex'),
-        'hex',
-      );
-      // timingSafeEqual needs equal-length buffers — both are 32 bytes.
-      if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
-        return true;
+    for (const ec of errForms) {
+      for (const amt of amountForms) {
+        // card rail: amount+err ; NAPS/QPay rail: err+amount.
+        const candidates: Array<{ tail: string; rail: 'card' | 'naps' }> = [
+          { tail: `${amt}${ec}`, rail: 'card' },
+          { tail: `${ec}${amt}`, rail: 'naps' },
+        ];
+        for (const { tail, rail } of candidates) {
+          const expected = Buffer.from(
+            crypto
+              .createHash('sha256')
+              .update(`${this.merchantId}${basketId}${this.secretWord}${tail}`)
+              .digest('hex'),
+            'hex',
+          );
+          // timingSafeEqual needs equal-length buffers — both are 32 bytes.
+          if (expected.length === target.length && crypto.timingSafeEqual(expected, target)) {
+            return { errCode: ec, rail };
+          }
+        }
       }
     }
-    return false;
+    return null;
+  }
+
+  /** Boolean convenience wrapper — true iff the Response_Key verifies (either rail). */
+  verifyCallbackHash(basketId: string, amount: string, errCode: string, responseKey: string): boolean {
+    return this.resolveSignedErrCode(basketId, amount, errCode, responseKey) !== null;
   }
 
   // ─── Initiate Payment ───────────────────────────────────────────────────
@@ -557,6 +625,219 @@ export class PaymentService {
     }
   }
 
+  /** How far a held NAPS booking's reservation is extended so the out-of-band
+   *  capture confirmation (PAY2M's delayed IPN: 5–15 min documented) has room
+   *  to arrive before the cleanup cron reaps the slot. */
+  private static readonly NAPS_HOLD_EXTENSION_MS = 30 * 60_000;
+
+  /**
+   * Hold a verified NAPS-rail success WITHOUT confirming or deleting anything.
+   * The hash proves the callback genuinely came from PAY2M, but on this rail a
+   * success signature can precede the actual capture — so the only safe move
+   * is to keep payment + booking PENDING, give the confirmation time to arrive
+   * (forward-only reservation extension), and leave a FINANCIAL audit trail.
+   * Logs carry only non-sensitive transaction metadata — never the
+   * Response_Key or secret word.
+   */
+  private async holdNapsSuccess(
+    paymentId: string,
+    bookingId: string | null,
+    params: { err_code: string; basket_id: string; transaction_id?: string },
+  ): Promise<void> {
+    if (bookingId) {
+      const extendTo = new Date(Date.now() + PaymentService.NAPS_HOLD_EXTENSION_MS);
+      // Forward-only and PENDING-only: never shorten a longer hold, never
+      // resurrect a cancelled/expired booking's reservation.
+      await this.prisma.client.booking.updateMany({
+        where: { id: bookingId, status: 'PENDING', reservedUntil: { lt: extendTo } },
+        data: { reservedUntil: extendTo },
+      });
+    }
+    this.logger.log({
+      event: 'PAY2M_NAPS_SUCCESS_HELD',
+      paymentId,
+      basketId: params.basket_id,
+      errCode: params.err_code,
+    });
+    await this.auditLogger.log({
+      actorType: 'SYSTEM',
+      actorId: 'pay2m-callback',
+      actorName: 'PAY2M Gateway',
+      action: 'PAYMENT_NAPS_AWAITING_CAPTURE',
+      entity: 'Payment',
+      entityId: paymentId,
+      details: `basket: ${params.basket_id}, err_code: ${params.err_code}, txn: ${params.transaction_id || 'N/A'} — NAPS success verified (authentic) but capture unconfirmed; booking held PENDING`,
+      actionCategory: 'FINANCIAL',
+    });
+  }
+
+  /**
+   * Whether an inbound IPN's REAL source IP is an allow-listed PAY2M server.
+   * FAIL-CLOSED: false when the feature is off, the IP is missing, or the
+   * allow-list is empty. The caller passes the Cloudflare-set `cf-connecting-ip`
+   * (a client cannot forge it while the ALB security group is locked to
+   * Cloudflare ranges) — this is the trust anchor for the hash-less IPN.
+   */
+  isTrustedIpnSource(sourceIp: string | undefined | null): boolean {
+    if (!this.ipnConfirmEnabled) return false;
+    if (!sourceIp) return false;
+    return this.ipnAllowedIps.has(sourceIp);
+  }
+
+  /**
+   * Duplicate-capture detector. Given an AUTHENTICATED success callback that
+   * landed on an already-SUCCESS payment, decide whether it is a harmless replay
+   * of the recorded capture (same transaction id) or a genuine SECOND CAPTURE
+   * (a DIFFERENT transaction id → the customer was charged twice), and in the
+   * latter case record it FINANCIAL + page admins (once per distinct txn).
+   *
+   * The CALLER is responsible for the authenticity gate — this is only ever
+   * invoked for a verified capture. It re-reads gatewayTxnId itself so it can be
+   * called from BOTH the entry-time already-SUCCESS branch AND the optimistic-
+   * lock-loss path (a CONCURRENT second capture that read PENDING at entry but
+   * lost the confirm race — that path returns success without re-entering the
+   * SUCCESS branch, so without this call the concurrent double-charge — the exact
+   * "two tabs / slow-gateway retry" case — would go undetected).
+   *
+   * Never auto-refunds and never overwrites the recorded txn — refunds are a
+   * deliberate admin action.
+   */
+  private async flagDuplicateCaptureIfDifferentTxn(
+    payment: { id: string; amount: unknown; currency: string },
+    basketId: string,
+    incomingTxnRaw: string | undefined | null,
+  ): Promise<void> {
+    const incomingTxn = (incomingTxnRaw ?? '').trim();
+    if (!incomingTxn) return; // this capture carries no txn id → nothing to compare
+
+    const fresh = await this.prisma.client.payment.findUnique({
+      where: { id: payment.id },
+      select: { gatewayTxnId: true },
+    });
+    const recordedTxn = (fresh?.gatewayTxnId ?? '').trim();
+
+    if (!recordedTxn) {
+      // The first capture recorded no txn id, so we cannot tell a replay from a
+      // second charge. Do NOT page (a legit replay would false-alarm), but leave
+      // an observable signal so reconciliation can spot it.
+      this.logger.warn({ event: 'PAY2M_DUPLICATE_CAPTURE_UNVERIFIABLE', paymentId: payment.id, basketId });
+      return;
+    }
+    if (recordedTxn === incomingTxn) return; // replay of the SAME capture — no-op
+
+    const amount = Number(payment.amount).toFixed(2);
+
+    // 1. Record the authoritative FINANCIAL row FIRST and UNCONDITIONALLY.
+    // Durability must NOT depend on a best-effort dedup marker. The previous
+    // auditLog-based dedup was self-healing precisely because the row WAS the
+    // marker: a failed write left no marker, so the retry re-attempted. If we set
+    // a marker first and this write then fails (auditLogger.log swallows its own
+    // errors), the retry finds the marker and skips — LOSING the record of a real
+    // double charge. `audit_logs` is append-only and this path is rare, so a
+    // duplicate row on a concurrent/replayed delivery is forensically harmless; a
+    // lost row is not.
+    this.logger.error({ event: 'PAY2M_DUPLICATE_CAPTURE', paymentId: payment.id, basketId });
+    await this.auditLogger.log({
+      actorType: 'SYSTEM',
+      actorId: 'pay2m-callback',
+      actorName: 'PAY2M Gateway',
+      action: 'PAYMENT_DUPLICATE_CAPTURE',
+      entity: 'Payment',
+      entityId: payment.id,
+      details:
+        `SECOND capture on an already-SUCCESS payment — the customer was likely charged twice. ` +
+        `basket: ${basketId} | recorded txn: ${recordedTxn} | new txn: ${incomingTxn} | ` +
+        `amount on file: ${amount} ${payment.currency}. ` +
+        `Verify in the PAY2M dashboard and refund the duplicate.`,
+      actionCategory: 'FINANCIAL',
+    });
+
+    // 2. Gate ONLY the admin PAGE on an atomic marker (SET NX), so concurrent or
+    // replayed deliveries of the SAME second capture page admins exactly once
+    // (the double-page this addresses). This replaces an unindexed `details LIKE
+    // '%…%'` audit scan. `acquire()` is fail-open BY DESIGN — it returns a token
+    // on a Redis error (see its own ADR-0001 doc) — so a Redis outage pages
+    // rather than silently dropping the alert; the local catch is belt-and-braces.
+    const dedupKey = `pay2m:dupcap:${payment.id}:${incomingTxn}`;
+    let pageAdmins: boolean;
+    try {
+      pageAdmins = (await this.redisLock.acquire(dedupKey, DUP_CAPTURE_DEDUP_TTL_MS)) !== null;
+    } catch {
+      pageAdmins = true; // fail-open on an unexpected throw — page rather than go silent
+    }
+    if (pageAdmins) {
+      void this.notificationService.notifyAdmins({
+        type: 'SYSTEM',
+        title: 'Duplicate charge detected',
+        message:
+          `Payment ${payment.id.slice(0, 8)} received a SECOND capture (txn ${incomingTxn}) — ` +
+          `the customer may have been charged twice. Check PAY2M and refund the duplicate.`,
+        link: '/admin',
+      }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Read-only lookup of a payment's status + booking by basket id. Used ONLY by
+   * the browser-callback handler to decide whether an UNVERIFIABLE callback (the
+   * NAPS rail, whose hash we can't verify) should show the "processing" screen —
+   * because the server-to-server IPN confirms it shortly — instead of a false
+   * "failed". Confirms NOTHING; never mutates state.
+   */
+  async paymentStatusByBasket(basketId: string): Promise<{ status: string; bookingId: string | null } | null> {
+    const p = await this.prisma.client.payment.findUnique({
+      where: { gatewayBasketId: basketId },
+      select: { status: true, bookingId: true },
+    });
+    return p ? { status: p.status, bookingId: p.bookingId } : null;
+  }
+
+  /**
+   * Slot-availability check for the §B2/§M6 recovery paths — re-inserting (or
+   * un-cancelling) a booking into its ORIGINAL fixed unit/window. Mirrors
+   * createBooking's logic EXACTLY (shared helpers): active-reservation filter
+   * (CANCELLED + expired-PENDING don't hold seats), sweep-line peak concurrency
+   * (so flex-start hourly overlaps that are never concurrent don't over-count),
+   * and whole-unit semantics. The old naive `SUM(guests)` over-counted and
+   * spuriously refunded recoverable paid bookings. Returns true if `guests`
+   * still fit. `tx` is the active (Serializable) transaction client.
+   */
+  private async recoverySlotAvailable(
+    tx: any,
+    args: { activityId: string; unitNumber: number | null; startDt: Date; endDt: Date; guests: number; excludeBookingId?: string },
+  ): Promise<boolean> {
+    const { activityId, unitNumber, startDt, endDt, guests, excludeBookingId } = args;
+    const act = await tx.activity.findUnique({
+      where: { id: activityId },
+      select: { capacity: true, hasUnits: true, unitCapacity: true, bookingType: true, pricingModel: true },
+    });
+    if (!act) return false;
+
+    const overlapping = await tx.booking.findMany({
+      where: {
+        activityId,
+        ...(unitNumber != null ? { unitNumber } : {}),
+        ...activeBookingFilter(new Date()),
+        startDatetime: { lt: endDt },
+        endDatetime: { gt: startDt },
+        ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+      },
+      select: { startDatetime: true, endDatetime: true, guests: true },
+    });
+
+    const isUnit = act.hasUnits && unitNumber != null;
+    // Whole-unit rental (rooms / per-unit): the unit is free ONLY if nothing
+    // overlaps it — one booking owns the entire unit, no seat-sharing.
+    if (isUnit && rentsWholeUnit(act)) {
+      return overlapping.length === 0;
+    }
+    // Per-person (unit or open): true peak concurrent guests within the window.
+    const peak = maxConcurrentInWindow(overlapping, startDt, endDt);
+    const cap = isUnit ? act.unitCapacity : act.capacity;
+    if (cap == null) return true; // no capacity limit configured → unbounded
+    return peak + guests <= cap;
+  }
+
   // ─── Handle Callback from PAY2M ────────────────────────────────────────
 
   async handleCallback(params: {
@@ -566,7 +847,16 @@ export class PaymentService {
     transaction_id?: string;
     Response_Key: string;
     order_date?: string;
-  }): Promise<{ bookingId: string; status: 'success' | 'failed'; error?: string }> {
+    // 'pending' = a verified NAPS-rail success held awaiting capture
+    // confirmation — neither confirmed nor failed yet.
+  }, opts?: {
+    // 'ipn' = a server-to-server IPN (trust by source IP, no hash verify);
+    // 'callback' (default) = the browser redirect (hash-verified).
+    via?: 'callback' | 'ipn';
+    // Set by the controller when an IPN's real source IP is allow-listed AND
+    // the feature flag is on. Only a trusted IPN may confirm/fail a booking.
+    trustedCapture?: boolean;
+  }): Promise<{ bookingId: string; status: 'success' | 'failed' | 'pending'; error?: string }> {
     // 0. Reject callbacks when payment is disabled (maintenance, misconfiguration)
     if (!this.enabled) {
       this.logger.warn({ event: 'PAY2M_CALLBACK_WHILE_DISABLED' });
@@ -579,7 +869,12 @@ export class PaymentService {
     const payment = await db.payment.findUnique({
       where: { gatewayBasketId: params.basket_id },
       select: {
-        id: true, bookingId: true, amount: true, status: true,
+        id: true, bookingId: true, amount: true, currency: true, status: true,
+        // The txn id of the capture we ALREADY recorded. Needed to tell a harmless
+        // REPLAY (same txn id — PAY2M re-sending its notification) apart from a
+        // genuine SECOND CAPTURE (a different txn id — the customer was charged
+        // twice). Without it the duplicate-capture guard below cannot exist.
+        gatewayTxnId: true,
         // §B2 — bookingSnapshot + bookingRecreatedAt feed the orphan-recovery
         // branch when the cleanup cron hard-deleted the booking before the
         // success callback arrived. Snapshot was frozen at booking creation;
@@ -600,50 +895,155 @@ export class PaymentService {
       throw new BadRequestException('Payment not found');
     }
 
-    // 2. Idempotent — if already processed as SUCCESS, return early
+    // 2. Idempotent — if already processed as SUCCESS, return early.
+    //
+    // BUT: "already SUCCESS" hides two very different events, and we used to treat
+    // them identically:
+    //   (a) a REPLAY — PAY2M re-sending the notification for the SAME capture
+    //       (same transaction_id). Harmless; the early return is correct.
+    //   (b) a genuine SECOND CAPTURE — a DIFFERENT transaction_id for the same
+    //       basket, i.e. THE CUSTOMER WAS CHARGED TWICE.
+    //
+    // (b) really happens: initiatePayment reuses the basket id on retry and mints a
+    // fresh gateway token each time, so two hosted-checkout sessions can both be
+    // completed (two tabs, or a retry after a slow gateway). It happened in prod.
+    //
+    // We stored gatewayTxnId but never compared it, so the second capture was
+    // discarded here with no audit row and no alert — and reconciliation could not
+    // see it either, because it sums the rows in OUR db and there is only one. The
+    // customer was the platform's only duplicate-charge detector.
+    //
+    // Detect it, record it as FINANCIAL, and page an admin. We deliberately do NOT
+    // auto-refund: the refund rail is a manual/admin decision elsewhere in this
+    // service, and guessing wrong with real money is worse than raising a flag.
     if (payment.status === 'SUCCESS') {
+      // AUTHENTICITY GATE — never raise a duplicate-charge alarm from an UNVERIFIED
+      // callback. A real capture is either a hash-signed browser success or a
+      // source-IP-trusted IPN; nothing else is trusted here. (Mirrors the
+      // verification the non-idempotent path does further down.)
+      const amount = Number(payment.amount).toFixed(2);
+      const authenticSuccess =
+        opts?.via === 'ipn'
+          ? !!opts.trustedCapture && ['00', '000', '0000'].includes((params.err_code ?? '').trim())
+          : (() => {
+              // Require the CARD rail: a NAPS-rail browser success is authentic
+              // but capture-AMBIGUOUS (its capture is confirmed via the IPN, not
+              // the redirect — see isSuccess below, which is likewise card-only).
+              // A NAPS double capture arrives via the IPN path, which is handled
+              // by the `via==='ipn'` branch above, so this misses nothing.
+              const r = this.resolveSignedErrCode(params.basket_id, amount, params.err_code, params.Response_Key);
+              return r !== null && r.rail === 'card' && (r.errCode === '00' || r.errCode === '000');
+            })();
+      if (authenticSuccess) {
+        await this.flagDuplicateCaptureIfDifferentTxn(payment, params.basket_id, params.transaction_id);
+      }
       return { bookingId: payment.bookingId!, status: 'success' };
     }
 
-    // 3. Check if success (err_code 00 or 000)
-    const isSuccess = params.err_code === '00' || params.err_code === '000';
+    // 3. Resolve the Response_Key and derive success from the SIGNED code plus
+    //    the RAIL that signed it.
+    //
+    // resolveSignedErrCode returns the err_code that cryptographically validates
+    // PAY2M's Response_Key and which rail signed it (or null if nothing
+    // matches). We trust THAT signed code for success — not the raw err_code
+    // field — because the NAPS/QPay rail echoes a 3-digit status (e.g. "001")
+    // in the field yet signs the hash with the 2-digit gateway code "00". A
+    // failure is signed with its own failure code, so it can never resolve to
+    // a success code.
+    //
+    // The rail decides what a verified SUCCESS means:
+    //   - card: "00" is only emitted post-capture → confirm the booking.
+    //   - naps: "00" can be emitted at a PENDING stage BEFORE any money moves
+    //     (live incident 2026-06-09, basket JDWL-939bd325-fa3) → HOLD the
+    //     booking (no confirm, no delete) until PAY2M confirms the capture
+    //     out-of-band (IPN / status inquiry — the trigger lands in a follow-up).
+    //
+    // ⚠ LAUNCH BLOCKER while the secret word is EMPTY: every hash input is
+    // otherwise visible in the customer's browser, so a forged callback could
+    // confirm an unpaid booking. main.ts fails-fast in production if
+    // PAY2M_SECRET_WORD is empty, so a deploy cannot ship that configuration.
+    const amount = Number(payment.amount).toFixed(2);
+    let hashValid: boolean;
+    let isSuccess: boolean;
+    let isNapsHeldSuccess: boolean;
 
-    // 2b. CRITICAL: If payment was marked FAILED by cleanup cron but PAY2M now sends SUCCESS,
-    // the customer WAS charged — we MUST recover the booking. This handles the race condition
-    // where the reservation timer expires while the customer is entering card details on PAY2M.
-    // Without this, the customer loses money with no booking.
+    if (opts?.via === 'ipn') {
+      // ── IPN path — trust by SOURCE IP, not hash ──────────────────────────
+      // The IPN carries no `amount`, so resolveSignedErrCode (which hashes the
+      // amount) cannot verify it. The trust anchor is `opts.trustedCapture`,
+      // set by the controller ONLY when the IPN's real source IP is allow-listed
+      // AND the feature flag is on. An untrusted IPN confirms/fails NOTHING.
+      // PAY2M's IPN success code is "0000"; the browser callback uses "000"/"00".
+      const successCode = ['00', '000', '0000'].includes((params.err_code ?? '').trim());
+      if (!opts.trustedCapture) {
+        this.logger.warn({ event: 'PAY2M_IPN_UNTRUSTED', paymentId: payment.id, basketId: params.basket_id });
+        // Take NO action — never fail or confirm a legit pending payment on an
+        // unverified, possibly-forged notification. Leave it for the cron.
+        return { bookingId: payment.bookingId ?? '', status: 'pending' };
+      }
+      if (!successCode) {
+        // NON-success IPN. We do NOT know PAY2M's full code taxonomy (a final
+        // decline vs a still-processing/authorized status), so we take NO
+        // destructive action — leave the payment PENDING. A genuine decline is
+        // already surfaced + FAILED by the browser callback, and an unpaid
+        // PENDING is reaped by the cleanup cron once its reservation lapses.
+        // This guarantees we can never prematurely FAIL a payment that PAY2M may
+        // still capture (which would also wrongly free the slot). Only an
+        // explicit success confirms; nothing else mutates state from an IPN.
+        this.logger.warn({ event: 'PAY2M_IPN_NONSUCCESS_NOOP', paymentId: payment.id, basketId: params.basket_id, errCode: params.err_code });
+        return { bookingId: payment.bookingId ?? '', status: 'pending' };
+      }
+      // Trusted SUCCESS IPN = authoritative capture confirmation → confirm the
+      // booking via the shared transaction below (no hash, no NAPS hold). The
+      // charged amount is the server-frozen `payment.amount`, never anything in
+      // the IPN, so amount integrity is unchanged.
+      this.logger.log({ event: 'PAY2M_IPN_CAPTURE_CONFIRMED', paymentId: payment.id, basketId: params.basket_id, errCode: params.err_code });
+      hashValid = true;
+      isNapsHeldSuccess = false;
+      isSuccess = true;
+    } else {
+      // ── Browser-callback path — hash-verified (unchanged) ────────────────
+      const resolved = this.resolveSignedErrCode(
+        params.basket_id,
+        amount,
+        params.err_code,
+        params.Response_Key,
+      );
+      hashValid = resolved !== null;
+      const signedSuccess = resolved !== null && (resolved.errCode === '00' || resolved.errCode === '000');
+      isNapsHeldSuccess = signedSuccess && resolved!.rail === 'naps';
+      // Only a CARD-rail success may confirm a booking in this handler; a
+      // NAPS-rail success is authentic but capture-ambiguous and is held.
+      isSuccess = signedSuccess && resolved!.rail === 'card';
+    }
+
+    // 2b. CRITICAL: If payment was marked FAILED by the cleanup cron but PAY2M
+    // now sends a VERIFIED success, the customer WAS charged — recover the
+    // booking (the reservation timer expired while they were on the PAY2M page).
+    // A NAPS-rail success is NOT capture proof, so it must not trigger the
+    // recovery either — it is held exactly like the pre-FAILED case below.
     if (payment.status === 'FAILED' && !isSuccess) {
+      if (isNapsHeldSuccess) {
+        await this.holdNapsSuccess(payment.id, payment.bookingId, params);
+        return { bookingId: payment.bookingId ?? '', status: 'pending' };
+      }
       return { bookingId: payment.bookingId!, status: 'failed', error: 'Payment was previously declined' };
     }
-    // If payment.status === 'FAILED' && isSuccess → fall through to process as new SUCCESS
-    // (the optimistic lock below handles the update safely)
+    // FAILED && isSuccess (card rail) → fall through to recover (optimistic lock below).
 
-    // 4. Verify the PAY2M Response_Key hash on every callback.
-    //
-    // The hash includes the PAY2M secret word (verifyCallbackHash). When a
-    // non-empty secret word is configured — in the PAY2M merchant portal AND
-    // the matching SSM PAY2M_SECRET_WORD — this is a genuine authentication
-    // signature: a customer cannot forge it.
-    //
-    // ⚠ LAUNCH BLOCKER while the secret word is EMPTY: with no secret word,
-    // every hash input is visible in the customer's browser, so a forged
-    // `err_code=000` callback could confirm an unpaid booking. Closing this
-    // = set a strong secret word in the PAY2M portal + mirror it to SSM.
-    // main.ts fails-fast in production if PAY2M_SECRET_WORD is empty, so a
-    // production deploy cannot ship with the forgeable configuration.
-    const amount = Number(payment.amount).toFixed(2);
-    const hashValid = this.verifyCallbackHash(
-      params.basket_id,
-      amount,
-      params.err_code,
-      params.Response_Key,
-    );
-
-    // The hash is verified on every callback regardless of err_code — a
-    // mismatch means a corrupted or malformed callback. (It cannot, on its
-    // own, distinguish a forgery — see the launch-blocker note above.)
+    // 4. Reject any callback whose Response_Key does not verify (corrupt,
+    // malformed, foreign-rail, or forged).
     if (!hashValid) {
-      this.logger.warn({ event: 'PAY2M_HASH_MISMATCH', paymentId: payment.id, errCode: params.err_code });
+      // Logs only NON-sensitive transaction metadata (basket/amount/err_code) —
+      // never the Response_Key or secret word, which together with the otherwise
+      // known inputs would form an offline brute-force oracle for the secret.
+      this.logger.warn({
+        event: 'PAY2M_HASH_MISMATCH',
+        paymentId: payment.id,
+        errCode: params.err_code,
+        basketId: params.basket_id,
+        amountUsed: amount,
+      });
       await this.auditLogger.log({
         actorType: 'SYSTEM',
         actorId: 'pay2m-callback',
@@ -655,6 +1055,22 @@ export class PaymentService {
         actionCategory: 'FINANCIAL',
       });
       throw new BadRequestException('Payment verification failed');
+    }
+
+    // 4a. NAPS-rail verified success → HOLD (no confirm, no delete). The
+    // message is genuine (secret-gated hash, unforgeable) but this rail emits
+    // success-signed callbacks pre-capture: confirming here booked UNPAID
+    // orders (#369 incident, basket 939bd325) and rejecting here destroyed
+    // PAID ones (#370, money-taken-no-booking). We do neither — payment and
+    // booking stay PENDING, the reservation is extended so a delayed capture
+    // confirmation (PAY2M's delayed IPN is documented at 5–15 min) doesn't
+    // lose the slot, and the hold is audited. The capture-confirmation
+    // trigger (IPN with a source allow-list / status inquiry) lands in a
+    // follow-up — until then NOTHING can confirm a NAPS booking, which is
+    // fail-safe in both directions.
+    if (isNapsHeldSuccess) {
+      await this.holdNapsSuccess(payment.id, payment.bookingId, params);
+      return { bookingId: payment.bookingId ?? '', status: 'pending' };
     }
 
     // 4b. Coupon expiry-race detection. The customer may have created the
@@ -679,7 +1095,7 @@ export class PaymentService {
         !liveCoupon ||
         liveCoupon.status !== 'APPROVED' ||
         liveCoupon.validTo < now ||
-        (liveCoupon.usageLimit !== null && liveCoupon.usedCount > liveCoupon.usageLimit);
+        (liveCoupon.usageLimit !== null && liveCoupon.usedCount >= liveCoupon.usageLimit);
       if (couponInvalid) {
         await this.auditLogger.log({
           actorType: 'SYSTEM',
@@ -706,7 +1122,7 @@ export class PaymentService {
     /// raises a flag; a separate tx below tries the booking recovery and
     /// falls back to REFUND_PENDING + audit + customer notification if
     /// recovery isn't safe.
-    let recoveryMode: 'B2_ORPHAN' | 'M6_SYSTEM_CANCELLED' | null = null;
+    let recoveryMode: 'B2_ORPHAN' | 'M6_SYSTEM_CANCELLED' | 'CANCELLED_REFUND' | null = null;
     const updated = await db.$transaction(async (tx: any) => {
       if (isSuccess) {
         // Accept SUCCESS from PENDING or FAILED (recovery from cron race condition)
@@ -729,21 +1145,35 @@ export class PaymentService {
           select: { id: true, status: true, cancelledBy: true },
         });
         if (booking) {
-          if (booking.status === 'CANCELLED' && booking.cancelledBy === 'SYSTEM') {
-            // §M6 — cron flipped the booking to CANCELLED-by-SYSTEM (e.g. the
-            // reservation window expired) but PAY2M's success callback now
-            // arrives. We can't blindly un-cancel: another customer may have
-            // booked the slot in the meantime. Flag for after-commit recovery
-            // (slot-conflict + activity-status + vendor-status checks);
-            // recovery either un-cancels safely or queues a refund.
-            recoveryMode = 'M6_SYSTEM_CANCELLED';
+          if (booking.status === 'CANCELLED') {
+            if (booking.cancelledBy === 'SYSTEM') {
+              // §M6 — the booking was auto-cancelled by SYSTEM (e.g. the
+              // reservation window expired) but PAY2M's success callback now
+              // arrives. The customer didn't choose to cancel, so try to
+              // recover their booking. We can't blindly un-cancel (another
+              // customer may have grabbed the slot): flag for after-commit
+              // recovery (slot-conflict + activity-status checks) which
+              // un-cancels safely or queues a refund.
+              recoveryMode = 'M6_SYSTEM_CANCELLED';
+            } else {
+              // Deliberately cancelled by the customer/vendor/admin BEFORE this
+              // capture: their cancel flipped the still-PENDING payment to
+              // FAILED, and the card success is arriving late. We must NOT
+              // resurrect a deliberately-cancelled booking — the slot may have
+              // been resold, and confirming it would charge the customer for a
+              // booking that was intentionally killed (risking a double-sell).
+              // The captured money is refunded instead.
+              //
+              // (Bug fix: this previously fell into an unconditional
+              // `status: 'CONFIRMED'` because the only CANCELLED branch required
+              // `cancelledBy === 'SYSTEM'`, which is never set anywhere — so
+              // every cancelled booking was silently re-confirmed and charged.)
+              recoveryMode = 'CANCELLED_REFUND';
+            }
           } else {
-            // Booking exists in a recoverable state — confirm it (PENDING is
+            // Booking exists in a confirmable state — confirm it. PENDING is
             // the normal happy path; an already-CONFIRMED booking is a
-            // duplicate-callback edge case we tolerate; CANCELLED-by-anyone-
-            // other-than-SYSTEM means the customer/vendor/admin cancelled
-            // post-payment-init, which the existing flow handles via
-            // refund-decision recording).
+            // duplicate-callback edge case we tolerate idempotently.
             await tx.booking.update({
               where: { id: payment.bookingId },
               data: { status: 'CONFIRMED' },
@@ -761,7 +1191,13 @@ export class PaymentService {
         // Verify still PENDING before deleting
         const result = await tx.payment.updateMany({
           where: { id: payment.id, status: 'PENDING' },
-          data: { status: 'FAILED' }, // Mark first, then delete — prevents race
+          // Mark first, then delete — prevents race. Also RELEASE the idempotency
+          // key: the retained FAILED row keeps its @unique idempotencyKey, and the
+          // customer's retry is a NEW payment. It's NULL today (the web client
+          // doesn't send a key to /payment/initiate), so this is a no-op now — but
+          // the old code deleted the row and freed the key, so a future client that
+          // DOES send one would otherwise hit a P2002 409 and be unable to retry.
+          data: { status: 'FAILED', idempotencyKey: null },
         });
         if (result.count === 0) return false; // Already processed
         // Payment failed/cancelled — delete the unpaid booking entirely (no trace)
@@ -771,7 +1207,7 @@ export class PaymentService {
           // state so we can refund usage before the booking row disappears.
           const doomed = await tx.booking.findUnique({
             where: { id: payment.bookingId },
-            select: { activityId: true, customerId: true, couponCode: true },
+            select: { activityId: true, customerId: true, couponCode: true, pointsRedeemed: true },
           });
           if (doomed) {
             deletedActivityId = doomed.activityId;
@@ -779,10 +1215,47 @@ export class PaymentService {
             // a failed payment means the booking never completed — return
             // that increment so the coupon stays accurate.
             await refundCouponUsage(tx, doomed.couponCode, doomed.customerId);
+            // Return any Wanasa points the customer redeemed on this booking.
+            // They were debited at booking-create time; deleting the booking on
+            // a failed payment without refunding them would silently confiscate
+            // the customer's store credit. Mirrors the cleanup cron's points
+            // refund on stale-booking deletion, and keeps the points accounting
+            // CONSISTENT so the §B2 recovery can safely re-debit if a late,
+            // verified success ever recreates this booking.
+            const redeemed = Number(doomed.pointsRedeemed) || 0;
+            if (redeemed > 0) {
+              await this.loyalty.refund(tx, {
+                userId: doomed.customerId,
+                amount: redeemed,
+                bookingId: payment.bookingId,
+                source: 'CANCEL_REFUND_UNPAID',
+                actorType: 'SYSTEM',
+                actorId: 'pay2m-callback',
+                note: `Payment failed — returned ${redeemed} redeemed points for deleted booking`,
+              });
+            }
           }
           await tx.booking.update({ where: { id: payment.bookingId }, data: { paymentId: null } });
         }
-        await tx.payment.delete({ where: { id: payment.id } });
+        // KEEP the payment row (already flipped to FAILED above). We must NOT
+        // hard-delete it, for two reasons:
+        //   1. Accounting/legal — this codebase's stated invariant is "Payments
+        //      and bookings are NEVER hard-deleted" (see cleanup.service.ts), with
+        //      a 7-year FINANCIAL retention design. The cron already honours this;
+        //      this callback branch was the one place that still violated it.
+        //   2. Recovery — deleting the row destroys gatewayBasketId + the frozen
+        //      bookingSnapshot. If PAY2M later reports a genuine capture for this
+        //      basket (the browser callback can carry a NON-terminal code such as
+        //      002 "timed out" / 001 "pending" that is NOT a final decline — the
+        //      IPN branch refuses to act on exactly these for that reason), the
+        //      later success would hit "Payment not found" and the customer would
+        //      be charged with no booking and no refund — invisible to
+        //      reconciliation. Keeping the FAILED row lets §B2 orphan-recovery
+        //      re-create the booking or queue a refund, same as the cron path.
+        //
+        // Only the unpaid Booking is removed (to free the slot). The booking is the
+        // FK-owning side (Booking.paymentId → Payment, onDelete: SetNull), so its
+        // deletion leaves the payment intact.
         if (payment.bookingId) {
           await tx.booking.delete({ where: { id: payment.bookingId } });
         }
@@ -793,7 +1266,20 @@ export class PaymentService {
     // If optimistic lock failed, another callback already processed this — return idempotent response
     if (!updated) {
       const current = await db.payment.findUnique({ where: { id: payment.id }, select: { status: true } });
-      if (current?.status === 'SUCCESS') return { bookingId: savedBookingId!, status: 'success' as const };
+      if (current?.status === 'SUCCESS') {
+        // CONCURRENT double-capture: THIS callback is an authenticated success
+        // (it passed hash verification above / is a trusted IPN) that read PENDING
+        // at entry but lost the confirm race to another capture. It never re-enters
+        // the entry-SUCCESS branch, so detect the duplicate HERE too — otherwise a
+        // genuine second charge that arrives concurrently (two tabs / a retry
+        // racing a slow gateway) is confirmed by the winner and silently dropped
+        // by the loser, with no alert. Gated on isSuccess so only a real capture
+        // (not a decline that lost a race) is compared.
+        if (isSuccess) {
+          await this.flagDuplicateCaptureIfDifferentTxn(payment, params.basket_id, params.transaction_id);
+        }
+        return { bookingId: savedBookingId!, status: 'success' as const };
+      }
       return { bookingId: savedBookingId ?? '', status: 'failed' as const, error: 'Payment was previously processed' };
     }
 
@@ -813,6 +1299,16 @@ export class PaymentService {
       await this.attemptB2OrphanRecovery(payment.id, params.basket_id);
     } else if (recoveryMode === 'M6_SYSTEM_CANCELLED') {
       await this.attemptM6UnCancel(payment.id, payment.bookingId!, params.basket_id);
+    } else if (recoveryMode === 'CANCELLED_REFUND') {
+      // Booking was deliberately cancelled before this late capture — queue a
+      // refund of the captured money. The booking stays cancelled.
+      await this.queueB2Refund(
+        payment.id,
+        payment.amount,
+        payment.currency,
+        params.basket_id,
+        'BOOKING_CANCELLED_BEFORE_CAPTURE',
+      );
     }
 
     // 6. Audit log (use saved bookingId since record may be deleted for failures)
@@ -831,6 +1327,18 @@ export class PaymentService {
       return { bookingId: savedBookingId ?? '', status: 'failed' as const, error: this.mapErrorMessage(params.err_code) };
     }
 
+    // Deliberately-cancelled booking that received a late capture: a refund was
+    // queued above (CANCELLED_REFUND). Do NOT send "booking confirmed" / "new
+    // booking" notifications — the booking stays cancelled. Tell the customer a
+    // refund is coming instead of falsely confirming the booking.
+    if (recoveryMode === 'CANCELLED_REFUND') {
+      return {
+        bookingId: savedBookingId ?? '',
+        status: 'failed' as const,
+        error: 'This booking was cancelled before payment completed. Your payment will be refunded.',
+      };
+    }
+
     // Notify customer about payment success + send booking confirmation email
     const bookingForNotify = await db.booking.findUnique({
       where: { id: payment.bookingId! },
@@ -843,6 +1351,7 @@ export class PaymentService {
         totalPrice: true,
         serviceFee: true,
         couponDiscount: true,
+        pointsDiscount: true,
         currencyCode: true,
         startDatetime: true,
         endDatetime: true,
@@ -933,6 +1442,19 @@ export class PaymentService {
       // may have been recreated by the §B2 path while the customer was being
       // soft-deleted in another tab; the customer email is then
       // `<id>@deleted.local`, a non-routable sentinel that would bounce at SES.
+      // Wanasa points the customer will EARN once this booking completes (after
+      // the event). Reuse LoyaltyService.computeEarnedPoints with the SAME inputs
+      // the award will use (totalPrice, pointsDiscount, current rate) so the email
+      // never promises a different number than what's granted. A points-paid
+      // booking yields 0 → the template hides the reward line. This is a display
+      // estimate only — it does NOT award points here (award stays at COMPLETED).
+      const loyaltyCfg = await db.loyaltyConfig.findUnique({ where: { id: 'singleton' } });
+      const pointsToEarn = this.loyalty.computeEarnedPoints(
+        Number(bookingForNotify.totalPrice),
+        Number(bookingForNotify.pointsDiscount),
+        loyaltyCfg ? loyaltyCfg.pointsPerQar.toNumber() : 0.01,
+      );
+
       const customerEmail = bookingForNotify.customer.email;
       if (!customerEmail.endsWith('@deleted.local')) {
         try {
@@ -952,6 +1474,7 @@ export class PaymentService {
                 bookingId: payment.bookingId!,
                 ...(bookingForNotify.activity?.locationAddress ? { locationAddress: bookingForNotify.activity.locationAddress } : {}),
                 ...(mapsLink ? { mapsLink } : {}),
+                ...(pointsToEarn > 0 ? { pointsToEarn } : {}),
               },
             },
           });
@@ -1038,7 +1561,7 @@ export class PaymentService {
     // snapshot (and a quick "already recovered" short-circuit) up front.
     const fresh = await db.payment.findUnique({
       where: { id: paymentId },
-      select: { id: true, amount: true, currency: true, bookingSnapshot: true, bookingRecreatedAt: true },
+      select: { id: true, bookingId: true, amount: true, currency: true, bookingSnapshot: true, bookingRecreatedAt: true },
     });
     if (!fresh) return;
     if (fresh.bookingRecreatedAt) {
@@ -1071,13 +1594,11 @@ export class PaymentService {
     // detection runs INSIDE the Serializable tx below.
     const startDt = new Date(snapshot.startDatetime);
     const endDt = new Date(snapshot.endDatetime);
-    const now = new Date();
-
-    if (endDt < now) {
-      // Activity already ended — not deliverable. Refund.
-      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'ACTIVITY_ALREADY_ENDED');
-      return;
-    }
+    // NOTE: the "activity already ended" gate is applied AFTER the activity is
+    // loaded below — it needs the activity's timezone. endDatetime is local-
+    // wall-clock tagged-UTC, so a raw `endDt < new Date()` compare is wrong by
+    // the country's UTC offset (Qatar +3 → would recreate a booking for an
+    // activity that already ended, for ~3h). See the tz-correct check below.
 
     // §B9 follow-up — customer may have been soft-deleted between the
     // PENDING booking creation and PAY2M's success callback (the
@@ -1097,10 +1618,19 @@ export class PaymentService {
 
     const activity = await db.activity.findUnique({
       where: { id: snapshot.activityId },
-      select: { id: true, status: true, vendor: { select: { id: true, status: true } } },
+      select: { id: true, status: true, vendor: { select: { id: true, status: true } }, country: { select: { defaultTimezone: true } } },
     });
     if (!activity) {
       await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'ACTIVITY_DELETED');
+      return;
+    }
+
+    // Activity already ended (in ITS timezone) — not deliverable → refund.
+    // endDatetime is tagged-UTC, so compare against nowInTimezone(activity tz),
+    // NOT raw now (which would be off by the country's offset and recreate a
+    // booking for a consumed activity). Matches the completion guards in #463.
+    if (endDt.getTime() <= nowInTimezone(activity.country?.defaultTimezone ?? 'UTC').getTime()) {
+      await this.queueB2Refund(paymentId, fresh.amount, fresh.currency, basketId, 'ACTIVITY_ALREADY_ENDED');
       return;
     }
     // Vendor suspended/inactive: still recreate the booking (customer paid in
@@ -1129,31 +1659,32 @@ export class PaymentService {
         });
         if (stamp.count === 0) return { kind: 'already-recovered' as const };
 
-        // Slot-conflict detection — same shape as createBooking's
-        // pre-insert aggregate. Counts only non-CANCELLED bookings that
-        // overlap the same activity/unit/window.
-        const overlap = await tx.booking.aggregate({
-          where: {
-            activityId: snapshot.activityId,
-            unitNumber: snapshot.unitNumber ?? undefined,
-            status: { notIn: ['CANCELLED'] },
-            startDatetime: { lt: endDt },
-            endDatetime: { gt: startDt },
-          },
-          _sum: { guests: true },
+        // Slot-conflict detection — uses the SAME helper as createBooking
+        // (sweep-line peak + active-reservation filter + whole-unit) so a
+        // recoverable paid booking isn't spuriously refunded by a naive
+        // SUM(guests) that over-counts non-concurrent overlaps / expired holds.
+        const slotFree = await this.recoverySlotAvailable(tx, {
+          activityId: snapshot.activityId,
+          unitNumber: snapshot.unitNumber ?? null,
+          startDt,
+          endDt,
+          guests: snapshot.guests,
         });
-        const taken = overlap._sum.guests ?? 0;
-        const activityCapacity = await tx.activity.findUnique({
-          where: { id: snapshot.activityId },
-          select: { capacity: true },
-        });
-        const cap = activityCapacity?.capacity ?? 0;
-        if (taken + snapshot.guests > cap) {
+        if (!slotFree) {
           return { kind: 'slot-conflict' as const };
         }
 
         const recreated = await tx.booking.create({
           data: {
+            // Re-use the ORIGINAL booking id (retained on payment.bookingId — a
+            // non-FK scalar the cron's booking-delete doesn't touch). The id is
+            // free (the row was deleted), and re-using it means every client
+            // reference minted before the cron ran — the redirect bookingId, the
+            // result-page poll, the confirmation-email link, and the post-recovery
+            // notification lookup (which reads payment.bookingId) — all resolve to
+            // this recovered booking instead of dangling. Falls back to a fresh id
+            // only for the (unexpected) case where the original id is missing.
+            ...(fresh.bookingId ? { id: fresh.bookingId } : {}),
             ref: snapshot.ref,
             activityId: snapshot.activityId,
             vendorId: snapshot.vendorId,
@@ -1191,9 +1722,8 @@ export class PaymentService {
         // re-inserting the booking, the customer IS using the coupon
         // again, so the counter has to climb back up. Mirrors the bookkeeping
         // that bookings.service.createBooking does at original booking time.
-        // Loyalty points: cleanup does NOT refund redeemed points (existing
-        // behaviour), so the customer's balance is already correct — no
-        // re-debit needed here.
+        // (Loyalty points are re-debited separately below — see the redeem()
+        // call after this coupon roll-forward block.)
         if (snapshot.couponCode) {
           const coupon = await tx.coupon.findUnique({
             where: { code: snapshot.couponCode },
@@ -1224,6 +1754,26 @@ export class PaymentService {
               data: { used: true },
             });
           }
+        }
+
+        // Re-debit the Wanasa points the customer redeemed on this booking.
+        // When the original booking was deleted (cleanup cron, or the callback
+        // failure path), those redeemed points were refunded to the customer's
+        // balance. This recovery re-creates the booking, which USED those points
+        // (pointsDiscount reduced the captured amount), so we must take them
+        // again — otherwise the customer keeps both the points AND the discount
+        // (balance inflation). If the customer already spent the refunded points
+        // meanwhile, redeem() throws Insufficient → this Serializable tx rolls
+        // back → the catch falls through to queueB2Refund (refunding the whole
+        // capture is correct when we can't honor the points-discounted price).
+        const redeemedPts = Number(snapshot.pointsRedeemed) || 0;
+        if (redeemedPts > 0) {
+          await this.loyalty.redeem(tx, {
+            userId: snapshot.customerId,
+            amount: redeemedPts,
+            bookingId: recreated.id,
+            note: `§B2 recovery re-debit of redeemed points, booking ${snapshot.ref}`,
+          });
         }
 
         return { kind: 'recreated' as const, bookingId: recreated.id, activityId: recreated.activityId };
@@ -1282,6 +1832,7 @@ export class PaymentService {
       select: {
         id: true, activityId: true, unitNumber: true, guests: true,
         startDatetime: true, endDatetime: true, status: true, cancelledBy: true,
+        activity: { select: { country: { select: { defaultTimezone: true } } } },
       },
     });
     if (!booking) {
@@ -1298,7 +1849,10 @@ export class PaymentService {
       // Concurrent recovery already un-cancelled it. Nothing to do.
       return;
     }
-    if (booking.endDatetime < new Date()) {
+    // endDatetime is tagged-UTC → compare against nowInTimezone(activity tz),
+    // not raw now (off by the country offset — would un-cancel a booking for an
+    // already-ended activity for ~3h in the GCC). Matches the #463 completion guards.
+    if (booking.endDatetime.getTime() <= nowInTimezone(booking.activity?.country?.defaultTimezone ?? 'UTC').getTime()) {
       const fresh = await db.payment.findUnique({
         where: { id: paymentId },
         select: { amount: true, currency: true },
@@ -1316,27 +1870,24 @@ export class PaymentService {
         });
         if (flip.count === 0) return { kind: 'already-recovered' as const };
 
-        // Slot-conflict re-check — another customer may have grabbed the
-        // slot while this one was CANCELLED. We use the same overlap
-        // aggregate as createBooking, EXCLUDING this booking itself.
-        const overlap = await tx.booking.aggregate({
-          where: {
-            id: { not: bookingId },
-            activityId: booking.activityId,
-            unitNumber: booking.unitNumber ?? undefined,
-            status: { notIn: ['CANCELLED'] },
-            startDatetime: { lt: booking.endDatetime },
-            endDatetime: { gt: booking.startDatetime },
-          },
-          _sum: { guests: true },
+        // Slot-conflict re-check — another customer may have grabbed the slot
+        // while this one was CANCELLED. Uses the SAME helper as createBooking
+        // (sweep-line + active-reservation filter + whole-unit), EXCLUDING this
+        // booking itself — so a flex-start overlap that's never concurrent no
+        // longer spuriously blocks a legitimate un-cancel.
+        const slotFree = await this.recoverySlotAvailable(tx, {
+          activityId: booking.activityId,
+          unitNumber: booking.unitNumber ?? null,
+          startDt: booking.startDatetime,
+          endDt: booking.endDatetime,
+          guests: booking.guests,
+          excludeBookingId: bookingId,
         });
-        const taken = overlap._sum.guests ?? 0;
-        const activityCapacity = await tx.activity.findUnique({
+        const activityState = await tx.activity.findUnique({
           where: { id: booking.activityId },
-          select: { capacity: true, status: true },
+          select: { status: true },
         });
-        const cap = activityCapacity?.capacity ?? 0;
-        if (taken + booking.guests > cap || activityCapacity?.status === 'INACTIVE') {
+        if (!slotFree || activityState?.status === 'INACTIVE') {
           // Roll back the un-cancel by throwing — Serializable tx rollback
           // restores the CANCELLED row, preserving the slot for whoever
           // owns it now.

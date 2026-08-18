@@ -16,6 +16,7 @@ import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { createSeedPrisma } from './_db-helper';
+import { TERMS_VERSION } from '../src/common/terms';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
@@ -51,6 +52,10 @@ async function main() {
       role: 'VENDOR',
       emailVerified: true,
       lockedUntil: null,
+      // Accept current Terms so the soft terms-consent banner (fixed bottom-4
+      // end-4) never renders and intercepts clicks on bottom-corner buttons.
+      termsAcceptedAt: new Date(),
+      termsAcceptedVersion: TERMS_VERSION,
     },
     update: {
       password: hash,
@@ -59,6 +64,8 @@ async function main() {
       lockedUntil: null,
       verificationToken: null,
       verificationTokenExpiry: null,
+      termsAcceptedAt: new Date(),
+      termsAcceptedVersion: TERMS_VERSION,
     },
   });
 

@@ -1,11 +1,12 @@
 /**
- * E2E — §B2 orphaned-paid auto-refund.
+ * E2E — §B2 orphaned-paid auto-refund reassurance.
  *
- * Wave 3 wired the payment callback to detect cron-cancelled / deleted
- * bookings and queue an automatic refund instead of silently logging
- * PAYMENT_ORPHANED. Customers landing on the post-pay callback page now
- * see a "we couldn't reserve your spot, money will return in 5–7
- * business days" message rather than a broken state.
+ * When a customer pays but their booking was already cron-cancelled / the spot
+ * became unavailable, the payment callback flips the payment to REFUND_PENDING
+ * and marks the booking CANCELLED by SYSTEM (queueB2Refund). The booking detail
+ * page must then reassure the customer that their money is coming back — rather
+ * than the customer-cancellation framing ("your refund request is under review")
+ * or a broken state. This spec mocks that end state and asserts the message.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
 
@@ -13,69 +14,75 @@ const CUSTOMER_STATE = 'e2e/.auth/customer.json';
 
 const MOCK_BOOKING_ID = '00000000-0000-4000-8000-0000000010b2';
 
-async function setupRoutes(page: Page) {
-  // The callback page polls bookings/:id and / or a callback endpoint to
-  // resolve the post-pay state. Both shapes return REFUND_QUEUED so the
-  // page renders the refund-pending message regardless of which one wins.
-  const refundPayload = {
-    bookingId: MOCK_BOOKING_ID,
-    status: 'REFUND_QUEUED',
-    reason: 'BOOKING_CANCELLED',
-    refundAmount: '300.00',
-    currency: 'QAR',
-  };
-
+// The booking detail page (GET /api/bookings/my/:id) resolved to a booking that
+// was auto-cancelled by SYSTEM after payment, with the payment queued for refund
+// (REFUND_PENDING — the real PaymentStatus enum value; there is no REFUND_QUEUED).
+async function mockOrphanCancelledBooking(page: Page) {
+  const now = Date.now();
+  const start = new Date(now + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const end = new Date(now + 3 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000).toISOString();
   await page.route('**/api/bookings/**', async (route: Route) => {
-    if (route.request().method() === 'GET') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          id: MOCK_BOOKING_ID,
-          status: 'CANCELLED',
-          cancelledBy: 'SYSTEM',
-          totalPrice: '300.00',
-          currencyCode: 'QAR',
-          activity: { titleEn: 'Orphan Mock Activity', slug: 'orphan-mock' },
-          payment: { id: 'pay-mock-b2', status: 'REFUND_QUEUED', amount: '300.00' },
-        }),
-      });
-      return;
-    }
-    await route.fallback();
-  });
-
-  await page.route('**/api/payment/callback**', async (route: Route) => {
-    if (route.request().method() === 'GET') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(refundPayload),
-      });
-      return;
-    }
-    await route.fallback();
+    if (route.request().method() !== 'GET') return route.fallback();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: MOCK_BOOKING_ID,
+        ref: 'JDWL-ORPHANB2',
+        status: 'CANCELLED',
+        cancelledBy: 'SYSTEM',
+        startDatetime: start,
+        endDatetime: end,
+        guests: 2,
+        totalPrice: '300.00',
+        serviceFee: '0',
+        currencyCode: 'QAR',
+        activity: {
+          titleEn: 'Orphan Mock Activity',
+          titleAr: 'نشاط تجريبي',
+          slug: 'orphan-mock',
+          gallery: [],
+          coverImage: null,
+          bookingType: 'HOURLY',
+          cancellationPolicy: null,
+          vendor: { businessNameEn: 'Mock Vendor', slug: 'mock-vendor' },
+          country: { currencyCode: 'QAR', defaultTimezone: 'Asia/Qatar' },
+        },
+        payment: {
+          id: 'pay-mock-b2',
+          amount: '300.00',
+          status: 'REFUND_PENDING',
+          method: 'CARD',
+          paidAt: new Date(now).toISOString(),
+          createdAt: new Date(now).toISOString(),
+          refundAmount: '300.00',
+          refundedAt: null,
+        },
+      }),
+    });
   });
 }
 
 test.describe('Customer payment callback — §B2 orphaned-paid refund', () => {
   test.use({ storageState: CUSTOMER_STATE });
 
-  test('callback page shows refund-queued message for cron-cancelled booking', async ({ page }) => {
-    await setupRoutes(page);
-    await page.goto(`/payment/callback?status=success&bookingId=${MOCK_BOOKING_ID}`);
+  test('booking detail shows a refund-reassurance message for a SYSTEM auto-cancel', async ({ page }) => {
+    await mockOrphanCancelledBooking(page);
+    await page.goto(`/bookings/${MOCK_BOOKING_ID}`);
     await page.waitForLoadState('networkidle');
 
-    // The exact copy may differ between EN/AR — match the user-facing
-    // intent: refund / 5-7 business days / could not reserve.
-    const refundMsg = page.getByText(
-      /(refund|return).*5\s*-\s*7|business day|could not.*spot|reserve.*failed|أيام عمل/i,
-    );
-    await expect(refundMsg.first()).toBeVisible({ timeout: 15000 });
+    // Reassurance: we couldn't confirm the booking + the payment is safe and a
+    // refund has been queued (added as Wanasa points). Match the user-facing
+    // intent across EN + AR rather than exact copy.
+    await expect(
+      page
+        .getByText(/couldn'?t confirm|refund has been queued|payment of .* is safe|Wanasa points|تعذّر تأكيد|تمت جدولة استرداد/i)
+        .first(),
+    ).toBeVisible({ timeout: 15000 });
 
-    // The callback page must NOT advertise a confirmed booking link —
-    // there's no booking to view because it was cancelled.
-    const confirmedLink = page.getByRole('link', { name: /view.*booking|تفاصيل الحجز/i });
-    await expect(confirmedLink).toHaveCount(0);
+    // It must NOT frame this as a customer-initiated "refund request under review".
+    await expect(
+      page.getByText(/will review your refund request|سيراجع طلب الاسترداد/i),
+    ).toHaveCount(0);
   });
 });

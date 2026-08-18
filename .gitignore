@@ -44,6 +44,9 @@ apps/api/uploads/
 .claude/
 .antigravity/
 docs/
+# MCP server config — carries auth/tokens; never commit.
+.mcp.json
+**/.mcp.json
 
 # AWS OIDC policy templates live as on-disk infra reference, not in
 # the repo. Replace the ACCOUNT_ID / org / repo placeholders locally
@@ -54,8 +57,9 @@ docs/
 # Graphify knowledge graph output (tool artifact)
 graphify-out/
 
-# DB migration backups (regenerable from migrations themselves)
+# DB migration backups + dated audit snapshots (regenerable / internal-only)
 backups-*/
+audit-*/
 
 # PAY2M integration documentation — vendor doc with NDA risk; never commit
 payment.txt
@@ -79,3 +83,6 @@ payment.txt
 # Scoped to ROOT so internal security-implementation docs deeper in the
 # tree (e.g. apps/api/SECURITY.md) stay ignored.
 !/SECURITY.md
+# README.md is the public repo landing doc. Root-scoped so internal *.md deeper
+# in the tree (working notes, security-implementation docs) stay ignored.
+!/README.md

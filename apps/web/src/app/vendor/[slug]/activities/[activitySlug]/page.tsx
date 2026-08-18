@@ -16,6 +16,8 @@ import { VendorSidebar } from '../../../_components/vendor-sidebar';
 import { Check, Loader2, X, BookmarkIcon, AlertCircle, ImagePlus, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import CustomSelect from '@/components/custom-select';
+import ActivityBlocksManager from '@/components/activity-blocks-manager';
+import ActivitySpecialPricesManager from '@/components/activity-special-prices-manager';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
 
 // Heavy widgets — leaflet, canvas, custom time UI — only mount when their
@@ -367,7 +369,11 @@ export default function EditActivityPage() {
     mutationFn: (data: any) => api.patch(`/vendor/activities/${activity?.id}`, data),
     onSuccess: () => {
       toast(t('vendor.activities.wizard.toast.updateSuccess'), 'success');
-      queryClient.invalidateQueries({ queryKey: ['vendor-activities'] });
+      // Prefix MUST start with user?.id to match the list query key
+      // [user?.id, 'vendor-activities', page, search, filterStatus] — otherwise
+      // the list isn't refetched and keeps showing the stale (pre-edit) status
+      // badge until a manual refresh. An edit flips the activity back to PENDING.
+      queryClient.invalidateQueries({ queryKey: [user?.id, 'vendor-activities'] });
       queryClient.invalidateQueries({ queryKey: [user?.id, 'vendor-activity', activitySlug] });
       router.push(`/vendor/${vendorSlug}/activities`);
     },
@@ -407,6 +413,9 @@ export default function EditActivityPage() {
       } else {
         if (!form.checkInTime) errs.checkInTime = t(ACTIVITY_WIZARD_ERR.checkInRequired);
         if (!form.checkOutTime) errs.checkOutTime = t(ACTIVITY_WIZARD_ERR.checkOutRequired);
+        // Minimum nights is OPTIONAL for DAILY (empty = flexible day-by-day). If set, bound 1–90.
+        if (form.durationValue && (Number(form.durationValue) < 1 || Number(form.durationValue) > 90))
+          errs.durationValue = t('vendor.activities.wizard.errors.minNightsRange', 'Minimum nights must be between 1 and 90');
       }
     }
     if (step === 3) {
@@ -479,9 +488,10 @@ export default function EditActivityPage() {
       categoryId: form.categoryId,
       subCategoryId: form.subCategoryId || undefined,
       pricePerPerson: Number(form.pricePerPerson),
-      durationValue: form.bookingType === 'HOURLY'
-        ? (Number(form.durationValue) || undefined)
-        : undefined,
+      // HOURLY: duration in hours (required). DAILY: minimum nights (optional).
+      // Send explicit null when cleared so an update RESETS it to flexible —
+      // Prisma ignores `undefined` (would keep the old value, so clearing fails).
+      durationValue: form.durationValue ? Number(form.durationValue) : null,
       pricingModel: form.bookingType === 'DAILY' ? 'PER_UNIT' : form.pricingModel,
       capacity: totalCapacity,
       locationLat: Number(form.locationLat),
@@ -539,7 +549,7 @@ export default function EditActivityPage() {
     return (
       <div className="min-h-screen bg-stone-50 dark:bg-slate-950 font-outfit">
         <VendorSidebar />
-        <main className="md:ms-64 min-h-screen overflow-x-hidden">
+        <main className="md:ms-64 max-md:pt-16 min-h-screen overflow-x-hidden">
           <div className="px-10 py-6 border-b border-stone-200 dark:border-slate-800">
             <div className="h-8 w-56 bg-gray-200 dark:bg-slate-800 rounded-lg animate-pulse" />
             <div className="h-4 w-72 bg-gray-100 dark:bg-slate-800/60 rounded-lg animate-pulse mt-2" />
@@ -558,7 +568,7 @@ export default function EditActivityPage() {
     <div className="min-h-screen bg-stone-50 dark:bg-slate-950 font-outfit">
       <VendorSidebar />
 
-      <main className="md:ms-64 min-h-screen overflow-x-hidden">
+      <main className="md:ms-64 max-md:pt-16 min-h-screen overflow-x-hidden">
         {/* Top bar */}
         <div className="flex items-center justify-between px-10 py-6 border-b border-stone-200 dark:border-slate-800 bg-stone-50 dark:bg-slate-950">
           <div>
@@ -751,6 +761,7 @@ export default function EditActivityPage() {
                       onChange={val => updateField('checkInTime', val)}
                       hasError={!!errors.checkInTime}
                       placeholder={t('vendor.activities.wizard.ui.phSelectStartTime')}
+                      minuteStep={30}
                     />
                   </FieldGroup>
                   <FieldGroup label={t('vendor.activities.wizard.ui.fieldEndTime')} required error={errors.checkOutTime}>
@@ -759,6 +770,7 @@ export default function EditActivityPage() {
                       onChange={val => updateField('checkOutTime', val)}
                       hasError={!!errors.checkOutTime}
                       placeholder={t('vendor.activities.wizard.ui.phSelectEndTime')}
+                      minuteStep={30}
                     />
                   </FieldGroup>
                 </div>
@@ -777,6 +789,7 @@ export default function EditActivityPage() {
                         onChange={val => updateField('checkInTime', val)}
                         hasError={!!errors.checkInTime}
                         placeholder={t('vendor.activities.wizard.ui.phSelectCheckInTime')}
+                        minuteStep={30}
                       />
                     </FieldGroup>
                     <FieldGroup label={t('vendor.activities.wizard.ui.fieldCheckOutTime')} required error={errors.checkOutTime}
@@ -786,9 +799,21 @@ export default function EditActivityPage() {
                         onChange={val => updateField('checkOutTime', val)}
                         hasError={!!errors.checkOutTime}
                         placeholder={t('vendor.activities.wizard.ui.phSelectCheckOutTime')}
+                        minuteStep={30}
                       />
                     </FieldGroup>
                   </div>
+
+                  {/* Minimum stay — optional. Empty = flexible day-by-day; set = customer
+                      must book at least this many nights (can extend, pays per night). */}
+                  <FieldGroup label={t('vendor.activities.wizard.ui.fieldMinNights', 'Minimum nights')}
+                    hint={t('vendor.activities.wizard.ui.hintMinNights', 'Leave empty for flexible day-by-day booking. Set a number to require at least that many nights (guests can still book more).')}
+                    error={errors.durationValue}>
+                    <input type="number" min="1" max="90" inputMode="numeric" value={form.durationValue}
+                      onChange={e => updateField('durationValue', e.target.value)}
+                      className={inputCls(!!errors.durationValue)}
+                      placeholder={t('vendor.activities.wizard.ui.phMinNights', 'e.g. 3 (or leave empty)')} />
+                  </FieldGroup>
                 </div>
               )}
 
@@ -814,6 +839,20 @@ export default function EditActivityPage() {
                   {activeDays.length === 0 ? t('vendor.activities.wizard.ui.anyDay') : activeDays.join(', ')}
                 </p>
               </div>
+
+              {/* Blocked dates & times — vendor availability locks (edit-only) */}
+              {activity?.id && (
+                <ActivityBlocksManager
+                  activityId={activity.id}
+                  /* Use the persisted activity config (not the unsaved `form`) so the
+                     manager matches what the block API validates against. */
+                  bookingType={activity.bookingType as 'HOURLY' | 'DAILY'}
+                  checkInTime={activity.checkInTime}
+                  checkOutTime={activity.checkOutTime}
+                  durationValue={activity.durationValue}
+                  collapsible
+                />
+              )}
 
               {/* Units */}
               <div className="mt-8 pt-6 border-t border-gray-200 dark:border-slate-800">
@@ -983,6 +1022,16 @@ export default function EditActivityPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Special prices by date — per-date price overrides (edit-only) */}
+              {activity?.id && (
+                <ActivitySpecialPricesManager
+                  activityId={activity.id}
+                  currency={activity.country?.currencyCode || 'QAR'}
+                  apiBase="/vendor"
+                  collapsible
+                />
+              )}
             </div>
           )}
 

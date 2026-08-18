@@ -294,7 +294,7 @@ export default function RequestsTab() {
                   </tr>
                 )}
                 {data?.data.map((req) => {
-                  const cfg = STATUS_CONFIG[req.status];
+                  const cfg = STATUS_CONFIG[req.status] ?? STATUS_CONFIG.PENDING;
                   const StatusIcon = cfg.icon;
                   const bank = req.vendor?.bankDetails;
                   return (
