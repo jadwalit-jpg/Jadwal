@@ -1825,13 +1825,23 @@ export class BookingsService {
         // (overlap scan, special prices, platform settings, coupon claim,
         // loyalty config, payment + booking insert, payment update, loyalty
         // redeem + ledger). Prisma's DEFAULT is 5s, which this can exceed
-        // under load or on a slow link — and the resulting P2028 surfaced as
-        // an unmapped generic 500 with no alert. 15s leaves headroom without
-        // letting a genuinely stuck transaction hold Serializable predicate
-        // locks indefinitely.
-        // maxWait: cap time spent waiting for a pool connection so a saturated
-        // pool fails fast instead of stacking requests behind it.
-      }, { isolationLevel: 'Serializable', timeout: 15_000, maxWait: 5_000 });
+        // under load — and the resulting P2028 surfaced as an unmapped generic
+        // 500 with no alert.
+        //
+        // 10s, deliberately BELOW the 15s per-connection statement_timeout set
+        // in prisma.service.ts. Setting it equal (as an earlier version did)
+        // makes a single stalled statement race two different error paths —
+        // Prisma's P2028 vs Postgres's own statement error — so the failure
+        // mode becomes nondeterministic. Staying under it means P2028 always
+        // wins and the new PRISMA_ERROR_5XX alert fires predictably.
+        //
+        // maxWait: LEFT AT PRISMA'S 2s DEFAULT. An earlier version raised this
+        // to 5s while claiming it made a saturated pool "fail fast" — that is
+        // backwards. maxWait is how long a request waits FOR a pool
+        // connection, so raising it makes saturation last longer, holding a
+        // slot (pool max 20/task) and Serializable predicate locks for a
+        // combined worst case of 20s instead of 12s.
+      }, { isolationLevel: 'Serializable', timeout: 10_000, maxWait: 2_000 });
     } catch (err) {
       // P2034 = PostgreSQL serialization failure (two transactions conflicted).
       // Without this catch, NestJS returns 500. Map it to 409 so the frontend
@@ -2358,8 +2368,14 @@ export class BookingsService {
           data: { status: 'FAILED' },
         });
         if (flipped.count === 0) {
+          // Deliberately does NOT assert the booking is now confirmed. count===0
+          // has three causes: a capture won the race (booking CONFIRMED), the
+          // stale-PENDING cron soft-FAILed the payment, or a PAY2M failure
+          // callback flipped it — in the last two the booking may be gone
+          // entirely. Naming only the first would send the user chasing a state
+          // that isn't there.
           throw new ConflictException(
-            'Payment completed while cancelling. Please refresh — the booking is confirmed.',
+            'This booking changed while you were cancelling. Please refresh to see its current state.',
           );
         }
 
@@ -2470,7 +2486,9 @@ export class BookingsService {
         id: true, ref: true, status: true, vendorId: true, customerId: true,
         activity: { select: { titleEn: true } },
         vendor: { select: { userId: true, slug: true } },
-        payment: { select: { id: true, status: true, amount: true } },
+        // payoutStatus is needed to detect a refund on a booking whose vendor
+        // has ALREADY been paid — money out twice unless finance claws it back.
+        payment: { select: { id: true, status: true, amount: true, payoutStatus: true } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
@@ -2573,6 +2591,39 @@ export class BookingsService {
         });
       }
     });
+
+    // ── Vendor already paid out for a booking we just refunded ──────────────
+    // The platform is now out of pocket: the customer has been made whole and
+    // the vendor still holds the money. We deliberately do NOT block the
+    // refund — the customer must not be held hostage to a bookkeeping problem
+    // — but this MUST be visible, because nothing else detects it:
+    // reconciliation never looks at payoutStatus, and the payout tables have
+    // no clawback flow. Raising it here gives finance a record to act on.
+    if (action === 'APPROVE' && finalAmount > 0 && booking.payment.payoutStatus === 'PAID') {
+      this.logger.warn({
+        event: 'REFUND_ON_PAID_OUT_BOOKING',
+        bookingId,
+        bookingRef: booking.ref,
+        vendorId: booking.vendorId,
+        refundAmount: finalAmount,
+      });
+      this.auditLogger.log({
+        actorType: actor,
+        actorId: userId,
+        actorName: `${actor} ${userId.slice(0, 8)}`,
+        action: 'REFUND_ON_PAID_OUT_BOOKING',
+        entity: 'Booking',
+        entityId: bookingId,
+        details: `Refund of ${finalAmount} approved on booking ${booking.ref} whose vendor payout was already marked PAID — clawback required`,
+        actionCategory: 'FINANCIAL',
+      });
+      this.notificationService.notifyAdmins({
+        type: 'SYSTEM',
+        title: 'Refund on an already-paid-out booking',
+        message: `Booking ${booking.ref} was refunded (${finalAmount}) after the vendor payout was marked PAID. The vendor holds funds that must be clawed back.`,
+        link: `/admin/bookings/${bookingId}`,
+      });
+    }
 
     // ── Audit log ──
     const decider = await db.user.findUnique({ where: { id: userId }, select: { fullName: true } });

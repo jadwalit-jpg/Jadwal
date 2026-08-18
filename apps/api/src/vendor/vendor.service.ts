@@ -17,6 +17,7 @@ import { refundCouponUsage } from '../bookings/bookings.service';
 import { createActivityBlockCore } from './activity-blocks.logic';
 import { createSpecialPriceCore, bulkCreateSpecialPricesCore } from './activity-special-prices.logic';
 import { BulkSpecialPriceDto } from './dto/bulk-special-price.dto';
+import { envNumber } from '../common/env';
 
 @Injectable()
 export class VendorService {
@@ -623,10 +624,23 @@ export class VendorService {
             });
           }
         } else if (result.payment.status === 'PENDING') {
-          await tx.payment.update({
-            where: { id: result.payment.id },
+                    // Optimistic lock, NOT a plain update. The `status === 'PENDING'`
+          // above was read earlier; a PAY2M capture can commit in between and
+          // flip the row to SUCCESS. An unguarded update would force that
+          // captured payment back to FAILED while the booking is cancelled,
+          // leaving the customer charged with no REFUND_PENDING row —
+          // recordRefundDecision requires REFUND_PENDING, so the refund queue
+          // could never reach it. Same incident the customer-cancel path was
+          // fixed for; this path was missed.
+          const flipped = await tx.payment.updateMany({
+            where: { id: result.payment.id, status: 'PENDING' },
             data: { status: 'FAILED' },
           });
+          if (flipped.count === 0) {
+            throw new ConflictException(
+              'This booking changed while you were cancelling. Please refresh to see its current state.',
+            );
+          }
         }
 
         // Refund redeemed loyalty points back to customer (ledger: CANCEL_REFUND_PAID)
@@ -1431,7 +1445,7 @@ export class VendorService {
     // endDatetime closes the "vendor gets paid, then the customer cancels a
     // still-future booking for a points refund" collusion vector — no cash
     // leaves while the booking is still reversible.
-    const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
+    const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
     const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
 
     const agg = await db.booking.aggregate({

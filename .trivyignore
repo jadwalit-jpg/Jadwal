@@ -4,90 +4,27 @@
 # Each entry is a DOCUMENTED, time-boxed risk-acceptance, not a "fix". Remove the
 # entry as soon as the underlying dependency can be patched.
 #
-# ── multer 2.1.1 Denial-of-Service advisories ───────────────────────────────
-# The patch is multer 2.2.0, but @nestjs/platform-express pins multer EXACTLY
-# 2.1.1 (even in its latest release, 11.1.27) and npm 11.9.0 silently refuses to
-# apply an `overrides` bump, so the version cannot be raised cleanly yet.
-#
-# Risk is mitigated and LOW in context:
-#   - the only code paths that reach multer are the image-upload endpoints,
-#   - which are AUTH-GATED (vendor/admin only),
-#   - RATE-LIMITED (RATE_LIMIT_CALLBACK, 20/min/IP) behind Cloudflare,
-#   - fileSize-capped (10 MB), and
-#   - fields/parts/fieldNameSize-capped (PR #385) — which closes the
-#     "deeply nested field names" DoS vector at the app layer.
-#
-# REMOVE these once NestJS ships a @nestjs/platform-express that depends on a
-# patched multer (Dependabot will open that PR). Tracked in the project memory
-# note `reference_deploy_trivy_gate`.
-CVE-2026-5079
-GHSA-72gw-mp4g-v24j
-GHSA-3p4h-7m6x-2hcm
 
-# ── sharp 0.34.5 — inherited libvips advisories ─────────────────────────────
+# ── deepmerge-ts 7.1.5 — CVE-2026-40345 (stack exhaustion) ─────────────────
 # Review by: 2026-09-30
 #
-# The patch is sharp >= 0.35.0, but it CANNOT be applied in isolation: `next`
-# depends on sharp@^0.34.3, so bumping only apps/api installs 0.35.x nested
-# while npm keeps the vulnerable 0.34.5 hoisted at the root — the image ends up
-# carrying BOTH copies and the finding does not clear. Verified by attempting
-# the bump: it produced a duplicate sharp and a 669-line lockfile diff, so it
-# was reverted. A root `overrides` forcing sharp across next is possible but
-# sharp/libvips is the exact package behind this project's past non-
-# deterministic deploy failures, so it needs its own PR with a build test.
+# Newly published advisory; nothing in this repo changed to introduce it.
+# Reached only as prisma -> @prisma/config -> deepmerge-ts. The fix is
+# deepmerge-ts 8.0.0, but @prisma/config pins 7.1.5 exactly and npm refuses a
+# root `overrides` bump against an exact pin (verified: the override leaves
+# 7.1.5 in the tree). No published prisma release ships a patched copy, so
+# there is nothing to upgrade to.
 #
-# Risk is mitigated and LOW in context — every claim below was verified in code:
-#   - sharp is reached from exactly ONE place, apps/api/src/common/services/
-#     upload.service.ts:8 (only import in the repo),
-#   - via image-upload endpoints that are AUTH-GATED: admin.controller.ts is
-#     class-level @UseGuards(JwtAuthGuard, RolesGuard) + @Roles('ADMIN'), and
-#     vendor.controller.ts:269 upload-image is @Roles('VENDOR','ADMIN'),
-#   - RATE-LIMITED (@Throttle(RATE_LIMIT_CALLBACK), 20/min/IP) behind Cloudflare,
-#   - fileSize-capped (upload.service.ts:242), and
-#   - content-sniffed with `file-type` fileTypeFromBuffer BEFORE processing, so
-#     a non-image payload is rejected before it reaches libvips.
-# Exploiting these requires an authenticated vendor/admin uploading a crafted
-# image within those limits — not an anonymous internet-facing vector.
+# Risk is LOW in context: the advisory is stack exhaustion when merging
+# deeply-recursive objects. @prisma/config uses deepmerge-ts to merge OUR OWN
+# prisma config at CLI/build time — it never merges request data, and no
+# runtime request path reaches it. An attacker would need write access to the
+# repo's prisma config, at which point this CVE is irrelevant.
 #
-# REMOVE when the next 15 -> 16 upgrade lands (next 16 allows sharp 0.35), or
-# when a reviewed root override ships. Tracked alongside the same advisory in
-# .audit-allowlist.json (GHSA-f88m-g3jw-g9cj), which must be removed together.
-GHSA-f88m-g3jw-g9cj
-CVE-2026-33327
-CVE-2026-33328
-CVE-2026-35590
-CVE-2026-35591
-
-# ── postcss 8.4.31 — vendored INSIDE next, pinned exactly ───────────────────
-# Review by: 2026-09-30
-#
-# This is NOT our postcss. The root dependency is already patched (8.5.10 at
-# node_modules/postcss, plus an `overrides` entry). The flagged copy lives at
-# node_modules/next/node_modules/postcss because next 15.5.23 declares
-# `"postcss": "8.4.31"` — an EXACT pin, not a range. Verified empirically: a
-# root `overrides` bump does NOT dislodge it (npm refuses against an exact
-# pin, same wall as the multer entry above). Only upgrading next fixes it, and
-# the fix version is next 16.3.1 — a major upgrade that needs its own tested PR.
-#
-# Risk is LOW in context — verified against the actual runner image contents:
-#   - postcss is a BUILD-TIME CSS transformer. The web runner stage copies only
-#     .next/standalone + .next/static + public (apps/web/Dockerfile, runner
-#     stage) and starts `node server.js`, serving CSS that was already compiled
-#     during the build.
-#   - No request path invokes postcss at runtime; Trivy is reporting the
-#     presence of a package.json manifest traced into the standalone output,
-#     not executing code.
-#   - The advisories are ReDoS/parsing issues that require attacker-controlled
-#     CSS to be parsed — we never parse untrusted CSS at runtime.
-#
-# REMOVE together with the sharp block above when next 15 -> 16 lands. Tracked
-# alongside the same advisories in .audit-allowlist.json, which must be
-# cleaned up in the same PR.
-CVE-2026-45623
-# CVE-2026-73646 — same vendored postcss 8.4.31 (fixed 8.5.18, unreachable for
-# the same exact-pin reason). Path traversal via "previous source map"
-# auto-loading (sourceMappingURL). Reachable only where postcss PARSES CSS,
-# which for this repo is the CI build over our OWN stylesheets — an attacker
-# would already need repo write access, at which point this CVE is moot. The
-# shipped runner never parses CSS at all (pre-compiled at build).
-CVE-2026-73646
+# Already waived for the npm gate as GHSA-ggr8-5vv4-36mx in
+# .audit-allowlist.json; this is the same advisory under its CVE id, which is
+# what Trivy matches on. Remove BOTH together when prisma ships a fix.
+# Trivy enforces `exp:` natively — after this date the entry stops applying
+# and the finding blocks deploys again. That makes the review date mechanical
+# rather than a comment nobody re-reads.
+CVE-2026-40345 exp:2026-09-30

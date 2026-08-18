@@ -5,7 +5,24 @@ import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { readFile, unlink, writeFile } from 'fs/promises';
 import * as crypto from 'crypto';
-import * as sharp from 'sharp';
+// sharp 0.35 moved to conditional `exports` (dist/index.d.cts + .d.mts) and
+// dropped the plain .d.ts. This project compiles with module=commonjs and the
+// default node10 resolution, which cannot read conditional exports, so neither
+// `import * as sharp` nor `import sharp from 'sharp'` yields a CALLABLE type
+// (TS2349). Switching the whole API to moduleResolution=node16 fixes the types
+// but breaks compression/cookie-parser the same way, so it is not a change to
+// bundle with a framework upgrade.
+//
+// At runtime `require('sharp')` returns the factory function itself and has NO
+// `.default`, so a default import would type-check and then crash on every
+// upload. require + an explicit type keeps the emit exactly right and the call
+// site fully typed. Type-only imports DO resolve, so Sharp/SharpOptions are real.
+import type { Sharp, SharpOptions } from 'sharp';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const sharp = require('sharp') as (
+  input?: Buffer | Uint8Array | string,
+  options?: SharpOptions,
+) => Sharp;
 
 // `file-type` v19 is ESM-only. Our tsconfig is CommonJS, so a static
 // `import { fileTypeFromBuffer } from 'file-type'` compiles to `require()`,
