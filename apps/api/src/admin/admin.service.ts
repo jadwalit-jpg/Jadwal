@@ -25,6 +25,7 @@ import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
+import { envNumber } from '../common/env';
 
 @Injectable()
 export class AdminService {
@@ -1144,10 +1145,29 @@ export class AdminService {
                 });
               }
             } else if (bk.payment.status === 'PENDING') {
-              await tx.payment.update({
-                where: { id: bk.payment.id },
+                            // Optimistic lock, NOT a plain update. The `status === 'PENDING'`
+              // above was read earlier; a PAY2M capture can commit in between and
+              // flip the row to SUCCESS. An unguarded update would force that
+              // captured payment back to FAILED while the booking is cancelled,
+              // leaving the customer charged with no REFUND_PENDING row —
+              // recordRefundDecision requires REFUND_PENDING, so the refund queue
+              // could never reach it. Same incident the customer-cancel path was
+              // fixed for; this path was missed.
+              const flipped = await tx.payment.updateMany({
+                where: { id: bk.payment.id, status: 'PENDING' },
                 data: { status: 'FAILED' },
               });
+              if (flipped.count === 0) {
+                // State-neutral on purpose: a zero-row update does NOT prove a
+                // capture completed. A PAY2M failure callback or the
+                // stale-PENDING cleanup cron can flip the row out of PENDING
+                // first, and in those cases the booking may be gone entirely.
+                // Naming only the capture case would tell an admin the booking
+                // is paid when it is not.
+                throw new ConflictException(
+                  'This booking changed while you were cancelling. Please refresh to see its current state.',
+                );
+              }
             }
           }
 
@@ -1486,10 +1506,23 @@ export class AdminService {
             });
           }
         } else if (result.payment.status === 'PENDING') {
-          await tx.payment.update({
-            where: { id: result.payment.id },
+                    // Optimistic lock, NOT a plain update. The `status === 'PENDING'`
+          // above was read earlier; a PAY2M capture can commit in between and
+          // flip the row to SUCCESS. An unguarded update would force that
+          // captured payment back to FAILED while the booking is cancelled,
+          // leaving the customer charged with no REFUND_PENDING row —
+          // recordRefundDecision requires REFUND_PENDING, so the refund queue
+          // could never reach it. Same incident the customer-cancel path was
+          // fixed for; this path was missed.
+          const flipped = await tx.payment.updateMany({
+            where: { id: result.payment.id, status: 'PENDING' },
             data: { status: 'FAILED' },
           });
+          if (flipped.count === 0) {
+            throw new ConflictException(
+              'This booking changed while you were cancelling. Please refresh to see its current state.',
+            );
+          }
         }
 
         // Refund redeemed loyalty points back to customer (separate from refund-to-points above)
@@ -1639,17 +1672,36 @@ export class AdminService {
     const { page = 1, limit = 20, search } = query;
     const skip = (page - 1) * limit;
 
-    const where: Prisma.PaymentWhereInput = { status: 'SUCCESS' };
+    // ── This list means "what is PAYABLE NOW", not "every successful payment" ──
+    //
+    // A vendor is only paid once their activity has actually happened. Showing
+    // future bookings here offered money the platform must not release yet: the
+    // customer can still cancel before the activity starts, and a payout already
+    // sent would leave the platform out of pocket with no clawback path.
+    //
+    // The escrow rule is enforced again in markPayoutsPaid, but enforcement
+    // alone is not enough — if the list still OFFERS in-escrow rows, "select
+    // all" trips the guard and the whole batch is refused, so nothing settles
+    // and the admin has no way to tell which rows to deselect. Filtering here
+    // makes the mistake unofferable; the guard downstream becomes a backstop
+    // that should never fire in normal use.
+    //
+    // Side effect, deliberate: a payment whose booking row is gone (a B2 orphan
+    // awaiting recovery) no longer appears. It has no vendor and no payable
+    // share, so it was never actionable — the reconciliation cron owns it.
+    const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
+    const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
+
+    const bookingFilter: Prisma.BookingWhereInput = { endDatetime: { lt: payoutCutoff } };
     if (search) {
-      where.booking = {
-        OR: [
-          { ref: { contains: search, mode: 'insensitive' } },
-          { vendor: { businessNameEn: { contains: search, mode: 'insensitive' } } },
-          { customer: { fullName: { contains: search, mode: 'insensitive' } } },
-          { activity: { titleEn: { contains: search, mode: 'insensitive' } } },
-        ],
-      };
+      bookingFilter.OR = [
+        { ref: { contains: search, mode: 'insensitive' } },
+        { vendor: { businessNameEn: { contains: search, mode: 'insensitive' } } },
+        { customer: { fullName: { contains: search, mode: 'insensitive' } } },
+        { activity: { titleEn: { contains: search, mode: 'insensitive' } } },
+      ];
     }
+    const where: Prisma.PaymentWhereInput = { status: 'SUCCESS', booking: bookingFilter };
 
     const [payments, total] = await Promise.all([
       db.payment.findMany({
@@ -1709,7 +1761,40 @@ export class AdminService {
       return { ...p, inflightRequest };
     });
 
-    return { data: enriched, total, page, limit, totalPages: Math.ceil(total / limit) };
+    // ── Upcoming (in escrow) — visible, but not payable ─────────────────────
+    // Filtering the list to payable-only would otherwise make future money
+    // vanish entirely: a vendor asks "where is my payout?" and the admin sees
+    // nothing at all, with no way to tell "not earned yet" from "we lost it".
+    // Surface the count and the earliest date it becomes payable, WITHOUT
+    // making any of it selectable. Counts only UNPAID rows — an already-PAID
+    // future booking (possible on rows settled before the escrow rule existed)
+    // is not upcoming money.
+    const upcomingWhere: Prisma.PaymentWhereInput = {
+      status: 'SUCCESS',
+      payoutStatus: 'UNPAID',
+      booking: { endDatetime: { gte: payoutCutoff } },
+    };
+    const [upcomingCount, nextPayable] = await Promise.all([
+      db.payment.count({ where: upcomingWhere }),
+      db.payment.findFirst({
+        where: upcomingWhere,
+        select: { booking: { select: { endDatetime: true } } },
+        orderBy: { booking: { endDatetime: 'asc' } },
+      }),
+    ]);
+
+    return {
+      data: enriched,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      // `total` counts payable rows only. These two describe money that exists
+      // but is still in escrow, so the UI can say "12 bookings become payable
+      // from 20 Aug" instead of silently showing nothing.
+      upcomingCount,
+      upcomingFrom: nextPayable?.booking?.endDatetime ?? null,
+    };
   }
 
   // ─── Countries CRUD ─────────────────────────────────────────
@@ -2183,19 +2268,131 @@ export class AdminService {
       throw new BadRequestException('bankTransferRef is required — record the bank-side wire confirmation number before marking paid.');
     }
 
+    // Escrow buffer — MUST mirror evaluatePayoutEligibility and the
+    // approve-payout path (both filter `booking.endDatetime < payoutCutoff`).
+    // This release path used to omit it, so a payment could be marked PAID
+    // while its activity was still in the future. The customer could then
+    // cancel before start (cancelBooking only blocks AFTER start) and the
+    // refund would be approved with no awareness that the vendor had already
+    // been paid — money out twice, with no clawback and no alert anywhere.
+    // Filtering here means an ineligible row is simply not marked, and the
+    // count check below surfaces the discrepancy to the caller.
+    const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
+    const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
+
+    // ── Pre-validate BEFORE writing anything ────────────────────────────────
+    // Marking paid is the system's record that a bank wire ALREADY LEFT
+    // (bankTransferRef is mandatory above). If some rows silently fail to
+    // match, the admin has wired money the DB still considers UNPAID — those
+    // rows resurface in the next payout cycle and get wired a SECOND time.
+    // The UI cannot save us here: payments-tab.tsx discards the return value
+    // and toasts success unconditionally.
+    //
+    // So refuse the whole batch and name the offenders instead of settling a
+    // subset. Nothing is written, and the admin can correct the selection
+    // before (or after) the wire rather than discovering a double-payment on
+    // a bank statement.
+    // Scope the rejection to ESCROW only, deliberately.
+    //
+    // Rows in a genuinely invalid state (REFUNDED / REJECTED / REFUND_PENDING,
+    // or already PAID) are still skipped silently — that is the existing,
+    // tested contract, and it is safe because the payouts list only ever
+    // offers `status: SUCCESS, payoutStatus: UNPAID` rows, so an admin cannot
+    // select them from the UI. Skipping there is defence-in-depth against a
+    // crafted API call, not something a human will act on.
+    //
+    // Escrow is different: those rows ARE offered by the list (it does not
+    // filter on endDatetime), they look completely normal, and marking paid
+    // records a bank wire that has ALREADY LEFT. Silently skipping them leaves
+    // them UNPAID, so they resurface next cycle and get wired a SECOND time —
+    // and payments-tab.tsx discards the return value and toasts success
+    // regardless. So refuse the batch and name them.
+    const inEscrow = await db.payment.findMany({
+      where: {
+        id: { in: paymentIds },
+        status: 'SUCCESS',
+        payoutStatus: 'UNPAID',
+        booking: { endDatetime: { gte: payoutCutoff } },
+      },
+      select: { id: true },
+    });
+    if (inEscrow.length > 0) {
+      const ids = inEscrow.map((p) => p.id);
+      this.logger.warn({
+        event: 'PAYOUT_MARK_PAID_REJECTED_ESCROW',
+        requested: paymentIds.length,
+        inEscrow: ids.length,
+      });
+      // The message must describe the ACTUAL cutoff. With
+      // PAYOUT_SETTLEMENT_BUFFER_DAYS=3 an activity that ended two days ago is
+      // still in escrow, so "has not ended yet" would be plainly false and
+      // send the admin looking for a problem that isn't there.
+      const bufferNote = payoutBufferDays > 0
+        ? `their activity has not yet cleared the ${payoutBufferDays}-day settlement buffer`
+        : 'their activity has not ended yet';
+      const retryNote = payoutBufferDays > 0
+        ? `Retry once ${payoutBufferDays} day(s) have passed since the activity ended.`
+        : 'Retry once the activities have ended.';
+      throw new BadRequestException(
+        `${ids.length} of ${paymentIds.length} selected payment(s) are still in payout escrow — ` +
+          `${bufferNote}. No payments were changed. Paying these out now risks ` +
+          'the customer cancelling before the activity starts and being refunded while the vendor ' +
+          `already holds the money. ${retryNote} Payment ids: ${ids.slice(0, 10).join(', ')}` +
+          (ids.length > 10 ? ` (+${ids.length - 10} more)` : ''),
+      );
+    }
+
     // `payoutStatus: 'UNPAID'` in the where makes this a one-way transition:
     // a row already marked PAID is skipped, so a concurrent / repeated call
-    // can't overwrite its original `paidAt` + `bankTransferRef`.
+    // can't overwrite its original `paidAt` + `bankTransferRef`. The same
+    // predicate is repeated here (not just relied on from the check above)
+    // because a concurrent mark-paid could land between the two statements.
     const result = await db.payment.updateMany({
-      where: { id: { in: paymentIds }, status: 'SUCCESS', payoutStatus: 'UNPAID' },
+      where: {
+        id: { in: paymentIds },
+        status: 'SUCCESS',
+        payoutStatus: 'UNPAID',
+        booking: { endDatetime: { lt: payoutCutoff } },
+      },
       data: { payoutStatus: 'PAID', paidAt: new Date(), bankTransferRef: trimmedRef },
     });
+
+    // Lost the race against a concurrent mark-paid between the check and the
+    // write. Surface it — the count is what the caller acts on.
+    if (result.count < paymentIds.length) {
+      // The bank transfer has ALREADY been sent (bankTransferRef is required
+      // above), so a short write is money out with no matching PAID row.
+      // Causes are wider than a concurrent mark-paid: a cancellation or refund
+      // landing between the escrow probe and this update also flips a row out
+      // of SUCCESS/UNPAID. Either way it needs a human, not a debug line —
+      // this is the same class of exposure as REFUND_ON_PAID_OUT_BOOKING.
+      this.logger.error({
+        event: 'PAYOUT_MARK_PAID_PARTIAL',
+        requested: paymentIds.length,
+        marked: result.count,
+        unmarked: paymentIds.length - result.count,
+        bankTransferRef: trimmedRef,
+        reason: 'rows changed between the eligibility probe and the write (concurrent mark-paid, cancellation, or refund)',
+      });
+      this.notificationService.notifyAdmins({
+        type: 'SYSTEM',
+        title: 'Payout partially recorded — reconcile manually',
+        message: `A bank transfer (${trimmedRef}) covered ${paymentIds.length} payment(s) but only ${result.count} were marked PAID. The remaining ${paymentIds.length - result.count} changed state mid-operation and must be reconciled by hand.`,
+        link: '/admin/payouts',
+      });
+    }
 
     // Notify each vendor whose payments were marked as paid. Pull the slug
     // here too so the notification link resolves to a real route (the vendor
     // portal lives under /vendor/[slug]/*, not /vendor/*).
+    // Re-query the rows this call ACTUALLY settled, not everything submitted.
+    // updateMany returns a count and no ids, so filtering on
+    // `bankTransferRef` + PAID identifies exactly the rows this transfer just
+    // stamped. Notifying on the submitted list instead would tell a vendor
+    // "your payout has been sent" for payments that were skipped — escrow,
+    // already-paid, or state-changed — which is worse than staying silent.
     const payments = await this.prisma.client.payment.findMany({
-      where: { id: { in: paymentIds } },
+      where: { id: { in: paymentIds }, payoutStatus: 'PAID', bankTransferRef: trimmedRef },
       select: { booking: { select: { vendorId: true, vendor: { select: { userId: true, slug: true } } } } },
     });
     const notifiedVendors = new Set<string>();
@@ -2477,7 +2674,7 @@ export class AdminService {
         // whose activity has ENDED (+ optional PAYOUT_SETTLEMENT_BUFFER_DAYS), so
         // the FIFO lock (ordered by payment.createdAt, which does NOT track the
         // activity date) can't tie up a still-cancellable future booking.
-        const payoutBufferDays = Math.max(0, Number(process.env.PAYOUT_SETTLEMENT_BUFFER_DAYS || 0));
+        const payoutBufferDays = Math.max(0, envNumber('PAYOUT_SETTLEMENT_BUFFER_DAYS', 0));
         const payoutCutoff = new Date(Date.now() - payoutBufferDays * 86_400_000);
         const eligible = await tx.payment.findMany({
           where: {
