@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   // is used in seed-admin.ts and seed-e2e-data.ts.
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const adapter = new PrismaPg(pool);
-  const prisma = new PrismaClient({ adapter } as never);
+  const prisma = new PrismaClient({ adapter });
 
   try {
     // Country — Qatar is the seed country the rest of the integration
