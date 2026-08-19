@@ -39,8 +39,17 @@ COPY apps/web/package.json ./apps/web/
 #      below that re-hydrated EVERY workspace's dev tree (946 packages,
 #      incl. @lhci/cli -> lighthouse -> puppeteer-core -> extract-zip,
 #      which is where the extract-zip HIGH CVE in the api image came
-#      from). Root-caused and fixed by adding `--omit=dev` to that
-#      command; these rm's only ever removed two of the ~600 strays.
+#      from). These rm's only ever removed two of the ~600 strays.
+#
+#      DO NOT "fix" that re-hydration by adding `--omit=dev` to the sharp
+#      reinstall. That was tried and it broke production: the command also
+#      passes --no-package-lock, so npm re-resolves the whole tree, and
+#      --omit=dev then PRUNES production packages `npm ci --omit=dev`
+#      already installed. express disappeared, every ECS task died at boot
+#      with MODULE_NOT_FOUND, and the circuit breaker rolled the deploy
+#      back. The tree must not be re-resolved AT ALL — which is why sharp
+#      now installs into an isolated --prefix and only its own packages are
+#      copied in. See that command below.
 #   2. TypeScript declaration files (.d.ts) and source maps (*.map) —
 #      useless at runtime, just disk weight.
 #   3. Per-package docs (README, LICENSE, CHANGELOG, etc.) and test
@@ -66,8 +75,12 @@ COPY apps/web/package.json ./apps/web/
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --ignore-scripts --workspace=api --include-workspace-root=false \
  && SHARP_VER="$(node -p "require('/app/node_modules/sharp/package.json').version")" \
- && npm install --no-save --no-package-lock --omit=dev --include=optional --ignore-scripts \
+ && npm install --prefix /tmp/sharpfix --no-save --no-package-lock --include=optional --ignore-scripts \
       --os=linux --cpu=x64 --libc=musl "sharp@${SHARP_VER}" \
+ && rm -rf node_modules/sharp node_modules/@img \
+ && cp -R /tmp/sharpfix/node_modules/sharp node_modules/ \
+ && cp -R /tmp/sharpfix/node_modules/@img node_modules/ \
+ && rm -rf /tmp/sharpfix \
  && rm -rf node_modules/prisma node_modules/.bin/prisma \
            node_modules/typescript node_modules/.bin/tsc node_modules/.bin/tsserver \
            apps/api/node_modules/prisma apps/api/node_modules/typescript \
@@ -151,6 +164,36 @@ COPY --from=builder /app/package.json ./
 # now throws ERR_PACKAGE_PATH_NOT_EXPORTED and would fail this very build.
 # A filesystem path is not subject to `exports`, so read it that way.
 RUN node -e "const s=require('sharp'); if(!s||!s.format){throw new Error('sharp.format missing')} const v=require('/app/node_modules/sharp/package.json').version; console.log('[build] sharp OK v'+v)"
+
+# Build-time RUNTIME DEPENDENCY check. The sharp probe above proves ONE
+# package loads; it says nothing about the rest of the tree. A deploy was
+# lost to exactly that gap: an image built, passed the sharp smoke test,
+# shipped, and then every task died at boot with
+#   Error: Cannot find module 'express'
+# because a dependency-pruning change removed production packages. ECS
+# circuit-breakered and rolled back, so production stayed up and the only
+# visible symptom was a deploy that would not finish.
+#
+# This asserts that EVERY package in apps/api dependencies actually
+# resolves inside the assembled image, which is the invariant that was
+# silently broken. Resolution (not import) is deliberate: it is cheap,
+# needs no env vars or database, and cannot be fooled by a package whose
+# side effects happen to be lazy.
+# Only MODULE_NOT_FOUND counts as missing; anything else (notably
+# ERR_PACKAGE_PATH_NOT_EXPORTED or ERR_INVALID_PACKAGE_CONFIG) is
+# RETHROWN and fails the build. Swallowing those would let a package
+# with a broken `exports` map pass a check whose entire purpose is to
+# prove the dependency is usable — and sharp 0.35 shipped exactly that
+# class of change, so it is not hypothetical here.
+# @types/* are excluded: they are declarations only, contribute no runtime
+# module, and are legitimately absent from a --omit=dev tree. (They sit in
+# `dependencies` rather than `devDependencies` in the manifest, which is a
+# separate pre-existing tidy-up, not a packaging fault.)
+RUN node -e "\
+const deps = Object.keys(require('/app/apps/api/package.json').dependencies || {}).filter(d => !d.startsWith('@types/'));\
+const missing = deps.filter(d => { try { require.resolve(d, { paths: ['/app/apps/api', '/app'] }); return false; } catch (e) { if (e.code === 'MODULE_NOT_FOUND') return true; throw e; } });\
+if (missing.length) { console.error('[build] FATAL missing runtime deps: ' + missing.join(', ')); process.exit(1); }\
+console.log('[build] all ' + deps.length + ' runtime deps resolve');"
 
 # Strip the npm CLI shipped with the node:22-alpine base image. The
 # runtime never calls npm (entrypoint is `node dist/main.js`), and npm's
