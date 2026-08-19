@@ -3,7 +3,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
-import { Mail, Phone, Instagram, MapPin } from 'lucide-react';
+import { Mail, Phone, MapPin } from 'lucide-react';
+import { Instagram } from '@/components/icons/instagram';
 import api from '@/lib/api';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
