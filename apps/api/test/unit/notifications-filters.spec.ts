@@ -378,6 +378,8 @@ describe('PrismaExceptionFilter — P1000 credential outage is alertable', () =>
     // chasing suppression syntax per tool.
     const dummyArnParts = ['arn', 'aws', 'secretsmanager', 'eu-central-1', '1', 'secret', 'x'];
     process.env.RDS_SECRET_ARN = dummyArnParts.join(':');
+    // Declared out here so the `finally` below can always restore it.
+    let errSpy: jest.SpyInstance | undefined;
     try {
       const prisma = { refreshOnAuthError: jest.fn().mockResolvedValue(undefined) } as any;
       const filter = new PrismaExceptionFilter(prisma);
@@ -387,7 +389,7 @@ describe('PrismaExceptionFilter — P1000 credential outage is alertable', () =>
       const res: any = makeRes();
       res.header = jest.fn().mockReturnValue(res);
       res.status = jest.fn().mockReturnValue(res);
-      const errSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      errSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
       filter.catch(mkP1000(), makeHost({ path: '/bookings', method: 'POST' }, res));
 
@@ -398,8 +400,10 @@ describe('PrismaExceptionFilter — P1000 credential outage is alertable', () =>
       expect(alert).toEqual(expect.objectContaining({ prismaCode: 'P1000', status: 503 }));
       // The recovery path still runs — alerting must not replace it.
       expect(prisma.refreshOnAuthError).toHaveBeenCalled();
-      errSpy.mockRestore();
     } finally {
+      // Restore in `finally`: if an assertion above throws, an un-restored
+      // spy on Logger.prototype leaks into every later test in this worker.
+      errSpy?.mockRestore();
       if (prev === undefined) delete process.env.RDS_SECRET_ARN;
       else process.env.RDS_SECRET_ARN = prev;
     }
