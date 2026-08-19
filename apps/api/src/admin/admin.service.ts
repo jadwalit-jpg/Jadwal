@@ -2365,12 +2365,18 @@ export class AdminService {
     // passes (nothing is UNPAID+in-escrow) and updateMany matches 0 rows —
     // which naively reads as "we lost rows" and would page finance about a
     // no-op AND tell every vendor "payout sent" a second time.
-    const alreadySettledByThisWire = await db.payment.count({
+    // NOTE: this probe runs AFTER the updateMany above, so the rows that update
+    // just flipped are themselves PAID with this bankTransferRef and are counted
+    // here. That makes it the COMPLETE total settled under this reference — do
+    // NOT add result.count to it. Doing so double-counts the freshly-written
+    // rows (1 + 1 >= 2 for a two-id batch where only one settled) and silently
+    // suppresses the alert below on a real short write.
+    const settledByThisWire = await db.payment.count({
       where: { id: { in: paymentIds }, payoutStatus: 'PAID', bankTransferRef: trimmedRef },
     });
     // Dedupe: a repeated id is one payment, not a missing one.
     const requestedCount = new Set(paymentIds).size;
-    if (result.count + alreadySettledByThisWire < requestedCount) {
+    if (settledByThisWire < requestedCount) {
       // The bank transfer has ALREADY been sent (bankTransferRef is required
       // above), so a short write is money out with no matching PAID row.
       // Causes are wider than a concurrent mark-paid: a cancellation or refund
@@ -2381,15 +2387,15 @@ export class AdminService {
         event: 'PAYOUT_MARK_PAID_PARTIAL',
         requested: requestedCount,
         marked: result.count,
-        alreadySettledByThisWire,
-        unmarked: requestedCount - result.count - alreadySettledByThisWire,
+        settledByThisWire,
+        unmarked: requestedCount - settledByThisWire,
         bankTransferRef: trimmedRef,
         reason: 'rows changed between the eligibility probe and the write (concurrent mark-paid, cancellation, or refund)',
       });
       this.notificationService.notifyAdmins({
         type: 'SYSTEM',
         title: 'Payout partially recorded — reconcile manually',
-        message: `A bank transfer (${trimmedRef}) covered ${requestedCount} payment(s) but only ${result.count + alreadySettledByThisWire} are PAID against it. The remaining ${requestedCount - result.count - alreadySettledByThisWire} changed state mid-operation and must be reconciled by hand.`,
+        message: `A bank transfer (${trimmedRef}) covered ${requestedCount} payment(s) but only ${settledByThisWire} are PAID against it. The remaining ${requestedCount - settledByThisWire} changed state mid-operation and must be reconciled by hand.`,
         link: '/admin/payouts',
       });
     }
