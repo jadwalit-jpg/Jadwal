@@ -216,15 +216,53 @@ jobs:
           path: ~/.cache/ms-playwright
           key: pw-browsers-${{ runner.os }}-${{ hashFiles('apps/web/package.json') }}
 
+      # `--with-deps` shells out to apt-get, which on Azure-hosted runners can
+      # block indefinitely on the dpkg/apt lock (unattended-upgrades holds it).
+      # Observed repeatedly: the step emits NOT ONE line of output and hangs
+      # until the 30-minute job timeout kills it, so a shard burns its whole
+      # budget without running a single test and the PR reports a cancelled
+      # required check that looks like a test failure.
+      #
+      # `timeout 300` bounds one attempt at 5 minutes (a healthy install takes
+      # ~2.5 min including apt), and we retry up to 3 times. A genuinely broken
+      # install still fails; a stalled lock now costs 5 minutes instead of 30
+      # and usually clears on the next attempt.
       - name: Install Playwright browsers
         if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: apps/web
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 18
+        run: |
+          for attempt in 1 2 3; do
+            echo "::group::playwright install attempt $attempt"
+            if timeout 300 npx playwright install --with-deps chromium; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "attempt $attempt stalled or failed"
+            echo "::endgroup::"
+            sleep 15
+          done
+          echo "::error::playwright install failed after 3 attempts"
+          exit 1
 
+      # Same apt exposure as above, so the same bounded retry.
       - name: Install Playwright system deps
         if: steps.pw-cache.outputs.cache-hit == 'true'
         working-directory: apps/web
-        run: npx playwright install-deps chromium
+        timeout-minutes: 12
+        run: |
+          for attempt in 1 2 3; do
+            echo "::group::playwright install-deps attempt $attempt"
+            if timeout 180 npx playwright install-deps chromium; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "attempt $attempt stalled or failed"
+            echo "::endgroup::"
+            sleep 15
+          done
+          echo "::error::playwright install-deps failed after 3 attempts"
+          exit 1
 
       # The API uses web-push at boot, which validates that VAPID keys
       # decode to 65-byte / 32-byte P-256 points. Generate a fresh
