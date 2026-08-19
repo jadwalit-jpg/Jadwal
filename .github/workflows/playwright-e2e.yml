@@ -216,15 +216,62 @@ jobs:
           path: ~/.cache/ms-playwright
           key: pw-browsers-${{ runner.os }}-${{ hashFiles('apps/web/package.json') }}
 
-      - name: Install Playwright browsers
+      # Browser binaries and system libraries are installed SEPARATELY and on
+      # purpose.
+      #
+      # `playwright install --with-deps` does both in one shot, but the deps
+      # half shells out to apt-get, which on Azure-hosted runners blocks on the
+      # dpkg lock held by unattended-upgrades. Measured on this repo: shards
+      # stalled with ZERO output until the 30-minute job timeout killed them,
+      # then reported as CANCELLED required checks that look like test
+      # failures. Bounding and retrying it helped (5 of 6 shards went green)
+      # but did not eliminate it — one runner stayed locked through three full
+      # 5-minute attempts.
+      #
+      # So the MANDATORY step is the browser download, which touches no apt and
+      # is therefore reliable, and the system libraries are best-effort. The
+      # ubuntu-latest image already ships the libraries Chromium needs, which is
+      # why the 5 passing shards passed. If one were genuinely missing, the
+      # browser fails to launch and every test errors loudly — a clear signal,
+      # not a silent one. That is a far better failure mode than a green-looking
+      # queue blocked by an apt lock.
+      - name: Install Playwright browser (required)
         if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: apps/web
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 240 npx playwright install chromium; then exit 0; fi
+            echo "browser download attempt $attempt failed; retrying"
+            sleep 10
+          done
+          echo "::error::playwright browser download failed after 3 attempts"
+          exit 1
 
-      - name: Install Playwright system deps
-        if: steps.pw-cache.outputs.cache-hit == 'true'
+      # Best-effort: never fails the job. See the rationale above.
+      - name: Install Playwright system libraries (best-effort)
         working-directory: apps/web
-        run: npx playwright install-deps chromium
+        timeout-minutes: 6
+        continue-on-error: true
+        run: |
+          sudo systemctl stop unattended-upgrades.service 2>/dev/null || true
+          sudo systemctl kill --kill-who=all unattended-upgrades.service 2>/dev/null || true
+          if timeout 240 npx playwright install-deps chromium; then
+            echo "system libraries installed"
+          else
+            echo "::warning::playwright install-deps did not complete (apt lock contention on this runner). Continuing: the runner image ships the Chromium libraries, and a genuinely missing one will surface as a browser-launch error in the tests."
+            # Wait for any apt/dpkg process to exit before touching the lock
+            # files, then repair. Removing a lock still held by a live process
+            # is how you get a genuinely corrupt package DB rather than a
+            # merely interrupted one.
+            for _ in $(seq 1 30); do
+              pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1 || break
+              sleep 2
+            done
+            sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock 2>/dev/null || true
+            sudo dpkg --configure -a 2>/dev/null || true
+            sudo apt-get install -f -y 2>/dev/null || true
+          fi
 
       # The API uses web-push at boot, which validates that VAPID keys
       # decode to 65-byte / 32-byte P-256 points. Generate a fresh
