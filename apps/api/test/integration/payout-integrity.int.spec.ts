@@ -46,6 +46,7 @@ function makeServices() {
     invalidateMany: jest.fn().mockResolvedValue(undefined),
   } as any;
   return {
+    notificationService,
     admin: new AdminService(prismaSvc, notificationService, loyalty, availabilityCache, { invalidate: jest.fn().mockResolvedValue(undefined), invalidateMany: jest.fn().mockResolvedValue(undefined) } as any, makeSessionDenylistMock() as any),
     vendor: new VendorService(prismaSvc, notificationService, loyalty, availabilityCache, makeSessionDenylistMock() as any),
   };
@@ -607,4 +608,136 @@ describe('admin.markPayoutsPaid — payout-eligibility guard', () => {
     // Refunded one stays UNPAID — WHERE filtered it out silently.
     expect(refundedAfter.payoutStatus).toBe('UNPAID');
   });
+
+  /**
+   * A SHORT WRITE must page finance. The bank transfer has already been sent
+   * (bankTransferRef is mandatory), so any requested payment that does NOT end
+   * up PAID against that reference is money out of the door with no matching
+   * row — it needs a human.
+   *
+   * This is the same shape as the 'mixed batch' case above: two ids requested,
+   * one eligible and one not. The refunded one can never be settled under this
+   * wire, so exactly one of the two is genuinely unaccounted for.
+   *
+   * Regression guard for a double-count: the reconciliation probe runs AFTER
+   * the updateMany, so rows the update just flipped are themselves PAID with
+   * this bankTransferRef. Adding that probe's result to result.count therefore
+   * counts those rows twice (1 + 1 >= 2) and silently suppresses this alert.
+   * The post-update count alone is already the complete total settled under
+   * the reference.
+   */
+  test('SHORT WRITE: one requested payment never settles -> admins are alerted', async () => {
+    const success = await seedBooking('SUCCESS');
+    const refundedPayment = await ctx.prisma.payment.create({
+      data: {
+        amount: 50, currency: 'QAR', status: 'REFUNDED',
+        payoutStatus: 'UNPAID', method: 'PAY2M', paidAt: new Date(),
+        refundAmount: 50, refundedAt: new Date(),
+        booking: {
+          create: {
+            ref: 'JDWL-SHORT',
+            bookingPhone: '+97455123456',
+            activityId: success.seed.activity.id, vendorId: success.seed.vendor.id,
+            customerId: success.seed.customer.id,
+            guests: 1, totalPrice: 50, serviceFee: 5,
+            commissionPct: 10, commissionAmount: 5,
+            currencyCode: 'QAR',
+            startDatetime: new Date('2020-02-01T10:00:00Z'),
+            endDatetime: new Date('2020-02-01T12:00:00Z'),
+            status: 'CANCELLED',
+          },
+        },
+      },
+    });
+
+    const { admin, notificationService } = makeServices();
+    await admin.markPayoutsPaid([success.payment.id, refundedPayment.id], 'SHORT-WIRE-REF');
+
+    // Ground truth: 2 requested, only 1 is PAID against this reference.
+    const settled = await ctx.prisma.payment.count({
+      where: { id: { in: [success.payment.id, refundedPayment.id] }, payoutStatus: 'PAID', bankTransferRef: 'SHORT-WIRE-REF' },
+    });
+    expect(settled).toBe(1);
+
+    const alerts = (notificationService.notifyAdmins as jest.Mock).mock.calls
+      .filter((c) => /reconcile/i.test(c[0]?.title ?? ''));
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0][0].message).toContain('SHORT-WIRE-REF');
+  });
+
+  /**
+   * MIXED RETRY. First call settles p1 but the response is lost, so the admin
+   * re-submits BOTH ids under the SAME bankTransferRef; this time p2 settles.
+   *
+   * p1's vendor was already told 'payout sent' on the first call. Telling them
+   * again reads as a second payout landing in their account.
+   *
+   * The early-return only covers a PURE retry (result.count === 0). Here the
+   * second call does settle something, so the notification lookup runs — and
+   * selecting by bankTransferRef alone matches p1 as well, because p1 carries
+   * that same reference from the first call. Only rows THIS invocation
+   * transitioned may be notified.
+   */
+  test('MIXED RETRY: a vendor already settled by an earlier call is not notified twice', async () => {
+    const first = await seedBooking('SUCCESS');
+
+    // Second payment on a DIFFERENT vendor, so the two notifications are
+    // distinguishable (a shared vendor would be deduped and hide the bug).
+    const otherVendorUser = await ctx.prisma.user.create({
+      data: {
+        fullName: 'Other Vendor', email: 'other-vendor@test.com',
+        password: '$2b$10$dummy.hash.for.tests.never.used.in.auth',
+        role: 'VENDOR', emailVerified: true,
+      },
+    });
+    const otherVendor = await ctx.prisma.vendor.create({
+      data: {
+        userId: otherVendorUser.id, businessNameEn: 'Other Biz', businessNameAr: 'اخر',
+        businessId: 'BIZ-TEST-2', slug: 'other-biz',
+        countryId: first.seed.country.id, status: 'ACTIVE',
+      },
+    });
+    const second = await ctx.prisma.payment.create({
+      data: {
+        amount: 80, currency: 'QAR', status: 'SUCCESS',
+        payoutStatus: 'UNPAID', method: 'PAY2M', paidAt: new Date(),
+        booking: {
+          create: {
+            ref: 'JDWL-MIXED',
+            bookingPhone: '+97455123456',
+            activityId: first.seed.activity.id, vendorId: otherVendor.id,
+            customerId: first.seed.customer.id,
+            guests: 1, totalPrice: 80, serviceFee: 5,
+            commissionPct: 10, commissionAmount: 8,
+            currencyCode: 'QAR',
+            startDatetime: new Date('2020-02-01T10:00:00Z'),
+            endDatetime: new Date('2020-02-01T12:00:00Z'),
+            status: 'COMPLETED',
+          },
+        },
+      },
+    });
+
+    const { admin, notificationService } = makeServices();
+    const send = notificationService.send as jest.Mock;
+
+    // First call settles ONLY p1.
+    await admin.markPayoutsPaid([first.payment.id], 'MIXED-WIRE-REF');
+    const firstRoundVendors = send.mock.calls
+      .filter((c) => c[0]?.type === 'PAYOUT_PROCESSED')
+      .map((c) => c[0].userId);
+    expect(firstRoundVendors).toEqual([first.seed.vendorUser.id]);
+    send.mockClear();
+
+    // Retry with BOTH ids under the same reference; only p2 transitions.
+    await admin.markPayoutsPaid([first.payment.id, second.id], 'MIXED-WIRE-REF');
+
+    const secondRoundVendors = send.mock.calls
+      .filter((c) => c[0]?.type === 'PAYOUT_PROCESSED')
+      .map((c) => c[0].userId);
+    // ONLY the newly settled vendor. p1's vendor must not hear about it again.
+    expect(secondRoundVendors).toEqual([otherVendorUser.id]);
+  });
+
+
 });

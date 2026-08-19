@@ -20,6 +20,9 @@ function makeModel(): Record<string, AnyFn> {
     createMany:       jest.fn().mockResolvedValue({ count: 0 }),
     update:           jest.fn().mockResolvedValue({}),
     updateMany:       jest.fn().mockResolvedValue({ count: 0 }),
+    // Postgres-only. Returns the updated ROWS, not a count — callers use it
+    // when they need the ids they just transitioned.
+    updateManyAndReturn: jest.fn().mockResolvedValue([]),
     upsert:           jest.fn().mockResolvedValue({}),
     delete:           jest.fn().mockResolvedValue({}),
     deleteMany:       jest.fn().mockResolvedValue({ count: 0 }),

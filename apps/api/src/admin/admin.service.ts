@@ -2347,7 +2347,12 @@ export class AdminService {
     // can't overwrite its original `paidAt` + `bankTransferRef`. The same
     // predicate is repeated here (not just relied on from the check above)
     // because a concurrent mark-paid could land between the two statements.
-    const result = await db.payment.updateMany({
+    // updateManyAndReturn (Postgres) so we keep the IDs this invocation actually
+    // transitioned. `bankTransferRef` alone cannot identify them: on a mixed
+    // retry the same reference is already stamped on rows settled by an EARLIER
+    // call, and notifying on that set tells a vendor "payout sent" a second
+    // time for money they were already told about.
+    const settledNow = await db.payment.updateManyAndReturn({
       where: {
         id: { in: paymentIds },
         status: 'SUCCESS',
@@ -2355,11 +2360,30 @@ export class AdminService {
         booking: { endDatetime: { lt: payoutCutoff } },
       },
       data: { payoutStatus: 'PAID', paidAt: new Date(), bankTransferRef: trimmedRef },
+      select: { id: true },
     });
+    const result = { count: settledNow.length };
 
     // Lost the race against a concurrent mark-paid between the check and the
     // write. Surface it — the count is what the caller acts on.
-    if (result.count < paymentIds.length) {
+    // Idempotency: distinguish "already settled by this same wire" from a real
+    // short write. An ALB timeout after commit makes the admin re-click, and
+    // duplicate ids can arrive in one array. In both cases the escrow probe
+    // passes (nothing is UNPAID+in-escrow) and updateMany matches 0 rows —
+    // which naively reads as "we lost rows" and would page finance about a
+    // no-op AND tell every vendor "payout sent" a second time.
+    // NOTE: this probe runs AFTER the updateMany above, so the rows that update
+    // just flipped are themselves PAID with this bankTransferRef and are counted
+    // here. That makes it the COMPLETE total settled under this reference — do
+    // NOT add result.count to it. Doing so double-counts the freshly-written
+    // rows (1 + 1 >= 2 for a two-id batch where only one settled) and silently
+    // suppresses the alert below on a real short write.
+    const settledByThisWire = await db.payment.count({
+      where: { id: { in: paymentIds }, payoutStatus: 'PAID', bankTransferRef: trimmedRef },
+    });
+    // Dedupe: a repeated id is one payment, not a missing one.
+    const requestedCount = new Set(paymentIds).size;
+    if (settledByThisWire < requestedCount) {
       // The bank transfer has ALREADY been sent (bankTransferRef is required
       // above), so a short write is money out with no matching PAID row.
       // Causes are wider than a concurrent mark-paid: a cancellation or refund
@@ -2368,16 +2392,17 @@ export class AdminService {
       // this is the same class of exposure as REFUND_ON_PAID_OUT_BOOKING.
       this.logger.error({
         event: 'PAYOUT_MARK_PAID_PARTIAL',
-        requested: paymentIds.length,
+        requested: requestedCount,
         marked: result.count,
-        unmarked: paymentIds.length - result.count,
+        settledByThisWire,
+        unmarked: requestedCount - settledByThisWire,
         bankTransferRef: trimmedRef,
         reason: 'rows changed between the eligibility probe and the write (concurrent mark-paid, cancellation, or refund)',
       });
       this.notificationService.notifyAdmins({
         type: 'SYSTEM',
         title: 'Payout partially recorded — reconcile manually',
-        message: `A bank transfer (${trimmedRef}) covered ${paymentIds.length} payment(s) but only ${result.count} were marked PAID. The remaining ${paymentIds.length - result.count} changed state mid-operation and must be reconciled by hand.`,
+        message: `A bank transfer (${trimmedRef}) covered ${requestedCount} payment(s) but only ${settledByThisWire} are PAID against it. The remaining ${requestedCount - settledByThisWire} changed state mid-operation and must be reconciled by hand.`,
         link: '/admin/payouts',
       });
     }
@@ -2385,14 +2410,21 @@ export class AdminService {
     // Notify each vendor whose payments were marked as paid. Pull the slug
     // here too so the notification link resolves to a real route (the vendor
     // portal lives under /vendor/[slug]/*, not /vendor/*).
-    // Re-query the rows this call ACTUALLY settled, not everything submitted.
-    // updateMany returns a count and no ids, so filtering on
-    // `bankTransferRef` + PAID identifies exactly the rows this transfer just
-    // stamped. Notifying on the submitted list instead would tell a vendor
-    // "your payout has been sent" for payments that were skipped — escrow,
-    // already-paid, or state-changed — which is worse than staying silent.
+    // Only notify when this call actually settled something. On an idempotent
+    // retry result.count is 0 — the vendors were already told on the first
+    // call, and telling them again reads as a second payout.
+    if (result.count === 0) {
+      return { updated: 0 };
+    }
+
+    // Look up ONLY the rows this call transitioned (ids captured above), not
+    // everything submitted and not everything sharing the reference. Notifying
+    // on the submitted list would tell a vendor "your payout has been sent" for
+    // payments that were skipped — escrow, already-paid, or state-changed.
+    // Notifying on the bankTransferRef set would re-notify vendors settled by
+    // an earlier attempt of the same wire.
     const payments = await this.prisma.client.payment.findMany({
-      where: { id: { in: paymentIds }, payoutStatus: 'PAID', bankTransferRef: trimmedRef },
+      where: { id: { in: settledNow.map((p) => p.id) } },
       select: { booking: { select: { vendorId: true, vendor: { select: { userId: true, slug: true } } } } },
     });
     const notifiedVendors = new Set<string>();
