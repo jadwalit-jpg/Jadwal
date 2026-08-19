@@ -39,8 +39,17 @@ COPY apps/web/package.json ./apps/web/
 #      below that re-hydrated EVERY workspace's dev tree (946 packages,
 #      incl. @lhci/cli -> lighthouse -> puppeteer-core -> extract-zip,
 #      which is where the extract-zip HIGH CVE in the api image came
-#      from). Root-caused and fixed by adding `--omit=dev` to that
-#      command; these rm's only ever removed two of the ~600 strays.
+#      from). These rm's only ever removed two of the ~600 strays.
+#
+#      DO NOT "fix" that re-hydration by adding `--omit=dev` to the sharp
+#      reinstall. That was tried and it broke production: the command also
+#      passes --no-package-lock, so npm re-resolves the whole tree, and
+#      --omit=dev then PRUNES production packages `npm ci --omit=dev`
+#      already installed. express disappeared, every ECS task died at boot
+#      with MODULE_NOT_FOUND, and the circuit breaker rolled the deploy
+#      back. The tree must not be re-resolved AT ALL — which is why sharp
+#      now installs into an isolated --prefix and only its own packages are
+#      copied in. See that command below.
 #   2. TypeScript declaration files (.d.ts) and source maps (*.map) —
 #      useless at runtime, just disk weight.
 #   3. Per-package docs (README, LICENSE, CHANGELOG, etc.) and test
@@ -170,13 +179,19 @@ RUN node -e "const s=require('sharp'); if(!s||!s.format){throw new Error('sharp.
 # silently broken. Resolution (not import) is deliberate: it is cheap,
 # needs no env vars or database, and cannot be fooled by a package whose
 # side effects happen to be lazy.
+# Only MODULE_NOT_FOUND counts as missing; anything else (notably
+# ERR_PACKAGE_PATH_NOT_EXPORTED or ERR_INVALID_PACKAGE_CONFIG) is
+# RETHROWN and fails the build. Swallowing those would let a package
+# with a broken `exports` map pass a check whose entire purpose is to
+# prove the dependency is usable — and sharp 0.35 shipped exactly that
+# class of change, so it is not hypothetical here.
 # @types/* are excluded: they are declarations only, contribute no runtime
 # module, and are legitimately absent from a --omit=dev tree. (They sit in
 # `dependencies` rather than `devDependencies` in the manifest, which is a
 # separate pre-existing tidy-up, not a packaging fault.)
 RUN node -e "\
 const deps = Object.keys(require('/app/apps/api/package.json').dependencies || {}).filter(d => !d.startsWith('@types/'));\
-const missing = deps.filter(d => { try { require.resolve(d, { paths: ['/app/apps/api', '/app'] }); return false; } catch (e) { return e.code === 'MODULE_NOT_FOUND'; } });\
+const missing = deps.filter(d => { try { require.resolve(d, { paths: ['/app/apps/api', '/app'] }); return false; } catch (e) { if (e.code === 'MODULE_NOT_FOUND') return true; throw e; } });\
 if (missing.length) { console.error('[build] FATAL missing runtime deps: ' + missing.join(', ')); process.exit(1); }\
 console.log('[build] all ' + deps.length + ' runtime deps resolve');"
 
