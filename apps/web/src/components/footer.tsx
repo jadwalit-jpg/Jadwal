@@ -3,7 +3,8 @@
 import { LocaleLink as Link } from '@/components/locale-link';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Mail, Phone, Instagram, MapPin } from 'lucide-react';
+import { Mail, Phone, MapPin } from 'lucide-react';
+import { Instagram } from '@/components/icons/instagram';
 import api from '@/lib/api';
 
 interface PlatformInfo {
