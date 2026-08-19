@@ -232,6 +232,12 @@ jobs:
         working-directory: apps/web
         timeout-minutes: 18
         run: |
+          # unattended-upgrades runs on boot on Azure-hosted runners and holds
+          # the dpkg/apt lock. Playwright's internal apt-get then blocks on it
+          # with no output. Stop it up front so the common case never contends.
+          sudo systemctl stop unattended-upgrades.service 2>/dev/null || true
+          sudo systemctl kill --kill-who=all unattended-upgrades.service 2>/dev/null || true
+
           for attempt in 1 2 3; do
             echo "::group::playwright install attempt $attempt"
             if timeout 300 npx playwright install --with-deps chromium; then
@@ -240,6 +246,13 @@ jobs:
             fi
             echo "attempt $attempt stalled or failed"
             echo "::endgroup::"
+            # A `timeout`-killed apt leaves dpkg mid-transaction and the lock
+            # files behind, so WITHOUT this repair every later attempt dies
+            # instantly with `exited with code: 100` and the retry is useless.
+            # Observed exactly that before this was added.
+            echo "repairing dpkg state before retry"
+            sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock 2>/dev/null || true
+            sudo dpkg --configure -a 2>/dev/null || true
             sleep 15
           done
           echo "::error::playwright install failed after 3 attempts"
@@ -251,6 +264,9 @@ jobs:
         working-directory: apps/web
         timeout-minutes: 12
         run: |
+          sudo systemctl stop unattended-upgrades.service 2>/dev/null || true
+          sudo systemctl kill --kill-who=all unattended-upgrades.service 2>/dev/null || true
+
           for attempt in 1 2 3; do
             echo "::group::playwright install-deps attempt $attempt"
             if timeout 180 npx playwright install-deps chromium; then
@@ -259,6 +275,9 @@ jobs:
             fi
             echo "attempt $attempt stalled or failed"
             echo "::endgroup::"
+            echo "repairing dpkg state before retry"
+            sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock 2>/dev/null || true
+            sudo dpkg --configure -a 2>/dev/null || true
             sleep 15
           done
           echo "::error::playwright install-deps failed after 3 attempts"
