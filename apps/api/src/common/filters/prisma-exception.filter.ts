@@ -71,6 +71,12 @@ export class PrismaExceptionFilter implements ExceptionFilter {
     // outage surfaces in logs/metrics.
     const usingRotatingCreds = !!process.env.RDS_SECRET_ARN?.trim();
     if (code === 'P1000' && this.prisma && usingRotatingCreds) {
+      // This branch RETURNS before mapError, so it must raise its own alert —
+      // otherwise the single most important database failure in production is
+      // the one nobody is told about. RDS_SECRET_ARN is required in prod, so
+      // usingRotatingCreds is always true there and EVERY credential/auth
+      // outage lands here. 503 is still a 5xx: page on it.
+      this.reportServerError(exception, code, request.method, safePath, HttpStatus.SERVICE_UNAVAILABLE);
       this.prisma
         .refreshOnAuthError()
         .catch((err: Error) =>
@@ -103,28 +109,49 @@ export class PrismaExceptionFilter implements ExceptionFilter {
     // below is the sink that always works — `event: PRISMA_ERROR_5XX` is a
     // stable, greppable token to build a CloudWatch metric filter + alarm on.
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
-      this.logger.error({
-        event: 'PRISMA_ERROR_5XX',
-        prismaCode: code,
-        method: request.method,
-        path: safePath,
-      });
-      // Never throws: captureException is a no-op without a DSN, but guard
-      // anyway so a reporting failure can never mask the original error.
-      try {
-        Sentry.captureException(exception, {
-          tags: { prismaCode: code, filter: 'PrismaExceptionFilter' },
-          extra: { method: request.method, path: safePath },
-        });
-      } catch {
-        /* reporting must never break the response path */
-      }
+      this.reportServerError(exception, code, request.method, safePath, status);
     }
 
     response.status(status).json({
       statusCode: status,
       message,
     });
+  }
+
+  /**
+   * Raise the alertable signal for a server-side (5xx) database failure.
+   *
+   * Two sinks on purpose. Sentry is a no-op unless SENTRY_DSN is set, and that
+   * variable is optional here (it is absent from REQUIRED_IN_PRODUCTION), so
+   * the structured log line is the sink that always works — `PRISMA_ERROR_5XX`
+   * is a stable token for a CloudWatch metric filter + alarm.
+   *
+   * Called from BOTH the mapped path and the P1000 early-return, because that
+   * branch responds 503 and returns without ever reaching mapError.
+   */
+  private reportServerError(
+    exception: unknown,
+    code: string,
+    method: string,
+    safePath: string,
+    status: number,
+  ): void {
+    this.logger.error({
+      event: 'PRISMA_ERROR_5XX',
+      prismaCode: code,
+      method,
+      path: safePath,
+      status,
+    });
+    // Guarded: a reporting failure must never mask the original error.
+    try {
+      Sentry.captureException(exception, {
+        tags: { prismaCode: code, filter: 'PrismaExceptionFilter' },
+        extra: { method, path: safePath, status },
+      });
+    } catch {
+      /* reporting must never break the response path */
+    }
   }
 
   private mapError(code: string): { status: number; message: string } {
