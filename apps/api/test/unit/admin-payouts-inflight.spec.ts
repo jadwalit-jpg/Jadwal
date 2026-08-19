@@ -68,7 +68,7 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
     await expect(ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF'))
       .rejects.toThrow(/alpha tours.*in-flight payout request.*payout requests page/i);
     // Must NOT flip any payments when blocked.
-    expect(ctx.prisma._client.payment.updateMany).not.toHaveBeenCalled();
+    expect(ctx.prisma._client.payment.updateManyAndReturn).not.toHaveBeenCalled();
   });
 
   test('blocks when the specific paymentId is in an APPROVED request.paymentIds[]', async () => {
@@ -97,7 +97,7 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
     ]);
     // Escrow probe — nothing in escrow, so the batch is not rejected.
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
-    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
+    ctx.prisma._client.payment.updateManyAndReturn.mockResolvedValueOnce([{ id: 'p1' }]);
     // Third findMany is for the notification lookup.
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
       { booking: { vendorId: 'vA', vendor: { userId: 'u1', slug: 'alpha-tours' } } },
@@ -109,7 +109,7 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
     // AND only for bookings whose activity has already ended (escrow buffer).
     // Without the endDatetime filter a future booking could be paid out and
     // then cancelled+refunded — money out twice with no clawback.
-    expect(ctx.prisma._client.payment.updateMany).toHaveBeenCalledWith({
+    expect(ctx.prisma._client.payment.updateManyAndReturn).toHaveBeenCalledWith({
       where: {
         id: { in: ['p1'] },
         status: 'SUCCESS',
@@ -117,6 +117,9 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
         booking: { endDatetime: { lt: expect.any(Date) } },
       },
       data: expect.objectContaining({ payoutStatus: 'PAID' }),
+      // Ids of the rows THIS call transitions — the notification pass is scoped
+      // to them so a mixed retry cannot re-notify an earlier call's vendors.
+      select: { id: true },
     });
   });
 
@@ -140,7 +143,7 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
       const ctx = await setupUnblocked();
       // Escrow probe finds nothing in escrow…
       ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
-      ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
+      ctx.prisma._client.payment.updateManyAndReturn.mockResolvedValueOnce([{ id: 'p1' }]);
       // …then the notification lookup.
       ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
         { booking: { vendorId: 'vA', vendor: { userId: 'u1', slug: 'alpha' } } },
@@ -148,7 +151,7 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
 
       await ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF');
 
-      const where = ctx.prisma._client.payment.updateMany.mock.calls[0][0].where;
+      const where = ctx.prisma._client.payment.updateManyAndReturn.mock.calls[0][0].where;
       expect(where.booking.endDatetime.lt).toBeInstanceOf(Date);
       // Cutoff is "now" minus the configured buffer — never in the future,
       // which would let unfinished bookings settle.
@@ -173,7 +176,7 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
         .rejects.toThrow(/still in payout escrow[\s\S]*No payments were changed/i);
 
       // Critical: no partial settlement.
-      expect(ctx.prisma._client.payment.updateMany).not.toHaveBeenCalled();
+      expect(ctx.prisma._client.payment.updateManyAndReturn).not.toHaveBeenCalled();
     });
 
     test('the rejection names the in-escrow payment ids so the admin can fix the selection', async () => {
@@ -191,12 +194,12 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
         const ctx = await setupUnblocked();
         // escrow probe (empty), then the update, then the notification lookup
         ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
-        ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 });
+        ctx.prisma._client.payment.updateManyAndReturn.mockResolvedValueOnce([{ id: 'p1' }]);
         ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
 
         await ctx.sut.markPayoutsPaid(['p1'], 'TEST-WIRE-REF');
 
-        const cutoff = ctx.prisma._client.payment.updateMany.mock.calls[0][0].where.booking.endDatetime.lt;
+        const cutoff = ctx.prisma._client.payment.updateManyAndReturn.mock.calls[0][0].where.booking.endDatetime.lt;
         // ~3 days back, allowing a second of execution slack.
         const expected = Date.now() - 3 * 86_400_000;
         expect(Math.abs(cutoff.getTime() - expected)).toBeLessThan(5_000);
@@ -209,8 +212,11 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
 
   // A vendor being told "your payout has been sent" for a payment that was
   // NOT settled is worse than silence — they chase a transfer that never
-  // happened. updateMany returns only a count, so the notification pass must
-  // re-query the rows this transfer actually stamped.
+  // happened. The notification pass is therefore scoped to the exact ids
+  // updateManyAndReturn handed back, i.e. the rows THIS invocation
+  // transitioned. Scoping by bankTransferRef instead is not enough: on a mixed
+  // retry that reference is already stamped on rows an EARLIER call settled,
+  // and those vendors would be notified a second time.
   test('notifies only the rows THIS transfer marked paid, not everything submitted', async () => {
     const ctx = await buildSut();
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
@@ -219,18 +225,16 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
     ]);
     ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]);
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);          // escrow probe: clear
-    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 2 });
+    ctx.prisma._client.payment.updateManyAndReturn.mockResolvedValueOnce([{ id: 'p1' }, { id: 'p2' }]);
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([             // notification lookup
       { booking: { vendorId: 'vA', vendor: { userId: 'uA', slug: 'alpha' } } },
     ]);
 
     await ctx.sut.markPayoutsPaid(['p1', 'p2'], 'WIRE-REF-1');
 
-    // The notification query must be scoped to rows stamped by THIS wire ref.
+    // Scoped to exactly the ids this invocation transitioned — nothing else.
     const notifyWhere = ctx.prisma._client.payment.findMany.mock.calls[2][0].where;
-    expect(notifyWhere).toEqual(
-      expect.objectContaining({ payoutStatus: 'PAID', bankTransferRef: 'WIRE-REF-1' }),
-    );
+    expect(notifyWhere).toEqual({ id: { in: ['p1', 'p2'] } });
   });
 
   test('names up to 3 offending vendors and appends "and N more" for the rest', async () => {
@@ -265,7 +269,7 @@ describe('AdminService.markPayoutsPaid — in-flight guard', () => {
     ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]); // no inflight
     // Escrow probe — nothing in escrow, so nothing is rejected.
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);
-    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 2 });
+    ctx.prisma._client.payment.updateManyAndReturn.mockResolvedValueOnce([{ id: 'p1' }, { id: 'p2' }]);
     // Third findMany for notifications.
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([
       { booking: { vendorId: 'vA', vendor: { userId: 'uA', slug: 'alpha-tours' } } },
@@ -314,7 +318,7 @@ describe('AdminService.processPayoutRequest — APPROVED → COMPLETED (two-step
 
     // Payment rows must be untouched — the two-step flow separates request
     // closure from cash settlement.
-    expect(ctx.prisma._client.payment.updateMany).not.toHaveBeenCalled();
+    expect(ctx.prisma._client.payment.updateManyAndReturn).not.toHaveBeenCalled();
     // The request itself must transition via optimistic lock on status=APPROVED.
     const reqUpdate = ctx.prisma._client.payoutRequest.updateMany.mock.calls[0]?.[0];
     expect(reqUpdate.where).toEqual({ id: 'req-1', status: 'APPROVED' });
@@ -581,7 +585,7 @@ describe('AdminService.markPayoutsPaid — idempotent retry', () => {
     ]);
     ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]);
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);        // escrow probe: clear
-    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 0 }); // already PAID
+    ctx.prisma._client.payment.updateManyAndReturn.mockResolvedValueOnce([]); // already PAID
     ctx.prisma._client.payment.count.mockResolvedValueOnce(1);            // settled by THIS ref
 
     const res = await ctx.sut.markPayoutsPaid(['p1'], 'WIRE-1');
@@ -601,7 +605,7 @@ describe('AdminService.markPayoutsPaid — idempotent retry', () => {
     ]);
     ctx.prisma._client.payoutRequest.findMany.mockResolvedValueOnce([]);
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);        // escrow probe: clear
-    ctx.prisma._client.payment.updateMany.mockResolvedValueOnce({ count: 1 }); // one row lost
+    ctx.prisma._client.payment.updateManyAndReturn.mockResolvedValueOnce([{ id: 'p1' }]); // one row lost
     ctx.prisma._client.payment.count.mockResolvedValueOnce(0);            // none pre-settled
     ctx.prisma._client.payment.findMany.mockResolvedValueOnce([]);        // notify lookup
 

@@ -2347,7 +2347,12 @@ export class AdminService {
     // can't overwrite its original `paidAt` + `bankTransferRef`. The same
     // predicate is repeated here (not just relied on from the check above)
     // because a concurrent mark-paid could land between the two statements.
-    const result = await db.payment.updateMany({
+    // updateManyAndReturn (Postgres) so we keep the IDs this invocation actually
+    // transitioned. `bankTransferRef` alone cannot identify them: on a mixed
+    // retry the same reference is already stamped on rows settled by an EARLIER
+    // call, and notifying on that set tells a vendor "payout sent" a second
+    // time for money they were already told about.
+    const settledNow = await db.payment.updateManyAndReturn({
       where: {
         id: { in: paymentIds },
         status: 'SUCCESS',
@@ -2355,7 +2360,9 @@ export class AdminService {
         booking: { endDatetime: { lt: payoutCutoff } },
       },
       data: { payoutStatus: 'PAID', paidAt: new Date(), bankTransferRef: trimmedRef },
+      select: { id: true },
     });
+    const result = { count: settledNow.length };
 
     // Lost the race against a concurrent mark-paid between the check and the
     // write. Surface it — the count is what the caller acts on.
@@ -2410,14 +2417,14 @@ export class AdminService {
       return { updated: 0 };
     }
 
-    // Re-query the rows this call ACTUALLY settled, not everything submitted.
-    // updateMany returns a count and no ids, so filtering on
-    // `bankTransferRef` + PAID identifies exactly the rows this transfer just
-    // stamped. Notifying on the submitted list instead would tell a vendor
-    // "your payout has been sent" for payments that were skipped — escrow,
-    // already-paid, or state-changed — which is worse than staying silent.
+    // Look up ONLY the rows this call transitioned (ids captured above), not
+    // everything submitted and not everything sharing the reference. Notifying
+    // on the submitted list would tell a vendor "your payout has been sent" for
+    // payments that were skipped — escrow, already-paid, or state-changed.
+    // Notifying on the bankTransferRef set would re-notify vendors settled by
+    // an earlier attempt of the same wire.
     const payments = await this.prisma.client.payment.findMany({
-      where: { id: { in: paymentIds }, payoutStatus: 'PAID', bankTransferRef: trimmedRef },
+      where: { id: { in: settledNow.map((p) => p.id) } },
       select: { booking: { select: { vendorId: true, vendor: { select: { userId: true, slug: true } } } } },
     });
     const notifiedVendors = new Set<string>();
