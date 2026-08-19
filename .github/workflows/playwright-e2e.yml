@@ -260,8 +260,17 @@ jobs:
             echo "system libraries installed"
           else
             echo "::warning::playwright install-deps did not complete (apt lock contention on this runner). Continuing: the runner image ships the Chromium libraries, and a genuinely missing one will surface as a browser-launch error in the tests."
+            # Wait for any apt/dpkg process to exit before touching the lock
+            # files, then repair. Removing a lock still held by a live process
+            # is how you get a genuinely corrupt package DB rather than a
+            # merely interrupted one.
+            for _ in $(seq 1 30); do
+              pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1 || break
+              sleep 2
+            done
             sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock 2>/dev/null || true
             sudo dpkg --configure -a 2>/dev/null || true
+            sudo apt-get install -f -y 2>/dev/null || true
           fi
 
       # The API uses web-push at boot, which validates that VAPID keys
