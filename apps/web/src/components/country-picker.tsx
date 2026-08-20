@@ -11,7 +11,7 @@
  *      auto-revalidated. The choice is cached in localStorage with source='manual'.
  *
  * Two visual variants:
- *   - `variant='desktop'` — compact pill button: `🇶🇦 QA ▾`. Sits in the navbar bar.
+ *   - `variant='desktop'` — compact pill button: globe icon + country name.
  *   - `variant='mobile'`  — full-width menu row matching the rest of the mobile
  *     hamburger menu rows.
  */
@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, MapPin, Check } from 'lucide-react';
+import { ChevronDown, MapPin, Check, Globe } from 'lucide-react';
 import api from '@/lib/api';
 import { useGeo } from '@/context/geo-context';
 
@@ -42,17 +42,17 @@ function pickName(c: Country, lang: string): string {
   return c.nameEn ?? '';
 }
 
-// ISO-3166 alpha-2 → flag emoji. Cheap, no network call. Two regional-indicator
-// code points (U+1F1E6 .. U+1F1FF). Returns globe if input is malformed.
-function flagFromIso(iso: string): string {
-  if (!iso || iso.length !== 2) return '🌍';
-  const A = 0x1F1E6;
-  const a = 'A'.charCodeAt(0);
-  return (
-    String.fromCodePoint(A + iso.charCodeAt(0) - a) +
-    String.fromCodePoint(A + iso.charCodeAt(1) - a)
-  );
-}
+// NO FLAG EMOJI. Regional-indicator pairs (U+1F1E6..U+1F1FF) are the standard
+// way to render a flag, and they do NOT work on Windows: Chrome and Edge there
+// have no flag glyphs, so a user sees the bare letters "QA" in a box instead of
+// a flag. That reads as broken, not as a country picker.
+//
+// Real SVG flags were the other option and were rejected: several GCC flags we
+// would need (Saudi Arabia's shahada calligraphy, Oman's national emblem) cannot
+// be hand-drawn accurately, and shipping a wrong national flag is worse than
+// shipping none. So the picker uses the same Lucide icon set as the rest of the
+// app — consistent, identical on every OS — and lets the localized country NAME
+// carry the identity, which it already did.
 
 interface Props {
   variant?: 'desktop' | 'mobile';
@@ -108,7 +108,7 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
         >
           <span className="flex items-center gap-3">
             <MapPin aria-hidden="true" className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-            <span>{country ? `${flagFromIso(country.isoCode)} ${pickName(country, lang)}` : t('nav.country', { defaultValue: 'Country' })}</span>
+            <span>{country ? pickName(country, lang) : t('nav.country', { defaultValue: 'Country' })}</span>
           </span>
           <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''} text-gray-400 dark:text-slate-500`} />
         </button>
@@ -128,7 +128,7 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
                   }`}
                 >
                   <span className="flex items-center gap-2">
-                    <span className="text-base leading-none">{flagFromIso(c.isoCode)}</span>
+                    <Globe aria-hidden="true" className="h-4 w-4 shrink-0 text-gray-400 dark:text-slate-500" />
                     <span>{pickName(c, lang)}</span>
                   </span>
                   {isActive && <Check aria-hidden="true" className="h-4 w-4" />}
@@ -157,13 +157,13 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
         title={source === 'unsupported-default' ? t('nav.countryFallback', { defaultValue: 'Showing Qatar — your country isn\'t available yet' }) : undefined}
         className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-medium transition-colors ${pillCls}`}
       >
-        <span className="text-base leading-none">{country ? flagFromIso(country.isoCode) : '🌍'}</span>
-        {/* Localized country name (e.g. "Jordan" / "الأردن"), not the ISO code
-            — the flag already carries the code visually, so showing "JO" next
-            to 🇯🇴 reads as a duplicate. Hidden below sm to keep the bar
-            uncluttered on phones (mobile users get the full row from the
-            hamburger menu variant). `max-w` + `truncate` so a long localized
-            name doesn't blow the navbar layout. */}
+        <Globe aria-hidden="true" className="h-4 w-4 shrink-0" />
+        {/* Localized country name (e.g. "Qatar" / "قطر"), not the ISO code. With
+            the flag gone this is the ONLY thing identifying the country, and it
+            reads better than "QA" anyway. Hidden below sm to keep the bar
+            uncluttered on phones (mobile users get the full row from the hamburger
+            menu variant). `max-w` + `truncate` so a long localized name cannot blow
+            up the navbar layout. */}
         <span className="hidden sm:inline max-w-[110px] truncate">
           {country ? pickName(country, lang) : '—'}
         </span>
@@ -192,7 +192,7 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
                   }`}
                 >
                   <span className="flex items-center gap-2.5">
-                    <span className="text-base leading-none">{flagFromIso(c.isoCode)}</span>
+                    <Globe aria-hidden="true" className="h-4 w-4 shrink-0 text-gray-400 dark:text-slate-500" />
                     <span>{pickName(c, lang)}</span>
                   </span>
                   {isActive && <Check aria-hidden="true" className="h-4 w-4" />}

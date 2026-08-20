@@ -49,21 +49,29 @@ export const metadata: Metadata = {
     title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
     description:
       'Book activities, tours and experiences across Qatar and the GCC — desert safaris, water activities, caravans, resorts and more, from trusted local vendors.',
+    // Landscape photo, NOT the square app icon. Link previews on WhatsApp,
+    // Slack, X and iMessage use a ~1.91:1 frame and centre-crop a 512x512
+    // icon down to a sliver of the logo. This is the home page — the single
+    // most-shared url on the site — so it was the worst place to have a
+    // square. NOTE: Next REPLACES openGraph rather than deep-merging it, so
+    // fixing the root layout alone did NOT reach this page; both had to
+    // change. A purpose-built 1200x630 brand asset is still the ideal.
     images: [
       {
-        url: '/android-chrome-512x512.png',
-        width: 512,
-        height: 512,
-        alt: 'AL Jadwal',
+        url: '/images/login-bg.webp',
+        width: 1920,
+        height: 1080,
+        alt: 'AL Jadwal — book experiences across Qatar and the GCC',
       },
     ],
   },
   twitter: {
-    card: 'summary',
+    // summary_large_image to match the landscape image above.
+    card: 'summary_large_image',
     title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
     description:
       'Book activities, tours and experiences across Qatar and the GCC, from trusted local vendors.',
-    images: ['/android-chrome-512x512.png'],
+    images: ['/images/login-bg.webp'],
   },
 };
 

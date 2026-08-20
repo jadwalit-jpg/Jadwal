@@ -12,28 +12,30 @@ import { localeAlternates } from '@/lib/locale-path';
 export async function generateMetadata(): Promise<Metadata> {
   const lang = await readLangServer();
 
-  const title =
-    lang === 'ar' ? 'العروض والكوبونات — الجدول' : 'Offers & Coupons — AL Jadwal';
+  // NO brand suffix — the root title template appends it. Same note as
+  // explore/layout.tsx.
+  const title = lang === 'ar' ? 'العروض والكوبونات' : 'Offers & Coupons';
+  const ogTitle = lang === 'ar' ? 'العروض والكوبونات — الجدول' : 'Offers & Coupons — AL Jadwal';
   const description =
     lang === 'ar'
       ? 'وفّر على تجاربك المفضلة في قطر مع كوبونات الخصم والعروض الحصرية من جدول.'
-      : 'Save on your favourite experiences in Qatar with exclusive AL Jadwal vouchers and discount coupons.';
+      : 'Save on Qatar experiences with exclusive AL Jadwal coupons and limited-time offers — desert safaris, dhow cruises, water sports and more, discounted.';
 
   return {
     title,
     description,
     alternates: localeAlternates('/offers', lang),
     openGraph: {
-      title,
+      title: ogTitle,
       description,
       type: 'website',
       siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
-      images: [{ url: '/images/login-bg.webp', width: 1200, height: 630, alt: title }],
+      images: [{ url: '/images/login-bg.webp', width: 1920, height: 1080, alt: title }],
     },
     twitter: {
       card: 'summary_large_image',
-      title,
+      title: ogTitle,
       description,
       images: ['/images/login-bg.webp'],
     },

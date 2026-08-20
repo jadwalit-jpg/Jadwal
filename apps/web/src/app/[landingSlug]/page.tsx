@@ -76,7 +76,7 @@ export async function generateMetadata({
       siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
       alternateLocale: lang === 'ar' ? ['en_US'] : ['ar_QA'],
-      images: [{ url: '/images/login-bg.webp', width: 1200, height: 630, alt: copy.metaTitle }],
+      images: [{ url: '/images/login-bg.webp', width: 1920, height: 1080, alt: copy.metaTitle }],
     },
     twitter: { card: 'summary_large_image', title: copy.metaTitle, description: copy.metaDescription, images: ['/images/login-bg.webp'] },
   };
