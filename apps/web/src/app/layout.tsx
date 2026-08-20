@@ -122,18 +122,26 @@ export const metadata: Metadata = {
     url: siteUrl.toString(),
     images: [
       {
-        url: "/android-chrome-512x512.png",
-        width: 512,
-        height: 512,
-        alt: "AL Jadwal",
+        // Landscape 1.78:1 photo, NOT the square app icon. WhatsApp, Slack, X
+        // and iMessage render link previews in a ~1.91:1 landscape frame; a
+        // 512x512 icon gets centre-cropped to a sliver of the logo. The home
+        // page is the most-shared url on the site, so it was the worst place
+        // to have a square. A purpose-built 1200x630 brand asset is still the
+        // ideal — this is the best real photo already in the repo.
+        url: "/images/login-bg.webp",
+        width: 1920,
+        height: 1080,
+        alt: "AL Jadwal — book experiences across Qatar",
       },
     ],
   },
   twitter: {
-    card: "summary",
+    // summary_large_image now that the image is landscape — 'summary' renders
+    // a small square thumbnail and wastes the photo.
+    card: "summary_large_image",
     title: "AL Jadwal — Discover and book experiences in Qatar",
     description: "Discover and book experiences in your city.",
-    images: ["/android-chrome-512x512.png"],
+    images: ["/images/login-bg.webp"],
   },
 };
 

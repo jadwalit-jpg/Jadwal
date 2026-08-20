@@ -14,12 +14,16 @@ import { localeAlternates } from '@/lib/locale-path';
 export async function generateMetadata(): Promise<Metadata> {
   const lang = await readLangServer();
 
-  const title =
-    lang === 'ar' ? 'استكشف الأنشطة — الجدول' : 'Explore Activities — AL Jadwal';
+  // NO brand suffix here: the root layout applies `template: '%s · AL Jadwal'`,
+  // so adding it again rendered "Explore Activities — AL Jadwal · AL Jadwal"
+  // and burned ~11 characters of the 60-char SERP title on a repeat.
+  const title = lang === 'ar' ? 'استكشف الأنشطة' : 'Explore Activities';
+  // og:title has no template applied, so it carries the brand itself.
+  const ogTitle = lang === 'ar' ? 'استكشف الأنشطة — الجدول' : 'Explore Activities — AL Jadwal';
   const description =
     lang === 'ar'
       ? 'تصفح أكثر من 50 تجربة موثوقة عبر قطر — رحلات السفاري، الجولات الثقافية، الرياضات المائية، تجارب الطعام والمزيد.'
-      : 'Browse 50+ vetted experiences across Qatar — Desert Safari, Cultural Tours, Water Sports, Dining and more.';
+      : 'Browse 50+ vetted experiences across Qatar — desert safaris, dhow cruises, cultural tours, water sports and dining. Compare prices and book online in minutes.';
 
   return {
     title,
@@ -29,16 +33,16 @@ export async function generateMetadata(): Promise<Metadata> {
     // filter permutations still consolidate onto the (per-language) base.
     alternates: localeAlternates('/explore', lang),
     openGraph: {
-      title,
+      title: ogTitle,
       description,
       type: 'website',
       siteName: 'AL Jadwal',
       locale: lang === 'ar' ? 'ar_QA' : 'en_US',
-      images: [{ url: '/images/login-bg.webp', width: 1200, height: 630, alt: title }],
+      images: [{ url: '/images/login-bg.webp', width: 1920, height: 1080, alt: title }],
     },
     twitter: {
       card: 'summary_large_image',
-      title,
+      title: ogTitle,
       description,
       images: ['/images/login-bg.webp'],
     },
