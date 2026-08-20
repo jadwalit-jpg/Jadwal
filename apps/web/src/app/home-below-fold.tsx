@@ -23,6 +23,7 @@
 import Image from 'next/image';
 import { LocaleLink as Link } from '@/components/locale-link';
 import { useRef, useState } from 'react';
+import { computeScrollDelta, readCarouselMetrics } from '@/lib/carousel-scroll';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import {
@@ -97,8 +98,13 @@ export default function HomeBelowFold() {
   // The row scrolls fine via swipe/trackpad, but its scrollbar is hidden
   // (matches the design), so on a desktop mouse there's no affordance that
   // cards continue off-screen — they read as "cropped". These arrows give
-  // that affordance. `scrollBy` honors the element's content direction, so a
-  // positive `left` advances in reading order in both LTR and RTL.
+    // that affordance.
+    //
+    // Direction handling lives in lib/carousel-scroll.ts. It is NOT true that
+    // a positive `left` advances in reading order in both directions — that
+    // assumption was the bug: in RTL scrollLeft runs 0 -> -maxScroll, so a
+    // positive delta at the initial position is clamped straight back to 0 and
+    // BOTH arrows looked dead in Arabic.
   const trendingScrollRef = useRef<HTMLDivElement>(null);
   const featuredScrollRef = useRef<HTMLDivElement>(null);
   // Shared by the Trending and Featured rows — same behaviour, one implementation.
@@ -108,21 +114,12 @@ export default function HomeBelowFold() {
   ) => {
     const el = ref.current;
     if (!el) return;
-    // ~one card + gap.
-    const amount = Math.round(el.clientWidth * 0.85);
-    // Infinite loop: at the last card, `next` wraps to the first; at the first,
-    // `prev` wraps to the last. `scrollLeft` magnitude works in both LTR and RTL
-    // (0 → maxScroll); and scrollBy(±scrollWidth) honors content direction and
-    // clamps at the far end, so a huge shift reliably lands on first/last.
-    const maxScroll = el.scrollWidth - el.clientWidth;
-    const pos = Math.abs(el.scrollLeft);
-    if (direction === 'next' && pos >= maxScroll - 4) {
-      el.scrollBy({ left: -el.scrollWidth, behavior: 'smooth' }); // → first
-    } else if (direction === 'prev' && pos <= 4) {
-      el.scrollBy({ left: el.scrollWidth, behavior: 'smooth' }); // → last
-    } else {
-      el.scrollBy({ left: direction === 'next' ? amount : -amount, behavior: 'smooth' });
-    }
+    // Metrics come from the ELEMENT (including its computed direction), not
+    // from the i18n language, so the maths cannot disagree with what the
+    // browser is doing after a hydration or a language switch.
+    const left = computeScrollDelta(direction, readCarouselMetrics(el));
+    if (left === 0) return;
+    el.scrollBy({ left, behavior: 'smooth' });
   };
 
   // Same queryKeys as home-client → shared TanStack cache, no duplicate request.
