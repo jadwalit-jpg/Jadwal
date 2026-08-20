@@ -23,6 +23,9 @@ describe('isClarityAllowedPath — routes Clarity must NEVER record', () => {
     ['customer profile', '/profile'],
     ['customer bookings', '/bookings/abc-123'],
     ['likes', '/likes'],
+    ['account', '/account'],
+    ['account nested', '/account/settings'],
+    ['notifications', '/notifications'],
     ['login', '/login'],
     ['register', '/register'],
     ['vendor register', '/register/vendor'],
@@ -68,5 +71,38 @@ describe('isClarityAllowedPath — prefix matching is not over-broad', () => {
   test('blocks the real /bookings list but allows an activity named similarly', () => {
     expect(isClarityAllowedPath('/bookings')).toBe(false);
     expect(isClarityAllowedPath('/activity/bookings-made-easy')).toBe(true);
+  });
+});
+
+describe('isClarityAllowedPath — locale prefixes are normalised first', () => {
+  // The site currently serves both languages on the SAME url (cookie-switched),
+  // so these are a no-op today. They exist so the planned indexable /ar/ scheme
+  // cannot silently reopen the checkout hole: without normalisation
+  // '/ar/activity/x/book' fails to match the checkout pattern and Clarity would
+  // start recording the Arabic checkout page.
+  test.each([
+    ['ar checkout', '/ar/activity/dhow-cruise/book'],
+    ['en checkout', '/en/activity/dhow-cruise/book'],
+    ['ar payment', '/ar/payment/callback'],
+    ['ar profile', '/ar/profile'],
+    ['ar login', '/ar/login'],
+    ['ar admin', '/ar/admin/bookings'],
+    ['ar notifications', '/ar/notifications'],
+  ])('still blocks %s', (_label, path) => {
+    expect(isClarityAllowedPath(path)).toBe(false);
+  });
+
+  test.each([
+    ['ar home', '/ar'],
+    ['ar explore', '/ar/explore'],
+    ['ar activity detail', '/ar/activity/dhow-cruise'],
+  ])('still allows %s', (_label, path) => {
+    expect(isClarityAllowedPath(path)).toBe(true);
+  });
+
+  test('does not strip a segment that merely starts with the locale letters', () => {
+    // '/article' begins with 'ar' but is not the 'ar' locale segment.
+    expect(isClarityAllowedPath('/article/something')).toBe(true);
+    expect(isClarityAllowedPath('/enterprise')).toBe(true);
   });
 });

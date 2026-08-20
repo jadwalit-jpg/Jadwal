@@ -38,18 +38,36 @@ export const CLARITY_PROJECT_ID = process.env.NEXT_PUBLIC_CLARITY_ID ?? 'y4xknit
  * - /admin, /vendor      our own staff dashboards; we don't record employees
  * - /activity/../book    checkout: guest names, phone numbers, prices
  * - /payment             gateway return path, carries transaction identifiers
- * - /profile, /bookings  a signed-in customer's own personal data
+ * - /profile, /bookings, /account, /notifications, /likes
+ *                        a signed-in customer's own personal data
  * - auth routes          credentials, reset tokens in the URL
  */
 const BLOCKED = [
   /^\/(admin|vendor)(\/|$)/,
   /^\/activity\/[^/]+\/book(\/|$)/,
   /^\/payment(\/|$)/,
-  /^\/(profile|bookings|likes)(\/|$)/,
+  /^\/(profile|bookings|likes|account|notifications)(\/|$)/,
   /^\/(login|register|forgot-password|reset-password|verify-email)(\/|$)/,
 ];
 
+/**
+ * Strip a locale prefix before matching.
+ *
+ * Today the site serves both languages on the SAME url and switches via a
+ * cookie, so nothing is prefixed and this is a no-op. An indexable `/ar/...`
+ * url scheme is a planned migration, and the day it lands `/ar/activity/x/book`
+ * would stop matching the checkout pattern below and Clarity would quietly
+ * start recording the Arabic checkout page. Normalising now costs one line and
+ * removes a privacy regression that would otherwise ship silently.
+ */
+function stripLocale(pathname: string): string {
+  const stripped = pathname.replace(/^\/(en|ar)(?=\/|$)/, '');
+  return stripped === '' ? '/' : stripped;
+}
+
 /** True only for pages Clarity is allowed to record. */
 export function isClarityAllowedPath(pathname: string | null): boolean {
-  return !!pathname && !BLOCKED.some((re) => re.test(pathname));
+  if (!pathname) return false;
+  const path = stripLocale(pathname);
+  return !BLOCKED.some((re) => re.test(path));
 }

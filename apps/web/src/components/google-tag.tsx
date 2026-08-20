@@ -49,7 +49,13 @@ function loadGtag(ids: string[]): void {
   document.head.appendChild(script);
 
   window.gtag('js', new Date());
-  for (const id of ids) window.gtag('config', id);
+  // send_page_view:false — `config` fires an automatic page_view per
+  // destination, and the navigation effect below fires one too, so the default
+  // double-counts EVERY first page load. Harmless for Ads (page_view is not the
+  // conversion metric) but it would inflate GA4 sessions/pageviews, which is
+  // the SEO team's core number. Suppressing it here makes that effect the one
+  // and only source of page_view.
+  for (const id of ids) window.gtag('config', id, { send_page_view: false });
 }
 
 /** Ads + GA4, minus any that were blanked out via env to disable them. */
@@ -84,8 +90,8 @@ export default function GoogleTag() {
     }
   }, [allowed, pathname]);
 
-  // gtag('config') sends the first page_view automatically; fire one on every
-  // subsequent client-side navigation.
+  // Single source of page_view: `config` has send_page_view disabled, so this
+  // fires the FIRST one as well as every client-side navigation after it.
   useEffect(() => {
     if (!allowed || !isTrackablePath(pathname) || !loaded.current) return;
     window.gtag?.('event', 'page_view');
