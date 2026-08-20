@@ -76,11 +76,18 @@ const IMG_HOSTS = [
   // Google Ads (gtag.js) conversion + remarketing image beacons. gtag.js is
   // loaded via 'strict-dynamic' (no script-src entry needed); only its beacon
   // hosts need allowlisting. Loads under the SAME opt-out cookie consent as the
-  // Meta Pixel — see components/google-ads.tsx.
+  // Meta Pixel — see components/google-tag.tsx.
   'https://www.googletagmanager.com',
   'https://www.google.com',
   'https://www.googleadservices.com',
   'https://googleads.g.doubleclick.net',
+  // Microsoft Clarity beacons. clarity.ms/tag loads via 'strict-dynamic' (no
+  // script-src entry needed); it uploads replay data to per-region subdomains
+  // (c.clarity.ms, x.clarity.ms, ...), hence the wildcard. Loads under the SAME
+  // opt-out consent and is blocked outright on checkout/account routes — see
+  // components/clarity.tsx.
+  'https://*.clarity.ms',
+  'https://c.bing.com',
   // Build-time CDN host (NEXT_PUBLIC_CDN_URL). Add to the allowlist ONLY if
   // it differs from the hardcoded production fallback above — prevents the
   // duplicate `cdn.jadwal.qa cdn.jadwal.qa` entry that the live CSP header
@@ -131,8 +138,10 @@ function buildCsp(nonce: string, isProd: boolean): string {
     // Meta Pixel: fbevents.js is fetched from connect.facebook.net and beacons
     // to www.facebook.com (only after cookie consent — see MetaPixel).
     // Google Ads: gtag.js (googletagmanager.com) beacons conversions to
-    // google.com / googleadservices.com / doubleclick — same opt-out consent.
-    `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org https://www.facebook.com https://connect.facebook.net https://www.googletagmanager.com https://www.google.com https://www.googleadservices.com https://googleads.g.doubleclick.net${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
+    // google.com / googleadservices.com / doubleclick (Ads + GA4 share one
+    // gtag.js). Clarity uploads session replays to *.clarity.ms + c.bing.com,
+    // same consent, and is never loaded on checkout/account routes — same opt-out consent.
+    `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org https://www.facebook.com https://connect.facebook.net https://www.googletagmanager.com https://www.google.com https://www.googleadservices.com https://googleads.g.doubleclick.net https://*.clarity.ms https://c.bing.com${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
     `font-src 'self' data:`,
     `frame-src ${FRAME_HOSTS.join(' ')}`,
     `frame-ancestors 'none'`,

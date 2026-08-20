@@ -11,7 +11,8 @@ import { ToastProvider } from "@/components/toast";
 import { CookieConsentProvider } from "@/context/cookie-consent";
 import CookieConsentBanner from "@/components/cookie-consent-banner";
 import MetaPixel from "@/components/meta-pixel";
-import GoogleAds from "@/components/google-ads";
+import GoogleTag from "@/components/google-tag";
+import Clarity from "@/components/clarity";
 import { Suspense } from "react";
 // CustomerShell conditionally wraps children with GeoProvider + LazyPrompts
 // based on pathname. Staff (admin / vendor) and auth routes skip both —
@@ -76,6 +77,12 @@ const siteUrl = (() => {
 
 export const metadata: Metadata = {
   metadataBase: siteUrl,
+  // Google Search Console ownership proof. Renders
+  // <meta name="google-site-verification" ...>. NOT tracking: no script, no
+  // cookie, no personal data — so it is deliberately NOT behind cookie consent.
+  verification: {
+    google: 'W5ueRddVK_v8BtVBm5jr0_kNY7uE7-vM7ms1YMRCleo',
+  },
   title: {
     default: "AL Jadwal — Discover and book experiences in Qatar",
     template: "%s · AL Jadwal",
@@ -228,14 +235,18 @@ export default async function RootLayout({
                           pre-feature accounts, Terms version bumps). Renders null
                           unless the logged-in customer/vendor must accept. */}
                       <TermsConsentGate />
-                      {/* Cookie-consent banner + ad platforms (Meta Pixel +
-                          Google Ads). Both load under the SAME opt-out consent
+                      {/* Cookie-consent banner + analytics platforms (Meta Pixel,
+                          Google tag = Ads + GA4, Microsoft Clarity). All load under
+                          the SAME opt-out consent. Clarity is additionally
+                          blocked on checkout/payment/account/auth routes
+                          because it records session replays (lib/clarity.ts)
                           and skip staff routes. Suspense wraps them because they
                           read useSearchParams (route-change page-view tracking). */}
                       <CookieConsentBanner />
                       <Suspense fallback={null}>
                         <MetaPixel />
-                        <GoogleAds />
+                        <GoogleTag />
+                        <Clarity />
                       </Suspense>
                     </ToastProvider>
                   </AuthProvider>
