@@ -1,8 +1,12 @@
 'use client';
 
 /**
- * Loads Google Ads (gtag.js) and fires a page_view on every client-side
+ * Loads the Google tag (gtag.js) and fires a page_view on every client-side
  * navigation. Rendered once in the root layout, right beside <MetaPixel>.
+ *
+ * ONE script, TWO destinations: Google Ads (AW-…) and Google Analytics 4
+ * (G-…). gtag.js is designed for this — load once, then `config` per ID.
+ * Loading it twice would double-count every page_view.
  *
  * Consent = OPT-OUT (mirrors MetaPixel): gtag loads by DEFAULT for every
  * visitor once the stored choice is read, EXCEPT visitors who explicitly
@@ -23,10 +27,10 @@
 import { useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useCookieConsent } from '@/context/cookie-consent';
-import { GOOGLE_ADS_ID } from '@/lib/gtag';
+import { GA4_MEASUREMENT_ID, GOOGLE_ADS_ID } from '@/lib/gtag';
 
-function loadGtag(id: string): void {
-  if (window.gtag) return;
+function loadGtag(ids: string[]): void {
+  if (window.gtag || ids.length === 0) return;
   window.dataLayer = window.dataLayer || [];
   // gtag.js reads the raw `arguments` object positionally — keep the vendor
   // bootstrap verbatim (a rest-array would not be read the same way).
@@ -37,13 +41,26 @@ function loadGtag(id: string): void {
   /* eslint-enable prefer-rest-params */
   window.gtag = gtag as (...args: unknown[]) => void;
 
+  // The ?id= on the loader URL only bootstraps the first destination; the
+  // `config` calls below are what actually register each one.
   const script = document.createElement('script');
   script.async = true;
-  script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(id)}`;
+  script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(ids[0])}`;
   document.head.appendChild(script);
 
   window.gtag('js', new Date());
-  window.gtag('config', id);
+  // send_page_view:false — `config` fires an automatic page_view per
+  // destination, and the navigation effect below fires one too, so the default
+  // double-counts EVERY first page load. Harmless for Ads (page_view is not the
+  // conversion metric) but it would inflate GA4 sessions/pageviews, which is
+  // the SEO team's core number. Suppressing it here makes that effect the one
+  // and only source of page_view.
+  for (const id of ids) window.gtag('config', id, { send_page_view: false });
+}
+
+/** Ads + GA4, minus any that were blanked out via env to disable them. */
+function activeIds(): string[] {
+  return [GOOGLE_ADS_ID, GA4_MEASUREMENT_ID].filter(Boolean);
 }
 
 /** Skip our own dashboards — the tag is for customer-facing pages only. */
@@ -51,7 +68,7 @@ function isTrackablePath(pathname: string | null): boolean {
   return !!pathname && !/^\/(admin|vendor)(\/|$)/.test(pathname);
 }
 
-export default function GoogleAds() {
+export default function GoogleTag() {
   const { consent, hydrated } = useCookieConsent();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -64,17 +81,19 @@ export default function GoogleAds() {
 
   // Load gtag once, on the first trackable customer page.
   useEffect(() => {
-    if (!allowed || !GOOGLE_ADS_ID || !isTrackablePath(pathname)) return;
+    if (!allowed || !isTrackablePath(pathname)) return;
     if (!loaded.current) {
-      loadGtag(GOOGLE_ADS_ID);
+      const ids = activeIds();
+      if (ids.length === 0) return;
+      loadGtag(ids);
       loaded.current = true;
     }
   }, [allowed, pathname]);
 
-  // gtag('config') sends the first page_view automatically; fire one on every
-  // subsequent client-side navigation.
+  // Single source of page_view: `config` has send_page_view disabled, so this
+  // fires the FIRST one as well as every client-side navigation after it.
   useEffect(() => {
-    if (!allowed || !GOOGLE_ADS_ID || !isTrackablePath(pathname) || !loaded.current) return;
+    if (!allowed || !isTrackablePath(pathname) || !loaded.current) return;
     window.gtag?.('event', 'page_view');
   }, [allowed, pathname, searchParams]);
 
@@ -86,6 +105,10 @@ export default function GoogleAds() {
         ad_storage: 'denied',
         ad_user_data: 'denied',
         ad_personalization: 'denied',
+        // GA4 stores its own analytics cookies under a separate signal — the ad
+        // signals above do NOT cover it, so a decline must deny this too or
+        // Analytics keeps collecting after the visitor opted out.
+        analytics_storage: 'denied',
       });
     }
   }, [consent]);

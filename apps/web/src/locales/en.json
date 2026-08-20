@@ -1460,7 +1460,7 @@
       },
       "processors": {
         "label": "Service Providers (Sub-processors):",
-        "text": "We rely on vetted third parties that process data on our behalf under data-processing agreements, each receiving only what its function requires: Amazon Web Services (hosting, database, and backups — Frankfurt, Germany), Cloudflare (CDN, DNS, and edge security — global), Resend (transactional email delivery), PAY2M (payment processing — Qatar), and Google (Sign-In / OAuth, for users who choose it)."
+        "text": "We rely on vetted third parties that process data on our behalf under data-processing agreements, each receiving only what its function requires: Amazon Web Services (hosting, database, and backups — Frankfurt, Germany), Cloudflare (CDN, DNS, and edge security — global), Resend (transactional email delivery), PAY2M (payment processing — Qatar), Google (Sign-In / OAuth for users who choose it, plus Google Ads and Google Analytics 4 for advertising measurement and site analytics), Meta (the Facebook Pixel, for advertising measurement), and Microsoft (Clarity, for anonymised session replays and heatmaps). The advertising and analytics providers receive data only from visitors who have not declined cookies."
       },
       "legal": {
         "label": "Legal Requirements:",
@@ -1488,7 +1488,7 @@
     },
     "cookies": {
       "title": "7. Cookies",
-      "p1": "We use essential cookies for authentication (login sessions) and localStorage for UI preferences (theme, language). We also use analytics and marketing cookies — including the Meta (Facebook) Pixel — to measure our advertising and understand how visitors use the site. You can decline these at any time via the cookie banner; declining does not affect core functionality."
+      "p1": "We use essential cookies for authentication (login sessions) and localStorage for UI preferences (theme, language). We also use analytics and marketing cookies — the Meta (Facebook) Pixel, Google Ads and Google Analytics 4, and Microsoft Clarity — to measure our advertising and understand how visitors use the site. Microsoft Clarity additionally records session replays (mouse movement, clicks and scrolling) to show us where pages are confusing; it is never enabled on checkout, payment, account or sign-in pages, and page text and anything you type are masked in those recordings. You can decline all of these at any time via the cookie banner; declining does not affect core functionality."
     },
     "rights": {
       "title": "8. Your Rights",
