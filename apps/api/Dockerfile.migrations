@@ -55,7 +55,7 @@ WORKDIR /app
 RUN echo '{ \
   "name":"jadwal-migrations", \
   "version":"1.0.0", \
-  "dependencies":{"prisma":"7.8.0"}, \
+  "dependencies":{"prisma":"7.9.1"}, \
   "overrides":{ \
     "hono":"^4.12.4", \
     "@hono/node-server":"^1.19.10", \

@@ -74,3 +74,30 @@ jobs:
             MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD,
             CC0-1.0, CC-BY-3.0, CC-BY-4.0, Unlicense, Python-2.0,
             BlueOak-1.0.0, MIT-0, MPL-2.0, LGPL-3.0-or-later
+
+          # Package-scoped exemptions. Deliberately NOT added to
+          # allow-licenses above: doing that would silently admit EVERY
+          # future dependency under the same licence, whereas these two are
+          # exempted by name and anything else new still gets flagged.
+          #
+          # Both arrive via `prisma` -> @prisma/studio-core, i.e. Prisma
+          # Studio, the local GUI. `prisma` is a devDependency, and the API
+          # runtime image explicitly deletes it (see `rm -rf
+          # node_modules/prisma` in apps/api/Dockerfile). So neither package
+          # is distributed by us in any artefact.
+          #
+          #   elkjs (EPL-2.0) - graph layout for Studio's schema view.
+          #     EPL-2.0 is weak copyleft whose obligations attach on
+          #     DISTRIBUTION of the covered work or a derivative. We neither
+          #     modify it nor ship it; it runs on a developer's machine when
+          #     they open Prisma Studio.
+          #
+          #   robust-predicates ("LicenseRef-scancode-public-domain AND
+          #     Unlicense") - geometric predicates reached through
+          #     d3-delaunay -> @visx/* charts in Studio. Effectively public
+          #     domain and MORE permissive than anything listed above;
+          #     Unlicense is already allowed. It only trips the check because
+          #     the AND-expression contains a non-SPDX LicenseRef that the
+          #     matcher cannot resolve.
+          allow-dependencies-licenses: >-
+            pkg:npm/elkjs, pkg:npm/robust-predicates
