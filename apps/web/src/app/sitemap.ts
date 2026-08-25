@@ -8,7 +8,7 @@ import { localePath } from '@/lib/locale-path';
  *
  * Dynamic URLs are fetched at request time from the API's
  * GET /catalog/sitemap-urls (bulk slug export) and the result is cached for
- * an hour via `revalidate` — so crawlers get a complete, reasonably-fresh
+ * 10 minutes via `revalidate` — so crawlers get a complete, reasonably-fresh
  * URL set without hitting the DB on every request.
  *
  * Robustness: the fetch is wrapped in a timeout + try/catch and FALLS BACK
@@ -35,8 +35,21 @@ const FETCH_TIMEOUT_MS = 10000;
 // pages. Category filter urls are not emitted at all — see below.
 const MAX_SITEMAP_URLS = 50000;
 
-// Cache the generated sitemap for 1h (ISR) — not regenerated per crawl.
-export const revalidate = 3600;
+// How long a generated sitemap is served before it is regenerated (ISR).
+//
+// This was 1h, and that turned out to be a real SEO hole rather than a tuning
+// choice. CI builds have no API access, so `next build` bakes the STATIC-ONLY
+// fallback into the sitemap — and Next.js then treats that baked copy as FRESH
+// for the whole window. So every deploy served a sitemap containing zero of the
+// 50 activity URLs for a full hour, and a day with several deploys kept it
+// empty end to end. Measured on 2026-08-25: six deploys, and the live sitemap
+// reported 0 activity URLs across an 86-minute watch.
+//
+// 10 minutes bounds that blind spot to something harmless while staying far
+// cheaper than per-crawl generation: the export is one bulk query, and this is
+// regenerated on demand (only when something actually requests the sitemap),
+// not on a timer.
+export const revalidate = 600;
 
 /**
  * hreflang alternates for a public path (bilingual /ar URLs, SEO P1#4). The
@@ -84,7 +97,9 @@ async function fetchSitemapUrls(): Promise<SitemapUrls | null> {
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const res = await fetch(`${api}/catalog/sitemap-urls`, {
       signal: controller.signal,
-      next: { revalidate: 3600 },
+      // Must not exceed `revalidate` above, or the regenerated sitemap would
+      // just re-serve an hour-old fetch and the shorter window would be a lie.
+      next: { revalidate: 600 },
       headers: { Accept: 'application/json' },
     });
     clearTimeout(timer);
