@@ -34,6 +34,7 @@
 import { useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { useCookieConsent } from '@/context/cookie-consent';
+import { onIdle } from '@/lib/defer-idle';
 import { CLARITY_PROJECT_ID, isClarityAllowedPath } from '@/lib/clarity';
 
 function loadClarity(id: string): void {
@@ -47,10 +48,15 @@ function loadClarity(id: string): void {
     };
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
-  const script = document.createElement('script');
-  script.async = true;
-  script.src = `https://www.clarity.ms/tag/${encodeURIComponent(id)}`;
-  document.head.appendChild(script);
+  // Only the tag download waits for idle; the stub above already buffers into
+  // clarity.q, which the tag drains on load — so the `consent` call the caller
+  // makes right after this still reaches Microsoft.
+  onIdle(() => {
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = `https://www.clarity.ms/tag/${encodeURIComponent(id)}`;
+    document.head.appendChild(script);
+  });
 }
 
 export default function Clarity() {

@@ -27,6 +27,7 @@
 import { useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useCookieConsent } from '@/context/cookie-consent';
+import { onIdle } from '@/lib/defer-idle';
 import { GA4_MEASUREMENT_ID, GOOGLE_ADS_ID } from '@/lib/gtag';
 
 function loadGtag(ids: string[]): void {
@@ -43,10 +44,14 @@ function loadGtag(ids: string[]): void {
 
   // The ?id= on the loader URL only bootstraps the first destination; the
   // `config` calls below are what actually register each one.
-  const script = document.createElement('script');
-  script.async = true;
-  script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(ids[0])}`;
-  document.head.appendChild(script);
+  // Only the gtag.js download waits for idle. The `js` / `config` calls below
+  // push onto window.dataLayer, which gtag.js replays in order once it loads.
+  onIdle(() => {
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(ids[0])}`;
+    document.head.appendChild(script);
+  });
 
   window.gtag('js', new Date());
   // send_page_view:false — `config` fires an automatic page_view per

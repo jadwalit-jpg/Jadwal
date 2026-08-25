@@ -21,6 +21,7 @@
 import { useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useCookieConsent } from '@/context/cookie-consent';
+import { onIdle } from '@/lib/defer-idle';
 import { FB_PIXEL_ID } from '@/lib/fb-pixel';
 
 function loadPixel(id: string): void {
@@ -37,10 +38,15 @@ function loadPixel(id: string): void {
   window.fbq = n;
   if (!window._fbq) window._fbq = n;
 
-  const script = document.createElement('script');
-  script.async = true;
-  script.src = 'https://connect.facebook.net/en_US/fbevents.js';
-  document.head.appendChild(script);
+  // The stub above is installed SYNCHRONOUSLY and `init` is queued below, so
+  // only the 400 KB fbevents.js download waits for idle. fbq buffers every
+  // call in n.queue and fbevents drains it on arrival — nothing is lost.
+  onIdle(() => {
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = 'https://connect.facebook.net/en_US/fbevents.js';
+    document.head.appendChild(script);
+  });
 
   n('init', id);
   /* eslint-enable @typescript-eslint/no-explicit-any */
