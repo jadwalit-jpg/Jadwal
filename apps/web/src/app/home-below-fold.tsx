@@ -203,6 +203,9 @@ export default function HomeBelowFold() {
               ) : undefined
             }
           />
+          {/* Same reserved height, same reason as Featured below — this row
+              swaps skeleton -> live the same way and collapses identically. */}
+          <div className="min-h-[389px]">
           {isDetecting || trendingLoading ? (
             <TrendingRowSkeleton />
           ) : trendingEvents.length > 0 ? (
@@ -355,6 +358,7 @@ export default function HomeBelowFold() {
               {t('home.noTrending', { defaultValue: 'No trending events yet' })}
             </div>
           )}
+          </div>
         </div>
 
         {/* Permanently mounted; opens via openTrendingEvent state. Uses the
@@ -381,6 +385,19 @@ export default function HomeBelowFold() {
               It used to become a 2/3-column grid at sm+, which stacked the cards
               into rows and capped how many were worth fetching. Scrolling instead
               lets the whole featured set live in one row on any screen size. */}
+          {/* RESERVED HEIGHT — this is a CLS fix, not spacing.
+              When the query resolves, React swaps the skeleton row for the real
+              row by reusing this container and reconciling its CHILDREN in
+              place: it removes the six skeleton cards one by one and only then
+              inserts the live row. Between the last removal and that insertion
+              the container is EMPTY for a frame, collapses to height 0, and
+              everything below it jumps up ~400px. Measured on a cold, throttled
+              first visit: a single 0.4885 layout shift — the entire mobile CLS
+              budget, in one frame nobody ever sees.
+              Reserving the row's own height means the collapse cannot move
+              anything. Keep this in sync with ActivityCard's `size="fill"`
+              height (200px image + ~200px body). */}
+          <div className="min-h-[407px]">
           {featuredActivities.length > 0 ? (
             <div className="relative">
               <div
@@ -440,6 +457,7 @@ export default function HomeBelowFold() {
               {t('home.noFeatured', { defaultValue: 'No featured activities yet' })}
             </div>
           )}
+          </div>
         </div>
       </section>
 
