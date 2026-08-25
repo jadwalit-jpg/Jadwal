@@ -41,9 +41,24 @@ import Clarity from '@/components/clarity';
 type W = Window & Record<string, unknown>;
 const w = window as W;
 
-function srcs(): string[] {
-  return Array.from(document.head.querySelectorAll('script')).map((s) => s.src);
+/**
+ * Exact origin + path matching, deliberately NOT `src.includes('facebook.net')`.
+ * A substring test passes for `https://evil-connect.facebook.net.attacker.com`,
+ * so it would happily green-light a script loaded from the wrong host — CodeQL
+ * flags that pattern (js/incomplete-url-substring-sanitization) and it is right
+ * to. Parsing the URL asserts what we actually mean: this exact origin, and for
+ * the tag scripts this exact path.
+ */
+function hasScript(origin: string, pathname?: string): boolean {
+  return Array.from(document.head.querySelectorAll('script'))
+    .filter((el) => el.src)
+    .map((el) => new URL(el.src))
+    .some((u) => u.origin === origin && (pathname === undefined || u.pathname === pathname));
 }
+
+const FB = 'https://connect.facebook.net';
+const GTM = 'https://www.googletagmanager.com';
+const CLARITY = 'https://www.clarity.ms';
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -75,10 +90,10 @@ describe('Meta Pixel', () => {
     // Stub must exist NOW — the PageView effect calls window.fbq?.() and would
     // silently no-op otherwise.
     expect(typeof w.fbq).toBe('function');
-    expect(srcs().some((s) => s.includes('fbevents'))).toBe(false);
+    expect(hasScript(FB, '/en_US/fbevents.js')).toBe(false);
 
     flushIdle();
-    expect(srcs().some((s) => s.includes('connect.facebook.net'))).toBe(true);
+    expect(hasScript(FB, '/en_US/fbevents.js')).toBe(true);
   });
 
   test('the PageView queued before the script arrives is not lost', () => {
@@ -102,7 +117,7 @@ describe('Google tag', () => {
     });
 
     expect(typeof w.gtag).toBe('function');
-    expect(srcs().some((s) => s.includes('googletagmanager'))).toBe(false);
+    expect(hasScript(GTM, '/gtag/js')).toBe(false);
 
     // gtag.js replays whatever is already on dataLayer, so both destinations
     // must be configured before the download completes.
@@ -111,7 +126,7 @@ describe('Google tag', () => {
     expect(pushed.some((p) => p.startsWith('config:G-TEST'))).toBe(true);
 
     flushIdle();
-    expect(srcs().some((s) => s.includes('googletagmanager.com/gtag/js'))).toBe(true);
+    expect(hasScript(GTM, '/gtag/js')).toBe(true);
   });
 });
 
@@ -122,7 +137,7 @@ describe('Clarity', () => {
     });
 
     expect(typeof w.clarity).toBe('function');
-    expect(srcs().some((s) => s.includes('clarity.ms'))).toBe(false);
+    expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(false);
 
     // The component calls clarity('consent') right after load; it must be
     // buffered in clarity.q for the tag to replay.
@@ -130,6 +145,6 @@ describe('Clarity', () => {
     expect(q.some((c) => c[0] === 'consent')).toBe(true);
 
     flushIdle();
-    expect(srcs().some((s) => s.includes('clarity.ms/tag/y4xknitrzo'))).toBe(true);
+    expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(true);
   });
 });
