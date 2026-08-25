@@ -1,4 +1,6 @@
 import { Metadata } from 'next';
+import { readLangServer } from '@/lib/lang-cookie.server';
+import { localeAlternates } from '@/lib/locale-path';
 import Image from 'next/image';
 import Footer from '@/components/footer';
 import Navbar from '@/components/navbar';
@@ -39,41 +41,76 @@ import HomeBelowFoldLoader from './_home-islands/home-below-fold-loader';
  *  - Solid-pill `<HeroBrowseCtaBasic/>` (no glass, no `animate-bounce`)
  *    instead of the heavier `<HeroBrowseCta/>`.
  */
-export const metadata: Metadata = {
-  title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
-  description:
-    'Book activities, tours & experiences across Qatar and the GCC — desert safaris, water sports, caravans, resorts & more, from trusted local vendors.',
-  openGraph: {
-    type: 'website',
-    siteName: 'AL Jadwal',
-    title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
-    description:
-      'Book activities, tours and experiences across Qatar and the GCC — desert safaris, water activities, caravans, resorts and more, from trusted local vendors.',
-    // Landscape photo, NOT the square app icon. Link previews on WhatsApp,
-    // Slack, X and iMessage use a ~1.91:1 frame and centre-crop a 512x512
-    // icon down to a sliver of the logo. This is the home page — the single
-    // most-shared url on the site — so it was the worst place to have a
-    // square. NOTE: Next REPLACES openGraph rather than deep-merging it, so
-    // fixing the root layout alone did NOT reach this page; both had to
-    // change. A purpose-built 1200x630 brand asset is still the ideal.
-    images: [
-      {
-        url: '/images/login-bg.webp',
-        width: 1920,
-        height: 1080,
-        alt: 'AL Jadwal — book experiences across Qatar and the GCC',
-      },
-    ],
-  },
-  twitter: {
-    // summary_large_image to match the landscape image above.
-    card: 'summary_large_image',
-    title: 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC',
-    description:
-      'Book activities, tours and experiences across Qatar and the GCC, from trusted local vendors.',
-    images: ['/images/login-bg.webp'],
-  },
-};
+/**
+ * Locale-aware metadata. Every other public route already localizes its title
+ * and description (/explore, /offers, /about, /contact, /activity/[slug], the
+ * landing pages); the HOME page was the last one still serving the English
+ * strings on `/ar`, so Google read English metadata for the Arabic home even
+ * though its body content, canonical and hreflang were all correct.
+ *
+ * NOTE ON THE BRAND SUFFIX: `app/page.tsx` is the SAME route segment as the
+ * root `app/layout.tsx`, so the root's `title.template` ('%s · AL Jadwal') is
+ * NOT applied here — unlike /explore, which is a child segment and does get
+ * it. That is why both titles below carry the brand themselves; adding a
+ * suffix would double it.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const lang = await readLangServer();
+  const ar = lang === 'ar';
+
+  const title = ar
+    ? 'الجدول — احجز الأنشطة والتجارب في قطر والخليج'
+    : 'AL Jadwal — Book Activities & Experiences in Qatar & the GCC';
+  const description = ar
+    ? 'احجز الأنشطة والجولات والتجارب في قطر ودول الخليج — رحلات السفاري الصحراوية والرياضات المائية والكرفانات والمنتجعات والمزيد، من مزوّدين محليين موثوقين.'
+    : 'Book activities, tours & experiences across Qatar and the GCC — desert safaris, water sports, caravans, resorts & more, from trusted local vendors.';
+  const socialDescription = ar
+    ? 'احجز الأنشطة والجولات والتجارب في قطر ودول الخليج — رحلات السفاري والرياضات المائية والكرفانات والمنتجعات والمزيد، من مزوّدين محليين موثوقين.'
+    : 'Book activities, tours and experiences across Qatar and the GCC — desert safaris, water activities, caravans, resorts and more, from trusted local vendors.';
+
+  return {
+    title,
+    description,
+    // Self-canonical per language (en -> /, ar -> /ar) + hreflang to both
+    // twins. The root layout sets an equivalent fallback; stating it here
+    // keeps the home page consistent with every other public route.
+    alternates: localeAlternates('/', lang),
+    openGraph: {
+      type: 'website',
+      siteName: 'AL Jadwal',
+      locale: ar ? 'ar_QA' : 'en_US',
+      alternateLocale: ar ? 'en_US' : 'ar_QA',
+      title,
+      description: socialDescription,
+      // Landscape photo, NOT the square app icon. Link previews on WhatsApp,
+      // Slack, X and iMessage use a ~1.91:1 frame and centre-crop a 512x512
+      // icon down to a sliver of the logo. This is the home page — the single
+      // most-shared url on the site — so it was the worst place to have a
+      // square. NOTE: Next REPLACES openGraph rather than deep-merging it, so
+      // fixing the root layout alone did NOT reach this page; both had to
+      // change. A purpose-built 1200x630 brand asset is still the ideal.
+      images: [
+        {
+          url: '/images/login-bg.webp',
+          width: 1920,
+          height: 1080,
+          alt: ar
+            ? 'الجدول — احجز التجارب في قطر والخليج'
+            : 'AL Jadwal — book experiences across Qatar and the GCC',
+        },
+      ],
+    },
+    twitter: {
+      // summary_large_image to match the landscape image above.
+      card: 'summary_large_image',
+      title,
+      description: ar
+        ? 'احجز الأنشطة والجولات والتجارب في قطر ودول الخليج من مزوّدين محليين موثوقين.'
+        : 'Book activities, tours and experiences across Qatar and the GCC, from trusted local vendors.',
+      images: ['/images/login-bg.webp'],
+    },
+  };
+}
 
 export default function HomePage() {
   return (
