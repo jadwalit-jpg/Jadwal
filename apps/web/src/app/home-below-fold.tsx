@@ -25,6 +25,7 @@ import { LocaleLink as Link } from '@/components/locale-link';
 import { useRef, useState } from 'react';
 import { computeScrollDelta, readCarouselMetrics } from '@/lib/carousel-scroll';
 import { useQuery } from '@tanstack/react-query';
+import { InView } from '@/components/in-view';
 import { useTranslation } from 'react-i18next';
 import {
   Calendar,
@@ -398,65 +399,79 @@ export default function HomeBelowFold() {
               anything. Keep this in sync with ActivityCard's `size="fill"`
               height (200px image + ~200px body). */}
           <div className="min-h-[407px]">
-          {featuredActivities.length > 0 ? (
-            <div className="relative">
-              <div
-                ref={featuredScrollRef}
-                className="flex gap-4 md:gap-5 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 pe-4 sm:pe-6 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
-              >
-                {featuredActivities.map((activity) => (
-                  <div
-                    key={activity.id}
-                    className="shrink-0 snap-start w-[78vw] max-w-[300px] sm:w-[300px] md:w-[320px] sm:max-w-none"
-                  >
-                    <ActivityCard activity={activity} size="fill" />
+          <InView
+            placeholder={
+              // Same shape AND height as the live row, so revealing it does not
+              // create the very shift this gate exists to remove.
+              <div className="flex gap-4 md:gap-5 overflow-x-auto pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="shrink-0 w-[78vw] max-w-[300px] sm:w-[300px] md:w-[320px] sm:max-w-none">
+                    <ActivityCardSkeleton />
                   </div>
                 ))}
               </div>
-
-              {/* Desktop scroll affordance — mirrors Trending (hidden on mobile,
-                  where swiping is natural). Logical inset-s/inset-e so they flip
-                  in RTL, and the chevron follows reading direction. */}
-              <button
-                type="button"
-                onClick={() => scrollRowByCard(featuredScrollRef, 'prev')}
-                aria-label={t('common.prev', { defaultValue: 'Previous' })}
-                className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-s-0 -ms-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
-              >
-                {isRtl ? (
-                  <ChevronRight className="h-5 w-5" aria-hidden="true" />
-                ) : (
-                  <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => scrollRowByCard(featuredScrollRef, 'next')}
-                aria-label={t('common.next', { defaultValue: 'Next' })}
-                className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-e-0 -me-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
-              >
-                {isRtl ? (
-                  <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-                ) : (
-                  <ChevronRight className="h-5 w-5" aria-hidden="true" />
-                )}
-              </button>
-            </div>
-          ) : isDetecting || featuredLoading ? (
-            // Skeleton row in the SAME shape as the live row, so the section
-            // height stays ~constant when the real cards arrive (no CLS jump).
-            <div className="flex gap-4 md:gap-5 overflow-x-auto pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="shrink-0 w-[78vw] max-w-[300px] sm:w-[300px] md:w-[320px] sm:max-w-none">
-                  <ActivityCardSkeleton />
+            }
+          >
+            {featuredActivities.length > 0 ? (
+              <div className="relative">
+                <div
+                  ref={featuredScrollRef}
+                  className="flex gap-4 md:gap-5 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 pe-4 sm:pe-6 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+                >
+                  {featuredActivities.map((activity) => (
+                    <div
+                      key={activity.id}
+                      className="shrink-0 snap-start w-[78vw] max-w-[300px] sm:w-[300px] md:w-[320px] sm:max-w-none"
+                    >
+                      <ActivityCard activity={activity} size="fill" />
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12 text-jadwal-text-faint text-sm">
-              {t('home.noFeatured', { defaultValue: 'No featured activities yet' })}
-            </div>
-          )}
+
+                {/* Desktop scroll affordance — mirrors Trending (hidden on mobile,
+                    where swiping is natural). Logical inset-s/inset-e so they flip
+                    in RTL, and the chevron follows reading direction. */}
+                <button
+                  type="button"
+                  onClick={() => scrollRowByCard(featuredScrollRef, 'prev')}
+                  aria-label={t('common.prev', { defaultValue: 'Previous' })}
+                  className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-s-0 -ms-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
+                >
+                  {isRtl ? (
+                    <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                  ) : (
+                    <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scrollRowByCard(featuredScrollRef, 'next')}
+                  aria-label={t('common.next', { defaultValue: 'Next' })}
+                  className="hidden md:grid place-items-center absolute top-[100px] -translate-y-1/2 inset-e-0 -me-3 h-10 w-10 rounded-full bg-jadwal-surface/90 backdrop-blur border border-jadwal-border-subtle text-jadwal-text shadow-jadwal hover:bg-jadwal-surface hover:shadow-jadwal-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-accent"
+                >
+                  {isRtl ? (
+                    <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                  ) : (
+                    <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            ) : isDetecting || featuredLoading ? (
+              // Skeleton row in the SAME shape as the live row, so the section
+              // height stays ~constant when the real cards arrive (no CLS jump).
+              <div className="flex gap-4 md:gap-5 overflow-x-auto pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="shrink-0 w-[78vw] max-w-[300px] sm:w-[300px] md:w-[320px] sm:max-w-none">
+                    <ActivityCardSkeleton />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-jadwal-text-faint text-sm">
+                {t('home.noFeatured', { defaultValue: 'No featured activities yet' })}
+              </div>
+            )}
+          </InView>
           </div>
         </div>
       </section>
