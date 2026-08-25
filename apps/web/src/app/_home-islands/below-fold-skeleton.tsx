@@ -48,7 +48,36 @@ export function TrendingRowSkeleton() {
   );
 }
 
-/** Mirrors the 3-col activity-card grid used by Featured + Near You. */
+/**
+ * Mirrors the HORIZONTAL SNAP-SCROLL row used by Featured.
+ *
+ * This exists because Featured used to be a 3-column grid and was later changed
+ * to a single scrolling row — but this skeleton was not changed with it, and
+ * that mismatch was measured as the single largest layout shift on the site.
+ * On mobile the grid skeleton stacks 6 cards (~2,280px) where the real section
+ * renders one row (~380px), so the moment the lazy chunk mounted, everything
+ * below it jumped up ~1,900px. Lighthouse scored the page CLS 0.488 and pinned
+ * `section#featured > div.max-w-7xl > div.relative` as the culprit.
+ *
+ * Keep the card wrapper classes IDENTICAL to the live row in
+ * `home-below-fold.tsx` — that identity is the whole point of this component.
+ */
+export function CardRowSkeleton() {
+  return (
+    <div className="flex gap-4 md:gap-5 overflow-x-auto pb-2 -mx-4 sm:mx-0 px-4 sm:px-0 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div
+          key={i}
+          className="shrink-0 w-[78vw] max-w-[300px] sm:w-[300px] md:w-[320px] sm:max-w-none"
+        >
+          <ActivityCardSkeleton />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Mirrors the 3-col activity-card grid used by Near You. */
 export function CardGridSkeleton() {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
@@ -70,11 +99,11 @@ export function BelowFoldSkeleton() {
           <TrendingRowSkeleton />
         </div>
       </section>
-      {/* Featured */}
+      {/* Featured — a scrolling ROW, not a grid (see CardRowSkeleton). */}
       <section className="bg-jadwal-bg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
           <HeaderBar />
-          <CardGridSkeleton />
+          <CardRowSkeleton />
         </div>
       </section>
       {/* Near You */}
