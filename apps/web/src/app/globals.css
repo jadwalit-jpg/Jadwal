@@ -237,24 +237,58 @@ body {
   border: 1px solid var(--jadwal-glass-border);
 }
 
+/* Skeleton shimmer.
+ *
+ * This animates TRANSFORM, not `background-position`, and that is the whole
+ * point. `background-position` cannot be composited, so every shimmering
+ * placeholder repainted on the main thread on every frame, forever. Lighthouse
+ * reported "54 animated elements found" on the mobile home page — one skeleton
+ * card contributes ~8 of them — while Rendering (2,480ms) plus Style & Layout
+ * (1,370ms) accounted for 3,850ms of a 12s main thread, exactly when the page
+ * is trying to paint.
+ *
+ * A translated overlay runs on the compositor instead, so the shimmer costs the
+ * main thread nothing. `overflow: hidden` clips it to the placeholder and
+ * `isolation: isolate` keeps the pseudo-element from escaping stacking
+ * contexts. Keep the animated property to `transform` — reintroducing any
+ * layout- or paint-triggering property here brings the whole cost back.
+ */
 @keyframes jadwal-shim {
-  0% {
-    background-position: 200% 0;
+  from {
+    transform: translateX(-100%);
   }
-  100% {
-    background-position: -200% 0;
+  to {
+    transform: translateX(100%);
   }
 }
 
 .jadwal-skeleton {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--jadwal-border-subtle);
+}
+
+.jadwal-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
   background: linear-gradient(
     90deg,
-    var(--jadwal-border-subtle),
+    transparent,
     var(--jadwal-border-strong),
-    var(--jadwal-border-subtle)
+    transparent
   );
-  background-size: 200% 100%;
   animation: jadwal-shim 1.6s ease-in-out infinite;
+}
+
+/* Visitors who ask for less motion get a flat placeholder, no animation at
+   all — and no compositor layer either. */
+@media (prefers-reduced-motion: reduce) {
+  .jadwal-skeleton::after {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 @keyframes slide-in-up {
