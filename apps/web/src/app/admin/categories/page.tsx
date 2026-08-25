@@ -8,6 +8,7 @@ import { getApiError } from '@/lib/api-error';
 import { sanitize } from '@/lib/validation';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
+import { slugify } from '@/lib/slugify';
 import {
   Plus,
   Pencil,
@@ -23,14 +24,6 @@ import {
   Loader2,
 } from 'lucide-react';
 
-function slugify(text: string) {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 60);
-}
 
 const inputCls =
   'w-full px-4 py-2.5 bg-white dark:bg-slate-900/50 border border-gray-200 dark:border-slate-800 rounded-xl text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all';

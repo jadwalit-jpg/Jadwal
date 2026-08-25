@@ -313,11 +313,11 @@ export class VendorService {
     });
     if (!activity) throw new NotFoundException('Activity not found');
 
-    // If slug is being changed, check uniqueness
-    if (dto.slug && dto.slug !== activity.slug) {
-      const existingSlug = await db.activity.findUnique({ where: { slug: dto.slug } });
-      if (existingSlug) throw new ConflictException('Activity slug already taken');
-    }
+    // No slug-uniqueness check here any more: UpdateActivityDto has no `slug`
+    // field, so a vendor cannot change an activity URL at all (see the note in
+    // that DTO — a slug is a permanent public link). The uniqueness check still
+    // runs on CREATE, and on the admin update path where correcting a slug is
+    // deliberately allowed.
 
     // If city is being changed, verify it belongs to vendor's country
     if (dto.cityId && dto.cityId !== activity.cityId) {
