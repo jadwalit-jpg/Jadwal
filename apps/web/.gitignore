@@ -48,3 +48,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local Lighthouse audit output (large JSON, machine-specific)
+.lhreports/
