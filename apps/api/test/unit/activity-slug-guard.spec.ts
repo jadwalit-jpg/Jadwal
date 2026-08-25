@@ -66,3 +66,22 @@ describe('vendor UpdateActivityDto — slug is not editable at all', () => {
     expect(errs).toHaveLength(0);
   });
 });
+
+describe('vendor UpdateActivityDto — a NORMAL vendor edit must still work', () => {
+  /**
+   * The regression this catches: removing `slug` from the DTO while the vendor
+   * edit FORM still sent one. With forbidNonWhitelisted the whole PATCH 400s,
+   * so a vendor could not edit their activity AT ALL — a total loss of the
+   * feature, caused by a change whose stated purpose was only to lock one
+   * field. Verifying the removal without verifying what must still work is
+   * exactly how that shipped.
+   */
+  it('accepts a realistic vendor edit payload with no slug', async () => {
+    const dto = new UpdateActivityDto() as unknown as Record<string, unknown>;
+    dto.titleEn = 'Catamaran Sunset Cruise';
+    dto.titleAr = 'رحلة كاتاماران';
+    dto.descriptionEn = 'A relaxing sunset sail along the Doha coastline.';
+    const errs = await validate(dto as object);
+    expect(errs).toHaveLength(0);
+  });
+});

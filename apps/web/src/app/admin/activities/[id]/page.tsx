@@ -328,7 +328,14 @@ export default function AdminEditActivityPage() {
   };
 
   const updateField = (field: string, value: string) => { setForm(prev => ({ ...prev, [field]: value })); if (errors[field]) setErrors(prev => { const n = { ...prev }; delete n[field]; return n; }); };
-  const handleTitleEnChange = (value: string) => { updateField('titleEn', value); setForm(f => ({ ...f, slug: slugify(value) })); };
+  // This page is EDIT-ONLY (PATCH /admin/activities/:id), so the title must
+  // NOT regenerate the slug. It used to: renaming an activity silently
+  // changed its public URL and broke every existing link to it — a bookmark,
+  // a shared link, Google's indexed entry — with no warning and no redirect.
+  // The vendor edit page already guarded this ("Do NOT auto-update slug on
+  // edit"); the admin page did not. Admins who genuinely want a different
+  // slug now edit the slug field directly, which carries a warning.
+  const handleTitleEnChange = (value: string) => { updateField('titleEn', value); };
   const toggleDay = (day: string) => setActiveDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]);
   const addExtraService = () => {
     const n = extraName.trim();
