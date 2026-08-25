@@ -34,10 +34,11 @@
 import { useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { useCookieConsent } from '@/context/cookie-consent';
+import { onIdle, type IdleDisposer } from '@/lib/defer-idle';
 import { CLARITY_PROJECT_ID, isClarityAllowedPath } from '@/lib/clarity';
 
-function loadClarity(id: string): void {
-  if (window.clarity) return;
+function loadClarity(id: string): IdleDisposer {
+  if (window.clarity) return () => false;
   /* eslint-disable @typescript-eslint/no-explicit-any -- Clarity's bootstrap queue is untyped by design */
   const w = window as any;
   w.clarity =
@@ -47,16 +48,24 @@ function loadClarity(id: string): void {
     };
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
-  const script = document.createElement('script');
-  script.async = true;
-  script.src = `https://www.clarity.ms/tag/${encodeURIComponent(id)}`;
-  document.head.appendChild(script);
+  // Only the tag download waits for idle; the stub above already buffers into
+  // clarity.q, which the tag drains on load — so the `consent` call the caller
+  // makes right after this still reaches Microsoft.
+  return onIdle(() => {
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = `https://www.clarity.ms/tag/${encodeURIComponent(id)}`;
+    document.head.appendChild(script);
+  });
 }
 
 export default function Clarity() {
   const { consent, hydrated } = useCookieConsent();
   const pathname = usePathname();
   const loaded = useRef(false);
+  // Cancels the pending tag download if consent is withdrawn, or if the visitor
+  // navigates onto an excluded route, before it has actually been requested.
+  const dispose = useRef<IdleDisposer | null>(null);
 
   // Opt-out: allowed once the stored choice is read (`hydrated`) unless the
   // visitor previously declined. Waiting for `hydrated` ensures a prior
@@ -70,7 +79,7 @@ export default function Clarity() {
 
     if (recordable) {
       if (!loaded.current) {
-        loadClarity(CLARITY_PROJECT_ID);
+        dispose.current = loadClarity(CLARITY_PROJECT_ID);
         loaded.current = true;
       }
       window.clarity?.('consent');
@@ -80,7 +89,15 @@ export default function Clarity() {
     // Not recordable: either consent was withdrawn or the visitor navigated
     // into an excluded route (checkout, payment, account, auth). Clarity cannot
     // be unloaded, so revoke consent — that is what actually stops collection.
-    if (loaded.current) window.clarity?.('consent', false);
+    // Cancel a download that has not started — far better than fetching a
+    // session recorder we are about to switch off. Unlike the other two this
+    // branch is also hit by simply navigating onto checkout, so clearing the
+    // latch matters: navigating back to an allowed page must be able to
+    // schedule the tag again.
+    const prevented = dispose.current?.() ?? false;
+    dispose.current = null;
+    if (prevented) loaded.current = false;
+    else if (loaded.current) window.clarity?.('consent', false);
   }, [allowed, pathname]);
 
   return null;

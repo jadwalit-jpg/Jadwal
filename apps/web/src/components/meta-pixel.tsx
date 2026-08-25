@@ -21,10 +21,11 @@
 import { useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useCookieConsent } from '@/context/cookie-consent';
+import { onIdle, type IdleDisposer } from '@/lib/defer-idle';
 import { FB_PIXEL_ID } from '@/lib/fb-pixel';
 
-function loadPixel(id: string): void {
-  if (window.fbq) return;
+function loadPixel(id: string): IdleDisposer {
+  if (window.fbq) return () => false;
   /* eslint-disable @typescript-eslint/no-explicit-any -- fbq's self-referential bootstrap is inherently untyped */
   const n: any = function (...args: unknown[]) {
     if (n.callMethod) n.callMethod(...args);
@@ -37,12 +38,18 @@ function loadPixel(id: string): void {
   window.fbq = n;
   if (!window._fbq) window._fbq = n;
 
-  const script = document.createElement('script');
-  script.async = true;
-  script.src = 'https://connect.facebook.net/en_US/fbevents.js';
-  document.head.appendChild(script);
+  // The stub above is installed SYNCHRONOUSLY and `init` is queued below, so
+  // only the 400 KB fbevents.js download waits for idle. fbq buffers every
+  // call in n.queue and fbevents drains it on arrival — nothing is lost.
+  const dispose = onIdle(() => {
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = 'https://connect.facebook.net/en_US/fbevents.js';
+    document.head.appendChild(script);
+  });
 
   n('init', id);
+  return dispose;
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
@@ -56,6 +63,8 @@ export default function MetaPixel() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const loaded = useRef(false);
+  // Cancels the pending fbevents.js download if the visitor declines first.
+  const dispose = useRef<IdleDisposer | null>(null);
 
   // Opt-out: allowed by default once the stored choice is read (`hydrated`),
   // unless the visitor previously declined. Waiting for `hydrated` ensures a
@@ -66,7 +75,7 @@ export default function MetaPixel() {
   useEffect(() => {
     if (!allowed || !FB_PIXEL_ID || !isTrackablePath(pathname)) return;
     if (!loaded.current) {
-      loadPixel(FB_PIXEL_ID);
+      dispose.current = loadPixel(FB_PIXEL_ID);
       loaded.current = true;
     }
   }, [allowed, pathname]);
@@ -79,8 +88,18 @@ export default function MetaPixel() {
 
   // If the visitor declines AFTER the pixel already loaded, tell Meta to stop.
   // fbevents can't be unloaded, but consent-revoke halts further events.
+  // Deferring the download opens a window in which the visitor can decline
+  // BEFORE we have requested anything. Cancel first: not downloading 685 KB for
+  // someone who just opted out beats downloading it and then revoking. If the
+  // cancel came too late the script is already on its way, so fall back to the
+  // revoke, which is what actually stops Meta processing events.
   useEffect(() => {
-    if (consent === 'declined' && loaded.current) window.fbq?.('consent', 'revoke');
+    if (consent !== 'declined') return;
+    const prevented = dispose.current?.() ?? false;
+    dispose.current = null;
+    // Never fetched -> clear the latch so a later re-consent can load it.
+    if (prevented) loaded.current = false;
+    else if (loaded.current) window.fbq?.('consent', 'revoke');
   }, [consent]);
 
   return null;
