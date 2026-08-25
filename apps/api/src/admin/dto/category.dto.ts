@@ -1,5 +1,6 @@
 import { IsString, IsOptional, IsNumber, Min, Max, MaxLength, MinLength, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
+import { SLUG_PATTERN, SLUG_MESSAGE } from '../../common/validators/slug-pattern';
 
 export class CreateCategoryDto {
   @IsString()
@@ -18,7 +19,7 @@ export class CreateCategoryDto {
   @IsString()
   @MinLength(1)
   @MaxLength(60)
-  @Matches(/^[a-z0-9-]+$/, { message: 'URL slug may only contain lowercase letters, numbers, and hyphens' })
+  @Matches(SLUG_PATTERN, { message: SLUG_MESSAGE })
   slug!: string;
 
   @IsOptional()
@@ -56,7 +57,7 @@ export class UpdateCategoryDto {
   @IsString()
   @MinLength(1)
   @MaxLength(60)
-  @Matches(/^[a-z0-9-]+$/, { message: 'URL slug may only contain lowercase letters, numbers, and hyphens' })
+  @Matches(SLUG_PATTERN, { message: SLUG_MESSAGE })
   slug?: string;
 
   @IsOptional()

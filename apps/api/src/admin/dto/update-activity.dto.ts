@@ -17,6 +17,7 @@ import {
 import { Type } from 'class-transformer';
 import { ACTIVITY_TITLE_REGEX, ACTIVITY_TITLE_MESSAGE } from '../../common/validators/name-allowlist';
 import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
+import { SLUG_PATTERN, SLUG_MESSAGE } from '../../common/validators/slug-pattern';
 
 enum BookingType {
   HOURLY = 'HOURLY',
@@ -66,7 +67,7 @@ export class UpdateActivityDto {
   titleAr?: string;
 
   // Same slug contract as vendor create/update: a-z/0-9/hyphen, not reserved.
-  @IsString() @IsNotEmpty() @MaxLength(120) @Matches(/^[a-z0-9-]+$/, { message: 'URL slug may only contain lowercase letters, numbers, and hyphens' }) @IsNotReservedSlug() @IsOptional()
+  @IsString() @IsNotEmpty() @MaxLength(120) @Matches(SLUG_PATTERN, { message: SLUG_MESSAGE }) @IsNotReservedSlug() @IsOptional()
   slug?: string;
 
   @IsString() @IsNotEmpty() @MaxLength(5000) @IsOptional()

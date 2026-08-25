@@ -18,6 +18,7 @@ import { Type } from 'class-transformer';
 import { ExtraServiceItem } from './create-activity.dto';
 import { ACTIVITY_TITLE_REGEX, ACTIVITY_TITLE_MESSAGE } from '../../common/validators/name-allowlist';
 import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
+import { SLUG_PATTERN, SLUG_MESSAGE } from '../../common/validators/slug-pattern';
 
 enum BookingType {
   HOURLY = 'HOURLY',
@@ -48,7 +49,7 @@ export class UpdateActivityDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)
-  @Matches(/^[a-z0-9-]+$/, { message: 'URL slug may only contain lowercase letters, numbers, and hyphens' })
+  @Matches(SLUG_PATTERN, { message: SLUG_MESSAGE })
   @IsNotReservedSlug()
   @IsOptional()
   slug?: string;

@@ -27,11 +27,12 @@ const BASE_URL = 'https://jadwal.qa';
 // hour. The sitemap is generated in the background (ISR, hourly), so no user
 // ever waits on this and a longer ceiling is free.
 const FETCH_TIMEOUT_MS = 10000;
-// Google ignores everything past 50,000 URLs in a single sitemap file. We
-// assemble static + activities + categories here, so this is the authoritative
-// total cap (the API also leaves headroom). Entries are ordered static →
-// activities → categories, so if the cap ever bites, the least SEO-critical
-// entries (categories) drop first.
+// Google ignores everything past 50,000 URLs in a single sitemap file. This
+// file assembles static routes + landing pages + guides + per-activity URLs,
+// so it is the authoritative total cap (the API export also leaves headroom).
+// Entries are appended static -> landings/guides -> activities, so if the cap
+// ever bites it sheds trailing ACTIVITY urls first and never the hand-written
+// pages. Category filter urls are not emitted at all — see below.
 const MAX_SITEMAP_URLS = 50000;
 
 // Cache the generated sitemap for 1h (ISR) — not regenerated per crawl.
@@ -51,6 +52,7 @@ function langAlternates(path: string): { languages: Record<string, string> } {
 
 interface SitemapUrls {
   activities: Array<{ slug: string; updatedAt: string }>;
+  // Still returned by the API; deliberately NOT emitted as sitemap urls.
   categories: Array<{ slug: string; updatedAt: string }>;
 }
 
@@ -139,15 +141,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         alternates: langAlternates(`/activity/${encodeURIComponent(a.slug)}`),
       });
     }
-    for (const c of dynamic.categories ?? []) {
-      if (!c?.slug) continue;
-      entries.push({
-        url: `${BASE_URL}/explore?category=${encodeURIComponent(c.slug)}`,
-        lastModified: c.updatedAt ? new Date(c.updatedAt) : now,
-        changeFrequency: 'weekly',
-        priority: 0.6,
-      });
-    }
+    // Category FILTER urls are deliberately NOT in the sitemap.
+    // `/explore?category=x` is the Explore page with a filter applied, not a
+    // distinct page: same layout, same intro copy, a subset of the same cards.
+    // Submitting several of them asks Google to choose between near-duplicates
+    // of one page, which splits ranking signals instead of concentrating them.
+    // The indexable home for a category keyword is a dedicated landing page in
+    // lib/seo-landings.ts (e.g. /water-activities-qatar), which has its own h1,
+    // its own copy and its own inventory check — those ARE listed above.
+    // Flagged by the SEO team's sitemap screenshot, 2026-08-25.
   }
 
   // Hard guarantee we never emit more than Google reads (it silently drops
