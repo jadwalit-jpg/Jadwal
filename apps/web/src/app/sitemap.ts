@@ -27,11 +27,12 @@ const BASE_URL = 'https://jadwal.qa';
 // hour. The sitemap is generated in the background (ISR, hourly), so no user
 // ever waits on this and a longer ceiling is free.
 const FETCH_TIMEOUT_MS = 10000;
-// Google ignores everything past 50,000 URLs in a single sitemap file. We
-// assemble static + activities here, so this is the authoritative
-// total cap (the API also leaves headroom). Entries are ordered static →
-// order, so if the cap ever bites the least SEO-critical entries drop
-// first. Category FILTER urls are excluded entirely — see below.
+// Google ignores everything past 50,000 URLs in a single sitemap file. This
+// file assembles static routes + landing pages + guides + per-activity URLs,
+// so it is the authoritative total cap (the API export also leaves headroom).
+// Entries are appended static -> landings/guides -> activities, so if the cap
+// ever bites it sheds trailing ACTIVITY urls first and never the hand-written
+// pages. Category filter urls are not emitted at all — see below.
 const MAX_SITEMAP_URLS = 50000;
 
 // Cache the generated sitemap for 1h (ISR) — not regenerated per crawl.

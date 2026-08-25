@@ -115,7 +115,7 @@ export const SEO_LANDINGS: SeoLanding[] = [
         h1: 'Resorts, Chalets & Caravans in Qatar',
         intro:
           'Day-use resorts, private chalets, beach villas and luxury caravans across Qatar — from Doha to Al Shahaniya and the north coast. Book your day-out or overnight stay with trusted hosts and see real prices on AL Jadwal.',
-        metaTitle: 'Resorts & Chalets for Rent in Qatar',
+        metaTitle: 'Resorts & Chalets for Rent in Qatar | Book Now',
         metaDescription:
           'Explore resorts rental Qatar options for family getaways, private stays and relaxing escapes. Browse resorts and chalets and book with AL Jadwal.',
       },
@@ -143,7 +143,7 @@ export const SEO_LANDINGS: SeoLanding[] = [
         h1: 'Yacht Rental in Qatar',
         intro:
           'Charter a private yacht in Doha and The Pearl — sunset cruises, celebrations and day trips on the Arabian Gulf. Compare yachts by capacity and price from trusted Qatar operators and book securely on AL Jadwal.',
-        metaTitle: 'Yacht Rental Qatar | Hire Premium Charters',
+        metaTitle: 'Yacht Rental Qatar | Hire Premium Charters Today',
         metaDescription:
           'Hire a luxury yacht in Qatar with AL Jadwal. Sunset cruises, corporate events and weekend escapes on the Gulf. Instant confirmation — book today!',
       },
@@ -199,7 +199,7 @@ export const SEO_LANDINGS: SeoLanding[] = [
         h1: 'Boat Tours in Doha',
         intro:
           'Explore Doha from the water — Corniche cruises, Pearl boat tours, traditional dhows and speedboat rides. Compare boat trips by duration and price from trusted operators and book online on AL Jadwal.',
-        metaTitle: 'Doha Boat Tour | Scenic Skyline Cruises',
+        metaTitle: 'Doha Boat Tour | Scenic Skyline Cruises in Qatar',
         metaDescription:
           'See Doha\'s stunning skyline from the water with AL Jadwal\'s guided boat tours. Pass West Bay, Katara and The Pearl. Book your seat today!',
       },
