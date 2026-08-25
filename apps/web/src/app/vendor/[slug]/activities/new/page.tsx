@@ -20,6 +20,7 @@ import { useToast } from '@/components/toast';
 import TermsAcceptModal from '@/components/terms-accept-modal';
 import CustomSelect from '@/components/custom-select';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
+import { slugify } from '@/lib/slugify';
 
 // Heavy widgets (leaflet, canvas, custom) — only mount when their wizard
 // step is opened. Cuts the initial JS chunk for the wizard route.
@@ -1240,15 +1241,6 @@ const inputCls = (hasError: boolean) =>
       ? 'border-red-400 focus:ring-red-400/20'
       : 'border-gray-200 dark:border-slate-700 focus:ring-[#1d4f35]/20 focus:border-[#1d4f35]/50'
   }`;
-
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 60);
-}
 
 function FieldGroup({
   label, required, error, hint, className = '', children,
