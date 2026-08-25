@@ -126,3 +126,50 @@ describe('onIdle — runs exactly ONCE', () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('onIdle — cancellation (the consent requirement)', () => {
+  // Deferring opens a window in which the visitor can click "Decline" BEFORE
+  // the tracker has been requested. Downloading 685 KB for someone who just
+  // opted out would be indefensible, so this must genuinely abort.
+  test('the disposer prevents the callback and reports that it did', () => {
+    win.requestIdleCallback = jest.fn(() => 1) as IdleWin['requestIdleCallback'];
+    const fn = jest.fn();
+
+    const dispose = onIdle(fn, 3000);
+    expect(dispose()).toBe(true); // true = the callback had NOT run
+
+    window.dispatchEvent(new Event('load'));
+    jest.advanceTimersByTime(10000); // ceiling must not resurrect it
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test('disposing AFTER the callback ran reports false and changes nothing', () => {
+    // The caller uses this to decide between "cancel the download" and "the
+    // script is already in flight, so revoke consent instead".
+    win.requestIdleCallback = ((cb: () => void) => {
+      cb();
+      return 1;
+    }) as IdleWin['requestIdleCallback'];
+    const fn = jest.fn();
+
+    const dispose = onIdle(fn);
+    window.dispatchEvent(new Event('load'));
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    expect(dispose()).toBe(false);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  test('cancelling before `load` stops the idle callback ever being scheduled', () => {
+    const ric = jest.fn(() => 1) as IdleWin['requestIdleCallback'];
+    win.requestIdleCallback = ric;
+    const fn = jest.fn();
+
+    const dispose = onIdle(fn);
+    dispose();
+    window.dispatchEvent(new Event('load'));
+
+    expect(ric).not.toHaveBeenCalled();
+    expect(fn).not.toHaveBeenCalled();
+  });
+});

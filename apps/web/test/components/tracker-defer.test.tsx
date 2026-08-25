@@ -20,8 +20,14 @@ jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+let mockConsent: 'accepted' | 'declined' | null = null;
 jest.mock('@/context/cookie-consent', () => ({
-  useCookieConsent: () => ({ consent: null, hydrated: true, accept: jest.fn(), decline: jest.fn() }),
+  useCookieConsent: () => ({
+    consent: mockConsent,
+    hydrated: true,
+    accept: jest.fn(),
+    decline: jest.fn(),
+  }),
 }));
 
 jest.mock('@/lib/fb-pixel', () => ({ FB_PIXEL_ID: '1554481776310825' }));
@@ -62,6 +68,7 @@ const CLARITY = 'https://www.clarity.ms';
 
 beforeEach(() => {
   jest.useFakeTimers();
+  mockConsent = null;
   document.head.innerHTML = '';
   delete w.fbq;
   delete w._fbq;
@@ -146,5 +153,29 @@ describe('Clarity', () => {
 
     flushIdle();
     expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(true);
+  });
+});
+
+describe('declining during the deferral window', () => {
+  // The regression this locks down: deferring the download means a visitor can
+  // opt out BEFORE we have requested anything. In that window the right
+  // behaviour is to never fetch the tracker at all — not to fetch it and then
+  // ask the vendor to ignore it.
+  test.each([
+    ['Meta Pixel', () => <MetaPixel />, FB, '/en_US/fbevents.js'],
+    ['Google tag', () => <GoogleTag />, GTM, '/gtag/js'],
+    ['Clarity', () => <Clarity />, CLARITY, '/tag/y4xknitrzo'],
+  ])('%s: no script is EVER appended', (_label, renderTracker, origin, path) => {
+    const { rerender } = render(renderTracker());
+    expect(hasScript(origin, path)).toBe(false); // still deferred
+
+    // Visitor clicks Decline before idle / the ceiling.
+    mockConsent = 'declined';
+    act(() => {
+      rerender(renderTracker());
+    });
+    flushIdle();
+
+    expect(hasScript(origin, path)).toBe(false);
   });
 });

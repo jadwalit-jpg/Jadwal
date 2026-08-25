@@ -25,6 +25,15 @@
  * requestIdleCallback's own `timeout` is a fourth belt: it forces the callback
  * to run even if the main thread never goes idle. Safari before 16.4 has no
  * requestIdleCallback at all, hence the setTimeout fallback.
+ *
+ * CANCELLABLE, and this is a consent requirement rather than tidiness. The
+ * deferral opens a window (up to `timeout`) in which the visitor can click
+ * "Decline" BEFORE we have requested anything. Downloading 685 KB of tracker
+ * for someone who just opted out would be indefensible, so the returned
+ * disposer aborts a pending run. It reports whether it actually prevented the
+ * callback, which lets a caller reset its "already loaded" latch and schedule
+ * again later — the case that matters is Clarity, which is switched off when
+ * the visitor navigates onto checkout and must come back on afterwards.
  */
 
 /** Default ceiling, in ms, before the callback is forced to run. */
@@ -34,26 +43,48 @@ type IdleWindow = Window & {
   requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
 };
 
-export function onIdle(fn: () => void, timeout: number = DEFAULT_TIMEOUT): void {
-  if (typeof window === 'undefined') return;
+/** Cancels a pending run. Returns true if the callback had NOT yet run. */
+export type IdleDisposer = () => boolean;
+
+export function onIdle(fn: () => void, timeout: number = DEFAULT_TIMEOUT): IdleDisposer {
+  if (typeof window === 'undefined') return () => false;
 
   let ran = false;
+  let cancelled = false;
+  // Both the ceiling and the Safari fallback land here so cleanup can drain
+  // them without tracking each one in its own mutable slot.
+  const timers: number[] = [];
+
+  const cleanup = (): void => {
+    window.removeEventListener('load', schedule);
+    for (const t of timers) window.clearTimeout(t);
+  };
+
   const run = (): void => {
-    if (ran) return;
+    if (ran || cancelled) return;
     ran = true;
+    cleanup();
     fn();
   };
 
-  const schedule = (): void => {
+  function schedule(): void {
+    if (cancelled) return;
     const ric = (window as IdleWindow).requestIdleCallback;
     // Safari < 16.4: no requestIdleCallback. A short timeout still yields the
     // main thread, which is the point — it just can't wait for true idle.
     if (typeof ric === 'function') ric(run, { timeout });
-    else window.setTimeout(run, 200);
-  };
+    else timers.push(window.setTimeout(run, 200));
+  }
 
   if (document.readyState === 'complete') schedule();
   else window.addEventListener('load', schedule, { once: true });
 
-  window.setTimeout(run, timeout);
+  timers.push(window.setTimeout(run, timeout));
+
+  return (): boolean => {
+    const prevented = !ran;
+    cancelled = true;
+    cleanup();
+    return prevented;
+  };
 }

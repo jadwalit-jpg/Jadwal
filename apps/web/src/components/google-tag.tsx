@@ -27,11 +27,11 @@
 import { useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useCookieConsent } from '@/context/cookie-consent';
-import { onIdle } from '@/lib/defer-idle';
+import { onIdle, type IdleDisposer } from '@/lib/defer-idle';
 import { GA4_MEASUREMENT_ID, GOOGLE_ADS_ID } from '@/lib/gtag';
 
-function loadGtag(ids: string[]): void {
-  if (window.gtag || ids.length === 0) return;
+function loadGtag(ids: string[]): IdleDisposer {
+  if (window.gtag || ids.length === 0) return () => false;
   window.dataLayer = window.dataLayer || [];
   // gtag.js reads the raw `arguments` object positionally — keep the vendor
   // bootstrap verbatim (a rest-array would not be read the same way).
@@ -46,7 +46,7 @@ function loadGtag(ids: string[]): void {
   // `config` calls below are what actually register each one.
   // Only the gtag.js download waits for idle. The `js` / `config` calls below
   // push onto window.dataLayer, which gtag.js replays in order once it loads.
-  onIdle(() => {
+  const dispose = onIdle(() => {
     const script = document.createElement('script');
     script.async = true;
     script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(ids[0])}`;
@@ -61,6 +61,7 @@ function loadGtag(ids: string[]): void {
   // the SEO team's core number. Suppressing it here makes that effect the one
   // and only source of page_view.
   for (const id of ids) window.gtag('config', id, { send_page_view: false });
+  return dispose;
 }
 
 /** Ads + GA4, minus any that were blanked out via env to disable them. */
@@ -78,6 +79,8 @@ export default function GoogleTag() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const loaded = useRef(false);
+  // Cancels the pending gtag.js download if the visitor declines first.
+  const dispose = useRef<IdleDisposer | null>(null);
 
   // Opt-out: allowed by default once the stored choice is read (`hydrated`),
   // unless the visitor previously declined. Waiting for `hydrated` ensures a
@@ -90,7 +93,7 @@ export default function GoogleTag() {
     if (!loaded.current) {
       const ids = activeIds();
       if (ids.length === 0) return;
-      loadGtag(ids);
+      dispose.current = loadGtag(ids);
       loaded.current = true;
     }
   }, [allowed, pathname]);
@@ -104,8 +107,17 @@ export default function GoogleTag() {
 
   // If the visitor declines AFTER gtag already loaded, tell Google to stop
   // using ad data. gtag can't be unloaded, but a consent update halts it.
+  // Cancel a not-yet-started download first (see MetaPixel for the reasoning);
+  // only fall back to the consent update when the script is already in flight.
   useEffect(() => {
-    if (consent === 'declined' && loaded.current) {
+    if (consent !== 'declined') return;
+    const prevented = dispose.current?.() ?? false;
+    dispose.current = null;
+    if (prevented) {
+      loaded.current = false;
+      return;
+    }
+    if (loaded.current) {
       window.gtag?.('consent', 'update', {
         ad_storage: 'denied',
         ad_user_data: 'denied',
