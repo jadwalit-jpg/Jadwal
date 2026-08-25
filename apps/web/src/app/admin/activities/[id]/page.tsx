@@ -15,6 +15,8 @@ import CustomSelect from '@/components/custom-select';
 import ActivityBlocksManager from '@/components/activity-blocks-manager';
 import ActivitySpecialPricesManager from '@/components/activity-special-prices-manager';
 import { ACCEPTED_IMAGE_TYPES, MAX_COVER_SIZE, MAX_IMAGE_DIM } from '@/lib/image-constants';
+import { slugify } from '@/lib/slugify';
+import { slugPatch } from '@/lib/slug-patch';
 
 // Heavy widgets — only mount when their respective wizard step opens.
 const LocationPicker = dynamic(
@@ -167,6 +169,9 @@ export default function AdminEditActivityPage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [initialized, setInitialized] = useState(false);
 
+  // The slug as it was when the activity loaded. Used to send `slug` ONLY when
+  // an admin actually edited it — see handleSubmit.
+  const [originalSlug, setOriginalSlug] = useState('');
   const [form, setForm] = useState({
     titleEn: '', titleAr: '', slug: '', descriptionEn: '', descriptionAr: '',
     categoryId: '', subCategoryId: '', pricePerPerson: '', durationValue: '',
@@ -226,6 +231,7 @@ export default function AdminEditActivityPage() {
         bookingType: activity.bookingType ?? 'HOURLY', cancellationPolicy: activity.cancellationPolicy ?? '',
         checkInTime: activity.checkInTime ?? '', checkOutTime: activity.checkOutTime ?? '',
       });
+      setOriginalSlug(activity.slug ?? '');
       setCoverImage(activity.coverImage ?? '');
       setGallery(Array.isArray(activity.gallery) ? activity.gallery : []);
       setExtraServices(Array.isArray(activity.extraServices) ? activity.extraServices.map((s: any) => ({ name: s.name, ...(s.nameAr ? { nameAr: s.nameAr } : {}), price: s.price ?? 0, perPerson: !!s.perPerson })) : []);
@@ -308,7 +314,18 @@ export default function AdminEditActivityPage() {
     if (!validateStep(currentStep)) return;
     const totalCapacity = hasUnits && Number(unitCount) > 0 ? Number(unitCount) * (Number(unitCapacity) || 1) : (form.capacity ? Number(form.capacity) : undefined);
     const payload = sanitizeObject({
-      titleEn: sanitize(form.titleEn), titleAr: sanitize(form.titleAr), slug: sanitize(form.slug),
+      titleEn: sanitize(form.titleEn), titleAr: sanitize(form.titleAr),
+      // Send `slug` ONLY when the admin actually edited it.
+      //
+      // Five activities went live with slugs the old generator produced badly
+      // (a stray leading/trailing hyphen). The tightened SLUG_PATTERN now
+      // rejects those. Sending the loaded slug back unchanged would therefore
+      // 400 the whole update, and an admin could not fix a PRICE on one of
+      // those activities without also renaming its URL — a link-breaking
+      // change forced by an unrelated edit. Omitting it leaves the existing
+      // slug untouched server-side and keeps the validator meaningful for the
+      // case it is actually for: a deliberate rename.
+      ...slugPatch(sanitize(form.slug), originalSlug),
       descriptionEn: sanitize(form.descriptionEn), descriptionAr: sanitize(form.descriptionAr),
       categoryId: form.categoryId, subCategoryId: form.subCategoryId || undefined,
       pricePerPerson: Number(form.pricePerPerson),
@@ -327,7 +344,14 @@ export default function AdminEditActivityPage() {
   };
 
   const updateField = (field: string, value: string) => { setForm(prev => ({ ...prev, [field]: value })); if (errors[field]) setErrors(prev => { const n = { ...prev }; delete n[field]; return n; }); };
-  const handleTitleEnChange = (value: string) => { updateField('titleEn', value); setForm(f => ({ ...f, slug: value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') })); };
+  // This page is EDIT-ONLY (PATCH /admin/activities/:id), so the title must
+  // NOT regenerate the slug. It used to: renaming an activity silently
+  // changed its public URL and broke every existing link to it — a bookmark,
+  // a shared link, Google's indexed entry — with no warning and no redirect.
+  // The vendor edit page already guarded this ("Do NOT auto-update slug on
+  // edit"); the admin page did not. Admins who genuinely want a different
+  // slug now edit the slug field directly, which carries a warning.
+  const handleTitleEnChange = (value: string) => { updateField('titleEn', value); };
   const toggleDay = (day: string) => setActiveDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]);
   const addExtraService = () => {
     const n = extraName.trim();
@@ -411,7 +435,11 @@ export default function AdminEditActivityPage() {
                 <CustomSelect options={subCategories.map((s: any) => ({ value: s.id, label: s.nameEn }))} value={form.subCategoryId} onChange={val => updateField('subCategoryId', val)} placeholder={form.categoryId ? 'Select sub-category (optional)' : 'Select category first'} disabled={!form.categoryId || subCategories.length === 0} />
               </FieldGroup>
               <FieldGroup label="URL Slug" required error={errors.slug} className="col-span-2">
-                <input value={form.slug} readOnly tabIndex={-1} className={`${inputCls(!!errors.slug)} bg-gray-100 dark:bg-slate-800/80 cursor-not-allowed text-gray-500 dark:text-slate-400`} placeholder="Auto-generated from title" />
+                <input value={form.slug} onChange={e => updateField('slug', slugify(e.target.value))} className={inputCls(!!errors.slug)} placeholder="Auto-generated from the English title" />
+                <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+                  Changing this changes the public URL. Any existing link to the old address —
+                  a bookmark, a shared link, or Google&apos;s indexed entry — will stop working.
+                </p>
               </FieldGroup>
             </div>
             <div className="grid grid-cols-2 gap-5 mt-5">

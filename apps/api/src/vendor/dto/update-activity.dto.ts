@@ -18,7 +18,6 @@ import { Type } from 'class-transformer';
 import { ExtraServiceItem } from './create-activity.dto';
 import { ACTIVITY_TITLE_REGEX, ACTIVITY_TITLE_MESSAGE } from '../../common/validators/name-allowlist';
 import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
-import { SLUG_PATTERN, SLUG_MESSAGE } from '../../common/validators/slug-pattern';
 
 enum BookingType {
   HOURLY = 'HOURLY',
@@ -45,14 +44,16 @@ export class UpdateActivityDto {
   @IsOptional()
   titleAr?: string;
 
-  // Same slug contract as create: lowercase a-z/0-9/hyphen, not a reserved word.
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(120)
-  @Matches(SLUG_PATTERN, { message: SLUG_MESSAGE })
-  @IsNotReservedSlug()
-  @IsOptional()
-  slug?: string;
+  // NO `slug` FIELD ON PURPOSE. A slug is a permanent public URL: changing it
+  // breaks every existing link — a bookmark, a WhatsApp share, Google's index
+  // entry — because nothing records the old address. Vendors may rename their
+  // activity freely (titleEn/titleAr above); the URL stays put.
+  //
+  // Admins CAN still correct a slug via the admin endpoint, which is the escape
+  // hatch for the handful that were generated wrong before slugify was fixed.
+  // ValidationPipe runs with forbidNonWhitelisted, so a vendor POSTing `slug`
+  // is REJECTED rather than silently ignored — the field being absent here is
+  // the enforcement, not just documentation.
 
   @IsString()
   @IsNotEmpty()

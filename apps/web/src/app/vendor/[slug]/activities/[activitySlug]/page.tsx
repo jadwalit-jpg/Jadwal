@@ -482,7 +482,11 @@ export default function EditActivityPage() {
     const payload = sanitizeObject({
       titleEn: sanitize(form.titleEn),
       titleAr: sanitize(form.titleAr),
-      slug: sanitize(form.slug),
+      // NO slug. A slug is a permanent public URL and vendors cannot change it:
+      // UpdateActivityDto declares no such field and the API runs with
+      // forbidNonWhitelisted, so sending one would 400 the ENTIRE update and
+      // block the vendor from editing their activity at all. Admins correct a
+      // slug through the admin endpoint.
       descriptionEn: sanitize(form.descriptionEn),
       descriptionAr: sanitize(form.descriptionAr),
       categoryId: form.categoryId,
