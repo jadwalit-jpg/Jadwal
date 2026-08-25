@@ -59,9 +59,9 @@ export const SEO_LANDINGS: SeoLanding[] = [
         h1: 'Desert Safari & Camping in Qatar',
         intro:
           'Book a desert safari in Qatar — Sealine dune trips, full-day adventures and overnight desert camps with dinner, dune bashing and stargazing. Compare packages from trusted local operators and reserve your spot on AL Jadwal.',
-        metaTitle: 'Desert Safari Qatar — Sealine Trips & Overnight Camps',
+        metaTitle: 'Desert Safari Qatar | Dune Adventures & Prices',
         metaDescription:
-          'Book a desert safari in Qatar: Sealine dune trips, full-day and overnight desert camps with dinner & fireworks. Compare prices and reviews on AL Jadwal.',
+          'Experience the thrill of Qatar\'s golden dunes. Compare overnight desert safari Qatar prices and enjoy dune bashing, camel rides and more with AL Jadwal.',
       },
       ar: {
         h1: 'سفاري الصحراء والتخييم في قطر',
@@ -115,9 +115,9 @@ export const SEO_LANDINGS: SeoLanding[] = [
         h1: 'Resorts, Chalets & Caravans in Qatar',
         intro:
           'Day-use resorts, private chalets, beach villas and luxury caravans across Qatar — from Doha to Al Shahaniya and the north coast. Book your day-out or overnight stay with trusted hosts and see real prices on AL Jadwal.',
-        metaTitle: 'Resorts, Chalets & Caravans in Qatar — Day-Use & Overnight',
+        metaTitle: 'Resorts & Chalets for Rent in Qatar',
         metaDescription:
-          'Book resorts, chalets, villas and caravans in Qatar for day-use or overnight stays. Compare locations, prices and reviews on AL Jadwal.',
+          'Explore resorts rental Qatar options for family getaways, private stays and relaxing escapes. Browse resorts and chalets and book with AL Jadwal.',
       },
       ar: {
         h1: 'منتجعات وشاليهات وكرفانات في قطر',
@@ -143,9 +143,9 @@ export const SEO_LANDINGS: SeoLanding[] = [
         h1: 'Yacht Rental in Qatar',
         intro:
           'Charter a private yacht in Doha and The Pearl — sunset cruises, celebrations and day trips on the Arabian Gulf. Compare yachts by capacity and price from trusted Qatar operators and book securely on AL Jadwal.',
-        metaTitle: 'Yacht Rental Qatar — Private Yacht Charter in Doha & The Pearl',
+        metaTitle: 'Yacht Rental Qatar | Hire Premium Charters',
         metaDescription:
-          'Rent a private yacht in Qatar — sunset cruises and day charters in Doha & The Pearl. Compare yachts, capacity, prices and reviews on AL Jadwal.',
+          'Hire a luxury yacht in Qatar with AL Jadwal. Sunset cruises, corporate events and weekend escapes on the Gulf. Instant confirmation — book today!',
       },
       ar: {
         h1: 'تأجير يخت في قطر',
@@ -171,9 +171,9 @@ export const SEO_LANDINGS: SeoLanding[] = [
         h1: 'Caravan Rental in Qatar',
         intro:
           'VIP and family caravans for desert getaways and weekend escapes across Qatar — fully equipped, air-conditioned and ready to book. Compare caravans by location, capacity and price on AL Jadwal.',
-        metaTitle: 'Caravan Rental Qatar — VIP & Family Desert Caravans',
+        metaTitle: 'Caravan Rental Qatar | Desert Glamping Getaways',
         metaDescription:
-          'Rent a caravan in Qatar — VIP and family desert caravans, fully equipped and air-conditioned. Compare locations, prices and reviews on AL Jadwal.',
+          'Rent a cozy caravan in Qatar and explore the desert in style. Perfect for families and couples seeking a unique glamping adventure. Affordable rates!',
       },
       ar: {
         h1: 'تأجير كرفان في قطر',
@@ -199,9 +199,9 @@ export const SEO_LANDINGS: SeoLanding[] = [
         h1: 'Boat Tours in Doha',
         intro:
           'Explore Doha from the water — Corniche cruises, Pearl boat tours, traditional dhows and speedboat rides. Compare boat trips by duration and price from trusted operators and book online on AL Jadwal.',
-        metaTitle: 'Doha Boat Tours — Corniche Cruises, Dhows & Speedboats',
+        metaTitle: 'Doha Boat Tour | Scenic Skyline Cruises',
         metaDescription:
-          'Book a boat tour in Doha — Corniche cruises, Pearl trips, traditional dhows and speedboats. Compare durations, prices and reviews on AL Jadwal.',
+          'See Doha\'s stunning skyline from the water with AL Jadwal\'s guided boat tours. Pass West Bay, Katara and The Pearl. Book your seat today!',
       },
       ar: {
         h1: 'جولات القوارب في الدوحة',

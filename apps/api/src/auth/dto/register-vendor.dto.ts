@@ -7,6 +7,7 @@ import {
   BUSINESS_NAME_EN_REGEX, BUSINESS_NAME_EN_MESSAGE,
   BUSINESS_NAME_AR_REGEX, BUSINESS_NAME_AR_MESSAGE,
 } from '../../common/validators/name-allowlist';
+import { SLUG_PATTERN, SLUG_MESSAGE } from '../../common/validators/slug-pattern';
 
 export class RegisterVendorDto {
   @IsString()
@@ -61,7 +62,7 @@ export class RegisterVendorDto {
 
   @IsString()
   @IsNotEmpty({ message: 'URL slug is required' })
-  @Matches(/^[a-z0-9-]+$/, { message: 'Slug must contain only lowercase letters, numbers, and hyphens' })
+  @Matches(SLUG_PATTERN, { message: SLUG_MESSAGE })
   @MaxLength(60, { message: 'Slug is too long' })
   @IsNotReservedSlug()
   slug!: string;
