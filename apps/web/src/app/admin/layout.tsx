@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 import { RoleGuard } from '@/components/role-guard';
+import VendorTranslationsGate from '@/components/vendor-translations-gate';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -13,7 +14,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <RoleGuard allowedRoles={['ADMIN']}>
-      {children}
+      {/* Admin activity screens reuse the vendor components, so they need the
+          same split-out vendor.* strings. Deliberately NOT applied to
+          /admin/login above: that page uses no vendor keys and must not wait
+          on an extra chunk before you can sign in. */}
+      <VendorTranslationsGate>{children}</VendorTranslationsGate>
     </RoleGuard>
   );
 }
