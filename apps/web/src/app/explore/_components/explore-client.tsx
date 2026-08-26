@@ -16,6 +16,17 @@ import { useGeo } from '@/context/geo-context';
 
 /* ─── Types ───────────────────────────────────────────────── */
 
+/**
+ * How many leading cards are treated as LCP candidates and get `priority`.
+ *
+ * The grid is one column below 640px and the card image is 192px tall, so on a
+ * mobile viewport roughly two cards can sit above the fold once the filter bar
+ * is accounted for. Kept deliberately small: `priority` preloads, and
+ * preloading images nobody sees would compete for bandwidth with the ones they
+ * do — the opposite of the intended effect.
+ */
+const LCP_CANDIDATE_CARDS = 2;
+
 interface Activity {
   id: string;
   titleEn: string;
@@ -529,7 +540,7 @@ function ExploreContent({
           </div>
         ) : activities.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {activities.map((activity) => (
+            {activities.map((activity, index) => (
               // No per-card JS animation — wrapping each of up to 20 cards in a
               // `motion.div` with a staggered delay mounted 20 motion components
               // and queued ~1 s of animation, which hurt INP. The cards just
@@ -550,7 +561,20 @@ function ExploreContent({
                         alt={localized(activity, 'title')}
                         fill
                         sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-                        loading="lazy"
+                        // The first cards are the LCP candidates, so they get
+                        // `priority` (fetchpriority=high + eager + a <link
+                        // rel=preload> in the SSR head) and the rest stay lazy.
+                        // Measured on the live mobile /explore 2026-08-26: the
+                        // LCP element IS one of these images, and all three of
+                        // Lighthouse's LCP-discovery checks failed — no
+                        // fetchpriority, loading=lazy, and not discoverable in
+                        // the initial document. The image itself downloads in
+                        // 0.3 ms from the CDN; it was simply requested 3,945 ms
+                        // too late. `priority` and `loading` are mutually
+                        // exclusive in next/image, hence the spread.
+                        {...(index < LCP_CANDIDATE_CARDS
+                          ? ({ priority: true } as const)
+                          : ({ loading: 'lazy' } as const))}
                         // Dev: API serves uploads from localhost:4000 which the
                         // Next image optimizer (running inside docker) can't
                         // reach. In prod, S3/CDN URLs are public and full
