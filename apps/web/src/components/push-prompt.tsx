@@ -80,7 +80,7 @@ export function PushPrompt() {
       className={cn(
         'fixed bottom-6 inset-x-6 sm:inset-x-auto sm:inset-e-6 sm:max-w-sm z-50',
         'transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none',
-        visible ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0',
+        visible ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0 pointer-events-none',
       )}
     >
       <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-2xl shadow-2xl dark:shadow-black/40 p-4 flex items-start gap-3">

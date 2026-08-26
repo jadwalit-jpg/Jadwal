@@ -113,6 +113,35 @@ describe('CookieConsentBanner — the consent buttons still work', () => {
 });
 
 describe('CookieConsentBanner — the exit transition', () => {
+  test('does not capture clicks while it is fading out', () => {
+    // Found by review on #607. `opacity-0` hides an element but does NOT stop it
+    // receiving pointer events, and useMountTransition deliberately keeps the
+    // node mounted for the whole exit duration. Without pointer-events-none the
+    // invisible overlay swallows clicks aimed at the page beneath it.
+    //
+    // It is worst on terms-accept-modal, whose backdrop is `fixed inset-0` and
+    // therefore blanks the ENTIRE page for 200 ms after closing. This banner is
+    // `fixed bottom-4 inset-x-4 max-w-3xl`, so it blocks a wide strip for 300 ms.
+    // Reduced-motion users get no visual cue at all that anything is happening.
+    jest.useFakeTimers();
+    try {
+      const { rerender } = render(<CookieConsentBanner />);
+      expect(screen.getByRole('dialog').className).not.toContain('pointer-events-none');
+
+      mockConsent = 'accepted';
+      act(() => {
+        rerender(<CookieConsentBanner />);
+      });
+
+      // Still mounted (the exit transition is running) but must be click-through.
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toBeInTheDocument();
+      expect(dialog.className).toContain('pointer-events-none');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('stays in the DOM while fading out, then leaves', () => {
     // This is exactly what <AnimatePresence> used to provide. Without it the
     // banner would disappear instantly and the slide-down would never be seen.
