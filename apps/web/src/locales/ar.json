@@ -84,7 +84,10 @@
     "locationDenied": "تم رفض الوصول للموقع",
     "ctaTitle": "مستعد لاستكشاف قطر؟",
     "ctaSubtitle": "احجز مغامرتك القادمة واصنع ذكريات لا تُنسى مع الجدول.",
-    "getStarted": "ابدأ الآن"
+    "getStarted": "ابدأ الآن",
+    "searching": "جارٍ البحث…",
+    "noSuggestions": "لا توجد نتائج مطابقة",
+    "viewAllResults": "عرض كل النتائج"
   },
   "activity": {
     "bookNow": "احجز الآن",
@@ -681,9 +684,6 @@
     "title": "استكشف الأنشطة",
     "subtitle": "اكتشف تجارب مميزة بالقرب منك",
     "searchPlaceholder": "ابحث عن أنشطة، جولات، تجارب...",
-    "searching": "جارٍ البحث…",
-    "noSuggestions": "لا توجد نتائج مطابقة",
-    "viewAllResults": "عرض كل النتائج",
     "country": "الدولة",
     "category": "الفئة",
     "city": "المدينة",
