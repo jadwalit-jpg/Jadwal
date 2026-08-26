@@ -260,6 +260,44 @@ export const SEO_GUIDES: SeoGuide[] = [
           },
         ],
       },
+      {
+        heading: { en: 'What two days actually costs', ar: 'كم يكلّف يومان فعلياً' },
+        body: [
+          {
+            en: 'On a tight budget, two days runs about QAR 250 per person: a Full-Day Desert Safari at QAR 150 and a Kayak Ride at QAR 100 covers both landscapes Qatar is known for, with Souq Waqif and the Corniche costing nothing to walk.',
+            ar: 'بميزانية محدودة، يكلّف اليومان نحو 250 ر.ق للفرد: سفاري صحراوي ليوم كامل بـ150 ر.ق وجولة كاياك بـ100 ر.ق تغطّي المشهدين اللذين تشتهر بهما قطر، بينما التجوّل في سوق واقف وعلى الكورنيش مجاني.',
+          },
+          {
+            en: 'For a small group wanting comfort rather than economy, a Grand Doha City Tour at QAR 800 for six hours plus a speedboat at QAR 350 for up to four people covers day one properly, with the QAR 150 safari on day two. Split across four, that is roughly QAR 440 each for two full days.',
+            ar: 'ولمجموعة صغيرة تريد الراحة لا الاقتصاد، جولة الدوحة الكبرى بـ800 ر.ق لست ساعات مع قارب سريع بـ350 ر.ق حتى أربعة أشخاص تغطّي اليوم الأول جيداً، مع سفاري الـ150 ر.ق في اليوم الثاني. وبتقسيمها على أربعة، يصبح ذلك نحو 440 ر.ق للفرد ليومين كاملين.',
+          },
+          {
+            en: 'If the trip is an occasion, the numbers change shape rather than simply rising. A private yacht from QAR 1,200 or a Traditional Dhow at QAR 2,000 is priced for the whole boat, not per seat — with a group of ten the dhow works out cheaper per person than most individual activities.',
+            ar: 'وإن كانت الرحلة لمناسبة، فالأرقام تتغيّر شكلاً لا مجرد ارتفاع. فاليخت الخاص من 1,200 ر.ق أو مركب الداو التقليدي بـ2,000 ر.ق يُسعَّر للقارب كاملاً لا للمقعد — ومع مجموعة من عشرة يصبح الداو للفرد أرخص من معظم الأنشطة الفردية.',
+          },
+        ],
+      },
+      {
+        heading: { en: 'Common questions', ar: 'أسئلة شائعة' },
+        body: [
+          {
+            en: 'Is two days enough for Doha? For the city itself, yes — it is compact and the main sights sit within a few kilometres of each other. What two days does not allow is the north of the country: Al Zubarah, the Al Thakira mangroves and the abandoned village at Al Jumail need a third day, covered by the QAR 1,100 North of Qatar Historical Tour.',
+            ar: 'هل يكفي يومان للدوحة؟ للمدينة نفسها نعم — فهي صغيرة ومعالمها الرئيسية تقع على بُعد كيلومترات قليلة من بعضها. لكن ما لا يتيحه اليومان هو شمال البلاد: الزبارة وأشجار القرم في الذخيرة وقرية الجميل المهجورة تحتاج يوماً ثالثاً، تغطّيه جولة شمال قطر التاريخية بـ1,100 ر.ق.',
+          },
+          {
+            en: 'Do I need to hire a car? No. Taxis and ride apps are cheap and everywhere, and the metro is fast on the lines it covers, including the airport, Msheireb and Katara. The one thing you cannot reach on public transport is the desert — but every safari includes the drive, so that is handled.',
+            ar: 'هل أحتاج لاستئجار سيارة؟ لا. سيارات الأجرة وتطبيقات النقل رخيصة ومنتشرة، والمترو سريع على الخطوط التي يغطيها، ومنها المطار ومشيرب وكتارا. والشيء الوحيد الذي لا يمكن الوصول إليه بالمواصلات العامة هو الصحراء — لكن كل رحلة سفاري تشمل الطريق، فالأمر مُعالَج.',
+          },
+          {
+            en: 'Which day should be the desert day? The second, if you can. It is the longer and more tiring of the two, and finishing on the Inland Sea leaves a better last impression than finishing in a souq. It also gives you day one to adjust to the heat before spending eight hours in it.',
+            ar: 'أي يوم ينبغي أن يكون يوم الصحراء؟ الثاني إن أمكن. فهو الأطول والأكثر إرهاقاً بين الاثنين، وإنهاء الرحلة عند البحر الداخلي يترك انطباعاً أخيراً أفضل من إنهائها في سوق. كما يمنحك اليوم الأول للتأقلم مع الحرارة قبل قضاء ثماني ساعات فيها.',
+          },
+          {
+            en: 'What should I book before arriving? The desert day and anything on the water for a Friday or Saturday. Those two days are the local weekend, so demand concentrates there, and the larger boats and camps have limited places. Walking the souq, the Corniche and Katara needs no booking at all.',
+            ar: 'ماذا ينبغي أن أحجز قبل الوصول؟ يوم الصحراء وأي نشاط على الماء ليومي الجمعة أو السبت. فهذان اليومان هما عطلة نهاية الأسبوع المحلية، لذا يتركّز الطلب فيهما، والقوارب والمخيمات الكبيرة أماكنها محدودة. أما التجوّل في السوق والكورنيش وكتارا فلا يحتاج حجزاً إطلاقاً.',
+          },
+        ],
+      },
     ],
     relatedLandings: ['desert-safari-qatar', 'doha-boat-tour', 'water-activities-qatar'],
   },
@@ -343,6 +381,57 @@ export const SEO_GUIDES: SeoGuide[] = [
           {
             en: 'In peak season, book a few days out if you want a weekend departure. Friday and Saturday are the local weekend in Qatar, so that is when demand concentrates — the same two days everyone else is also free. Outside the peak months there is far more availability.',
             ar: 'في موسم الذروة، احجز قبل أيام إن أردت انطلاقة في نهاية الأسبوع. فالجمعة والسبت هما عطلة نهاية الأسبوع المحلية في قطر، وفيهما يتركّز الطلب — اليومان نفسهما اللذان يكون فيهما الجميع متفرّغاً. أما خارج أشهر الذروة فالتوافر أكبر بكثير.',
+          },
+        ],
+      },
+      {
+        heading: { en: 'Which safari actually suits you', ar: 'أي سفاري يناسبك فعلاً' },
+        body: [
+          {
+            en: 'The word "safari" covers trips that differ by a factor of twelve in price, so it is worth knowing what separates them. The Full-Day Desert Safari at QAR 150 per person runs eight hours and is the one most visitors want: dune driving, the Inland Sea, and back to Doha the same evening. Everything above it is either longer, smaller, or both.',
+            ar: 'تشمل كلمة «سفاري» رحلات يفصل بينها فارق يصل إلى اثني عشر ضعفاً في السعر، لذا يستحق الأمر معرفة ما يميّزها. سفاري الصحراء ليوم كامل بـ150 ر.ق للشخص يمتد ثماني ساعات وهو ما يريده معظم الزوّار: قيادة على الكثبان، والبحر الداخلي، والعودة إلى الدوحة في المساء نفسه. وكل ما فوقه إما أطول أو أصغر أو كلاهما.',
+          },
+          {
+            en: 'The Safari trip at QAR 1,700 is also eight hours but takes up to 300 people, which tells you it is built for groups rather than couples. The full-day nineteen-hour version at QAR 1,800 caps at 80 and is the one that genuinely fills a day and a night. Both launch from Sealine, an hour south of Doha.',
+            ar: 'ورحلة السفاري بـ1,700 ر.ق مدّتها ثماني ساعات أيضاً لكنها تتّسع حتى 300 شخص، وهو ما يخبرك أنها مصمّمة للمجموعات لا للثنائيات. أما نسخة اليوم الكامل من تسع عشرة ساعة بـ1,800 ر.ق فتتّسع لثمانين وهي التي تملأ يوماً وليلة فعلاً. وكلتاهما تنطلقان من سيلين، على بُعد ساعة جنوب الدوحة.',
+          },
+          {
+            en: 'For the night, the Overnight Desert Safari at the Sealine Camp is QAR 500 and takes up to 60. Al Rehlah Camp at QAR 1,500 is a different proposition again — it sits at Al Shahaniya rather than Sealine and caps at 30, so it is the quieter, more private end of the range.',
+            ar: 'وللمبيت، سفاري الصحراء الليلي في مخيم سيلين بـ500 ر.ق ويتّسع حتى ستين. أما مخيم الرحلة بـ1,500 ر.ق فهو خيار مختلف تماماً — يقع في الشحانية لا في سيلين ويتّسع لثلاثين فقط، وهو بذلك الطرف الأهدأ والأكثر خصوصية.',
+          },
+        ],
+      },
+      {
+        heading: { en: 'Sealine or Al Shahaniya?', ar: 'سيلين أم الشحانية؟' },
+        body: [
+          {
+            en: 'Almost every safari in Qatar leaves from one of two places, and they are not interchangeable. Sealine is the south coast, about an hour from Doha, and it is where the dunes meet the sea at Khor Al Adaid — if you want the landscape Qatar is photographed for, you want Sealine. It is also the busier of the two.',
+            ar: 'تنطلق كل رحلات السفاري في قطر تقريباً من أحد مكانين، وهما ليسا بديلين لبعضهما. سيلين على الساحل الجنوبي، على بُعد نحو ساعة من الدوحة، وفيها تلتقي الكثبان بالبحر عند خور العديد — فإن أردت المشهد الذي تُصوَّر به قطر، فأنت تريد سيلين. وهي أيضاً الأكثر ازدحاماً بين الاثنتين.',
+          },
+          {
+            en: 'Al Shahaniya, inland to the west, is desert without the coastline. Fewer visitors, smaller camps, and it is where the camel racing tracks are. If your priority is quiet and a clear sky rather than the Inland Sea, it is the better choice — and the smaller capacities there reflect that.',
+            ar: 'أما الشحانية، في الداخل غرباً، فهي صحراء دون ساحل. زوّار أقل، ومخيمات أصغر، وفيها مضامير سباق الهجن. وإن كانت أولويتك الهدوء وسماء صافية بدل البحر الداخلي، فهي الخيار الأفضل — والسعات الأصغر هناك تعكس ذلك.',
+          },
+        ],
+      },
+      {
+        heading: { en: 'Common questions', ar: 'أسئلة شائعة' },
+        body: [
+          {
+            en: 'How long does a desert safari take? The standard full-day trip runs eight hours door to door. Shorter versions exist but cut the drive south, which is most of what you came for. The nineteen-hour option is effectively a day plus an overnight.',
+            ar: 'كم تستغرق رحلة السفاري الصحراوي؟ تمتد رحلة اليوم الكامل المعتادة ثماني ساعات من الباب إلى الباب. وتوجد نسخ أقصر لكنها تختصر الطريق جنوباً، وهو معظم ما جئت من أجله. أما خيار التسع عشرة ساعة فهو عملياً يوم كامل مع مبيت.',
+          },
+          {
+            en: 'Do I need to book ahead? In peak season — November to February — yes, a few days out, and more for a Friday or Saturday, which is the local weekend. Outside those months availability is usually comfortable in the same week.',
+            ar: 'هل أحتاج للحجز مسبقاً؟ في موسم الذروة — من نوفمبر إلى فبراير — نعم، قبل أيام، وأكثر ليومي الجمعة والسبت وهما عطلة نهاية الأسبوع المحلية. أما خارج تلك الأشهر فالتوافر مريح عادةً في الأسبوع نفسه.',
+          },
+          {
+            en: 'Is it worth going in summer? Between June and August the daytime desert is genuinely punishing — temperatures pass 45°C and midday dune driving stops being a holiday activity. Trips still run, but take an early morning or an overnight, and consider spending a summer afternoon on the water instead.',
+            ar: 'هل تستحق الزيارة صيفاً؟ بين يونيو وأغسطس تكون الصحراء نهاراً قاسية فعلاً — تتجاوز الحرارة 45 مئوية وتتوقف القيادة على الكثبان في منتصف النهار عن كونها نشاط عطلة. ولا تزال الرحلات تعمل، لكن اختر صباحاً باكراً أو مبيتاً، وفكّر في قضاء عصر الصيف على الماء بدلاً من ذلك.',
+          },
+          {
+            en: 'What does it cost for a family or a group? Because the day trip is priced per person at QAR 150, a family of four is QAR 600 for the day. The camps price differently — the QAR 500 overnight at Sealine takes up to 60 people, so for a larger group the per-head figure drops sharply. Work that out before assuming the cheaper headline price is the cheaper option.',
+            ar: 'كم تكلّف لعائلة أو مجموعة؟ لأن رحلة اليوم الواحد تُسعَّر للشخص بـ150 ر.ق، فإن عائلة من أربعة أفراد تدفع 600 ر.ق لليوم. أما المخيمات فتُسعَّر بطريقة مختلفة — فمبيت سيلين بـ500 ر.ق يتّسع حتى ستين شخصاً، ومع مجموعة أكبر ينخفض نصيب الفرد بشدة. احسب ذلك قبل أن تفترض أن السعر المعلن الأرخص هو الخيار الأرخص.',
           },
         ],
       },
@@ -544,6 +633,44 @@ export const SEO_GUIDES: SeoGuide[] = [
           {
             en: 'Come between October and April if you can. June to August passes 45°C, which rules out midday outdoor activity — in summer, shift to early morning or evening and choose water over desert. Friday and Saturday are the local weekend, so book ahead for those two days in particular.',
             ar: 'تعال بين أكتوبر وأبريل إن استطعت. فمن يونيو إلى أغسطس تتجاوز الحرارة 45 مئوية، ما يستبعد النشاط الخارجي في منتصف النهار — وفي الصيف انتقل إلى الصباح الباكر أو المساء واختر الماء بدل الصحراء. والجمعة والسبت هما عطلة نهاية الأسبوع المحلية، فاحجز مسبقاً لهذين اليومين تحديداً.',
+          },
+        ],
+      },
+      {
+        heading: { en: 'Weekend places within an hour of the city', ar: 'أماكن نهاية الأسبوع على بُعد ساعة من المدينة' },
+        body: [
+          {
+            en: 'Doha empties at the weekend, and where people go is worth knowing even on a short trip. North to Al Khor, the caravan cabins are QAR 1,500 and sleep around fifteen. Further up the coast at Al Ruwais, Cavilam Resort is QAR 1,200 for up to thirty and North Villa QAR 2,500 for as many as fifty.',
+            ar: 'تفرغ الدوحة في نهاية الأسبوع، ومن المفيد معرفة إلى أين يذهب الناس حتى في رحلة قصيرة. شمالاً إلى الخور، تبلغ كابينات الكرفان 1,500 ر.ق وتتّسع لنحو خمسة عشر شخصاً. وأبعد على الساحل في الرويس، منتجع كافيلام بـ1,200 ر.ق حتى ثلاثين شخصاً وفيلا الشمال بـ2,500 ر.ق لما يصل إلى خمسين.',
+          },
+          {
+            en: 'West into the desert at Al Shahaniya, Ghatha Resort is QAR 1,500 for fifteen and Stone Chalet QAR 2,500 for eight — smaller, quieter, and closer to open desert than to a beach. South at Sealine, the Mais Al Reem Caravan is QAR 2,000 for fifteen, which puts you where the safaris launch.',
+            ar: 'وغرباً في الصحراء عند الشحانية، منتجع غاثة بـ1,500 ر.ق لخمسة عشر وشاليه ستون بـ2,500 ر.ق لثمانية — أصغر وأهدأ وأقرب إلى الصحراء المفتوحة منها إلى الشاطئ. وجنوباً في سيلين، كرفان ميس الريم بـ2,000 ر.ق لخمسة عشر، ما يضعك حيث تنطلق رحلات السفاري.',
+          },
+          {
+            en: 'Inside the city, a Lusail Apartment at QAR 800 suits two, while Al Kadi Resort and J Rest Private Chalet are QAR 2,600 each for up to thirty. Because these are priced per property rather than per guest, a group almost always pays less per head here than for hotel rooms.',
+            ar: 'وداخل المدينة، شقة في لوسيل بـ800 ر.ق تناسب شخصين، بينما منتجع الكادي وشاليه J Rest الخاص بـ2,600 ر.ق لكل منهما حتى ثلاثين شخصاً. ولأن هذه تُسعَّر للعقار لا للنزيل، فإن المجموعة تدفع للفرد أقل من غرف الفنادق في معظم الحالات.',
+          },
+        ],
+      },
+      {
+        heading: { en: 'Common questions', ar: 'أسئلة شائعة' },
+        body: [
+          {
+            en: 'What is the single best thing to do in Doha? If you only do one, get on the water at sunset — it is the view the city is built around, and it starts at QAR 100 for a kayak. If you have a full day free instead, the QAR 150 desert safari is better value than anything else on this page.',
+            ar: 'ما أفضل شيء منفرد يمكن فعله في الدوحة؟ إن اخترت شيئاً واحداً فقط، فانزل إلى الماء عند الغروب — فهو المنظر الذي بُنيت المدينة حوله، ويبدأ من 100 ر.ق لكاياك. وإن كان لديك يوم كامل بدلاً من ذلك، فسفاري الصحراء بـ150 ر.ق أفضل قيمة من أي شيء آخر في هذه الصفحة.',
+          },
+          {
+            en: 'How many days do I need? Two covers the city and one desert day. Three lets you add the north — Al Zubarah, the Al Thakira mangroves and Al Jumail, reachable on the QAR 1,100 historical tour. Beyond that you are repeating yourself unless you are here to relax rather than sightsee.',
+            ar: 'كم يوماً أحتاج؟ يومان يغطيان المدينة ويوم صحراء واحداً. وثلاثة تتيح لك إضافة الشمال — الزبارة وأشجار القرم في الذخيرة والجميل، ويمكن الوصول إليها بجولة تاريخية بـ1,100 ر.ق. وما بعد ذلك تكرار، إلا إن كنت هنا للاسترخاء لا لمشاهدة المعالم.',
+          },
+          {
+            en: 'Is anything worth doing for free? Yes, and more than most Gulf cities. Souq Waqif, the Corniche promenade, Katara Cultural Village and the Msheireb streets all cost nothing to walk, and the skyline view across the bay after dark is the best free thing in the country.',
+            ar: 'هل هناك ما يستحق القيام به مجاناً؟ نعم، وأكثر من معظم مدن الخليج. فسوق واقف وممشى الكورنيش والحي الثقافي كتارا وشوارع مشيرب كلها مجانية للتجوّل، ومنظر الأفق عبر الخليج بعد المغيب هو أفضل شيء مجاني في البلاد.',
+          },
+          {
+            en: 'When is the worst time to visit? July and August. Temperatures pass 45°C, outdoor activity is limited to early morning and after sunset, and much of what makes Doha enjoyable happens outdoors. If those months are your only option, plan around water rather than desert and treat midday as indoor time.',
+            ar: 'ما أسوأ وقت للزيارة؟ يوليو وأغسطس. تتجاوز الحرارة 45 مئوية، وتقتصر الأنشطة الخارجية على الصباح الباكر وما بعد الغروب، وكثير مما يجعل الدوحة ممتعة يحدث في الخارج. وإن كان هذان الشهران خيارك الوحيد، فخطّط حول الماء بدل الصحراء واعتبر منتصف النهار وقتاً داخلياً.',
           },
         ],
       },
