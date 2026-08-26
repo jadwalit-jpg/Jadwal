@@ -19,7 +19,6 @@ import { VendorService } from '../../src/vendor/vendor.service';
 import { LoyaltyService } from '../../src/common/services/loyalty.service';
 import { BookingsService, refundCouponUsage } from '../../src/bookings/bookings.service';
 import { OffersController } from '../../src/catalog/offers.controller';
-import { BadRequestException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { makeSessionDenylistMock } from '../mocks/auth-deps.mock';
 

@@ -17,7 +17,6 @@ import {
 import { Type } from 'class-transformer';
 import { ExtraServiceItem } from './create-activity.dto';
 import { ACTIVITY_TITLE_REGEX, ACTIVITY_TITLE_MESSAGE } from '../../common/validators/name-allowlist';
-import { IsNotReservedSlug } from '../../common/validators/reserved-slug';
 
 enum BookingType {
   HOURLY = 'HOURLY',
