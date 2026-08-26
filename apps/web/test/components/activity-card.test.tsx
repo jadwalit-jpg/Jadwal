@@ -140,3 +140,24 @@ describe('<ActivityCard />', () => {
     expect(screen.getByText(/QAR\s*250/i)).toBeInTheDocument();
   });
 });
+
+describe('<ActivityCard /> — LCP preload is opt-in', () => {
+  // The default matters more than it looks. Every list on the site renders
+  // this card, so a `preload` that defaulted to true would emit a
+  // <link rel=preload as=image> for every activity in every grid — dozens of
+  // images racing the one that is actually the LCP element. The whole point of
+  // #602/#608 was to preload the FEW cards a caller measured above the fold.
+  it('is lazy by default so uncontrolled callers cannot flood the preload queue', () => {
+    render(<ActivityCard activity={base} />);
+
+    expect(screen.getByAltText('Desert Safari')).toHaveAttribute('loading', 'lazy');
+  });
+
+  it('drops loading="lazy" when the caller opts in', () => {
+    // next/image treats `preload` and `loading` as mutually exclusive — passing
+    // both throws at render. This pins the spread that keeps them apart.
+    render(<ActivityCard activity={base} preload />);
+
+    expect(screen.getByAltText('Desert Safari')).not.toHaveAttribute('loading');
+  });
+});
