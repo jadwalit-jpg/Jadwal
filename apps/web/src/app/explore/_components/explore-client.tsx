@@ -591,7 +591,22 @@ function ExploreContent({
                         src={activity.coverImage || activity.gallery[0]}
                         alt={localized(activity, 'title')}
                         fill
-                        sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                        // Derived from the real layout rather than rounded
+                        // guesses, because `sizes` is what picks the srcset
+                        // candidate and overstating it downloads a bigger image
+                        // than any screen will ever show. The grid sits in
+                        // `max-w-7xl mx-auto px-6` (48px of padding) with
+                        // `gap-6` (24px) between columns:
+                        //   <640px   1 column  -> 100vw - 48
+                        //   <1024px  2 columns -> (100vw - 48 - 24) / 2
+                        //   >=1024px 3 columns -> (min(100vw,1280) - 48 - 48)/3
+                        //                         = 394px at the capped width
+                        // The old value claimed 100vw/50vw/33vw. On mobile that
+                        // is 412px against a card that is actually 364px, and
+                        // on a 1920px screen `33vw` asks for ~634px for a card
+                        // that never exceeds 394px. Lighthouse measured 44 KiB
+                        // of waste from this on mobile alone.
+                        sizes="(max-width: 640px) calc(100vw - 48px), (max-width: 1024px) calc((100vw - 72px) / 2), 400px"
                         // `preload`, not the `priority` prop: Next 16 deprecates
                         // the latter (see get-img-props.d.ts). It emits a
                         // <link rel=preload> and drops the lazy attribute, which
