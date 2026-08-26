@@ -11,10 +11,10 @@
  * entirely (e.g. in staging). The hardcoded fallback is the ID the ads team
  * supplied so the tag works without a pipeline/env change.
  *
- * The tag is loaded by <GoogleTag> by DEFAULT (opt-out) for every visitor
- * unless they declined cookies — mirroring the Meta Pixel so every analytics
- * platform behaves identically. See components/google-tag.tsx +
- * context/cookie-consent.tsx.
+ * The tag is loaded by <GoogleTag> ONLY for visitors who actively accepted
+ * cookies (opt-in since 2026-08-26; undecided counts as no), mirroring the Meta
+ * Pixel so every analytics platform behaves identically. See
+ * components/google-tag.tsx + context/cookie-consent.tsx.
  */
 
 declare global {
@@ -35,9 +35,9 @@ export const GA4_MEASUREMENT_ID = process.env.NEXT_PUBLIC_GA4_ID ?? 'G-L7XMHJZNQ
 
 /**
  * Fire a Google Ads conversion. Safe to call unconditionally from anywhere in
- * the customer flow: it no-ops until gtag is loaded (opt-out — gtag loads by
- * default unless the visitor declined cookies), so a visitor who declined is
- * never tracked and callers don't need to know the consent state.
+ * the customer flow: it no-ops until gtag is loaded, and under opt-in gtag only
+ * loads for a visitor who accepted — so anyone who declined OR never chose is
+ * never tracked, and callers do not need to know the consent state.
  *
  * `sendTo` is the conversion label the ads team provides once they create a
  * conversion action, e.g. 'AW-11005501487/AbC-dEfGhIjK'.

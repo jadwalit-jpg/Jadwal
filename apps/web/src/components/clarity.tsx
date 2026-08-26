@@ -4,11 +4,15 @@
  * Loads Microsoft Clarity (session replay + heatmaps). Rendered once in the
  * root layout, beside <MetaPixel> and <GoogleTag>.
  *
- * Consent = OPT-OUT, matching the Meta Pixel and the Google tag so every
- * analytics platform on the site behaves identically: Clarity loads by DEFAULT
- * once the stored choice is read, EXCEPT for visitors who explicitly clicked
- * "Decline". Declining after load calls `clarity('consent', false)` so Microsoft
+ * Consent = OPT-IN (changed 2026-08-26), matching the Meta Pixel and the Google
+ * tag so every analytics platform on the site behaves identically: Clarity
+ * loads ONLY for visitors who actively clicked "Accept". Undecided counts as
+ * no. Declining after load still calls `clarity('consent', false)` so Microsoft
  * stops collecting.
+ *
+ * Previously opt-out — see meta-pixel.tsx for the PDPPL reasoning. It applies
+ * with most force here: an undecided visitor having their session RECORDED is
+ * the worst version of that default.
  *
  * WHAT MAKES THIS DIFFERENT from the other two: Clarity records what the user
  * actually sees and does, so the blast radius of getting it wrong is a replay
@@ -102,10 +106,11 @@ export default function Clarity() {
   // navigates onto an excluded route, before it has actually been requested.
   const dispose = useRef<IdleDisposer | null>(null);
 
-  // Opt-out: allowed once the stored choice is read (`hydrated`) unless the
-  // visitor previously declined. Waiting for `hydrated` ensures a prior
-  // "Decline" is respected before anything loads.
-  const allowed = hydrated && consent !== 'declined';
+  // OPT-IN: nothing records until the visitor has actively accepted. Undecided
+  // counts as "no". See meta-pixel.tsx for the PDPPL reasoning. It applies with
+  // most force here — Clarity records session replays, so an undecided visitor
+  // being recorded is the worst version of the opt-out default.
+  const allowed = hydrated && consent === 'accepted';
 
   useEffect(() => {
     if (!CLARITY_PROJECT_ID) return;

@@ -8,12 +8,14 @@
  * (G-…). gtag.js is designed for this — load once, then `config` per ID.
  * Loading it twice would double-count every page_view.
  *
- * Consent = OPT-OUT (mirrors MetaPixel): gtag loads by DEFAULT for every
- * visitor once the stored choice is read, EXCEPT visitors who explicitly
- * clicked "Decline" (consent === 'declined'). Declining after load calls
- * gtag('consent','update', ...denied) so Google stops using the data. (An
- * Accept-first gate kills ad-conversion tracking because most ad visitors
- * never click Accept — same reasoning as the Meta Pixel.)
+ * Consent = OPT-IN (changed 2026-08-26, mirrors MetaPixel): gtag loads ONLY
+ * for visitors who actively clicked "Accept". Undecided counts as no.
+ * Declining after load still calls gtag('consent','update', ...denied) so
+ * Google stops using the data.
+ *
+ * Previously opt-out. Qatar's PDPPL has no legitimate-interest basis and no
+ * provision for implied consent, and Google Ads remarketing is direct
+ * marketing — see meta-pixel.tsx for the full reasoning.
  *
  * CSP: the app's script-src uses 'strict-dynamic', so a <script> element
  * inserted by our (nonce-trusted) bundle is itself trusted — gtag.js and every
@@ -82,10 +84,11 @@ export default function GoogleTag() {
   // Cancels the pending gtag.js download if the visitor declines first.
   const dispose = useRef<IdleDisposer | null>(null);
 
-  // Opt-out: allowed by default once the stored choice is read (`hydrated`),
-  // unless the visitor previously declined. Waiting for `hydrated` ensures a
-  // prior "Decline" is respected before anything fires.
-  const allowed = hydrated && consent !== 'declined';
+  // OPT-IN: nothing fires until the visitor has actively accepted. Undecided
+  // counts as "no". See meta-pixel.tsx for the full reasoning — in short,
+  // Qatar's PDPPL has no legitimate-interest basis and no provision for
+  // implied consent, and Google Ads remarketing is direct marketing.
+  const allowed = hydrated && consent === 'accepted';
 
   // Load gtag once, on the first trackable customer page.
   useEffect(() => {

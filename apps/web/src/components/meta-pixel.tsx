@@ -4,11 +4,20 @@
  * Loads the Meta (Facebook) Pixel and fires a PageView on every client-side
  * navigation. Rendered once in the root layout.
  *
- * Consent = OPT-OUT: the pixel loads by DEFAULT for every visitor once the
- * stored choice is read, EXCEPT visitors who explicitly clicked "Decline"
- * (consent === 'declined'). Declining after load calls fbq('consent','revoke')
- * so Meta stops receiving events. (An Accept-first gate killed ad-conversion
- * tracking because most ad visitors never click Accept.)
+ * Consent = OPT-IN (changed 2026-08-26): the pixel loads ONLY for visitors who
+ * actively clicked "Accept". Undecided counts as no. Declining after load still
+ * calls fbq('consent','revoke') so Meta stops receiving events.
+ *
+ * This was previously opt-out, on the reasoning that an Accept-first gate kills
+ * ad-conversion tracking because most ad visitors never click Accept. That
+ * reasoning is commercially true and legally unavailable here. Qatar's PDPPL
+ * (Law No. 13 of 2016) is consent-centric with NO legitimate-interest basis to
+ * fall back on — Article 4 has no provision for implied or opt-out consent —
+ * and it prohibits direct marketing without "explicit and unambiguous consent".
+ * This pixel is direct marketing: Purchase with currency and value,
+ * InitiateCheckout, Lead, CompleteRegistration.
+ *
+ * The cost is real and was accepted deliberately: fewer tracked conversions.
  *
  * CSP: the app's script-src uses 'strict-dynamic', so a <script> element
  * inserted by our (nonce-trusted) bundle is itself trusted — fbevents.js loads
@@ -66,10 +75,19 @@ export default function MetaPixel() {
   // Cancels the pending fbevents.js download if the visitor declines first.
   const dispose = useRef<IdleDisposer | null>(null);
 
-  // Opt-out: allowed by default once the stored choice is read (`hydrated`),
-  // unless the visitor previously declined. Waiting for `hydrated` ensures a
-  // prior "Decline" is respected before anything fires.
-  const allowed = hydrated && consent !== 'declined';
+  // OPT-IN: nothing fires until the visitor has actively accepted. Undecided
+  // counts as "no", which is the opposite of what this used to do.
+  //
+  // Qatar's PDPPL (Law No. 13 of 2016) is consent-centric and, unlike the GDPR,
+  // has NO legitimate-interest basis to fall back on — Article 4 carries no
+  // provision for implied or opt-out consent. It also prohibits direct
+  // marketing without "explicit and unambiguous consent", and this pixel is
+  // squarely a direct-marketing tool: it fires Purchase with real currency and
+  // value, plus InitiateCheckout, Lead and CompleteRegistration.
+  //
+  // `hydrated` still gates everything, so the stored choice is read before any
+  // decision is made.
+  const allowed = hydrated && consent === 'accepted';
 
   // Load the pixel once, on the first trackable customer page.
   useEffect(() => {
