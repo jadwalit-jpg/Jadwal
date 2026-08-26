@@ -35,6 +35,15 @@ export const dynamic = 'force-dynamic';
 
 const GRID_LIMIT = 12;
 
+/**
+ * How many leading cards get their image preloaded as the LCP candidate.
+ *
+ * Two, measured rather than guessed: on /desert-safari-qatar at 412x823 the
+ * grid is one column, card 0 lands at 400px and card 1 at 815px — both inside
+ * the fold — and card 2 at 1,229px is off screen.
+ */
+const LCP_CANDIDATE_CARDS = 2;
+
 function siteOrigin(): string {
   try {
     return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://jadwal.qa').origin;
@@ -150,8 +159,20 @@ export default async function LandingPage({
         <section className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
           {cards.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
-              {cards.map((c) => (
-                <ActivityCard key={c.id} activity={c} size="fill" />
+              {cards.map((c, i) => (
+                <ActivityCard
+                  key={c.id}
+                  activity={c}
+                  size="fill"
+                  // Measured on /desert-safari-qatar at 412x823: card 0 sits at
+                  // 400px and card 1 at 815px — both inside the 823px fold —
+                  // while card 2 is at 1,229px and off screen. Card 0's image is
+                  // the LCP element (75,600 px², bigger than the h1), and it was
+                  // lazy with no preload, so every LCP-discovery check failed.
+                  // Two, not more: preloading off-screen images would steal
+                  // bandwidth from the ones actually visible.
+                  preload={i < LCP_CANDIDATE_CARDS}
+                />
               ))}
             </div>
           ) : (
