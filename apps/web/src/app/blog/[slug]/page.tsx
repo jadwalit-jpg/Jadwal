@@ -88,6 +88,12 @@ export default async function GuidePage({
     .filter((l): l is NonNullable<typeof l> => !!l && l.launched);
   const picks = await guidePicks(related);
 
+  // Absolute URL in the CURRENT language. Schema on /ar/blog/x must point at
+  // the /ar twins: the page is self-canonical per language, so linking its
+  // structured data at the English URLs tells Google the Arabic page is about
+  // English pages, and leaks crawl equity out of the /ar tree.
+  const abs = (path: string) => `${origin}${localePath(path, lang)}`;
+
   const articleLd = {
     '@context': 'https://schema.org',
     '@type': 'Article',
@@ -96,7 +102,7 @@ export default async function GuidePage({
     inLanguage: lang === 'ar' ? 'ar-QA' : 'en-QA',
     datePublished: guide.updated,
     dateModified: guide.updated,
-    mainEntityOfPage: `${origin}/blog/${guide.slug}`,
+    mainEntityOfPage: abs(`/blog/${guide.slug}`),
     author: { '@type': 'Organization', name: 'AL Jadwal', url: `${origin}/` },
     publisher: {
       '@type': 'Organization',
@@ -108,9 +114,9 @@ export default async function GuidePage({
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: `${origin}/` },
-      { '@type': 'ListItem', position: 2, name: isAr ? 'الدليل' : 'Guides', item: `${origin}/blog` },
-      { '@type': 'ListItem', position: 3, name: tr(guide.title, lang), item: `${origin}/blog/${guide.slug}` },
+      { '@type': 'ListItem', position: 1, name: isAr ? 'الرئيسية' : 'Home', item: abs('/') },
+      { '@type': 'ListItem', position: 2, name: isAr ? 'الدليل' : 'Guides', item: abs('/blog') },
+      { '@type': 'ListItem', position: 3, name: tr(guide.title, lang), item: abs(`/blog/${guide.slug}`) },
     ],
   };
   // ItemList over the real picks. "Best X in Doha" queries are list-intent, and
@@ -129,7 +135,7 @@ export default async function GuidePage({
           itemListElement: picks.map((p, i) => ({
             '@type': 'ListItem',
             position: i + 1,
-            url: `${origin}/activity/${p.slug}`,
+            url: abs(`/activity/${p.slug}`),
             name: isAr && p.titleAr ? p.titleAr : p.titleEn,
           })),
         }
