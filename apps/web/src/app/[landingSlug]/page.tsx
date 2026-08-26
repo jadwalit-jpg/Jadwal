@@ -35,6 +35,34 @@ export const dynamic = 'force-dynamic';
 
 const GRID_LIMIT = 12;
 
+/**
+ * How many leading cards get their image preloaded as the LCP candidate.
+ *
+ * ONE — and the count is deliberately viewport-blind, because a preload is an
+ * SSR decision: the `<link rel=preload>` is emitted before any viewport is
+ * known, so it fires on every device. `imagesizes` lets the browser pick the
+ * right SRC, but not whether to fetch at all. The grid is responsive
+ * (1 col → 2 at sm → 3 at lg), so "cards above the fold" is 1, 2 or 3 depending
+ * on the device — one static number has to serve all three.
+ *
+ * Mobile wins that tie (locked mobile-first rule, and it is where bandwidth is
+ * scarcest and the Lighthouse score is worst). Measured at 412x823, one column,
+ * 200px-tall card images:
+ *
+ *   /yacht-rental-qatar   card 0 → top 364, 100% visible | card 1 → top 779,  22% (45px)
+ *   /desert-safari-qatar  card 0 → top 400, 100% visible | card 1 → top 815,   4% (8px)
+ *
+ * Card 1 is a sliver on both, and card 2 (1,193px / 1,229px) is off screen
+ * entirely. Preloading card 1 would spend bandwidth racing the image that IS
+ * the LCP element — card 0 — for a strip most visitors scroll past before it
+ * paints. On desktop cards 1-2 stay lazy, which is the cheap side of the
+ * trade: they are one row down at a viewport that is not bandwidth-bound.
+ *
+ * Copy length shifts card 0 by ~36px between slugs; it stays fully visible in
+ * both, so the count is stable across the launched registry.
+ */
+const LCP_CANDIDATE_CARDS = 1;
+
 function siteOrigin(): string {
   try {
     return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://jadwal.qa').origin;
@@ -150,8 +178,17 @@ export default async function LandingPage({
         <section className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
           {cards.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
-              {cards.map((c) => (
-                <ActivityCard key={c.id} activity={c} size="fill" />
+              {cards.map((c, i) => (
+                <ActivityCard
+                  key={c.id}
+                  activity={c}
+                  size="fill"
+                  // Card 0's image is the LCP element here (75,600 px², bigger
+                  // than the h1) and it shipped lazy with no preload, so every
+                  // one of Lighthouse's LCP-discovery checks failed. See
+                  // LCP_CANDIDATE_CARDS above for why the count is exactly 1.
+                  preload={i < LCP_CANDIDATE_CARDS}
+                />
               ))}
             </div>
           ) : (
