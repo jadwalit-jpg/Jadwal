@@ -350,9 +350,9 @@ export const SEO_GUIDES: SeoGuide[] = [
     relatedLandings: ['desert-safari-qatar', 'caravan-rental-qatar', 'resorts-chalets-qatar'],
   },
   {
-    // ── DRAFT — published:false. Renders but noindex, and excluded from the
-    // blog index + sitemap, so nothing is public until the owner approves.
-    // Open fact-checks live in JADWAL_GUIDE_CONTENT_GAPS.md (owner's desktop).
+    // Written 2026-08-26 from live catalogue values, then published once the
+    // owner confirmed the open facts (notably the dhow's 105-person capacity,
+    // which the per-head pricing argument below leans on).
     slug: 'best-water-activities-in-doha',
     published: true,
     priority: 0.7,
@@ -443,7 +443,7 @@ export const SEO_GUIDES: SeoGuide[] = [
         heading: { en: 'Practical notes before you book', ar: 'ملاحظات عملية قبل الحجز' },
         body: [
           {
-            en: 'Most of these boats are listed at Box Park, so allow travel time from wherever you are staying. Book ahead for Friday and Saturday — the local weekend in Qatar, and so the days demand concentrates on, particularly in peak season.',
+            en: 'Most of these boats are listed at Box Park, so allow travel time from wherever you are staying. Book ahead for Friday and Saturday: they are the local weekend in Qatar, so demand concentrates there, especially in peak season.',
             ar: 'معظم هذه القوارب مُدرجة في بوكس بارك، لذا احسب وقت التنقّل من مكان إقامتك. واحجز مسبقاً ليومي الجمعة والسبت — عطلة نهاية الأسبوع المحلية في قطر، وبالتالي اليومان اللذان يتركّز فيهما الطلب — خصوصاً في موسم الذروة.',
           },
           {
@@ -456,8 +456,6 @@ export const SEO_GUIDES: SeoGuide[] = [
     relatedLandings: ['water-activities-qatar', 'yacht-rental-qatar', 'doha-boat-tour'],
   },
   {
-    // ── DRAFT — published:false. See the note on best-water-activities-in-doha.
-    //
     // DELIBERATE SCOPE SPLIT: this guide stays INSIDE Doha and leans towards
     // short-trip, no-car visitors. `things-to-do-in-qatar` covers the whole
     // country (Sealine, Al Khor, the north). Two pages saying the same thing
