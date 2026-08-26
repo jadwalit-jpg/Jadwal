@@ -83,6 +83,8 @@ jobs:
           push: true
           pull: true                    # force fresh node:20-alpine base
           platforms: linux/amd64        # ECS Fargate x86 — never push arm64
+          build-args: |
+            APK_SECURITY_BUST=${{ github.sha }}
           tags: |
             ${{ env.ECR_REGISTRY }}/jadwal-api:${{ github.sha }}
           cache-from: type=gha
@@ -138,6 +140,7 @@ jobs:
             NEXT_PUBLIC_CDN_URL=${{ vars.NEXT_PUBLIC_CDN_URL }}
             NEXT_PUBLIC_SITE_URL=${{ vars.NEXT_PUBLIC_SITE_URL }}
             API_PROXY_TARGET=${{ vars.API_PROXY_TARGET }}
+            APK_SECURITY_BUST=${{ github.sha }}
           tags: |
             ${{ env.ECR_REGISTRY }}/jadwal-web:${{ github.sha }}
           cache-from: type=gha
@@ -170,6 +173,8 @@ jobs:
           push: true
           pull: true
           platforms: linux/amd64
+          build-args: |
+            APK_SECURITY_BUST=${{ github.sha }}
           tags: |
             ${{ env.ECR_REGISTRY }}/jadwal-migrations:${{ github.sha }}
           cache-from: type=gha

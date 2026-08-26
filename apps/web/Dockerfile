@@ -113,7 +113,22 @@ ENV NODE_ENV=production
 # older Alpine whose openssl carries CVE-2026-45447 (HIGH, fixed in 3.5.7-r0),
 # which the deploy's Trivy CRITICAL,HIGH gate blocks on. Upgrade just these two
 # packages (runner stage only — this is the image that ships + gets scanned).
-RUN apk upgrade --no-cache libcrypto3 libssl3
+#
+# APK_SECURITY_BUST exists because `--no-cache` above clears APK's package
+# INDEX cache, NOT Docker's LAYER cache. The deploy workflow builds with
+# `cache-from: type=gha`, and this RUN's cache key never changed — so buildx
+# replayed a layer built long before, and the image kept shipping whatever
+# openssl was current back then. That is how this line was added for
+# CVE-2026-45447 (fixed in 3.5.7-r0) and then CVE-2026-14456 (fixed in
+# 3.5.8-r0) silently blocked EVERY deploy on 2026-08-26 while the Dockerfile
+# looked correct.
+#
+# The workflow passes the commit sha, so the upgrade genuinely re-runs on
+# every build. Cost: a few seconds and one uncached layer. The alternative is
+# rediscovering this by hand the next time an OpenSSL CVE lands.
+ARG APK_SECURITY_BUST=dev
+RUN echo "apk security upgrade (bust=${APK_SECURITY_BUST})" \
+ && apk upgrade --no-cache libcrypto3 libssl3
 
 # Security: non-root user
 RUN addgroup --system --gid 1001 jadwal && \
