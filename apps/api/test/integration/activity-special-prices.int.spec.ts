@@ -199,7 +199,6 @@ describe('Special prices — booking is charged the override', () => {
       data: { bookingType: 'DAILY', pricingModel: 'PER_UNIT', pricePerPerson: 100, durationValue: null, checkInTime: '14:00', checkOutTime: '11:00', capacity: 10, hasUnits: false, activeDays: [] },
     });
     const night1 = futureDate(20);
-    const night2 = futureDate(21);
     // Override only night1 → total = 150 + 100 = 250.
     await vendor.createActivitySpecialPrice(seed.vendorUser.id, seed.activity.id, { date: night1, price: 150 });
 
