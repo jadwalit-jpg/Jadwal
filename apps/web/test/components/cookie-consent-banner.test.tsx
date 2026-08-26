@@ -15,8 +15,10 @@ import userEvent from '@testing-library/user-event';
 
 const accept = jest.fn();
 const decline = jest.fn();
+const reopen = jest.fn();
 let mockConsent: 'accepted' | 'declined' | null = null;
 let mockHydrated = true;
+let mockReopened = false;
 
 jest.mock('@/context/cookie-consent', () => ({
   useCookieConsent: () => ({
@@ -24,6 +26,10 @@ jest.mock('@/context/cookie-consent', () => ({
     hydrated: mockHydrated,
     accept,
     decline,
+    reopen,
+    // Mirrors the provider's own derivation so these tests exercise the real
+    // rule rather than a convenient shortcut.
+    bannerOpen: mockHydrated && (mockConsent === null || mockReopened),
   }),
 }));
 
@@ -36,8 +42,10 @@ import CookieConsentBanner from '@/components/cookie-consent-banner';
 beforeEach(() => {
   accept.mockClear();
   decline.mockClear();
+  reopen.mockClear();
   mockConsent = null;
   mockHydrated = true;
+  mockReopened = false;
 });
 
 describe('CookieConsentBanner — visibility', () => {
@@ -64,6 +72,20 @@ describe('CookieConsentBanner — visibility', () => {
       render(<CookieConsentBanner />);
 
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    },
+  );
+
+  test.each([['accepted'], ['declined']] as const)(
+    'comes back when re-opened after choosing %s',
+    (choice) => {
+      // The PDPPL right to withdraw consent, which the Privacy Policy promises.
+      // The banner never reappears on its own, so re-opening it from the footer
+      // is the only mechanism there is for changing a past decision.
+      mockConsent = choice;
+      mockReopened = true;
+      render(<CookieConsentBanner />);
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
     },
   );
 });

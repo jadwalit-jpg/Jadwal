@@ -24,11 +24,12 @@ import { cn } from '@/lib/utils';
 const TRANSITION_MS = 300;
 
 export default function CookieConsentBanner() {
-  const { consent, hydrated, accept, decline } = useCookieConsent();
+  const { bannerOpen, accept, decline } = useCookieConsent();
   const { t } = useTranslation();
 
-  const show = hydrated && consent === null;
-  const { mounted, visible } = useMountTransition(show, TRANSITION_MS);
+  // `bannerOpen` covers both cases: never decided, or re-opened from the footer
+  // to change an earlier decision (the PDPPL right to withdraw consent).
+  const { mounted, visible } = useMountTransition(bannerOpen, TRANSITION_MS);
 
   if (!mounted) return null;
 
