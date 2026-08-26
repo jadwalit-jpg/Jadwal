@@ -38,11 +38,30 @@ const GRID_LIMIT = 12;
 /**
  * How many leading cards get their image preloaded as the LCP candidate.
  *
- * Two, measured rather than guessed: on /desert-safari-qatar at 412x823 the
- * grid is one column, card 0 lands at 400px and card 1 at 815px — both inside
- * the fold — and card 2 at 1,229px is off screen.
+ * ONE — and the count is deliberately viewport-blind, because a preload is an
+ * SSR decision: the `<link rel=preload>` is emitted before any viewport is
+ * known, so it fires on every device. `imagesizes` lets the browser pick the
+ * right SRC, but not whether to fetch at all. The grid is responsive
+ * (1 col → 2 at sm → 3 at lg), so "cards above the fold" is 1, 2 or 3 depending
+ * on the device — one static number has to serve all three.
+ *
+ * Mobile wins that tie (locked mobile-first rule, and it is where bandwidth is
+ * scarcest and the Lighthouse score is worst). Measured at 412x823, one column,
+ * 200px-tall card images:
+ *
+ *   /yacht-rental-qatar   card 0 → top 364, 100% visible | card 1 → top 779,  22% (45px)
+ *   /desert-safari-qatar  card 0 → top 400, 100% visible | card 1 → top 815,   4% (8px)
+ *
+ * Card 1 is a sliver on both, and card 2 (1,193px / 1,229px) is off screen
+ * entirely. Preloading card 1 would spend bandwidth racing the image that IS
+ * the LCP element — card 0 — for a strip most visitors scroll past before it
+ * paints. On desktop cards 1-2 stay lazy, which is the cheap side of the
+ * trade: they are one row down at a viewport that is not bandwidth-bound.
+ *
+ * Copy length shifts card 0 by ~36px between slugs; it stays fully visible in
+ * both, so the count is stable across the launched registry.
  */
-const LCP_CANDIDATE_CARDS = 2;
+const LCP_CANDIDATE_CARDS = 1;
 
 function siteOrigin(): string {
   try {
@@ -164,13 +183,10 @@ export default async function LandingPage({
                   key={c.id}
                   activity={c}
                   size="fill"
-                  // Measured on /desert-safari-qatar at 412x823: card 0 sits at
-                  // 400px and card 1 at 815px — both inside the 823px fold —
-                  // while card 2 is at 1,229px and off screen. Card 0's image is
-                  // the LCP element (75,600 px², bigger than the h1), and it was
-                  // lazy with no preload, so every LCP-discovery check failed.
-                  // Two, not more: preloading off-screen images would steal
-                  // bandwidth from the ones actually visible.
+                  // Card 0's image is the LCP element here (75,600 px², bigger
+                  // than the h1) and it shipped lazy with no preload, so every
+                  // one of Lighthouse's LCP-discovery checks failed. See
+                  // LCP_CANDIDATE_CARDS above for why the count is exactly 1.
                   preload={i < LCP_CANDIDATE_CARDS}
                 />
               ))}
