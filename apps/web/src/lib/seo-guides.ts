@@ -91,8 +91,8 @@ export const SEO_GUIDES: SeoGuide[] = [
             ar: 'القوارب السريعة هي الخيار الأوسط الأكثر شعبية، ولأن السعر يشمل القارب كاملاً فإن قيمتها تتحسّن كلما زاد عددكم: 350 ر.ق حتى أربعة أشخاص، و450 ر.ق لخمسة، و600 ر.ق لثمانية، وقارب Q السريع بـ800 ر.ق لعشرة — أي نحو 80 ر.ق للفرد. وإذا أردت النسخة المليئة بالأدرينالين، فجلسة التزلج على الماء بـ550 ر.ق، وركوب الموزة بـ600 ر.ق، والفلاي بورد مع الجيت سكي بـ1,000 ر.ق.',
           },
           {
-            en: 'At the top end are private charters. Yachts run from QAR 1,200 for the C-Ray up to QAR 1,600 for the Q Luxury Yacht, with a Catamaran at QAR 1,800 for four hours. For a full day with a group, houseboats go from QAR 3,000 — and a Traditional Dhow, the wooden boat Qatar built its pearling trade on, is QAR 2,000 and takes a genuinely large party. Most launch from Box Park on the old Doha port side.',
-            ar: 'في الفئة الأعلى تأتي الرحلات الخاصة. تبدأ اليخوت من 1,200 ر.ق ليخت C-Ray وحتى 1,600 ر.ق لليخت الفاخر Q، مع كاتاماران بـ1,800 ر.ق لأربع ساعات. ولقضاء يوم كامل مع مجموعة، تبدأ البيوت العائمة من 3,000 ر.ق — أما مركب الداو التقليدي، القارب الخشبي الذي بنت عليه قطر تجارة اللؤلؤ، فبـ2,000 ر.ق ويتّسع لمجموعة كبيرة فعلاً. وتنطلق معظمها من بوكس بارك في ميناء الدوحة القديم.',
+            en: 'At the top end are private charters. Yachts run from QAR 1,200 for the C-Ray up to QAR 1,600 for the Q Luxury Yacht, with a Catamaran at QAR 1,800 for four hours. For a full day with a group, houseboats go from QAR 3,000 — and a Traditional Dhow, the wooden boat Qatar built its pearling trade on, is QAR 2,000 and takes up to 105 people. Most of these boats are listed at Box Park.',
+            ar: 'في الفئة الأعلى تأتي الرحلات الخاصة. تبدأ اليخوت من 1,200 ر.ق ليخت C-Ray وحتى 1,600 ر.ق لليخت الفاخر Q، مع كاتاماران بـ1,800 ر.ق لأربع ساعات. ولقضاء يوم كامل مع مجموعة، تبدأ البيوت العائمة من 3,000 ر.ق — أما مركب الداو التقليدي، القارب الخشبي الذي بنت عليه قطر تجارة اللؤلؤ، فبـ2,000 ر.ق ويتّسع حتى 105 أشخاص. ومعظم هذه القوارب مُدرجة في بوكس بارك.',
           },
           {
             en: 'Fishing is its own category: Balhambar and Marlin both run four-hour boat fishing trips at QAR 1,500. And Public Al Safliya Island Water Sports at QAR 125 is a four-hour trip out to the island — priced per person rather than per boat, and the cheapest way to combine a crossing with time actually in the water.',
@@ -255,8 +255,8 @@ export const SEO_GUIDES: SeoGuide[] = [
             ar: 'الدوحة مدينة تعتمد على السيارة. سيارات الأجرة وتطبيقات النقل رخيصة ومتوفّرة، لكن التنقّل مشياً بين الأحياء غير مريح تقريباً، لذا احسب عشرين إلى ثلاثين دقيقة لكل انتقال. أما المترو فنظيف وسريع على الخطوط التي يغطيها، ومنها المطار ومشيرب وكتارا.',
           },
           {
-            en: 'On timing: this itinerary assumes the October-to-April season. Between June and August, temperatures pass 45°C and the desert day should move to early morning or become an overnight instead. Book weekend activities ahead in peak season — Friday and Saturday are the local weekend, and that is when everything fills.',
-            ar: 'أما التوقيت: تفترض هذه الخطة موسم أكتوبر إلى أبريل. وبين يونيو وأغسطس تتجاوز الحرارة 45 مئوية، وينبغي نقل يوم الصحراء إلى الصباح الباكر أو تحويله إلى مبيت. واحجز أنشطة نهاية الأسبوع مسبقاً في الموسم — فالجمعة والسبت هما عطلة نهاية الأسبوع المحلية، وفيهما يمتلئ كل شيء.',
+            en: 'On timing: this itinerary assumes the October-to-April season. Between June and August, temperatures pass 45°C and the desert day should move to early morning or become an overnight instead. Book weekend activities ahead in peak season — Friday and Saturday are the local weekend in Qatar, so demand concentrates on those two days.',
+            ar: 'أما التوقيت: تفترض هذه الخطة موسم أكتوبر إلى أبريل. وبين يونيو وأغسطس تتجاوز الحرارة 45 مئوية، وينبغي نقل يوم الصحراء إلى الصباح الباكر أو تحويله إلى مبيت. واحجز أنشطة نهاية الأسبوع مسبقاً في الموسم — فالجمعة والسبت هما عطلة نهاية الأسبوع المحلية في قطر، لذا يتركّز الطلب في هذين اليومين.',
           },
         ],
       },
@@ -332,8 +332,8 @@ export const SEO_GUIDES: SeoGuide[] = [
             ar: 'أحذية مغلقة بدل الصنادل — فالرمل يتسلل إلى كل مكان والكثبان أشدّ انحداراً مما تبدو من الطريق. ونظارة شمسية وواقٍ من الشمس في أي موسم، لأن انعكاس الضوء عن الرمل الفاتح لا يرحم حتى في يناير. وسترة أو معطف خفيف للمساء، خصوصاً في المبيت؛ فانخفاض الحرارة بعد الغروب يفاجئ معظم الزوار لأول مرة.',
           },
           {
-            en: 'On dune driving specifically: it is a rollercoaster, not a scenic drive. If anyone in your group is prone to motion sickness, eat lightly beforehand and ask the driver for a gentler run — most operators will accommodate that, but only if you say so before you set off.',
-            ar: 'وعن القيادة على الكثبان تحديداً: إنها أشبه بأفعوانية لا برحلة مناظر. إن كان أحد في مجموعتك عرضة لدوار الحركة، فتناول طعاماً خفيفاً قبلها واطلب من السائق جولة ألطف — ومعظم المشغّلين يستجيبون لذلك، لكن فقط إن قلت ذلك قبل الانطلاق.',
+            en: 'On dune driving specifically: it is a rollercoaster, not a scenic drive. If anyone in your group is prone to motion sickness, eat lightly beforehand and say so to the driver before you set off — asking for a gentler run is a normal request, and much easier to make at the start than halfway up a dune.',
+            ar: 'وعن القيادة على الكثبان تحديداً: إنها أشبه بأفعوانية لا برحلة مناظر. إن كان أحد في مجموعتك عرضة لدوار الحركة، فتناول طعاماً خفيفاً قبلها وأخبر السائق قبل الانطلاق — فطلب جولة ألطف أمر معتاد، ومن الأسهل بكثير قوله في البداية لا في منتصف كثيب رملي.',
           },
         ],
       },
@@ -341,8 +341,8 @@ export const SEO_GUIDES: SeoGuide[] = [
         heading: { en: 'Booking ahead', ar: 'الحجز المسبق' },
         body: [
           {
-            en: 'In peak season, book at least a few days out for a weekend departure. Friday and Saturday fill first, and overnight camps have fewer places than day trips, so they go earliest. Outside the peak months you can often book same-week without trouble.',
-            ar: 'في موسم الذروة، احجز قبل أيام على الأقل لانطلاقة في نهاية الأسبوع. تمتلئ الجمعة والسبت أولاً، ومخيمات المبيت أماكنها أقل من رحلات اليوم الواحد فتُحجز أسرع. أما خارج أشهر الذروة فيمكنك غالباً الحجز في الأسبوع نفسه دون مشكلة.',
+            en: 'In peak season, book a few days out if you want a weekend departure. Friday and Saturday are the local weekend in Qatar, so that is when demand concentrates — the same two days everyone else is also free. Outside the peak months there is far more availability.',
+            ar: 'في موسم الذروة، احجز قبل أيام إن أردت انطلاقة في نهاية الأسبوع. فالجمعة والسبت هما عطلة نهاية الأسبوع المحلية في قطر، وفيهما يتركّز الطلب — اليومان نفسهما اللذان يكون فيهما الجميع متفرّغاً. أما خارج أشهر الذروة فالتوافر أكبر بكثير.',
           },
         ],
       },
@@ -350,11 +350,11 @@ export const SEO_GUIDES: SeoGuide[] = [
     relatedLandings: ['desert-safari-qatar', 'caravan-rental-qatar', 'resorts-chalets-qatar'],
   },
   {
-    // ── DRAFT — published:false. Renders but noindex, and excluded from the
-    // blog index + sitemap, so nothing is public until the owner approves.
-    // Open fact-checks live in JADWAL_GUIDE_CONTENT_GAPS.md (owner's desktop).
+    // Written 2026-08-26 from live catalogue values, then published once the
+    // owner confirmed the open facts (notably the dhow's 105-person capacity,
+    // which the per-head pricing argument below leans on).
     slug: 'best-water-activities-in-doha',
-    published: false,
+    published: true,
     priority: 0.7,
     updated: '2026-08-26',
     title: {
@@ -417,8 +417,8 @@ export const SEO_GUIDES: SeoGuide[] = [
         heading: { en: 'QAR 2,000 and up — full-day charters', ar: 'من 2,000 ر.ق فأكثر — رحلات اليوم الكامل' },
         body: [
           {
-            en: 'At the top end you are chartering the whole vessel, and the capacities change the arithmetic completely. A Traditional Dhow rental is QAR 2,000 for four hours and holds a large party — for a sizeable event that works out at a few riyals a head, cheaper per person than a single kayak. The Safliyah water sports Trip is QAR 2,500 for five hours and takes 60.',
-            ar: 'في الفئة العليا أنت تستأجر القارب بأكمله، والسعات تغيّر الحساب تماماً. استئجار مركب داو تقليدي بـ2,000 ر.ق لأربع ساعات ويتّسع لمجموعة كبيرة — وفي مناسبة كبيرة الحجم يصبح ذلك بضعة ريالات للفرد، أرخص للشخص من كاياك فردي واحد. ورحلة الرياضات المائية في الصفلية بـ2,500 ر.ق لخمس ساعات وتتّسع لستين.',
+            en: 'At the top end you are chartering the whole vessel, and the capacities change the arithmetic completely. A Traditional Dhow rental is QAR 2,000 for four hours and holds up to 105 people — at capacity that is roughly QAR 19 a head, which makes the most traditional boat on this page also the cheapest per person, undercutting a single kayak. The Safliyah water sports Trip is QAR 2,500 for five hours and takes 60.',
+            ar: 'في الفئة العليا أنت تستأجر القارب بأكمله، والسعات تغيّر الحساب تماماً. استئجار مركب داو تقليدي بـ2,000 ر.ق لأربع ساعات ويتّسع حتى 105 أشخاص — أي نحو 19 ر.ق للفرد عند اكتمال السعة، ما يجعل أعرق قارب في هذه الصفحة أرخصها أيضاً للشخص الواحد، بأقل من كاياك فردي. ورحلة الرياضات المائية في الصفلية بـ2,500 ر.ق لخمس ساعات وتتّسع لستين.',
           },
           {
             en: 'Houseboats are the most expensive per booking and all run four hours: the Royal Home Houseboat at QAR 3,000 for 25 people, the Q Houseboat at QAR 3,000 for 20, and a standard Houseboat at QAR 3,800 for 25. The dhow is still worth singling out though — it is the wooden boat Qatar built its pearling economy on, which makes it the one trip on this page that is about the country rather than the view.',
@@ -443,8 +443,8 @@ export const SEO_GUIDES: SeoGuide[] = [
         heading: { en: 'Practical notes before you book', ar: 'ملاحظات عملية قبل الحجز' },
         body: [
           {
-            en: 'Most departures are from Box Park on the old Doha port side, so allow travel time from wherever you are staying. Book ahead for Friday and Saturday — the local weekend — particularly in peak season, when the larger boats go first.',
-            ar: 'تنطلق معظم الرحلات من بوكس بارك في ميناء الدوحة القديم، لذا احسب وقت التنقّل من مكان إقامتك. واحجز مسبقاً ليومي الجمعة والسبت — عطلة نهاية الأسبوع المحلية — خصوصاً في موسم الذروة حين تُحجز القوارب الكبيرة أولاً.',
+            en: 'Most of these boats are listed at Box Park, so allow travel time from wherever you are staying. Book ahead for Friday and Saturday: they are the local weekend in Qatar, so demand concentrates there, especially in peak season.',
+            ar: 'معظم هذه القوارب مُدرجة في بوكس بارك، لذا احسب وقت التنقّل من مكان إقامتك. واحجز مسبقاً ليومي الجمعة والسبت — عطلة نهاية الأسبوع المحلية في قطر، وبالتالي اليومان اللذان يتركّز فيهما الطلب — خصوصاً في موسم الذروة.',
           },
           {
             en: 'Bring more sun protection than you think you need; glare off the water roughly doubles the exposure. And understand how these prices work: with one exception on this page — Public Al Safliya Island Water Sports, which is per person — every price quoted here is for the entire boat, however many of you board it. That changes the arithmetic completely. A QAR 800 Q Speed Boat is QAR 80 each for ten people. Work out the per-head figure before deciding something is out of reach.',
@@ -456,14 +456,12 @@ export const SEO_GUIDES: SeoGuide[] = [
     relatedLandings: ['water-activities-qatar', 'yacht-rental-qatar', 'doha-boat-tour'],
   },
   {
-    // ── DRAFT — published:false. See the note on best-water-activities-in-doha.
-    //
     // DELIBERATE SCOPE SPLIT: this guide stays INSIDE Doha and leans towards
     // short-trip, no-car visitors. `things-to-do-in-qatar` covers the whole
     // country (Sealine, Al Khor, the north). Two pages saying the same thing
     // compete with each other and both lose, so keep that boundary when editing.
     slug: 'best-activities-to-do-in-doha',
-    published: false,
+    published: true,
     priority: 0.7,
     updated: '2026-08-26',
     title: {
