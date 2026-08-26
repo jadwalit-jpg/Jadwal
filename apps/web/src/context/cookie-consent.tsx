@@ -41,11 +41,17 @@ export function CookieConsentProvider({ children }: { children: React.ReactNode 
   const [hydrated, setHydrated] = useState(false);
   // Re-opening shows the banner again WITHOUT clearing the stored decision.
   //
-  // That distinction matters legally. Consent here is opt-out, so resetting the
-  // stored value to `null` would flip a visitor who had DECLINED back into the
-  // tracked default for as long as the banner sat open — withdrawing consent
-  // would briefly start the very processing it is meant to stop. Keeping the
-  // decision in force until they pick again avoids that.
+  // Under the old opt-out model this was a hard legal requirement: `null` meant
+  // TRACKED, so clearing the decision would have flipped a visitor who had
+  // declined back into tracking for as long as the banner sat open — the act of
+  // withdrawing consent would have started the very processing it was meant to
+  // stop. Consent is opt-in now (2026-08-26), so `null` is the safe state and
+  // that specific trap is gone.
+  //
+  // The behaviour stays because it is still the correct one: a visitor who
+  // opens preferences and then closes them without choosing should keep the
+  // choice they already made, not silently lose it. Nothing here should be
+  // "simplified" back to clearing the value.
   const [reopened, setReopened] = useState(false);
 
   useEffect(() => {

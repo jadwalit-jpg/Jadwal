@@ -75,7 +75,10 @@ const CLARITY = 'https://www.clarity.ms';
 
 beforeEach(() => {
   jest.useFakeTimers();
-  mockConsent = null;
+  // 'accepted', not null. Consent is OPT-IN since 2026-08-26 — an undecided
+  // visitor loads nothing at all, so these deferral tests would have nothing to
+  // observe. The undecided case is pinned separately below.
+  mockConsent = 'accepted';
   mockClarityAllowedPath = true;
   mockPathname.mockReturnValue('/');
   document.head.innerHTML = '';
@@ -245,6 +248,50 @@ describe('Clarity', () => {
 
     interact();
     expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(true);
+  });
+});
+
+describe('opt-in: an UNDECIDED visitor is never tracked', () => {
+  /**
+   * The regression this locks down is the one that would be invisible: under
+   * the previous opt-out model `consent === null` meant TRACKED, and most
+   * visitors never touch a cookie banner at all — so "undecided" is the
+   * majority case, not an edge case. Flipping this back would silently start
+   * tracking almost everyone.
+   *
+   * Qatar's PDPPL is consent-centric with no legitimate-interest basis and no
+   * provision for implied consent (Article 4), and it prohibits direct
+   * marketing without explicit and unambiguous consent.
+   */
+  test.each([
+    ['Meta Pixel', () => <MetaPixel />, FB, '/en_US/fbevents.js', flushIdle],
+    ['Google tag', () => <GoogleTag />, GTM, '/gtag/js', flushIdle],
+    ['Clarity', () => <Clarity />, CLARITY, '/tag/y4xknitrzo', interact],
+  ])('%s: nothing loads while consent is undecided', (_label, renderTracker, origin, path, release) => {
+    mockConsent = null;
+
+    render(renderTracker());
+    release();
+    flushIdle();
+
+    expect(hasScript(origin, path)).toBe(false);
+  });
+
+  test('accepting AFTER being undecided does load the tracker', () => {
+    // The other half: opt-in must actually be reachable, or we would have
+    // silently disabled analytics rather than gated it.
+    mockConsent = null;
+    const { rerender } = render(<MetaPixel />);
+    flushIdle();
+    expect(hasScript(FB, '/en_US/fbevents.js')).toBe(false);
+
+    mockConsent = 'accepted';
+    act(() => {
+      rerender(<MetaPixel />);
+    });
+    flushIdle();
+
+    expect(hasScript(FB, '/en_US/fbevents.js')).toBe(true);
   });
 });
 
