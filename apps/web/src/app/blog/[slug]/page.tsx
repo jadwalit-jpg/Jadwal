@@ -13,8 +13,10 @@ import { ArrowRight } from 'lucide-react';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 import { JsonLd } from '@/components/json-ld';
+import { ActivityCard } from '@/components/ui';
 import { getGuide, tr } from '@/lib/seo-guides';
 import { getLanding, landingCopy, type LandingLang } from '@/lib/seo-landings';
+import { guidePicks } from '@/lib/seo-guide-picks';
 import { readLangServer } from '@/lib/lang-cookie.server';
 import { localePath, localeAlternates } from '@/lib/locale-path';
 
@@ -35,6 +37,7 @@ function siteOrigin(): string {
 async function readLang(): Promise<LandingLang> {
   return readLangServer();
 }
+
 
 export async function generateMetadata({
   params,
@@ -83,6 +86,7 @@ export default async function GuidePage({
   const related = guide.relatedLandings
     .map(getLanding)
     .filter((l): l is NonNullable<typeof l> => !!l && l.launched);
+  const picks = await guidePicks(related);
 
   const articleLd = {
     '@context': 'https://schema.org',
@@ -109,10 +113,33 @@ export default async function GuidePage({
       { '@type': 'ListItem', position: 3, name: tr(guide.title, lang), item: `${origin}/blog/${guide.slug}` },
     ],
   };
+  // ItemList over the real picks. "Best X in Doha" queries are list-intent, and
+  // this is what lets Google read the guide as a curated list of bookable
+  // things rather than an undifferentiated blob of prose. Only emitted when
+  // there ARE picks — schema that describes content the page does not actually
+  // show is a structured-data violation, and a manual action risk.
+  const itemListLd =
+    picks.length > 0
+      ? {
+          '@context': 'https://schema.org',
+          '@type': 'ItemList',
+          name: tr(guide.title, lang),
+          itemListOrder: 'https://schema.org/ItemListUnordered',
+          numberOfItems: picks.length,
+          itemListElement: picks.map((p, i) => ({
+            '@type': 'ListItem',
+            position: i + 1,
+            url: `${origin}/activity/${p.slug}`,
+            name: isAr && p.titleAr ? p.titleAr : p.titleEn,
+          })),
+        }
+      : null;
 
   return (
     <>
-      {guide.published && <JsonLd data={[articleLd, breadcrumbLd]} />}
+      {guide.published && (
+        <JsonLd data={itemListLd ? [articleLd, breadcrumbLd, itemListLd] : [articleLd, breadcrumbLd]} />
+      )}
       <Navbar variant="solid" />
       <main className="min-h-[60vh] bg-jadwal-bg">
         <article className="max-w-3xl mx-auto px-4 sm:px-6 pt-24 pb-12 md:pt-28 md:pb-16">
@@ -141,10 +168,35 @@ export default async function GuidePage({
             </section>
           ))}
 
+          {/* Real, bookable inventory — the guide's payoff. Deliberately NOT
+              preloaded: unlike the landing pages (where card 0 IS the LCP
+              element), this grid sits below ~1,000px of long-form prose, and
+              the measured LCP on these pages is a paragraph at ~858ms. A
+              preload here would race the text that actually paints. */}
+          {picks.length > 0 && (
+            <section className="mt-12">
+              <h2 className="text-xl md:text-2xl font-bold text-jadwal-text mb-4 text-start">
+                {isAr ? 'احجز هذه التجارب' : 'Book these experiences'}
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-5">
+                {picks.map((p) => (
+                  <ActivityCard key={p.id} activity={p} size="fill" />
+                ))}
+              </div>
+              <Link
+                href={localePath('/explore', lang)}
+                className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-jadwal-accent hover:underline"
+              >
+                {isAr ? 'تصفّح جميع الأنشطة' : 'Browse all activities'}
+                <ArrowRight className="h-4 w-4 rtl:-scale-x-100" aria-hidden="true" />
+              </Link>
+            </section>
+          )}
+
           {related.length > 0 && (
             <section className="mt-12 rounded-2xl border border-jadwal-border-subtle bg-jadwal-surface p-6">
               <h2 className="text-lg font-bold text-jadwal-text mb-4 text-start">
-                {isAr ? 'احجز الآن' : 'Book it'}
+                {isAr ? 'استكشف حسب الفئة' : 'Explore by category'}
               </h2>
               <div className="flex flex-wrap gap-3">
                 {related.map((r) => (
