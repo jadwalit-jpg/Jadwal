@@ -98,6 +98,21 @@ export function I18nProvider({
       startTransition(() => {
         if (isLocalizablePath(underlying)) {
           router.push(localePath(underlying, lng) + suffix);
+          // …then invalidate the Router Cache, or the push serves STALE HTML in
+          // the previous language. `/ar/x` is not a distinct route: the
+          // middleware REWRITES it to `/x` with an `x-lang: ar` header, so both
+          // languages resolve to the same underlying route — and Next's client
+          // Router Cache keys on that underlying route, not the visible URL. A
+          // push from `/blog` to `/ar/blog` therefore hits the cached English
+          // payload and renders English text under an Arabic URL.
+          //
+          // The symptom was deceptive: `<html lang/dir>` flipped and every
+          // client component re-rendered in Arabic immediately (they read the
+          // i18next singleton), so only SERVER-rendered copy stayed English —
+          // guide titles, landing-page copy, category names. It looked like a
+          // partial translation rather than a cache bug, and a manual reload
+          // "fixed" it because that bypasses the Router Cache entirely.
+          router.refresh();
         } else {
           router.refresh();
         }
