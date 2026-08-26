@@ -74,7 +74,7 @@ export default function TermsConsentGate() {
       className={cn(
         'fixed bottom-4 end-4 z-50 w-[min(92vw,22rem)] font-outfit',
         'transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none',
-        visible ? 'translate-y-0 opacity-100' : 'translate-y-6 opacity-0',
+        visible ? 'translate-y-0 opacity-100' : 'translate-y-6 opacity-0 pointer-events-none',
       )}
       role="status"
     >
