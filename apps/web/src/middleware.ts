@@ -2,6 +2,33 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { LANG_COOKIE, LANG_HEADER } from './lib/lang-cookie';
 import { hasArPrefix, isLocalizablePath, localePath, stripLocalePrefix } from './lib/locale-path';
+import { allGuideSlugs } from './lib/seo-guides';
+
+/**
+ * True when `path` is /blog/<slug> for a slug that does not exist.
+ *
+ * Why this lives in middleware rather than the page: `notFound()` inside
+ * app/blog/[slug] CANNOT set a 404 status here. The route streams (the response
+ * carries `Transfer-Encoding: chunked`), so by the time the unknown slug is
+ * discovered the 200 has already been written — Next can swap in the not-found
+ * UI but not the status line. That is what app/not-found.tsx documents, and it
+ * is why the page's own "hard 404" comment was wrong: measured, /blog/anything
+ * returned 200. Middleware runs BEFORE any rendering, so it is the only place
+ * the status can still be chosen.
+ *
+ * Scope is deliberately narrow — only /blog. The landing-page allow-list would
+ * also need every static top-level route (/about, /explore, /login…) enumerated
+ * here to avoid 404ing a real page, and /activity slugs live in the database
+ * where middleware cannot reach them. Both remain soft 404s; they are `noindex`
+ * so nothing is wrongly indexed either way.
+ */
+export function isUnknownGuidePath(path: string): boolean {
+  if (!path.startsWith('/blog/')) return false;
+  const slug = path.slice('/blog/'.length);
+  // Trailing segments (/blog/a/b) are unknown too; a bare /blog is the index.
+  if (!slug || slug.includes('/')) return slug.length > 0;
+  return !allGuideSlugs().includes(slug);
+}
 
 /**
  * Decode JWT payload without verification (Edge runtime can't use the full
@@ -304,7 +331,14 @@ export function middleware(request: NextRequest) {
     requestHeaders.set(LANG_HEADER, 'ar');
     const rewritten = request.nextUrl.clone();
     rewritten.pathname = underlying; // search params preserved by clone()
-    return applyCspHeaders(NextResponse.rewrite(rewritten, { request: { headers: requestHeaders } }));
+    return applyCspHeaders(
+      NextResponse.rewrite(rewritten, {
+        request: { headers: requestHeaders },
+        // Unknown guide slug → real 404 status. The page still renders its
+        // not-found UI; only the status line is corrected here.
+        ...(isUnknownGuidePath(underlying) ? { status: 404 } : {}),
+      }),
+    );
   }
 
   if (isLocalizablePath(pathname)) {
@@ -314,6 +348,16 @@ export function middleware(request: NextRequest) {
       return applyCspHeaders(NextResponse.redirect(target));
     }
     requestHeaders.set(LANG_HEADER, 'en'); // public unprefixed = English; tell SSR explicitly
+    if (isUnknownGuidePath(pathname)) {
+      // Rewrite to the same URL purely to carry a status — NextResponse.next()
+      // is a pass-through and cannot set one.
+      return applyCspHeaders(
+        NextResponse.rewrite(request.nextUrl.clone(), {
+          request: { headers: requestHeaders },
+          status: 404,
+        }),
+      );
+    }
     return applyCspHeaders(NextResponse.next({ request: { headers: requestHeaders } }));
   }
   // else: non-localizable (admin/vendor/auth/per-user) → fall through; language
