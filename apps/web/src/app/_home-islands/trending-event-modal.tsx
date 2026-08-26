@@ -26,6 +26,7 @@ import Image from 'next/image';
 import { useEffect, useRef } from 'react';
 import { Calendar, X } from 'lucide-react';
 import { localized } from '@/lib/localize';
+import { CARD_IMG_BLUR } from '@/components/ui/activity-card';
 
 interface TrendingEvent {
   id: string;
@@ -126,8 +127,30 @@ export function TrendingEventModal({ event, onClose, isRtl, closeLabel }: Trendi
                 src={event.image}
                 alt={localized(event, 'title')}
                 fill
-                sizes="(max-width: 640px) calc(100vw - 2rem), 640px"
-                priority={false}
+                // DELIBERATELY the same `sizes` as the trending CARD, even
+                // though this image displays wider. The modal only ever opens
+                // on a card the user just tapped, so that card's image is
+                // already in the browser cache — and `sizes` is what decides
+                // which srcset candidate is picked. A different value picks a
+                // different URL, which is a different cache entry, so the
+                // browser re-downloads the SAME photo at a second width.
+                //
+                // Measured on prod before this change: tapping "Read more"
+                // fired a fresh 55 KB request at w=1080 for a picture already
+                // held at w=750. That download is the delay people describe as
+                // "it loads again" when the modal opens.
+                //
+                // Nothing is lost visually here: the trending source images are
+                // 177-380px wide, so w=750 already exceeds every original and
+                // w=1080 was upscaling to no benefit. If genuinely
+                // high-resolution sources are uploaded later, revisit this —
+                // the trade then becomes real rather than free.
+                sizes="(max-width: 640px) 280px, 320px"
+                // Fade in from the same ~99-byte inlined placeholder the cards
+                // use, instead of popping in from an empty box. Without it the
+                // modal shows a dark rectangle for the whole fetch.
+                placeholder="blur"
+                blurDataURL={CARD_IMG_BLUR}
                 unoptimized={process.env.NODE_ENV !== 'production'}
                 className="object-cover"
               />
