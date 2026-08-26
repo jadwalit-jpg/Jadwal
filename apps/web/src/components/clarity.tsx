@@ -34,7 +34,7 @@
 import { useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { useCookieConsent } from '@/context/cookie-consent';
-import { onIdle, type IdleDisposer } from '@/lib/defer-idle';
+import { onFirstInteraction, type IdleDisposer } from '@/lib/defer-idle';
 import { CLARITY_PROJECT_ID, isClarityAllowedPath } from '@/lib/clarity';
 
 function loadClarity(id: string): IdleDisposer {
@@ -48,10 +48,19 @@ function loadClarity(id: string): IdleDisposer {
     };
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
-  // Only the tag download waits for idle; the stub above already buffers into
-  // clarity.q, which the tag drains on load — so the `consent` call the caller
-  // makes right after this still reaches Microsoft.
-  return onIdle(() => {
+  // Only the tag download waits; the stub above already buffers into clarity.q,
+  // which the tag drains on load — so the `consent` call the caller makes right
+  // after this still reaches Microsoft.
+  //
+  // FIRST INTERACTION, not idle. Measured 2026-08-25 on the live mobile home
+  // page: idle-scheduled clarity.js ran a 176 ms task at 7,606 ms, inside the
+  // TBT window (FCP 1,958 ms -> TTI 11,312 ms), costing 126 ms of Total
+  // Blocking Time on a page whose TBT scores 18/100. A session-replay recorder
+  // has nothing to record until the visitor does something, so waiting for that
+  // moment costs no data that mattered — unlike the Meta Pixel and the Google
+  // tag, whose whole job is to report the zero-interaction bounce. Those two
+  // stay on onIdle. See `onFirstInteraction` for the trade-off in full.
+  return onFirstInteraction(() => {
     const script = document.createElement('script');
     script.async = true;
     script.src = `https://www.clarity.ms/tag/${encodeURIComponent(id)}`;

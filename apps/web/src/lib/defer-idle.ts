@@ -26,6 +26,25 @@
  * to run even if the main thread never goes idle. Safari before 16.4 has no
  * requestIdleCallback at all, hence the setTimeout fallback.
  *
+ * NOT BEFORE FIRST PAINT. Measured on the live mobile home page 2026-08-25
+ * (Lighthouse 13.4.0, throttled): `load` fired early enough that the browser
+ * went idle at ~1,508 ms while FCP did not land until 1,958 ms — so the tracker
+ * downloads were starting BEFORE the first paint they were supposed to come
+ * after, and 522 KB of third-party script competed for bandwidth with the LCP
+ * image (LCP 4.8 s, scoring 30/100). Waiting for `load` is not the same as
+ * waiting for a paint: a document whose subresources all resolve quickly can
+ * fire `load` while the main thread still has not produced a frame.
+ *
+ * So idle work is additionally gated on the `first-contentful-paint` entry.
+ * This is a bandwidth/LCP protection, NOT a TBT fix — the trackers' own long
+ * tasks execute later, whenever the main thread frees up, and are unaffected
+ * by when the download was requested.
+ *
+ * The gate is skipped entirely where paint timing is not observable (jsdom,
+ * older Safari), falling back to the previous behaviour rather than stranding
+ * the callback. The `timeout` ceiling still overrides it in every case, so the
+ * "always eventually runs" property is preserved even if a paint never fires.
+ *
  * CANCELLABLE, and this is a consent requirement rather than tidiness. The
  * deferral opens a window (up to `timeout`) in which the visitor can click
  * "Decline" BEFORE we have requested anything. Downloading 685 KB of tracker
@@ -46,11 +65,38 @@ type IdleWindow = Window & {
 /** Cancels a pending run. Returns true if the callback had NOT yet run. */
 export type IdleDisposer = () => boolean;
 
+/**
+ * Whether paint timing is actually observable here.
+ *
+ * Deliberately checks that the `paint` ENTRY TYPE is supported, not merely that
+ * `PerformanceObserver` exists: jsdom (and any environment that stubs the API)
+ * exposes the constructor but never emits a paint entry, so gating on existence
+ * alone would strand every callback until the ceiling.
+ */
+function paintObservable(): boolean {
+  return (
+    typeof PerformanceObserver === 'function' &&
+    Array.isArray(PerformanceObserver.supportedEntryTypes) &&
+    PerformanceObserver.supportedEntryTypes.includes('paint')
+  );
+}
+
+/** Whether FCP has already been recorded for this document. */
+function alreadyPainted(): boolean {
+  try {
+    return performance.getEntriesByName('first-contentful-paint').length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function onIdle(fn: () => void, timeout: number = DEFAULT_TIMEOUT): IdleDisposer {
   if (typeof window === 'undefined') return () => false;
 
   let ran = false;
   let cancelled = false;
+  // Held so cleanup can disconnect a paint gate that never resolved.
+  let observer: PerformanceObserver | undefined;
   // Both the ceiling and the Safari fallback land here so cleanup can drain
   // them without tracking each one in its own mutable slot.
   const timers: number[] = [];
@@ -58,6 +104,8 @@ export function onIdle(fn: () => void, timeout: number = DEFAULT_TIMEOUT): IdleD
   const cleanup = (): void => {
     window.removeEventListener('load', schedule);
     for (const t of timers) window.clearTimeout(t);
+    observer?.disconnect();
+    observer = undefined;
   };
 
   const run = (): void => {
@@ -67,7 +115,33 @@ export function onIdle(fn: () => void, timeout: number = DEFAULT_TIMEOUT): IdleD
     fn();
   };
 
-  function schedule(): void {
+  /**
+   * Invoke `next` once the first contentful paint has happened — or straight
+   * away where paint is not observable, which preserves the pre-existing
+   * behaviour rather than deferring indefinitely.
+   */
+  function whenPainted(next: () => void): void {
+    if (alreadyPainted() || !paintObservable()) {
+      next();
+      return;
+    }
+    try {
+      observer = new PerformanceObserver((list) => {
+        if (list.getEntriesByName('first-contentful-paint').length === 0) return;
+        observer?.disconnect();
+        observer = undefined;
+        next();
+      });
+      // `buffered` so a paint that landed between the readyState check and here
+      // is not missed — that race is the whole bug this gate exists to fix.
+      observer.observe({ type: 'paint', buffered: true });
+    } catch {
+      observer = undefined;
+      next();
+    }
+  }
+
+  function scheduleIdle(): void {
     if (cancelled) return;
     const ric = (window as IdleWindow).requestIdleCallback;
     // Safari < 16.4: no requestIdleCallback. A short timeout still yields the
@@ -76,10 +150,73 @@ export function onIdle(fn: () => void, timeout: number = DEFAULT_TIMEOUT): IdleD
     else timers.push(window.setTimeout(run, 200));
   }
 
+  function schedule(): void {
+    if (cancelled) return;
+    whenPainted(scheduleIdle);
+  }
+
   if (document.readyState === 'complete') schedule();
   else window.addEventListener('load', schedule, { once: true });
 
   timers.push(window.setTimeout(run, timeout));
+
+  return (): boolean => {
+    const prevented = !ran;
+    cancelled = true;
+    cleanup();
+    return prevented;
+  };
+}
+
+/**
+ * Events that count as the visitor engaging with the page. `scroll` is included
+ * deliberately: it is what almost every real visitor does first, so gating on
+ * this set keeps coverage high while still excluding the load window entirely.
+ */
+const INTERACTION_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'scroll'] as const;
+
+/**
+ * Run a callback on the visitor's FIRST interaction — same disposer contract as
+ * `onIdle`, but with NO timeout ceiling, so it genuinely never runs on a page
+ * nobody touched.
+ *
+ * FOR SESSION REPLAY ONLY (Clarity). Measured 2026-08-25 on the live mobile
+ * home page, `clarity.js` ran a 176 ms task at 7,606 ms — inside the TBT window
+ * (FCP 1,958 ms -> TTI 11,312 ms) — costing 126 ms of Total Blocking Time.
+ *
+ * Why this is the safe tracker to move, and the others are not: Clarity records
+ * behaviour, so a session with zero interaction has nothing to replay and
+ * losing it costs nothing. An ANALYTICS or ADS tag is the opposite — its
+ * pageview/conversion is exactly what a zero-interaction bounce needs to
+ * report, so gating those on interaction would silently drop real attribution.
+ * Do not reuse this for the Meta Pixel or the Google tag.
+ *
+ * TRADE-OFF, stated plainly: visitors who never scroll, tap, or type are no
+ * longer recorded at all, and for everyone else the replay begins at their
+ * first interaction rather than at page load.
+ */
+export function onFirstInteraction(fn: () => void): IdleDisposer {
+  if (typeof window === 'undefined') return () => false;
+
+  let ran = false;
+  let cancelled = false;
+
+  const cleanup = (): void => {
+    for (const type of INTERACTION_EVENTS) window.removeEventListener(type, run);
+  };
+
+  function run(): void {
+    if (ran || cancelled) return;
+    ran = true;
+    cleanup();
+    fn();
+  }
+
+  for (const type of INTERACTION_EVENTS) {
+    // `passive` so listening can never delay a scroll or tap; `once` so a
+    // single fired event detaches itself even before cleanup drains the rest.
+    window.addEventListener(type, run, { passive: true, once: true });
+  }
 
   return (): boolean => {
     const prevented = !ran;
