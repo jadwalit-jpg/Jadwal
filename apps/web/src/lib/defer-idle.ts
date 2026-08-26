@@ -176,6 +176,13 @@ export function onIdle(fn: () => void, timeout: number = DEFAULT_TIMEOUT): IdleD
 const INTERACTION_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'scroll'] as const;
 
 /**
+ * How long to wait AFTER the first interaction before actually running the
+ * callback. See `onFirstInteraction` — this window is a consent requirement,
+ * not a performance tweak.
+ */
+const SETTLE_MS = 500;
+
+/**
  * Run a callback on the visitor's FIRST interaction — same disposer contract as
  * `onIdle`, but with NO timeout ceiling, so it genuinely never runs on a page
  * nobody touched.
@@ -191,31 +198,51 @@ const INTERACTION_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'sc
  * report, so gating those on interaction would silently drop real attribution.
  * Do not reuse this for the Meta Pixel or the Google tag.
  *
+ * WHY THE SETTLE WINDOW EXISTS. For a great many visitors the very FIRST
+ * interaction is the click on the cookie banner itself, and `pointerdown`
+ * reaches window before React has run that button's onClick. Firing the
+ * callback synchronously would therefore download a session recorder for the
+ * person who just clicked "Decline" — the exact outcome the deferral exists to
+ * prevent. Waiting `SETTLE_MS` leaves the consent effect time to call the
+ * disposer first. The same window covers navigating onto an excluded route
+ * (checkout) with the click that ends the current page.
+ *
  * TRADE-OFF, stated plainly: visitors who never scroll, tap, or type are no
- * longer recorded at all, and for everyone else the replay begins at their
- * first interaction rather than at page load.
+ * longer recorded at all, and for everyone else the replay begins shortly after
+ * their first interaction rather than at page load.
  */
-export function onFirstInteraction(fn: () => void): IdleDisposer {
+export function onFirstInteraction(fn: () => void, settleMs: number = SETTLE_MS): IdleDisposer {
   if (typeof window === 'undefined') return () => false;
 
   let ran = false;
   let cancelled = false;
+  let timer: number | undefined;
 
-  const cleanup = (): void => {
-    for (const type of INTERACTION_EVENTS) window.removeEventListener(type, run);
+  const detach = (): void => {
+    for (const type of INTERACTION_EVENTS) window.removeEventListener(type, onInteract);
   };
 
-  function run(): void {
-    if (ran || cancelled) return;
-    ran = true;
-    cleanup();
-    fn();
+  const cleanup = (): void => {
+    detach();
+    if (timer !== undefined) window.clearTimeout(timer);
+  };
+
+  function onInteract(): void {
+    if (ran || cancelled || timer !== undefined) return;
+    // Stop listening immediately — the settle window below is the part that is
+    // still cancellable, and re-entering here would restart it.
+    detach();
+    timer = window.setTimeout(() => {
+      if (cancelled) return;
+      ran = true;
+      fn();
+    }, settleMs);
   }
 
   for (const type of INTERACTION_EVENTS) {
     // `passive` so listening can never delay a scroll or tap; `once` so a
     // single fired event detaches itself even before cleanup drains the rest.
-    window.addEventListener(type, run, { passive: true, once: true });
+    window.addEventListener(type, onInteract, { passive: true, once: true });
   }
 
   return (): boolean => {

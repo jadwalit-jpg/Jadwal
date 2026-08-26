@@ -37,8 +37,29 @@ import { useCookieConsent } from '@/context/cookie-consent';
 import { onFirstInteraction, type IdleDisposer } from '@/lib/defer-idle';
 import { CLARITY_PROJECT_ID, isClarityAllowedPath } from '@/lib/clarity';
 
+/** Marks the injected <script> so a repeat attempt can recognise it. */
+const TAG_MARKER = 'data-clarity-tag';
+
+/**
+ * Whether the tag itself has already been injected — deliberately NOT the same
+ * question as "does `window.clarity` exist".
+ *
+ * Conflating the two was a bug. The queueing stub is installed on the first
+ * attempt and is never removed, so guarding on `window.clarity` meant that once
+ * an attempt had been CANCELLED — by navigating onto checkout before
+ * interacting, say — every later attempt returned early without arming a new
+ * interaction listener, and Clarity never loaded again for the rest of the page
+ * session. That directly defeated the "navigating back to an allowed page must
+ * be able to schedule the tag again" intent below.
+ *
+ * Read from the DOM rather than held in a module variable so it cannot go stale
+ * or leak between tests: the script element IS the source of truth.
+ */
+function tagAlreadyInjected(): boolean {
+  return !!document.head.querySelector(`script[${TAG_MARKER}]`);
+}
+
 function loadClarity(id: string): IdleDisposer {
-  if (window.clarity) return () => false;
   /* eslint-disable @typescript-eslint/no-explicit-any -- Clarity's bootstrap queue is untyped by design */
   const w = window as any;
   w.clarity =
@@ -47,6 +68,10 @@ function loadClarity(id: string): IdleDisposer {
       (w.clarity.q = w.clarity.q || []).push(args);
     };
   /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  // The stub is now guaranteed, so the caller's `clarity('consent')` buffers
+  // either way. Only skip if the download itself already happened.
+  if (tagAlreadyInjected()) return () => false;
 
   // Only the tag download waits; the stub above already buffers into clarity.q,
   // which the tag drains on load — so the `consent` call the caller makes right
@@ -63,6 +88,7 @@ function loadClarity(id: string): IdleDisposer {
   return onFirstInteraction(() => {
     const script = document.createElement('script');
     script.async = true;
+    script.setAttribute(TAG_MARKER, '');
     script.src = `https://www.clarity.ms/tag/${encodeURIComponent(id)}`;
     document.head.appendChild(script);
   });

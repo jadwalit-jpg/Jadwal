@@ -362,6 +362,14 @@ describe('onFirstInteraction — Clarity only', () => {
    * property that matters most here is the INVERSE of onIdle's: this one must
    * NOT have a ceiling, or the cost comes straight back on every bounce.
    */
+  const SETTLE = 500;
+
+  /** Interact, then flush the settle window that follows it. */
+  function interactAndSettle(type = 'scroll'): void {
+    window.dispatchEvent(new Event(type));
+    jest.advanceTimersByTime(SETTLE);
+  }
+
   test('does not run on load, idle, or the passage of time', () => {
     const fn = jest.fn();
 
@@ -378,7 +386,7 @@ describe('onFirstInteraction — Clarity only', () => {
       const fn = jest.fn();
 
       onFirstInteraction(fn);
-      window.dispatchEvent(new Event(type));
+      interactAndSettle(type);
 
       expect(fn).toHaveBeenCalledTimes(1);
     },
@@ -392,6 +400,7 @@ describe('onFirstInteraction — Clarity only', () => {
     window.dispatchEvent(new Event('scroll'));
     window.dispatchEvent(new Event('pointerdown'));
     window.dispatchEvent(new Event('keydown'));
+    jest.advanceTimersByTime(SETTLE);
 
     expect(fn).toHaveBeenCalledTimes(1);
   });
@@ -404,8 +413,8 @@ describe('onFirstInteraction — Clarity only', () => {
     const dispose = onFirstInteraction(fn);
     expect(dispose()).toBe(true);
 
-    window.dispatchEvent(new Event('scroll'));
-    window.dispatchEvent(new Event('pointerdown'));
+    interactAndSettle('scroll');
+    interactAndSettle('pointerdown');
     expect(fn).not.toHaveBeenCalled();
   });
 
@@ -413,7 +422,7 @@ describe('onFirstInteraction — Clarity only', () => {
     const fn = jest.fn();
 
     const dispose = onFirstInteraction(fn);
-    window.dispatchEvent(new Event('scroll'));
+    interactAndSettle();
     expect(fn).toHaveBeenCalledTimes(1);
 
     expect(dispose()).toBe(false);
@@ -426,11 +435,66 @@ describe('onFirstInteraction — Clarity only', () => {
     const fn = jest.fn();
 
     onFirstInteraction(fn);
-    window.dispatchEvent(new Event('scroll'));
+    interactAndSettle();
 
     for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel', 'scroll']) {
       expect(remove).toHaveBeenCalledWith(type, expect.any(Function));
     }
     remove.mockRestore();
+  });
+});
+
+describe('onFirstInteraction — the settle window (a consent guard)', () => {
+  /**
+   * For most visitors the FIRST interaction is the click on the cookie banner,
+   * and `pointerdown` reaches window before React runs that button's onClick.
+   * Without a settle window, clicking "Decline" is itself what downloads the
+   * session recorder — the precise outcome the deferral exists to prevent.
+   */
+  test('does not fire on the interaction itself', () => {
+    const fn = jest.fn();
+
+    onFirstInteraction(fn);
+    window.dispatchEvent(new Event('pointerdown'));
+
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test('a decline landing inside the settle window still prevents it', () => {
+    const fn = jest.fn();
+
+    const dispose = onFirstInteraction(fn);
+    window.dispatchEvent(new Event('pointerdown'));
+    // React processes the click and the consent effect cancels, mid-window.
+    expect(dispose()).toBe(true);
+
+    jest.advanceTimersByTime(10_000);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test('fires once the window elapses with no cancellation', () => {
+    const fn = jest.fn();
+
+    onFirstInteraction(fn);
+    window.dispatchEvent(new Event('pointerdown'));
+
+    jest.advanceTimersByTime(499);
+    expect(fn).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  test('further interactions during the window do not stack extra runs', () => {
+    const fn = jest.fn();
+
+    onFirstInteraction(fn);
+    window.dispatchEvent(new Event('pointerdown'));
+    jest.advanceTimersByTime(200);
+    window.dispatchEvent(new Event('scroll'));
+    window.dispatchEvent(new Event('keydown'));
+    jest.advanceTimersByTime(10_000);
+
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });

@@ -38,9 +38,10 @@ jest.mock('@/context/cookie-consent', () => ({
 
 jest.mock('@/lib/fb-pixel', () => ({ FB_PIXEL_ID: '1554481776310825' }));
 jest.mock('@/lib/gtag', () => ({ GA4_MEASUREMENT_ID: 'G-TEST', GOOGLE_ADS_ID: 'AW-TEST' }));
+let mockClarityAllowedPath = true;
 jest.mock('@/lib/clarity', () => ({
   CLARITY_PROJECT_ID: 'y4xknitrzo',
-  isClarityAllowedPath: () => true,
+  isClarityAllowedPath: () => mockClarityAllowedPath,
 }));
 
 // Imported statically, not via await import(): a dynamic import combined with
@@ -75,6 +76,8 @@ const CLARITY = 'https://www.clarity.ms';
 beforeEach(() => {
   jest.useFakeTimers();
   mockConsent = null;
+  mockClarityAllowedPath = true;
+  mockPathname.mockReturnValue('/');
   document.head.innerHTML = '';
   delete w.fbq;
   delete w._fbq;
@@ -94,10 +97,17 @@ function flushIdle(): void {
   });
 }
 
-/** Clarity waits on the visitor doing something, so idle will never release it. */
+/**
+ * Clarity waits on the visitor doing something, so idle will never release it.
+ * The settle window after the interaction is a consent guard (see
+ * `onFirstInteraction`), so it has to be flushed too.
+ */
 function interact(): void {
   act(() => {
     window.dispatchEvent(new Event('scroll'));
+  });
+  act(() => {
+    jest.advanceTimersByTime(500);
   });
 }
 
@@ -187,6 +197,51 @@ describe('Clarity', () => {
       render(<Clarity />);
     });
     expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(false);
+
+    interact();
+    expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(true);
+  });
+
+  test('clicking Decline does not download the recorder', () => {
+    // THE ORDERING THAT MATTERS. For most visitors the very first interaction
+    // IS the click on the consent banner, and `pointerdown` reaches window
+    // before React has run the button's onClick. So an interaction gate that
+    // fires the download synchronously downloads a session recorder for the
+    // person who just opted out — precisely what the deferral exists to avoid.
+    const { rerender } = render(<Clarity />);
+
+    act(() => {
+      window.dispatchEvent(new Event('pointerdown')); // pointerdown on "Decline"
+    });
+    mockConsent = 'declined'; // ...then React processes the click
+    act(() => {
+      rerender(<Clarity />);
+    });
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+
+    expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(false);
+  });
+
+  test('a cancelled attempt can still be scheduled again later', () => {
+    // Navigating onto checkout before interacting cancels the pending load and
+    // clears the component's latch. Coming back to an allowed page must be able
+    // to arm it again — the queueing stub installed by the first attempt must
+    // not be mistaken for "already downloaded".
+    const { rerender } = render(<Clarity />);
+
+    mockClarityAllowedPath = false; // -> /activity/x/book
+    mockPathname.mockReturnValue('/activity/x/book');
+    act(() => {
+      rerender(<Clarity />);
+    });
+
+    mockClarityAllowedPath = true; // -> back to /explore
+    mockPathname.mockReturnValue('/explore');
+    act(() => {
+      rerender(<Clarity />);
+    });
 
     interact();
     expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(true);
