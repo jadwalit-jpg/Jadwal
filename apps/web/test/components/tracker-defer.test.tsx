@@ -10,7 +10,13 @@
  *     first paint, which is what this change exists to fix.
  *
  * So each test asserts the stub exists IMMEDIATELY and the <script> appears
- * ONLY after idle.
+ * ONLY after its release trigger.
+ *
+ * The trigger is NOT the same for all three (changed 2026-08-26). The Meta
+ * Pixel and the Google tag are released by idle; Clarity is released by the
+ * visitor's first interaction, because its 176 ms task was landing inside the
+ * TBT window and a session recorder has nothing to record before then. Anything
+ * asserting "after idle" for Clarity is asserting the old behaviour.
  */
 import { render, act } from '@testing-library/react';
 
@@ -32,9 +38,10 @@ jest.mock('@/context/cookie-consent', () => ({
 
 jest.mock('@/lib/fb-pixel', () => ({ FB_PIXEL_ID: '1554481776310825' }));
 jest.mock('@/lib/gtag', () => ({ GA4_MEASUREMENT_ID: 'G-TEST', GOOGLE_ADS_ID: 'AW-TEST' }));
+let mockClarityAllowedPath = true;
 jest.mock('@/lib/clarity', () => ({
   CLARITY_PROJECT_ID: 'y4xknitrzo',
-  isClarityAllowedPath: () => true,
+  isClarityAllowedPath: () => mockClarityAllowedPath,
 }));
 
 // Imported statically, not via await import(): a dynamic import combined with
@@ -69,6 +76,8 @@ const CLARITY = 'https://www.clarity.ms';
 beforeEach(() => {
   jest.useFakeTimers();
   mockConsent = null;
+  mockClarityAllowedPath = true;
+  mockPathname.mockReturnValue('/');
   document.head.innerHTML = '';
   delete w.fbq;
   delete w._fbq;
@@ -85,6 +94,20 @@ afterEach(() => {
 function flushIdle(): void {
   act(() => {
     jest.advanceTimersByTime(3000);
+  });
+}
+
+/**
+ * Clarity waits on the visitor doing something, so idle will never release it.
+ * The settle window after the interaction is a consent guard (see
+ * `onFirstInteraction`), so it has to be flushed too.
+ */
+function interact(): void {
+  act(() => {
+    window.dispatchEvent(new Event('scroll'));
+  });
+  act(() => {
+    jest.advanceTimersByTime(500);
   });
 }
 
@@ -138,7 +161,13 @@ describe('Google tag', () => {
 });
 
 describe('Clarity', () => {
-  test('stub is synchronous, the tag downloads after idle', () => {
+  // Clarity alone waits for INTERACTION, not idle (2026-08-26). Measured on the
+  // live mobile home page, the idle-scheduled tag ran a 176 ms task at 7,606 ms
+  // — inside the TBT window — for 126 ms of Total Blocking Time. A session
+  // recorder has nothing to record until the visitor acts, so that wait costs
+  // no data. The Pixel and the Google tag must NOT copy this: reporting the
+  // zero-interaction bounce is exactly their job.
+  test('stub is synchronous and the consent call is buffered', () => {
     act(() => {
       render(<Clarity />);
     });
@@ -150,8 +179,71 @@ describe('Clarity', () => {
     // buffered in clarity.q for the tag to replay.
     const q = (w.clarity as unknown as { q: unknown[][] }).q;
     expect(q.some((c) => c[0] === 'consent')).toBe(true);
+  });
+
+  test('idle alone does NOT download the tag', () => {
+    // The whole point of the change — if this ever goes green-by-idle again,
+    // the 126 ms is back.
+    act(() => {
+      render(<Clarity />);
+    });
 
     flushIdle();
+    expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(false);
+  });
+
+  test('the tag downloads on the first interaction', () => {
+    act(() => {
+      render(<Clarity />);
+    });
+    expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(false);
+
+    interact();
+    expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(true);
+  });
+
+  test('clicking Decline does not download the recorder', () => {
+    // THE ORDERING THAT MATTERS. For most visitors the very first interaction
+    // IS the click on the consent banner, and `pointerdown` reaches window
+    // before React has run the button's onClick. So an interaction gate that
+    // fires the download synchronously downloads a session recorder for the
+    // person who just opted out — precisely what the deferral exists to avoid.
+    const { rerender } = render(<Clarity />);
+
+    act(() => {
+      window.dispatchEvent(new Event('pointerdown')); // pointerdown on "Decline"
+    });
+    mockConsent = 'declined'; // ...then React processes the click
+    act(() => {
+      rerender(<Clarity />);
+    });
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+
+    expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(false);
+  });
+
+  test('a cancelled attempt can still be scheduled again later', () => {
+    // Navigating onto checkout before interacting cancels the pending load and
+    // clears the component's latch. Coming back to an allowed page must be able
+    // to arm it again — the queueing stub installed by the first attempt must
+    // not be mistaken for "already downloaded".
+    const { rerender } = render(<Clarity />);
+
+    mockClarityAllowedPath = false; // -> /activity/x/book
+    mockPathname.mockReturnValue('/activity/x/book');
+    act(() => {
+      rerender(<Clarity />);
+    });
+
+    mockClarityAllowedPath = true; // -> back to /explore
+    mockPathname.mockReturnValue('/explore');
+    act(() => {
+      rerender(<Clarity />);
+    });
+
+    interact();
     expect(hasScript(CLARITY, '/tag/y4xknitrzo')).toBe(true);
   });
 });
@@ -161,20 +253,23 @@ describe('declining during the deferral window', () => {
   // opt out BEFORE we have requested anything. In that window the right
   // behaviour is to never fetch the tracker at all — not to fetch it and then
   // ask the vendor to ignore it.
+  // Each tracker is released by a DIFFERENT trigger, so the release must be
+  // parameterised too. Flushing idle at Clarity would make this test pass
+  // whether or not the decline worked — a guard that cannot fail is not a guard.
   test.each([
-    ['Meta Pixel', () => <MetaPixel />, FB, '/en_US/fbevents.js'],
-    ['Google tag', () => <GoogleTag />, GTM, '/gtag/js'],
-    ['Clarity', () => <Clarity />, CLARITY, '/tag/y4xknitrzo'],
-  ])('%s: no script is EVER appended', (_label, renderTracker, origin, path) => {
+    ['Meta Pixel', () => <MetaPixel />, FB, '/en_US/fbevents.js', flushIdle],
+    ['Google tag', () => <GoogleTag />, GTM, '/gtag/js', flushIdle],
+    ['Clarity', () => <Clarity />, CLARITY, '/tag/y4xknitrzo', interact],
+  ])('%s: no script is EVER appended', (_label, renderTracker, origin, path, release) => {
     const { rerender } = render(renderTracker());
     expect(hasScript(origin, path)).toBe(false); // still deferred
 
-    // Visitor clicks Decline before idle / the ceiling.
+    // Visitor clicks Decline before the trigger that would release the download.
     mockConsent = 'declined';
     act(() => {
       rerender(renderTracker());
     });
-    flushIdle();
+    release();
 
     expect(hasScript(origin, path)).toBe(false);
   });

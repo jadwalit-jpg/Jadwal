@@ -3,14 +3,18 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useTranslation } from 'react-i18next';
-import { motion, AnimatePresence } from 'framer-motion';
 import { ShieldCheck, X, Loader2 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import api from '@/lib/api';
 import { getApiError } from '@/lib/api-error';
 import { useToast } from '@/components/toast';
+import { useMountTransition } from '@/lib/use-mount-transition';
+import { cn } from '@/lib/utils';
 
 const DISMISS_KEY = 'jadwal_terms_banner_dismissed';
+
+/** Must match the `duration-300` below, or the banner is cut off mid-exit. */
+const TRANSITION_MS = 300;
 
 /**
  * Soft, NON-blocking Terms-consent prompt — a dismissible bottom corner banner
@@ -41,6 +45,9 @@ export default function TermsConsentGate() {
   }, []);
 
   const show = !!user && user.role !== 'ADMIN' && !!user.needsTermsAcceptance && !dismissed;
+  // CSS transition instead of <AnimatePresence> — this component is rendered by
+  // the root layout, so importing framer-motion here cost every route 120 KB.
+  const { mounted, visible } = useMountTransition(show, TRANSITION_MS);
 
   const accept = async () => {
     if (submitting) return;
@@ -60,52 +67,50 @@ export default function TermsConsentGate() {
     setDismissed(true);
   };
 
+  if (!mounted) return null;
+
   return (
-    <AnimatePresence>
-      {show && (
-        <motion.div
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 24 }}
-          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-          className="fixed bottom-4 end-4 z-50 w-[min(92vw,22rem)] font-outfit"
-          role="status"
-        >
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xl shadow-black/10 p-4">
-            <div className="flex items-start gap-3">
-              <ShieldCheck className="h-5 w-5 shrink-0 text-[#1d4f35] dark:text-emerald-400 mt-0.5" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-gray-900 dark:text-white text-start">
-                  {t('auth.termsGate.bannerTitle', 'Review our Terms')}
-                </p>
-                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400 text-start">
-                  {t('auth.termsGate.bannerBody', 'Browse freely — to book, please accept our')}{' '}
-                  <Link href="/terms" target="_blank" className="underline text-[#1d4f35] dark:text-emerald-400">{t('terms.title')}</Link>
-                  {' '}{t('auth.and')}{' '}
-                  <Link href="/privacy" target="_blank" className="underline text-[#1d4f35] dark:text-emerald-400">{t('privacy.title')}</Link>.
-                </p>
-                <button
-                  type="button"
-                  onClick={accept}
-                  disabled={submitting}
-                  className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#1d4f35] hover:bg-[#163e29] text-white text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {t('auth.termsGate.accept', 'Accept')}
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={dismiss}
-                aria-label={t('auth.termsGate.dismiss', 'Dismiss')}
-                className="shrink-0 -me-1 -mt-1 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        </motion.div>
+    <div
+      className={cn(
+        'fixed bottom-4 end-4 z-50 w-[min(92vw,22rem)] font-outfit',
+        'transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none',
+        visible ? 'translate-y-0 opacity-100' : 'translate-y-6 opacity-0',
       )}
-    </AnimatePresence>
+      role="status"
+    >
+      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-xl shadow-black/10 p-4">
+        <div className="flex items-start gap-3">
+          <ShieldCheck className="h-5 w-5 shrink-0 text-[#1d4f35] dark:text-emerald-400 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-gray-900 dark:text-white text-start">
+              {t('auth.termsGate.bannerTitle', 'Review our Terms')}
+            </p>
+            <p className="mt-1 text-xs text-gray-500 dark:text-slate-400 text-start">
+              {t('auth.termsGate.bannerBody', 'Browse freely — to book, please accept our')}{' '}
+              <Link href="/terms" target="_blank" className="underline text-[#1d4f35] dark:text-emerald-400">{t('terms.title')}</Link>
+              {' '}{t('auth.and')}{' '}
+              <Link href="/privacy" target="_blank" className="underline text-[#1d4f35] dark:text-emerald-400">{t('privacy.title')}</Link>.
+            </p>
+            <button
+              type="button"
+              onClick={accept}
+              disabled={submitting}
+              className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#1d4f35] hover:bg-[#163e29] text-white text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t('auth.termsGate.accept', 'Accept')}
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={dismiss}
+            aria-label={t('auth.termsGate.dismiss', 'Dismiss')}
+            className="shrink-0 -me-1 -mt-1 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
