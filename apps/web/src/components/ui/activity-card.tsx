@@ -54,6 +54,14 @@ export interface ActivityCardProps {
   onToggleLike?: () => void;
   className?: string;
   href?: string;
+  /**
+   * Preload this card's image as an LCP candidate. Defaults to false (lazy).
+   *
+   * Only set it for cards the CALLER has measured to be above the fold —
+   * preloading images nobody scrolls to competes for bandwidth with the ones
+   * they do, which is the opposite of the intent.
+   */
+  preload?: boolean;
 }
 
 const sizeClass: Record<Size, { w: string; img: string; title: string; price: string }> = {
@@ -109,6 +117,7 @@ export function ActivityCard({
   onToggleLike,
   className,
   href,
+  preload = false,
 }: ActivityCardProps) {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
@@ -175,7 +184,19 @@ export function ActivityCard({
               alt={title}
               fill
               sizes="(max-width: 640px) 90vw, (max-width: 1024px) 45vw, 340px"
-              loading="lazy"
+              // Opt-in only: `preload` for the handful of cards a caller knows
+              // are above the fold, lazy for everything else. Next 16 deprecates
+              // `priority` in favour of `preload`, and the two are mutually
+              // exclusive with `loading`, hence the spread.
+              //
+              // WHY IT MATTERS. On /desert-safari-qatar at 412x823 the first
+              // card image IS the LCP element (75,600 px², larger than the h1),
+              // and it sat at `loading="lazy"` with no preload — so all three of
+              // Lighthouse's LCP-discovery checks failed. Same shape as the
+              // /explore fix (#602).
+              {...(preload
+                ? ({ preload: true } as const)
+                : ({ loading: 'lazy' } as const))}
               // In dev the API serves uploads from `http://localhost:4000/...`,
               // which the Next.js image optimizer (running *inside* the
               // `jadwal-web` container) cannot reach — localhost resolves to
