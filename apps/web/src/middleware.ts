@@ -81,6 +81,18 @@ const IMG_HOSTS = [
   'https://www.google.com',
   'https://www.googleadservices.com',
   'https://googleads.g.doubleclick.net',
+  // Google Ads remarketing pings the visitor's COUNTRY Google domain, not
+  // google.com — observed live as a blocked
+  // `www.google.com.qa/pagead/1p-user-list/…` beacon. CSP cannot wildcard a
+  // TLD, so the markets we actually sell in are listed explicitly. A visitor
+  // outside these still loses only this one remarketing beacon; nothing else
+  // breaks for them.
+  'https://www.google.com.qa',
+  'https://www.google.ae',
+  'https://www.google.com.sa',
+  'https://www.google.com.kw',
+  'https://www.google.com.bh',
+  'https://www.google.com.om',
   // Microsoft Clarity beacons. clarity.ms/tag loads via 'strict-dynamic' (no
   // script-src entry needed); it uploads replay data to per-region subdomains
   // (c.clarity.ms, x.clarity.ms, ...), hence the wildcard. Loads under the SAME
@@ -114,7 +126,15 @@ const FRAME_HOSTS = ['https://www.google.com'];
  * - `img-src` is pinned to our own hosts + S3/CDN — no bare `https:` wildcard,
  *   so an injected `<img src="http://tracker.evil/">` can't beacon out.
  */
-function buildCsp(nonce: string, isProd: boolean): string {
+/**
+ * Exported for tests. Every analytics tool here downloads its script from one
+ * host and then BEACONS TO A DIFFERENT ONE, and only the download host is
+ * obvious from the code. GA4 shipped with googletagmanager.com allowlisted and
+ * google-analytics.com missing, so it silently sent nothing for days — the
+ * page looked fine and only the browser console knew. `test/lib/csp.test.ts`
+ * pins the beacon hosts so that cannot recur.
+ */
+export function buildCsp(nonce: string, isProd: boolean): string {
   const scriptSrc = isProd
     ? `'self' 'nonce-${nonce}' 'strict-dynamic'`
     : `'self' 'nonce-${nonce}' 'strict-dynamic' 'unsafe-eval'`; // unsafe-eval for React Fast Refresh in dev only
@@ -141,7 +161,17 @@ function buildCsp(nonce: string, isProd: boolean): string {
     // google.com / googleadservices.com / doubleclick (Ads + GA4 share one
     // gtag.js). Clarity uploads session replays to *.clarity.ms + c.bing.com,
     // same consent, and is never loaded on checkout/account routes — same opt-out consent.
-    `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org https://www.facebook.com https://connect.facebook.net https://www.googletagmanager.com https://www.google.com https://www.googleadservices.com https://googleads.g.doubleclick.net https://*.clarity.ms https://c.bing.com${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
+    // GA4 posts its hits to google-analytics.com — NOT to googletagmanager.com,
+    // which is only where gtag.js is downloaded from. That distinction was
+    // missed when GA4 went in (#567), so every `/g/collect` request has been
+    // blocked by this directive since. Confirmed live in the browser console:
+    //   Connecting to 'https://www.google-analytics.com/g/collect?v=2&tid=G-…'
+    //   violates ... connect-src ... The action has been blocked.
+    // Wildcarded because GA4 also uses regional hosts (region1.google-analytics.com)
+    // and analytics.google.com depending on the property's data location.
+    // ad.doubleclick.net was blocked the same way — the allowlist had only the
+    // googleads.g.doubleclick.net host.
+    `connect-src 'self' ${API_ORIGIN} https://nominatim.openstreetmap.org https://www.facebook.com https://connect.facebook.net https://www.googletagmanager.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.google.com https://www.googleadservices.com https://googleads.g.doubleclick.net https://ad.doubleclick.net https://*.clarity.ms https://c.bing.com${reportUri ? ' ' + new URL(reportUri).origin : ''}`,
     `font-src 'self' data:`,
     `frame-src ${FRAME_HOSTS.join(' ')}`,
     `frame-ancestors 'none'`,
