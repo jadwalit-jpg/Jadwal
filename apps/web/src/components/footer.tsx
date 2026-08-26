@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Mail, Phone, MapPin } from 'lucide-react';
 import { Instagram } from '@/components/icons/instagram';
+import { useCookieConsent } from '@/context/cookie-consent';
 import api from '@/lib/api';
 
 interface PlatformInfo {
@@ -36,6 +37,7 @@ function smoothScrollTo(targetY: number, duration = 1200) {
 
 export default function Footer() {
   const { t, i18n } = useTranslation();
+  const { reopen } = useCookieConsent();
   const isAr = (i18n.language || '').toLowerCase().startsWith('ar');
   const { data: platform } = useQuery<PlatformInfo>({
     queryKey: ['platform-info'],
@@ -112,6 +114,20 @@ export default function Footer() {
               <li><Link href="/register/vendor" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.becomeVendor')}</Link></li>
               <li><Link href="/terms" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.terms')}</Link></li>
               <li><Link href="/privacy" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.privacy')}</Link></li>
+              {/* Re-opens the consent banner. This is the ONLY way to change an
+                  analytics/marketing choice once it has been made — the banner
+                  itself never reappears on its own — so without it the PDPPL
+                  right to withdraw consent, which our own Privacy Policy
+                  promises, had no mechanism behind it. */}
+              <li>
+                <button
+                  type="button"
+                  onClick={reopen}
+                  className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors text-start"
+                >
+                  {t('footer.cookiePreferences')}
+                </button>
+              </li>
             </ul>
           </div>
 

@@ -21,6 +21,10 @@ interface CookieConsentValue {
   hydrated: boolean;
   accept: () => void;
   decline: () => void;
+  /** Whether the banner should be on screen (undecided, or re-opened). */
+  bannerOpen: boolean;
+  /** Re-open the banner so a past decision can be changed (PDPPL Article 4). */
+  reopen: () => void;
 }
 
 const CookieConsentContext = createContext<CookieConsentValue>({
@@ -28,11 +32,21 @@ const CookieConsentContext = createContext<CookieConsentValue>({
   hydrated: false,
   accept: () => {},
   decline: () => {},
+  bannerOpen: false,
+  reopen: () => {},
 });
 
 export function CookieConsentProvider({ children }: { children: React.ReactNode }) {
   const [consent, setConsent] = useState<CookieConsent>(null);
   const [hydrated, setHydrated] = useState(false);
+  // Re-opening shows the banner again WITHOUT clearing the stored decision.
+  //
+  // That distinction matters legally. Consent here is opt-out, so resetting the
+  // stored value to `null` would flip a visitor who had DECLINED back into the
+  // tracked default for as long as the banner sat open — withdrawing consent
+  // would briefly start the very processing it is meant to stop. Keeping the
+  // decision in force until they pick again avoids that.
+  const [reopened, setReopened] = useState(false);
 
   useEffect(() => {
     try {
@@ -51,13 +65,20 @@ export function CookieConsentProvider({ children }: { children: React.ReactNode 
       // Non-fatal: consent still applies for this session via state.
     }
     setConsent(value);
+    setReopened(false); // a fresh decision closes the banner
   }, []);
 
   const accept = useCallback(() => persist('accepted'), [persist]);
   const decline = useCallback(() => persist('declined'), [persist]);
+  const reopen = useCallback(() => setReopened(true), []);
+
+  // Undecided visitors see it automatically; anyone else only on request.
+  const bannerOpen = hydrated && (consent === null || reopened);
 
   return (
-    <CookieConsentContext.Provider value={{ consent, hydrated, accept, decline }}>
+    <CookieConsentContext.Provider
+      value={{ consent, hydrated, accept, decline, bannerOpen, reopen }}
+    >
       {children}
     </CookieConsentContext.Provider>
   );
