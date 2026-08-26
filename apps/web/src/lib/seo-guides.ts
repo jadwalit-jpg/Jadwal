@@ -637,11 +637,11 @@ export const SEO_GUIDES: SeoGuide[] = [
         ],
       },
       {
-        heading: { en: 'Weekend places within an hour of the city', ar: 'أماكن نهاية الأسبوع على بُعد ساعة من المدينة' },
+        heading: { en: 'Weekend places outside the city', ar: 'أماكن نهاية الأسبوع خارج المدينة' },
         body: [
           {
-            en: 'Doha empties at the weekend, and where people go is worth knowing even on a short trip. North to Al Khor, the caravan cabins are QAR 1,500 and sleep around fifteen. Further up the coast at Al Ruwais, Cavilam Resort is QAR 1,200 for up to thirty and North Villa QAR 2,500 for as many as fifty.',
-            ar: 'تفرغ الدوحة في نهاية الأسبوع، ومن المفيد معرفة إلى أين يذهب الناس حتى في رحلة قصيرة. شمالاً إلى الخور، تبلغ كابينات الكرفان 1,500 ر.ق وتتّسع لنحو خمسة عشر شخصاً. وأبعد على الساحل في الرويس، منتجع كافيلام بـ1,200 ر.ق حتى ثلاثين شخصاً وفيلا الشمال بـ2,500 ر.ق لما يصل إلى خمسين.',
+            en: 'Doha empties at the weekend, and where people go is worth knowing even on a short trip — though check the drive before booking, because Qatar is small but not that small. Al Khor is a comfortable run up the coast, where the caravan cabins are QAR 1,500 and sleep around fifteen. Al Ruwais is a different commitment: it sits at the northern tip of the peninsula, well over an hour out, and rewards an overnight rather than a day trip. Cavilam Resort there is QAR 1,200 for up to thirty and North Villa QAR 2,500 for as many as fifty.',
+            ar: 'تفرغ الدوحة في نهاية الأسبوع، ومن المفيد معرفة إلى أين يذهب الناس حتى في رحلة قصيرة — مع التحقّق من مدة الطريق قبل الحجز، فقطر صغيرة لكن ليست إلى هذا الحد. الخور رحلة مريحة شمالاً على الساحل، وفيها كابينات الكرفان بـ1,500 ر.ق وتتّسع لنحو خمسة عشر شخصاً. أما الرويس فالتزام مختلف: تقع في أقصى شمال شبه الجزيرة، على بُعد أكثر من ساعة بكثير، وتستحق مبيتاً لا رحلة يوم واحد. ومنتجع كافيلام هناك بـ1,200 ر.ق حتى ثلاثين شخصاً وفيلا الشمال بـ2,500 ر.ق لما يصل إلى خمسين.',
           },
           {
             en: 'West into the desert at Al Shahaniya, Ghatha Resort is QAR 1,500 for fifteen and Stone Chalet QAR 2,500 for eight — smaller, quieter, and closer to open desert than to a beach. South at Sealine, the Mais Al Reem Caravan is QAR 2,000 for fifteen, which puts you where the safaris launch.',
