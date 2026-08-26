@@ -16,6 +16,16 @@ import { useGeo } from '@/context/geo-context';
 
 /* ─── Types ───────────────────────────────────────────────── */
 
+/**
+ * How many leading cards are preloaded as LCP candidates.
+ *
+ * Two, because that is what measurably fits: on a filtered arrival at 412x823
+ * the first two card images land at 393 px and 802 px, and the third at
+ * 1,211 px is off screen. Kept deliberately tight — preloading images nobody
+ * sees competes for bandwidth with the ones they do.
+ */
+const LCP_CANDIDATE_CARDS = 2;
+
 interface Activity {
   id: string;
   titleEn: string;
@@ -294,6 +304,38 @@ function ExploreContent({
   }, [rawActivities, ratingFilter]);
   const totalPages = activitiesData?.totalPages ?? 0;
 
+  /**
+   * Ids of the cards whose image should be preloaded as the LCP candidate.
+   *
+   * WHY. Measured on the live mobile /explore 2026-08-26 (412x823, Slow 4G,
+   * 4x CPU): the LCP element is a card image, and all three of Lighthouse's
+   * LCP-discovery checks fail — no fetchpriority, loading=lazy, and not
+   * discoverable in the initial document. The image itself is not the problem;
+   * it downloads in ~20 ms from the CDN. Its *resource load delay* is 990 ms.
+   *
+   * TIED TO `showFilters`, and that is the whole subtlety. The panel opens by
+   * default only on a bare /explore, and with it open the first card sits at
+   * 958 px — below the 823 px fold, where preloading would just steal
+   * bandwidth from whatever is actually visible. Every filtered arrival
+   * (including the ?countryId= URL that geo detection sends real visitors to)
+   * renders the panel collapsed, which lifts the first two cards to 393 px and
+   * 802 px — both above the fold, and both previously lazy.
+   *
+   * Counts only activities that will actually RENDER an <Image>: the card
+   * falls back to a MapPin placeholder when there is no coverImage or gallery
+   * entry, so counting raw index would spend the preload budget on cards that
+   * have no image at all.
+   */
+  const preloadImageIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (showFilters) return ids;
+    for (const a of activities) {
+      if (ids.size >= LCP_CANDIDATE_CARDS) break;
+      if (a.coverImage || a.gallery?.[0]) ids.add(a.id);
+    }
+    return ids;
+  }, [activities, showFilters]);
+
   const clearFilters = () => {
     setSelectedCountry('');
     setSelectedCategory('');
@@ -550,7 +592,14 @@ function ExploreContent({
                         alt={localized(activity, 'title')}
                         fill
                         sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-                        loading="lazy"
+                        // `preload`, not the `priority` prop: Next 16 deprecates
+                        // the latter (see get-img-props.d.ts). It emits a
+                        // <link rel=preload> and drops the lazy attribute, which
+                        // is what fixes all three LCP-discovery failures. The
+                        // two props are mutually exclusive, hence the spread.
+                        {...(preloadImageIds.has(activity.id)
+                          ? ({ preload: true } as const)
+                          : ({ loading: 'lazy' } as const))}
                         // Dev: API serves uploads from localhost:4000 which the
                         // Next image optimizer (running inside docker) can't
                         // reach. In prod, S3/CDN URLs are public and full
