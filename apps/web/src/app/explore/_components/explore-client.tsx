@@ -84,25 +84,43 @@ interface City {
 
 export default function ExploreClient({
   initialActivities,
+  initialCountryId,
 }: {
-  // Default page-1 (unfiltered) activity list, fetched server-side and seeded
-  // into react-query so the activity-card grid is in the crawlable SSR HTML.
-  // null on an API blip → the client fetches on mount as before. Only used when
-  // the visitor lands with NO filters (the canonical /explore); any ?filter
-  // permutation fetches fresh (and is canonicalised to /explore anyway).
+  // Page-1 activity list fetched server-side and seeded into react-query so the
+  // activity-card grid is in the crawlable SSR HTML. null on an API blip → the
+  // client fetches on mount as before.
   initialActivities: ActivitiesResponse | null;
+  // Which country the server fetched that list FOR ('' = unfiltered).
+  //
+  // This exists because the seeded data used to be silently thrown away. The
+  // old `isDefaultQuery` required NO country at all, but geo detection sets one
+  // on load and writes it into the URL — so on any `?countryId=` arrival the
+  // server fetched, serialised and shipped a list the client immediately
+  // discarded and refetched. Symptom: the server rendered SKELETONS, the card
+  // images did not exist until hydration plus a client round-trip had finished,
+  // and LCP could not even begin until then.
+  //
+  // Comparing against what the server actually fetched keeps the seed usable
+  // for the filtered arrivals that are the common case, while still refetching
+  // whenever the visitor picks a DIFFERENT country.
+  initialCountryId: string;
 }) {
   return (
     <Suspense>
-      <ExploreContent initialActivities={initialActivities} />
+      <ExploreContent
+        initialActivities={initialActivities}
+        initialCountryId={initialCountryId}
+      />
     </Suspense>
   );
 }
 
 function ExploreContent({
   initialActivities,
+  initialCountryId,
 }: {
   initialActivities: ActivitiesResponse | null;
+  initialCountryId: string;
 }) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -255,10 +273,18 @@ function ExploreContent({
   // seeded page-1 data for every page (it's fresh within staleTime), which broke
   // pagination and filtering. Keying off state means any page>1 / filter / geo
   // disables the seed → react-query fetches that page normally.
+  // "Can the server-seeded list be used for the query the client is about to
+  // run?" — NOT "are there no filters at all".
+  //
+  // The country is compared rather than required-absent, because the server now
+  // fetches for whatever `?countryId=` the request carried. Requiring it to be
+  // empty meant every geo-resolved arrival discarded the seed (see
+  // `initialCountryId` above). Every OTHER filter still forces a fresh fetch,
+  // since the server only ever seeds page 1 of a country.
   const isDefaultQuery =
     page === 1 &&
     !searchDebounced &&
-    !selectedCountry &&
+    selectedCountry === initialCountryId &&
     !selectedCategory &&
     !activeCategorySlug &&
     !selectedCity &&

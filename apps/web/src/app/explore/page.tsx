@@ -23,8 +23,36 @@ export const dynamic = 'force-dynamic';
 
 const PAGE_LIMIT = 20;
 
-export default async function ExplorePage() {
-  const { data, total } = await fetchActivities({ page: 1, limit: PAGE_LIMIT });
+export default async function ExplorePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+
+  // Fetch for the country the request actually carries.
+  //
+  // Geo detection assigns a country on load and writes it into the URL, so
+  // `?countryId=…` is the NORMAL arrival, not an edge case — and the previous
+  // unfiltered-only fetch meant those arrivals were served skeletons while the
+  // client refetched the same page. The card images then did not exist until
+  // hydration plus a round-trip had completed, which is what LCP was waiting
+  // for. See `initialCountryId` in explore-client.tsx.
+  //
+  // Only the country is honoured. Every other filter permutation still fetches
+  // on the client — those are `noindex`, far less common, and seeding them
+  // would multiply the server-side cache entries for no benefit.
+  //
+  // Not validated here: an unknown or malformed id simply returns no rows, and
+  // `fetchActivities` already swallows a non-OK response into an empty result,
+  // so the client falls back to fetching exactly as it did before.
+  const countryId = typeof sp.countryId === 'string' ? sp.countryId : '';
+
+  const { data, total } = await fetchActivities({
+    page: 1,
+    limit: PAGE_LIMIT,
+    ...(countryId ? { countryId } : {}),
+  });
 
   // Build the ActivitiesResponse shape the client's useQuery expects. The list
   // endpoint returns a superset of ActivityCard fields (the client reads them
@@ -39,5 +67,10 @@ export default async function ExplorePage() {
       } as unknown as ActivitiesResponse)
     : null;
 
-  return <ExploreClient initialActivities={initialActivities} />;
+  return (
+    <ExploreClient
+      initialActivities={initialActivities}
+      initialCountryId={countryId}
+    />
+  );
 }
