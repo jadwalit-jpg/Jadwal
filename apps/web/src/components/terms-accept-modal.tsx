@@ -65,7 +65,7 @@ export default function TermsAcceptModal({ open, onAccepted, onCancel }: Props) 
       className={cn(
         'fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm font-outfit',
         'transition-opacity duration-200 ease-out motion-reduce:transition-none',
-        visible ? 'opacity-100' : 'opacity-0',
+        visible ? 'opacity-100' : 'opacity-0 pointer-events-none',
       )}
       onClick={(e) => { if (e.target === e.currentTarget && !submitting) onCancel(); }}
       role="dialog"

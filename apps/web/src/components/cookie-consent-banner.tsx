@@ -41,7 +41,7 @@ export default function CookieConsentBanner() {
       className={cn(
         'fixed bottom-4 inset-x-4 z-[200] mx-auto max-w-3xl rounded-2xl border border-jadwal-border-subtle bg-jadwal-surface/95 p-5 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-6 md:flex md:items-center md:gap-5',
         'transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none',
-        visible ? 'translate-y-0 opacity-100' : 'translate-y-32 opacity-0',
+        visible ? 'translate-y-0 opacity-100' : 'translate-y-32 opacity-0 pointer-events-none',
       )}
     >
       <div className="flex flex-1 items-start gap-3">
