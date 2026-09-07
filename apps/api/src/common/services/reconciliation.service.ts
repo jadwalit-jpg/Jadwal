@@ -18,13 +18,36 @@ import { RedisLockService } from '../../redis/redis-lock.service';
  *                    WHERE payment.status = SUCCESS
  *   totalRefunded  = SUM(payment.refundAmount WHERE status = REFUNDED)
  *
- *   drift = totalPayments - (vendorEarnings + platformFees + totalRefunded)
+ *   drift = totalPayments - (vendorEarnings + platformFees)
  *
- * Under correct accounting drift should always be exactly 0 — every QAR
- * a customer paid is either earmarked for a vendor, kept as platform
- * commission, or refunded. Any non-zero drift means a payment record
- * was lost, a refund was double-counted, a manual SQL edit happened,
- * or a code path was added that mints money outside this triangle.
+ * Under correct accounting drift should always be exactly 0 - every QAR a
+ * customer paid and we KEPT is either earmarked for a vendor or kept as
+ * platform commission. Any non-zero drift means a payment record was lost, a
+ * booking's recorded total no longer matches what was charged, a manual SQL
+ * edit happened, or a code path was added that mints money outside this pair.
+ *
+ * WHY totalRefunded IS NOT IN THE EQUATION
+ * ---------------------------------------
+ * It used to be, and it double-removed every refund. Refunding flips the
+ * payment SUCCESS -> REFUNDED, which already drops it from totalPayments AND
+ * from the bookings aggregate (both filter on SUCCESS). Subtracting the refund
+ * on top removed the same money twice, so drift landed on exactly
+ * -totalRefunded whenever any refund existed - a false alarm every night, on
+ * the one alert nobody can afford to learn to ignore. It is still computed and
+ * still stored on the snapshot row for reporting; it just no longer distorts
+ * the comparison.
+ *
+ * KNOWN BLIND SPOTS (money that is in NO bucket - deliberate, documented)
+ * ----------------------------------------------------------------------
+ * The states are disjoint and only SUCCESS is counted, so:
+ *   REFUND_PENDING - cancelled, money still HELD, refund decision outstanding
+ *   REJECTED       - cancelled, refund DENIED, money KEPT by the platform
+ * Neither is reconciled today. REJECTED is the more interesting of the two:
+ * it is money the platform genuinely keeps, and nothing currently checks that
+ * it was allocated correctly. Both totals are logged (below) so the gap is at
+ * least visible rather than silent. Closing it properly needs a product
+ * decision about how a partially-refunded booking should split what remains
+ * between vendor and platform, which is why it is not folded in here.
  *
  * The cron writes one row per UTC day to `reconciliation_logs` and
  * fires an admin alert (in-app notification + financial audit row)
@@ -55,6 +78,15 @@ export class ReconciliationService {
       this.logger.log('Starting daily reconciliation...');
       try {
         const result = await this.runReconciliation();
+        if (result.unreconciledCount > 0) {
+          // Not a failure - money in these states is intentionally outside the
+          // equation today. Logged so the gap stays visible rather than silent.
+          this.logger.warn(
+            `Reconciliation blind spot: ${result.unreconciledCount} payment(s) ` +
+              `worth ${result.unreconciledHeld.toFixed(2)} QAR are REFUND_PENDING ` +
+              `or REJECTED and are not covered by the drift check.`,
+          );
+        }
         if (result.passed) {
           this.logger.log(`Reconciliation passed (drift = ${result.drift.toFixed(2)} QAR).`);
         } else {
@@ -83,6 +115,8 @@ export class ReconciliationService {
     vendorEarnings: number;
     platformFees: number;
     totalRefunded: number;
+    unreconciledHeld: number;
+    unreconciledCount: number;
     drift: number;
     passed: boolean;
   }> {
@@ -93,7 +127,7 @@ export class ReconciliationService {
       now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
     ));
 
-    const [paymentsAgg, bookingsAgg, refundedAgg] = await Promise.all([
+    const [paymentsAgg, bookingsAgg, refundedAgg, unreconciledAgg] = await Promise.all([
       db.payment.aggregate({
         where: { status: 'SUCCESS' },
         _sum: { amount: true },
@@ -110,6 +144,14 @@ export class ReconciliationService {
         where: { status: 'REFUNDED' },
         _sum: { refundAmount: true },
       }),
+      // Money the platform is holding or has kept that NO bucket above counts.
+      // Not part of the equation (see the blind-spots note in the class doc) -
+      // surfaced so the gap is visible in the logs instead of silent.
+      db.payment.aggregate({
+        where: { status: { in: ['REFUND_PENDING', 'REJECTED'] } },
+        _sum: { amount: true },
+        _count: true,
+      }),
     ]);
 
     const totalPayments = decimalToNumber(paymentsAgg._sum.amount);
@@ -117,10 +159,29 @@ export class ReconciliationService {
     const platformFees = decimalToNumber(bookingsAgg._sum.commissionAmount);
     const vendorEarnings = round2(totalPriceSum - platformFees);
     const totalRefunded = decimalToNumber(refundedAgg._sum.refundAmount);
+    const unreconciledHeld = decimalToNumber(unreconciledAgg._sum.amount);
+    const unreconciledCount = unreconciledAgg._count ?? 0;
 
-    const drift = round2(
-      totalPayments - (vendorEarnings + platformFees + totalRefunded),
-    );
+    // drift compares money RECEIVED against how that same money was allocated.
+    //
+    // `totalRefunded` is deliberately NOT subtracted here. It used to be, and
+    // that double-removed every refund: refunding a payment flips its status
+    // SUCCESS -> REFUNDED, which already drops it out of `totalPayments` and
+    // out of the bookings aggregate (both filter on status SUCCESS). Subtracting
+    // the refund as well removed the same money a second time, so drift came out
+    // at exactly -totalRefunded on any day a refund existed - a guaranteed false
+    // alarm, nightly and forever, on the one alert that must stay trustworthy.
+    //
+    // The three states are disjoint, so there are two self-consistent ways to
+    // write this and the old code mixed them:
+    //   NET   - count only money kept, never mention refunds        (what we do)
+    //   GROSS - count everything received, then subtract refunds
+    // NET is the correct pairing for these aggregates because both surviving
+    // terms are already scoped to payment.status = SUCCESS.
+    //
+    // totalRefunded is still computed and still written to the snapshot row -
+    // it stays visible for reporting, it just no longer distorts the equation.
+    const drift = round2(totalPayments - (vendorEarnings + platformFees));
     const passed = Math.abs(drift) <= ReconciliationService.DRIFT_TOLERANCE;
 
     // upsert: on manual re-runs of the same day, refresh the snapshot.
@@ -162,6 +223,8 @@ export class ReconciliationService {
       vendorEarnings,
       platformFees,
       totalRefunded,
+      unreconciledHeld,
+      unreconciledCount,
       drift,
       passed,
     };
