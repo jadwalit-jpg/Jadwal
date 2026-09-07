@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import api from '@/lib/api';
 import { localized } from '@/lib/localize';
+import { displayableAddress } from '@/lib/location';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 import CustomSelect from '@/components/custom-select';
@@ -674,10 +675,21 @@ function ExploreContent({
                       {localized(activity, 'title')}
                     </h2>
 
-                    {activity.locationAddress && (
+                    {/* Prefer the CITY over locationAddress, matching the shared
+                        ActivityCard used on the home page. locationAddress is
+                        vendor free-text: it is a single untranslated string (so an
+                        Arabic visitor saw the English value) and vendors often paste
+                        raw coordinates into it, which is what shipped here -
+                        "25.2973927, 51.5500061" where the card should read "Box Park".
+                        city carries nameEn/nameAr, so it localises properly. Fall back
+                        to locationAddress only when there is no city, and never show
+                        a value that is just a lat/lng pair. */}
+                    {(localized(activity.city, 'name') || displayableAddress(activity.locationAddress)) && (
                       <div className="mt-1.5 flex items-center gap-1.5 text-sm text-gray-500 dark:text-slate-400">
                         <MapPin className="h-3.5 w-3.5 shrink-0" />
-                        <span className="line-clamp-1">{activity.locationAddress}</span>
+                        <span className="line-clamp-1">
+                          {localized(activity.city, 'name') || displayableAddress(activity.locationAddress)}
+                        </span>
                       </div>
                     )}
 

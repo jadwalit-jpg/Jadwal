@@ -35,6 +35,7 @@ const ActivityLocationMap = dynamic(() => import('@/components/activity-location
 import { getApiError } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import { localized } from '@/lib/localize';
+import { displayableAddress } from '@/lib/location';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 import TermsAcceptModal from '@/components/terms-accept-modal';
@@ -862,19 +863,29 @@ export default function ActivityDetailClient({
           ) : null}
 
           {/* Meeting point / Map */}
-          {activity.locationAddress ? (
+          {/* Prefer a REAL address here (the detail page wants the precise meeting
+              point), but drop it when it is just coordinates and use the city
+              instead. The section must still render for a coordinates-only
+              activity, because the map below it is the useful part. */}
+          {displayableAddress(activity.locationAddress) ||
+          localized(activity.city, 'name') ||
+          (activity.locationLat && activity.locationLng) ? (
             <Section
               title={t('activity.meetingPoint', {
                 defaultValue: 'Meeting point',
               })}
             >
-              <div className="flex items-start gap-2 text-sm text-jadwal-text">
-                <MapPin
-                  className="h-4 w-4 mt-0.5 shrink-0 text-jadwal-primary"
-                  aria-hidden="true"
-                />
-                <span>{activity.locationAddress}</span>
-              </div>
+              {displayableAddress(activity.locationAddress) || localized(activity.city, 'name') ? (
+                <div className="flex items-start gap-2 text-sm text-jadwal-text">
+                  <MapPin
+                    className="h-4 w-4 mt-0.5 shrink-0 text-jadwal-primary"
+                    aria-hidden="true"
+                  />
+                  <span>
+                    {displayableAddress(activity.locationAddress) || localized(activity.city, 'name')}
+                  </span>
+                </div>
+              ) : null}
               {activity.locationLat && activity.locationLng ? (
                 <div className="mt-4 rounded-2xl overflow-hidden border border-jadwal-border-subtle">
                   {/*
