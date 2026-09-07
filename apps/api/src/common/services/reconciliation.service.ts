@@ -37,17 +37,31 @@ import { RedisLockService } from '../../redis/redis-lock.service';
  * still stored on the snapshot row for reporting; it just no longer distorts
  * the comparison.
  *
- * KNOWN BLIND SPOTS (money that is in NO bucket - deliberate, documented)
- * ----------------------------------------------------------------------
- * The states are disjoint and only SUCCESS is counted, so:
- *   REFUND_PENDING - cancelled, money still HELD, refund decision outstanding
- *   REJECTED       - cancelled, refund DENIED, money KEPT by the platform
- * Neither is reconciled today. REJECTED is the more interesting of the two:
- * it is money the platform genuinely keeps, and nothing currently checks that
- * it was allocated correctly. Both totals are logged (below) so the gap is at
- * least visible rather than silent. Closing it properly needs a product
- * decision about how a partially-refunded booking should split what remains
- * between vendor and platform, which is why it is not folded in here.
+ * KNOWN BLIND SPOTS (real cash in NO bucket - deliberate, documented)
+ * -------------------------------------------------------------------
+ * Only SUCCESS is counted, and REFUNDS DO NOT MOVE CASH on this platform:
+ * an approved refund is converted to Wanasa loyalty points (store credit) at
+ * qarPerPoint - see refund-decision handling in bookings.service. There is no
+ * gateway refund call anywhere in the codebase. So the cash from a refunded
+ * booking STAYS in the platform's account and becomes a points liability.
+ *
+ * That makes three states hold real cash that this check does not see:
+ *   REFUNDED       - cash RETAINED, customer holds points instead
+ *   REFUND_PENDING - cash held, refund decision outstanding
+ *   REJECTED       - cancelled, refund denied, cash kept outright
+ *
+ * This is also why subtracting totalRefunded was doubly wrong: it treated a
+ * points conversion as though cash had left the building, on top of removing
+ * money that was already excluded.
+ *
+ * What is therefore NOT reconciled today: retained cash against the
+ * outstanding points liability in LoyaltyLedger (which is QAR-denominated and
+ * already carries balanceAfter for its own drift detection). Closing that
+ * properly is a cash-vs-liability model spanning two ledgers, and it needs a
+ * product decision about how a partially-refunded booking splits the retained
+ * remainder between vendor and platform - so it is documented and logged here
+ * rather than guessed at. The totals are surfaced below so the gap is visible
+ * rather than silent.
  *
  * The cron writes one row per UTC day to `reconciliation_logs` and
  * fires an admin alert (in-app notification + financial audit row)

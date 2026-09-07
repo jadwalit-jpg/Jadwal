@@ -267,8 +267,10 @@ describe('B10 — ReconciliationService computes drift + alerts on mismatch', ()
   it('a refund does NOT create phantom drift (regression: refund was removed twice)', async () => {
     const seed = await buildSeed();
     // 100 kept (vendor 90 + fee 10) and a separate 50 fully refunded.
-    // Nothing is wrong here: the 100 balances, and the 50 came in and went
-    // straight back out.
+    // NOTE: a refund on this platform does not move cash - it converts to
+    // loyalty points (store credit). So the 50 is still in the account as a
+    // points liability. Either way it must not be subtracted from the 100,
+    // which is what produced the phantom drift.
     await createCleanPayment(seed, 100, 10);
     await ctx.prisma.payment.create({
       data: {
