@@ -65,7 +65,9 @@ jobs:
     outputs:
       image-tag: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
@@ -74,7 +76,7 @@ jobs:
 
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
 
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -100,13 +102,15 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       # Fail-secure guard: every deploy build MUST have all required public
       # build-args set as repo Variables. Empty values silently bake broken
       # bundles (e.g. browser push subscribes against an empty VAPID key,
@@ -159,13 +163,15 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -217,7 +223,9 @@ jobs:
       # `trivyignores` input below). This job scans a pre-built ECR image and
       # otherwise has no working copy, so without a checkout trivy errors with
       # "cannot find ignorefile '.trivyignore'".
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
@@ -260,7 +268,7 @@ jobs:
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
 
-      - uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v3
+      - uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v3
         if: always()
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
@@ -277,7 +285,9 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
@@ -401,7 +411,9 @@ jobs:
           - { name: jadwal-api, img: jadwal-api, taskdef: api-task.json }
           - { name: jadwal-web, img: jadwal-web, taskdef: web-task.json }
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.GHA_DEPLOY_ROLE_ARN }}
@@ -625,5 +637,99 @@ jobs:
             exit 1
           fi
           echo "All ECS services have healthy targets — deploy verified."
+
+
+  # ─── Failure alarm ────────────────────────────────────────────────
+  # A fail-closed gate that fails SILENTLY is only half a control: it
+  # correctly refuses to ship a bad image, then lets everyone believe it
+  # shipped. On 2026-09-06 the Trivy gate did exactly that — it blocked a
+  # vulnerable migrations image (correct), migrate/deploy/smoke were skipped
+  # (correct), and nothing told anyone (not correct). main claimed the fix was
+  # live while production served an 11-day-old build, and it surfaced only
+  # because somebody went and read ECS by hand.
+  #
+  # `if: failure()` fires when a needed job FAILED. Skipped jobs do not count
+  # as failures, so this depends on every job in the pipeline.
+  notify-failure:
+    name: Deploy failure alert
+    runs-on: ubuntu-latest
+    needs: [build-api, build-web, build-migrations, trivy, migrate, deploy, smoke]
+    if: failure()
+    permissions:
+      contents: read
+      issues: write        # the only extra grant, scoped to this job alone
+    steps:
+      - name: Open a deploy-failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          BODY=$(cat <<EOF
+          The deploy workflow failed, so **production was NOT updated**.
+
+          - commit: \`${SHA}\`
+          - run: ${RUN_URL}
+
+          The gates here are fail-closed: when a build or a Trivy scan fails,
+          \`migrate\` / \`deploy\` / \`smoke\` are **skipped** rather than run. That is
+          the correct behaviour — but it means **main can look green and merged
+          while production keeps serving the previous build**.
+
+          Do not assume a later merge fixes this. Verify at the platform:
+
+          \`\`\`sh
+          aws ecs describe-services --cluster jadwal-prod \\
+            --services jadwal-api jadwal-web \\
+            --query 'services[].{n:serviceName,td:taskDefinition,r:deployments[0].rolloutState,f:deployments[0].failedTasks}'
+          \`\`\`
+
+          A **new task-definition revision**, \`rolloutState: COMPLETED\` and
+          \`failedTasks: 0\` is what "shipped" means. A green pipeline is not.
+
+          _Closes automatically on the next successful deploy._
+          EOF
+          )
+
+          # One rolling issue rather than one per failed run — a pile of
+          # duplicates is its own kind of silence.
+          EXISTING=$(gh issue list --label deploy-failure --state open --json number --jq '.[0].number // empty')
+          if [ -n "${EXISTING}" ]; then
+            gh issue comment "${EXISTING}" --body "${BODY}"
+            echo "commented on existing issue #${EXISTING}"
+          else
+            gh label create deploy-failure --color B60205 \
+              --description "Deploy failed; production did not update" 2>/dev/null || true
+            gh issue create --title "Deploy failed — production did NOT update (${SHA})" \
+              --body "${BODY}" --label deploy-failure
+          fi
+
+  # ─── Failure alarm: stand down ────────────────────────────────────
+  # Closes the rolling issue once a deploy genuinely succeeds end-to-end, so an
+  # OPEN deploy-failure issue always means "production is behind right now"
+  # rather than "something went wrong at some point".
+  notify-recovered:
+    name: Close deploy-failure issue
+    runs-on: ubuntu-latest
+    needs: [smoke]
+    if: success()
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Close any open deploy-failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label deploy-failure --state open --json number --jq '.[].number'); do
+            gh issue close "${n}" --comment "Recovered — deploy succeeded end-to-end. ${RUN_URL}"
+            echo "closed #${n}"
+          done
 
 # Last successful end-to-end run: 2026-04-29 (verification)

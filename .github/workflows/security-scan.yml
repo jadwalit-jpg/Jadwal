@@ -6,9 +6,20 @@ on:
   push:
     branches: [main]
   schedule:
-    # Weekly full scan on Monday 06:00 UTC — catches newly-disclosed CVEs
-    # even on code that hasn't changed.
-    - cron: "0 6 * * 1"
+    # DAILY, not weekly. The intent was always to catch newly-disclosed CVEs
+    # on code that has not changed - but advisories are published every day, so
+    # a weekly cadence leaves up to 7 days of blindness.
+    #
+    # Not hypothetical: on 2026-09-06 five HIGH production advisories
+    # (fast-uri x4, mysql2) were found by a PR, not by this scan. They were
+    # published AFTER the 08-31 Monday run, so this workflow would not have
+    # looked again until 09-07. main had not been pushed since 08-26, so no
+    # PR-triggered audit ran either, and production sat 11 days stale behind a
+    # fail-closed deploy gate nobody knew had tripped.
+    #
+    # A green badge means "green as of the last run", never "green today".
+    # Daily is what keeps that gap small enough to matter.
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
@@ -23,7 +34,9 @@ jobs:
     container:
       image: semgrep/semgrep:latest@sha256:7810f1d7884974ab6dda7bef8f4a2c8e165ea2142fd8260515d380e4f1407263
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Run Semgrep
         # Block deploy on ERROR-severity only. WARNING-level rules
         # (njsscan Math.random, regex-DoS heuristic, "string equality
@@ -47,7 +60,7 @@ jobs:
             apps/
       - name: Upload SARIF to GitHub Security tab
         if: always()
-        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v3
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v3
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -57,7 +70,9 @@ jobs:
     name: retire.js
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
@@ -84,14 +99,16 @@ jobs:
       matrix:
         language: [javascript-typescript]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v3
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v3
         with:
           languages: ${{ matrix.language }}
           queries: security-extended,security-and-quality
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v3
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v3
         with:
           category: "/language:${{ matrix.language }}"
 
@@ -100,7 +117,9 @@ jobs:
     name: npm audit (production)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22

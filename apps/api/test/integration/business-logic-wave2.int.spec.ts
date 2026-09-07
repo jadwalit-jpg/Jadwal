@@ -264,9 +264,13 @@ describe('B10 — ReconciliationService computes drift + alerts on mismatch', ()
     expect(audit?.actionCategory).toBe('FINANCIAL');
   });
 
-  it('factors refunds into the balance check', async () => {
+  it('a refund does NOT create phantom drift (regression: refund was removed twice)', async () => {
     const seed = await buildSeed();
-    // 100 paid + 100 fully refunded = balance still passes.
+    // 100 kept (vendor 90 + fee 10) and a separate 50 fully refunded.
+    // NOTE: a refund on this platform does not move cash - it converts to
+    // loyalty points (store credit). So the 50 is still in the account as a
+    // points liability. Either way it must not be subtracted from the 100,
+    // which is what produced the phantom drift.
     await createCleanPayment(seed, 100, 10);
     await ctx.prisma.payment.create({
       data: {
@@ -280,15 +284,106 @@ describe('B10 — ReconciliationService computes drift + alerts on mismatch', ()
     const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc, { withLeaderLock: (_k: string, _t: number, fn: () => unknown) => fn() } as any);
 
     const result = await svc.runReconciliation();
-    expect(result.totalRefunded).toBe(50);
-    // Refunded payment is NOT in the SUCCESS bucket (status=REFUNDED), so
-    // totalPayments stays 100, refunded=50, vendor+fees=100 → drift = -50
-    // (refunds aren't allocated against vendor/fee buckets in this snapshot).
-    // The contract: refunds are surfaced as a tracked bucket so admin can
-    // see them in the daily row, even though they pull the balance off
-    // when the corresponding refund-source payment isn't reflected.
-    expect(result.drift).toBe(-50);
+
+    // Refunding flips the payment SUCCESS -> REFUNDED, so it is ALREADY out of
+    // totalPayments and out of the bookings aggregate. Subtracting the refund
+    // again removed the same money twice and produced drift = -refundAmount on
+    // any day a refund existed. This asserts the money that was KEPT balances,
+    // and the refund is reported without distorting the equation.
+    expect(result.totalPayments).toBe(100);
+    expect(result.vendorEarnings).toBe(90);
+    expect(result.platformFees).toBe(10);
+    expect(result.totalRefunded).toBe(50);   // still surfaced for reporting
+    expect(result.drift).toBe(0);
+    expect(result.passed).toBe(true);
+    expect(stub.sent).toHaveLength(0);       // and no admin alert fires
+  });
+
+  it('a PARTIAL refund also produces no phantom drift', async () => {
+    const seed = await buildSeed();
+    await createCleanPayment(seed, 100, 10);
+    // Late cancellation: customer paid 80, got 30 back, platform kept 50.
+    await ctx.prisma.payment.create({
+      data: {
+        amount: 80, currency: 'QAR', status: 'REFUNDED', payoutStatus: 'UNPAID',
+        method: 'PAY2M', paidAt: new Date(), refundAmount: 30, refundedAt: new Date(),
+      },
+    });
+
+    const stub = makeNotificationServiceStub();
+    const auditLogger = new AuditLoggerService(makePrismaShim());
+    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc, { withLeaderLock: (_k: string, _t: number, fn: () => unknown) => fn() } as any);
+
+    const result = await svc.runReconciliation();
+
+    expect(result.totalRefunded).toBe(30);
+    expect(result.drift).toBe(0);
+    expect(result.passed).toBe(true);
+  });
+
+  it('still detects REAL drift when a refund is also present', async () => {
+    const seed = await buildSeed();
+    // The fix must not blunt the check: a genuinely mismatched booking has to
+    // still fail even on a day that also has refunds in the ledger.
+    const payment = await ctx.prisma.payment.create({
+      data: { amount: 100, currency: 'QAR', status: 'SUCCESS', payoutStatus: 'UNPAID', method: 'PAY2M', paidAt: new Date() },
+    });
+    await ctx.prisma.booking.create({
+      data: {
+        ref: 'JDWL-RECON-DRIFT-RF', customerId: seed.customer.id, vendorId: seed.vendor.id,
+        activityId: seed.activity.id, guests: 1, bookingPhone: '+97455123456', guestBreakdown: {},
+        startDatetime: new Date(Date.now() - 25 * 3600_000),
+        endDatetime: new Date(Date.now() - 23 * 3600_000),
+        totalPrice: 80,            // hand-edited: does not match the 100 charged
+        currencyCode: 'QAR', commissionPct: 10, commissionAmount: 8, serviceFee: 0,
+        status: 'COMPLETED', paymentId: payment.id, reservedUntil: new Date(Date.now() - 60_000),
+      },
+    });
+    await ctx.prisma.payment.create({
+      data: {
+        amount: 50, currency: 'QAR', status: 'REFUNDED', payoutStatus: 'UNPAID',
+        method: 'PAY2M', paidAt: new Date(), refundAmount: 50, refundedAt: new Date(),
+      },
+    });
+
+    const stub = makeNotificationServiceStub();
+    const auditLogger = new AuditLoggerService(makePrismaShim());
+    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc, { withLeaderLock: (_k: string, _t: number, fn: () => unknown) => fn() } as any);
+
+    const result = await svc.runReconciliation();
+
+    // 100 charged vs 80 recorded = 20 genuinely unaccounted, and the refund
+    // must not mask it (nor inflate it).
+    expect(result.drift).toBe(20);
     expect(result.passed).toBe(false);
+    expect(stub.sent).toHaveLength(1);
+  });
+
+  it('surfaces held/kept money that no bucket reconciles (blind spot)', async () => {
+    const seed = await buildSeed();
+    await createCleanPayment(seed, 100, 10);
+    // REFUND_PENDING: money still held, refund decision outstanding.
+    await ctx.prisma.payment.create({
+      data: { amount: 40, currency: 'QAR', status: 'REFUND_PENDING', payoutStatus: 'UNPAID', method: 'PAY2M', paidAt: new Date() },
+    });
+    // REJECTED: customer cancelled, refund denied, platform KEPT the money.
+    await ctx.prisma.payment.create({
+      data: { amount: 25, currency: 'QAR', status: 'REJECTED', payoutStatus: 'UNPAID', method: 'PAY2M', paidAt: new Date() },
+    });
+
+    const stub = makeNotificationServiceStub();
+    const auditLogger = new AuditLoggerService(makePrismaShim());
+    const svc = new ReconciliationService(makePrismaShim(), auditLogger, stub.svc, { withLeaderLock: (_k: string, _t: number, fn: () => unknown) => fn() } as any);
+
+    const result = await svc.runReconciliation();
+
+    // These states are deliberately outside the equation for now, but they must
+    // be VISIBLE - money nobody checks is how a real gap hides in plain sight.
+    expect(result.unreconciledCount).toBe(2);
+    expect(result.unreconciledHeld).toBe(65);
+    // ...and they must not be mistaken for drift.
+    expect(result.drift).toBe(0);
+    expect(result.passed).toBe(true);
   });
 
   it('upserts on same-day re-run rather than duplicating rows', async () => {
