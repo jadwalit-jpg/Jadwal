@@ -162,6 +162,29 @@ const apiPrisma = (apiPkg.devDependencies ?? {}).prisma;
 const apiClient = (apiPkg.dependencies ?? {})['@prisma/client'];
 const migPrisma = (migManifest.dependencies ?? {}).prisma;
 
+// A MISSING pin has to fail too, not just a mismatched one. Guarding each
+// comparison on both values being truthy means a removed or renamed pin
+// silently skips its own check and the gate passes green - the fail-open
+// shape this whole script exists to prevent. (Caught in review on this file.)
+//
+// The rule is "if any of the three exists, all three must": prisma is either
+// in use here or it is not. All three absent is vacuously fine - a project
+// that dropped prisma has nothing left to keep in sync. Some present and some
+// missing is exactly the drift worth blocking on.
+const prismaPins = [
+  ['apps/api/package.json devDependencies.prisma', apiPrisma],
+  ['apps/api/package.json dependencies["@prisma/client"]', apiClient],
+  ['Dockerfile.migrations dependencies.prisma', migPrisma],
+];
+const missingPrismaPins = prismaPins.filter(([, v]) => !v).map(([label]) => label);
+
+if (missingPrismaPins.length && missingPrismaPins.length < prismaPins.length) {
+  problems.push(
+    `  prisma: pinned in some places but MISSING in: ${missingPrismaPins.join(", ")}` +
+      `\n      -> cannot verify the migration CLI and the generated client agree`,
+  );
+}
+
 if (apiPrisma && migPrisma && apiPrisma !== migPrisma) {
   problems.push(
     `  prisma: apps/api devDependencies pins "${apiPrisma}" but the migrations image pins "${migPrisma}"\n` +
