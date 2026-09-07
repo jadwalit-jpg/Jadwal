@@ -28,6 +28,12 @@
  * tmp...), and demanding a copy of those would be noise that teaches people
  * to ignore the gate. Only overlap is enforced.
  *
+ * SCOPE: this checks OVERRIDES only. The prisma CLI/client version lockstep
+ * between apps/api and the migrations image is already enforced by the
+ * "Prisma version is in lockstep with migrations image" step in ci.yml - do
+ * not duplicate it here. One check per invariant, in one place, or the two
+ * copies drift apart and each reviewer assumes the other one is authoritative.
+ *
  * Usage:  node scripts/check-migrations-overrides.mjs
  */
 
@@ -146,69 +152,15 @@ for (const [pkg, rootRange] of Object.entries(rootOverrides)) {
   }
 }
 
-// ── the prisma pin ─────────────────────────────────────────────────────────
-// Second way these two files drift. Dockerfile.migrations hardcodes the prisma
-// CLI version, and its own comment says it MUST match apps/api because the
-// engine bundled in the CLI has to match the schema the client was generated
-// against. Nothing enforced that, and a Dependabot bump only ever touches
-// package.json — #639 proposes prisma 7.10.0 and would have left the image
-// running the 7.9.1 CLI against a 7.10.0 schema.
-//
-// Checked here rather than in a new script because it is the same failure:
-// a value duplicated between the manifest and the image, with only a comment
-// holding them together.
-const apiPkg = JSON.parse(readFileSync(join(REPO_ROOT, 'apps/api/package.json'), 'utf8'));
-const apiPrisma = (apiPkg.devDependencies ?? {}).prisma;
-const apiClient = (apiPkg.dependencies ?? {})['@prisma/client'];
-const migPrisma = (migManifest.dependencies ?? {}).prisma;
-
-// A MISSING pin has to fail too, not just a mismatched one. Guarding each
-// comparison on both values being truthy means a removed or renamed pin
-// silently skips its own check and the gate passes green - the fail-open
-// shape this whole script exists to prevent. (Caught in review on this file.)
-//
-// The rule is "if any of the three exists, all three must": prisma is either
-// in use here or it is not. All three absent is vacuously fine - a project
-// that dropped prisma has nothing left to keep in sync. Some present and some
-// missing is exactly the drift worth blocking on.
-const prismaPins = [
-  ['apps/api/package.json devDependencies.prisma', apiPrisma],
-  ['apps/api/package.json dependencies["@prisma/client"]', apiClient],
-  ['Dockerfile.migrations dependencies.prisma', migPrisma],
-];
-const missingPrismaPins = prismaPins.filter(([, v]) => !v).map(([label]) => label);
-
-if (missingPrismaPins.length && missingPrismaPins.length < prismaPins.length) {
-  problems.push(
-    `  prisma: pinned in some places but MISSING in: ${missingPrismaPins.join(", ")}` +
-      `\n      -> cannot verify the migration CLI and the generated client agree`,
-  );
-}
-
-if (apiPrisma && migPrisma && apiPrisma !== migPrisma) {
-  problems.push(
-    `  prisma: apps/api devDependencies pins "${apiPrisma}" but the migrations image pins "${migPrisma}"\n` +
-      `      -> the migration CLI and the generated client would disagree on the engine`,
-  );
-}
-if (apiPrisma && apiClient && apiPrisma !== apiClient) {
-  problems.push(
-    `  prisma: apps/api devDependencies pins "${apiPrisma}" but @prisma/client is "${apiClient}"\n` +
-      `      -> CLI and client must be the same version`,
-  );
-}
-
 const checked = Object.keys(rootOverrides).filter((p) => installed.has(p));
 console.log(`=== migrations-image override drift ===`);
 console.log(`    root overrides:       ${Object.keys(rootOverrides).length}`);
 console.log(`    migrations overrides: ${Object.keys(migOverrides).length}`);
 console.log(`    packages in BOTH the root overrides and the migrations tree: ${checked.length}`);
 if (checked.length) console.log(`      ${checked.join(', ')}`);
-console.log(`    prisma pin: apps/api=${apiPrisma} client=${apiClient} migrations-image=${migPrisma}`);
 
 if (problems.length) {
   const hasOverrideDrift = problems.some((p) => p.includes('pins NOTHING') || p.includes('(lower)'));
-  const hasPrismaDrift = problems.some((p) => p.trimStart().startsWith('prisma:'));
 
   let why = `\n\nWHY THIS BLOCKS THE MERGE\n`;
   if (hasOverrideDrift) {
@@ -223,17 +175,6 @@ if (problems.length) {
       `  FIX: add the pins above to the \`overrides\` block in\n` +
       `       apps/api/Dockerfile.migrations.\n`;
   }
-  if (hasPrismaDrift) {
-    why +=
-      `The prisma CLI version is duplicated between apps/api/package.json and\n` +
-      `the manifest synthesized in Dockerfile.migrations, and only a comment held\n` +
-      `them together. They must match: the engine bundled in the CLI has to match\n` +
-      `the schema the client was generated against. A dependency bump only ever\n` +
-      `edits package.json, so the image silently keeps running the old CLI.\n` +
-      `  FIX: bump \`"prisma":"…"\` in apps/api/Dockerfile.migrations to the same\n` +
-      `       version, in the SAME pull request.\n`;
-  }
-
   fail(`Drift between the root/apps/api manifests and ${DOCKERFILE}:\n\n` + problems.join('\n') + why);
 }
 

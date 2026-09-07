@@ -151,6 +151,16 @@ jobs:
             echo "❌ api workspace prisma must be an exact pin (no ^ or ~), got: $API_VER"
             exit 1
           fi
+          # The generated client must be the same version as the CLI that
+          # generates it. A mismatch here is the same engine-vs-schema desync
+          # as above, just introduced from the other side - and a dependency
+          # bot updating one line at a time is exactly how it happens.
+          CLI_VER=$(node -p "require('./apps/api/package.json').dependencies['@prisma/client']")
+          echo "@prisma/client=$CLI_VER"
+          if [ -z "$CLI_VER" ] || [ "$CLI_VER" != "$API_VER" ]; then
+            echo "❌ @prisma/client ($CLI_VER) must match the prisma CLI ($API_VER)"
+            exit 1
+          fi
           echo "✅ Prisma versions locked"
 
   # ─── Stage 4a2: Frontend ↔ Backend API contract ────────────────
