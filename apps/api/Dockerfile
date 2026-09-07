@@ -72,15 +72,60 @@ COPY apps/web/package.json ./apps/web/
 # keeps the no-arbitrary-scripts posture (the binary ships prebuilt, no script
 # needed). The runner stage adds a build-time `require('sharp')` smoke test so
 # a bad image can never again pass CI silently.
+#
+# INTEGRITY: the three tarballs are fetched by the exact URL recorded in our
+# lockfile and each is checked against that lockfile's sha512 before anything
+# is installed, then installed FROM THE VERIFIED FILES. The previous form was
+# a bare `npm install sharp@x.y.z`, which resolves from the registry with no
+# hash check at all - the one install in this image that trusted the registry
+# rather than the lockfile (OpenSSF Scorecard: "npmCommand not pinned by
+# hash"). A tampered tarball for that exact version would have been installed
+# silently. `--ignore-scripts` already blocked code execution at install time,
+# so this closes the remaining gap: the bytes themselves.
+#
+# The verifier fails the build on a mismatch AND on a count mismatch - if it
+# somehow verifies fewer than three packages it must not pass vacuously, which
+# is the failure mode that makes a check worse than no check.
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --ignore-scripts --workspace=api --include-workspace-root=false \
  && SHARP_VER="$(node -p "require('/app/node_modules/sharp/package.json').version")" \
- && npm install --prefix /tmp/sharpfix --no-save --no-package-lock --include=optional --ignore-scripts \
-      --os=linux --cpu=x64 --libc=musl "sharp@${SHARP_VER}" \
+ && mkdir -p /tmp/sharpdl \
+ && node -e ' \
+      const lock = require("/app/package-lock.json"); \
+      const want = process.argv[1]; \
+      const names = ["sharp", "@img/sharp-linuxmusl-x64", "@img/sharp-libvips-linuxmusl-x64"]; \
+      const out = []; \
+      for (const n of names) { \
+        const e = lock.packages["node_modules/" + n]; \
+        if (!e) { console.error("[sharp] missing from lockfile: " + n); process.exit(1); } \
+        if (!e.resolved || !e.integrity) { console.error("[sharp] no resolved/integrity: " + n); process.exit(1); } \
+        if (n === "sharp" && e.version !== want) { console.error("[sharp] lockfile " + e.version + " != installed " + want); process.exit(1); } \
+        out.push([n.replace(/[@/]/g, "_"), e.version, e.resolved, e.integrity].join(" ")); \
+      } \
+      require("fs").writeFileSync("/tmp/sharpdl/want.txt", out.join("\n") + "\n"); \
+    ' "${SHARP_VER}" \
+ && COUNT=0 \
+ && while read -r NAME VER URL INTEG; do \
+      [ -z "${NAME}" ] && continue; \
+      wget -q -O "/tmp/sharpdl/${NAME}.tgz" "${URL}"; \
+      EXPECT="$(printf '%s' "${INTEG}" | sed 's/^sha512-//')"; \
+      ACTUAL="$(sha512sum "/tmp/sharpdl/${NAME}.tgz" | cut -d' ' -f1 | xxd -r -p | base64 -w0)"; \
+      if [ "${ACTUAL}" != "${EXPECT}" ]; then \
+        echo "[sharp] FATAL integrity mismatch for ${NAME}@${VER} - refusing to build"; exit 1; \
+      fi; \
+      echo "[sharp] verified ${NAME}@${VER}"; \
+      COUNT=$((COUNT+1)); \
+    done < /tmp/sharpdl/want.txt \
+ && if [ "${COUNT}" -ne 3 ]; then echo "[sharp] FATAL verified ${COUNT}/3 packages"; exit 1; fi \
+ && npm install --prefix /tmp/sharpfix --no-save --no-package-lock --ignore-scripts \
+      /tmp/sharpdl/sharp.tgz \
+      /tmp/sharpdl/_img_sharp-linuxmusl-x64.tgz \
+      /tmp/sharpdl/_img_sharp-libvips-linuxmusl-x64.tgz \
+ && test -f /tmp/sharpfix/node_modules/@img/sharp-libvips-linuxmusl-x64/lib/libvips-cpp.so.*  \
  && rm -rf node_modules/sharp node_modules/@img \
  && cp -R /tmp/sharpfix/node_modules/sharp node_modules/ \
  && cp -R /tmp/sharpfix/node_modules/@img node_modules/ \
- && rm -rf /tmp/sharpfix \
+ && rm -rf /tmp/sharpfix /tmp/sharpdl \
  && rm -rf node_modules/prisma node_modules/.bin/prisma \
            node_modules/typescript node_modules/.bin/tsc node_modules/.bin/tsserver \
            apps/api/node_modules/prisma apps/api/node_modules/typescript \
