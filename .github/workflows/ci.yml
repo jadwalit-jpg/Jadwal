@@ -142,13 +142,32 @@ jobs:
         run: |
           API_VER=$(node -p "require('./apps/api/package.json').devDependencies.prisma")
           MIG_VER=$(grep -oP '"prisma":"\K[^"]+' apps/api/Dockerfile.migrations | head -1)
+          CLI_VER=$(node -p "require('./apps/api/package.json').dependencies['@prisma/client']")
+          echo "@prisma/client=$CLI_VER"
           echo "api/package.json prisma=$API_VER  Dockerfile.migrations prisma=$MIG_VER"
           if [ -z "$API_VER" ] || [ -z "$MIG_VER" ] || [ "$API_VER" != "$MIG_VER" ]; then
             echo "❌ Prisma version drift between api workspace and migrations image"
             exit 1
           fi
-          if echo "$API_VER" | grep -qE '^[\^~]'; then
-            echo "❌ api workspace prisma must be an exact pin (no ^ or ~), got: $API_VER"
+          # Assert an EXACT semver, rather than blacklisting ^ and ~. A blacklist
+          # only rejects the two range syntaxes someone thought of: "latest", "*",
+          # ">=7.0.0" and friends all pass a caret/tilde check while still being
+          # unpinned, and two sides can match today then silently resolve to
+          # different versions on a later build - the exact desync this gate exists
+          # to prevent. Allow-list the shape we want instead.
+          for pair in "api:$API_VER" "client:$CLI_VER" "migrations-image:$MIG_VER"; do
+            label="${pair%%:*}"; val="${pair#*:}"
+            if ! echo "$val" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "❌ $label prisma must be an exact version (x.y.z), got: $val"
+              exit 1
+            fi
+          done
+          # The generated client must be the same version as the CLI that
+          # generates it. A mismatch here is the same engine-vs-schema desync
+          # as above, just introduced from the other side - and a dependency
+          # bot updating one line at a time is exactly how it happens.
+          if [ -z "$CLI_VER" ] || [ "$CLI_VER" != "$API_VER" ]; then
+            echo "❌ @prisma/client ($CLI_VER) must match the prisma CLI ($API_VER)"
             exit 1
           fi
           echo "✅ Prisma versions locked"
