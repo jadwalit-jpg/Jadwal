@@ -25,6 +25,7 @@ import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage, addMonthsClamped } from '../bookings/bookings.service';
+import { assignMissingUnits } from '../bookings/assign-missing-units';
 import { envNumber } from '../common/env';
 
 @Injectable()
@@ -2170,16 +2171,45 @@ export class AdminService {
     if (subCategoryId !== undefined) data.subCategoryId = subCategoryId || null;
     if (cityId) data.city = { connect: { id: cityId } };
 
-    return this.prisma.client.activity.update({
-      where: { id },
-      data,
-      include: {
-        vendor: { select: { businessNameEn: true } },
-        category: { select: { id: true, nameEn: true } },
-        country: { select: { nameEn: true, currencyCode: true } },
-        city: { select: { id: true, nameEn: true } },
-      },
+    // Same hazard as the vendor-side update: admin can flip `hasUnits` on here
+    // too, and a booking taken while units were off carries unitNumber = null,
+    // which every unit-counting availability path ignores. Flipping without a
+    // backfill makes existing confirmed guests invisible and their dates
+    // re-sellable (found live on 2026-09-12). One transaction, so a failed
+    // backfill leaves the switch unflipped rather than half-applied.
+    const updated = await this.prisma.client.$transaction(async (tx) => {
+      const act = await tx.activity.update({
+        where: { id },
+        data,
+        include: {
+          vendor: { select: { businessNameEn: true } },
+          category: { select: { id: true, nameEn: true } },
+          country: { select: { nameEn: true, currencyCode: true } },
+          city: { select: { id: true, nameEn: true } },
+        },
+      });
+      await assignMissingUnits(tx as never, id);
+      return act;
+    }, {
+      // Same reasoning as the vendor-side update: Serializable so a concurrent
+      // booking cannot claim a unit the backfill is assigning, and an explicit
+      // timeout so a busy activity's backfill cannot roll back the edit itself.
+      isolationLevel: 'Serializable',
+      timeout: 15_000,
+      maxWait: 2_000,
     });
+
+    // Unit config and the backfill both change every cached month for this
+    // activity; this path never invalidated before.
+    //
+    // AWAITED, not fire-and-forget. invalidate() bumps a version key in Redis;
+    // the controller returns this promise straight to the client, so a `void`
+    // here lets the response land BEFORE the bump does. A read arriving in that
+    // window still resolves the old version and serves pre-change availability —
+    // the exact staleness this call exists to prevent.
+    await this.availabilityCache.invalidate(id);
+
+    return updated;
   }
 
   // ─── Payout Processing ────────────────────────────────────────
