@@ -816,7 +816,13 @@ export class PaymentService {
     const overlapping = await tx.booking.findMany({
       where: {
         activityId,
-        ...(unitNumber != null ? { unitNumber } : {}),
+        // When a unit IS named, still include bookings that hold NO unit: one
+        // of them may be occupying that very unit, and this decides whether a
+        // PAID booking can be recovered. Filtering to `unitNumber` alone hid
+        // them, so recovery could reinstate a booking into a room that is
+        // already taken. Matches the availability paths, which now count them
+        // the same way. (unitNumber null already scans everything.)
+        ...(unitNumber != null ? { OR: [{ unitNumber }, { unitNumber: null }] } : {}),
         ...activeBookingFilter(new Date()),
         startDatetime: { lt: endDt },
         endDatetime: { gt: startDt },

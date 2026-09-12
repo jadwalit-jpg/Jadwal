@@ -326,6 +326,43 @@ export function maxConcurrentInWindow(
  * HOURLY + PER_PERSON activities with units still sell individual seats and so
  * pack/share a unit up to its capacity. Activities without units are unaffected.
  */
+/**
+ * Bookings that overlap [start, end) and carry NO unit number.
+ *
+ * On an activity that uses units these are inventory nobody can see. Every
+ * unit-counting path scans units 1..unitCount, so a row with `unitNumber = null`
+ * matches none of them: it does not appear on the calendar AND it does not block
+ * a new booking of the same dates. The capacity it genuinely occupies reads as
+ * free and gets sold again.
+ *
+ * That state is supposed to be impossible — createBooking always assigns a unit
+ * when the activity has them, and the unit-switch backfill (assign-missing-units)
+ * now refuses to leave one behind. It became possible anyway, because a booking
+ * taken BEFORE the unit option was switched on was stored without one. Found in
+ * production on 2026-09-12: a confirmed two-night stay at a one-unit resort that
+ * the calendar reported as `booked: 0`.
+ *
+ * The callers below therefore treat such a booking as occupying inventory whose
+ * exact unit is unknown:
+ *   whole-unit  -> it consumes ONE unit (which one is unknowable)
+ *   per-person  -> its guests could be in ANY unit, so they count against each
+ *
+ * That errs toward withholding a unit that might really be free. Deliberate:
+ * refusing a booking you could have taken costs one sale, accepting one you
+ * cannot honour costs a family standing at a locked gate. And it only ever
+ * engages on data that is already broken — when there are no such rows, which is
+ * every healthy activity, the callers short-circuit and behave exactly as before.
+ */
+export function unassignedOverlapping<T extends { startDatetime: Date; endDatetime: Date; unitNumber: number | null }>(
+  bookings: ReadonlyArray<T>,
+  windowStart: Date,
+  windowEnd: Date,
+): T[] {
+  return bookings.filter(
+    (b) => b.unitNumber == null && b.startDatetime < windowEnd && b.endDatetime > windowStart,
+  );
+}
+
 export function rentsWholeUnit(a: { hasUnits: boolean; bookingType: string; pricingModel: string }): boolean {
   return a.hasUnits && (a.bookingType === 'DAILY' || a.pricingModel === 'PER_UNIT');
 }
@@ -553,9 +590,18 @@ export class BookingsService {
 
       if (activity.hasUnits && activity.unitCount > 0) {
         const wholeUnit = rentsWholeUnit(activity);
+        // Bookings with no unit occupy a slot nobody can attribute. Empty on
+        // every healthy activity, in which case the maths below is unchanged.
+        const orphans = unassignedOverlapping(dayBookings, startDatetime, endDatetime);
         const unitSlots = Array.from({ length: activity.unitCount }, (_, i) => i + 1).map((unitNum) => {
           const unitBookings = dayBookings.filter((b) => b.unitNumber === unitNum);
-          const peak = maxConcurrentInWindow(unitBookings, startDatetime, endDatetime);
+          // Per-person: an orphan's guests could be sitting in THIS unit, so
+          // they count against it. Whole-unit handles orphans below, by taking
+          // whole units out of the pool rather than per unit.
+          const peak = maxConcurrentInWindow(
+            wholeUnit ? unitBookings : [...unitBookings, ...orphans],
+            startDatetime, endDatetime,
+          );
           // Whole-unit rentals are all-or-nothing: any overlap takes the entire
           // unit out (no seat-sharing). Per-person units count remaining seats.
           // Capacity (concurrency) is computed independently of isBlocked; the
@@ -570,6 +616,16 @@ export class BookingsService {
             available,
           };
         });
+        // Whole-unit: each orphan holds one unit, but which one is unknowable.
+        // Retire that many free units from the pool, cheapest-first, so the
+        // total on offer never exceeds what can actually be honoured.
+        if (wholeUnit && orphans.length > 0) {
+          let toRetire = orphans.length;
+          for (const u of unitSlots) {
+            if (toRetire === 0) break;
+            if (u.available > 0) { u.available = 0; u.booked = activity.unitCapacity; toRetire--; }
+          }
+        }
         const totalAvailable = unitSlots.reduce((s, u) => s + u.available, 0);
         return { slotStart, slotEnd, units: unitSlots, totalAvailable, isPast: isSlotPast, isBlocked };
       } else {
@@ -644,16 +700,28 @@ export class BookingsService {
           by: ['unitNumber'],
           where: overlapCondition,
           _sum: { guests: true },
+          _count: true,
         });
         const bookedByUnit = new Map<number, number>();
+        // The null group is inventory in use that cannot be attributed to a
+        // unit. Previously skipped outright, which is what made such bookings
+        // invisible here. Both figures are zero on a healthy activity.
+        let orphanGuests = 0;
+        let orphanCount = 0;
         for (const g of grouped) {
-          if (g.unitNumber == null) continue;
+          if (g.unitNumber == null) {
+            orphanGuests = g._sum.guests ?? 0;
+            orphanCount = typeof g._count === 'number' ? g._count : 0;
+            continue;
+          }
           bookedByUnit.set(g.unitNumber, g._sum.guests ?? 0);
         }
         const wholeUnit = rentsWholeUnit(activity);
         const unitAvailability = Array.from({ length: activity.unitCount }, (_, i) => i + 1).map(
           (unitNum) => {
-            const booked = bookedByUnit.get(unitNum) ?? 0;
+            // Per-person: an orphan's guests could be in this unit, so they
+            // count against it. Whole-unit retires whole units below instead.
+            const booked = (bookedByUnit.get(unitNum) ?? 0) + (wholeUnit ? 0 : orphanGuests);
             // Whole-unit rentals (rooms): any guest in the unit takes it entirely.
             const available = blocked
               ? 0
@@ -668,20 +736,45 @@ export class BookingsService {
             };
           },
         );
+        // Whole-unit: each orphan holds one unit; which one is unknowable, so
+        // take that many off the board rather than advertising them as free.
+        if (wholeUnit && orphanCount > 0) {
+          let toRetire = orphanCount;
+          for (const u of unitAvailability) {
+            if (toRetire === 0) break;
+            if (u.available > 0) { u.available = 0; u.booked = activity.unitCapacity; toRetire--; }
+          }
+        }
         return { bookingType: 'DAILY', checkInDate, checkOutDate, units: unitAvailability, isBlocked: blocked };
       } else {
         if (unitNumber < 1 || unitNumber > activity.unitCount) {
           throw new NotFoundException('Unit not found');
         }
-        const agg = await this.prisma.client.booking.aggregate({
-          where: { ...overlapCondition, unitNumber },
-          _sum: { guests: true },
-        });
-        const booked = agg._sum.guests ?? 0;
+        // Asking about ONE unit must still account for bookings that hold no
+        // unit — one of them may well be sitting in this one. Filtering the
+        // query to `unitNumber` alone excluded them at the SQL level, so the
+        // single-unit view reported free while the guest was in the room.
+        const [agg, orphanAgg] = await Promise.all([
+          this.prisma.client.booking.aggregate({
+            where: { ...overlapCondition, unitNumber },
+            _sum: { guests: true },
+          }),
+          this.prisma.client.booking.aggregate({
+            where: { ...overlapCondition, unitNumber: null },
+            _sum: { guests: true },
+            _count: true,
+          }),
+        ]);
+        const wholeUnitHere = rentsWholeUnit(activity);
+        const orphanGuestsHere = orphanAgg._sum.guests ?? 0;
+        const orphanCountHere = typeof orphanAgg._count === 'number' ? orphanAgg._count : 0;
+        const booked = (agg._sum.guests ?? 0) + (wholeUnitHere ? 0 : orphanGuestsHere);
         const available = blocked
           ? 0
-          : rentsWholeUnit(activity)
-            ? (booked > 0 ? 0 : activity.unitCapacity)
+          : wholeUnitHere
+            // An unattributed booking could be in THIS unit, so it cannot be
+            // offered as free while one exists.
+            ? (booked > 0 || orphanCountHere > 0 ? 0 : activity.unitCapacity)
             : Math.max(0, activity.unitCapacity - booked);
         return {
           bookingType: 'DAILY', checkInDate, checkOutDate, unitNumber,
@@ -756,7 +849,11 @@ export class BookingsService {
         ...activeBookingFilter(now),
         startDatetime: { lte: monthEnd },
         endDatetime: { gte: monthStart },
-        ...(unitNumber ? { unitNumber } : {}),
+        // Include unattributed bookings even when a specific unit is asked
+        // for: one of them may be occupying it. Filtering to `unitNumber`
+        // alone dropped them at the SQL level, which is why a per-unit
+        // calendar could show a taken night as free.
+        ...(unitNumber ? { OR: [{ unitNumber }, { unitNumber: null }] } : {}),
       },
       select: { startDatetime: true, endDatetime: true, guests: true, unitNumber: true },
       take: MONTH_BOOKINGS_CAP,
@@ -844,14 +941,18 @@ export class BookingsService {
         capacity = 1; booked = occ ? 1 : 0; available = occ ? 0 : 1;
       } else if (wholeUnit) {
         const occupiedUnits = new Set<number>();
+        let orphansToday = 0;
         for (const b of bookings) {
-          if (b.unitNumber != null && b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn) {
-            occupiedUnits.add(b.unitNumber);
+          if (b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn) {
+            if (b.unitNumber != null) occupiedUnits.add(b.unitNumber);
+            // A confirmed guest with no unit still occupies a room. Skipping
+            // these is what reported `booked: 0` on nights that were taken.
+            else orphansToday++;
           }
         }
         capacity = activity.unitCount;
-        booked = occupiedUnits.size;
-        available = Math.max(0, activity.unitCount - occupiedUnits.size);
+        booked = Math.min(activity.unitCount, occupiedUnits.size + orphansToday);
+        available = Math.max(0, activity.unitCount - booked);
       } else {
         if (activity.bookingType === 'HOURLY') {
           const dayBookings = bookings.filter(
@@ -900,12 +1001,14 @@ export class BookingsService {
             // Whole-unit (per-unit hourly): slot full only if every unit is
             // occupied during it.
             const occ = new Set<number>();
+            let orphanSlots = 0;
             for (const b of dayBks) {
-              if (b.unitNumber != null && b.startDatetime < sEnd && b.endDatetime > sStart) {
-                occ.add(b.unitNumber);
+              if (b.startDatetime < sEnd && b.endDatetime > sStart) {
+                if (b.unitNumber != null) occ.add(b.unitNumber);
+                else orphanSlots++; // occupies a unit, just not a nameable one
               }
             }
-            return occ.size >= (unitNumber ? 1 : activity.unitCount);
+            return occ.size + orphanSlots >= (unitNumber ? 1 : activity.unitCount);
           }
           // Seat-based (per-person units / no units): slot full when peak
           // concurrency in it reaches total capacity. Uncapped → never full.
@@ -1235,27 +1338,42 @@ export class BookingsService {
 
         if (activity.hasUnits && activity.unitCount > 0) {
           const wholeUnit = rentsWholeUnit(activity);
+          // Bookings in this window that hold no unit. They occupy inventory
+          // that cannot be attributed to a specific unit, and until now were
+          // invisible here — `b.unitNumber === unitNum` never matches null, so
+          // the unit they really occupy was offered to the next customer. That
+          // is the double-sell. Empty on every healthy activity, in which case
+          // everything below behaves exactly as it did before.
+          const orphans = unassignedOverlapping(windowBookings, startDatetime, endDatetime);
+
+          const freeUnits: number[] = [];
           for (let unitNum = 1; unitNum <= activity.unitCount; unitNum++) {
             const unitBookings = windowBookings.filter((b) => b.unitNumber === unitNum);
             if (wholeUnit) {
               // Whole-unit rental (rooms / per-unit): a unit is available ONLY if
               // nothing overlaps it — one booking owns the entire unit, no seat-
               // sharing, regardless of guest count.
-              if (unitBookings.length === 0) {
-                resolvedUnitNumber = unitNum;
-                capacityLimit = activity.unitCapacity;
-                break;
-              }
+              if (unitBookings.length === 0) freeUnits.push(unitNum);
             } else {
               // Per-person units: pack into the first unit with enough free seats.
-              const peak = maxConcurrentInWindow(unitBookings, startDatetime, endDatetime);
-              if (activity.unitCapacity - peak >= dto.guests) {
-                resolvedUnitNumber = unitNum;
-                capacityLimit = activity.unitCapacity;
-                break;
-              }
+              // An orphan's guests could be sitting in ANY unit, so they are
+              // charged against every one of them — conservative by design.
+              const peak = maxConcurrentInWindow(
+                [...unitBookings, ...orphans], startDatetime, endDatetime,
+              );
+              if (activity.unitCapacity - peak >= dto.guests) freeUnits.push(unitNum);
             }
           }
+
+          // Whole-unit: each orphan is holding one of those apparently-free
+          // units. We cannot tell which, so retire that many from the pool
+          // before handing one out. Without this the same room is sold twice.
+          const usable = wholeUnit ? freeUnits.length - orphans.length : freeUnits.length;
+          if (usable > 0) {
+            resolvedUnitNumber = freeUnits[0];
+            capacityLimit = activity.unitCapacity;
+          }
+
           if (!resolvedUnitNumber) {
             throw new BusinessConflictException(
               'BOOKING.CAPACITY_FULL',
