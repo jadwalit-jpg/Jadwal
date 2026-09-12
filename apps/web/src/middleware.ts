@@ -317,10 +317,19 @@ export function middleware(request: NextRequest) {
     // trying to detect an RSC request.
     //
     // The first attempt tested `request.headers.has('rsc')` and
-    // `nextUrl.searchParams.has('_rsc')`. Verified against production: NEITHER
-    // fires. Next strips its internal `_rsc` param from `nextUrl` before
-    // middleware sees it, and the RSC header does not match there either — the
-    // flight response still came back carrying a five-minute private cache.
+    // `nextUrl.searchParams.has('_rsc')`. NEITHER fires. Measured directly by
+    // echoing what middleware observes, for a request that explicitly sent
+    // `RSC: 1` to `/?_rsc`:
+    //
+    //     sec-fetch-dest  rsc header  _rsc param
+    //     document        false       false      <- real navigation
+    //     empty           false       false      <- the router's RSC fetch
+    //     (absent)        false       false      <- curl / bots
+    //
+    // Next strips both before middleware runs, so an RSC request is simply not
+    // distinguishable that way — which is why the flight response kept coming
+    // back with a five-minute private cache after the first fix shipped.
+    // Sec-Fetch-Dest is the only signal that actually separates the two.
     //
     // Sec-Fetch-Dest is sent by every modern browser and is unambiguous:
     // `document` for a real navigation, `empty` for the router's fetches. So
