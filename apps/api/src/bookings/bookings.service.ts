@@ -619,6 +619,11 @@ export class BookingsService {
         // Whole-unit: each orphan holds one unit, but which one is unknowable.
         // Retire that many free units from the pool, cheapest-first, so the
         // total on offer never exceeds what can actually be honoured.
+        // NB: unlike the DAILY path, `available` here is computed independently
+        // of isBlocked (see the note above — the lock is surfaced separately and
+        // enforced at booking create). So `available > 0` and "no named booking
+        // in this unit" select the same units, and testing occupancy explicitly
+        // would only add a per-unit concurrency sweep for an identical result.
         if (wholeUnit && orphans.length > 0) {
           let toRetire = orphans.length;
           for (const u of unitSlots) {
@@ -738,11 +743,22 @@ export class BookingsService {
         );
         // Whole-unit: each orphan holds one unit; which one is unknowable, so
         // take that many off the board rather than advertising them as free.
+        //
+        // Chosen by OCCUPANCY, not by leftover availability. Gating on
+        // `available > 0` silently skipped every blocked date, because a block
+        // has already forced availability to 0 — so a blocked-and-occupied
+        // night reported `booked: 0` here while the calendar reported
+        // `booked: 1` for the same night. The availability answer was right
+        // either way, but the two views contradicting each other is the exact
+        // class of bug this work exists to remove.
         if (wholeUnit && orphanCount > 0) {
           let toRetire = orphanCount;
           for (const u of unitAvailability) {
             if (toRetire === 0) break;
-            if (u.available > 0) { u.available = 0; u.booked = activity.unitCapacity; toRetire--; }
+            if ((bookedByUnit.get(u.unitNumber) ?? 0) > 0) continue; // already taken by a named booking
+            u.booked = activity.unitCapacity;
+            u.available = 0;
+            toRetire--;
           }
         }
         return { bookingType: 'DAILY', checkInDate, checkOutDate, units: unitAvailability, isBlocked: blocked };

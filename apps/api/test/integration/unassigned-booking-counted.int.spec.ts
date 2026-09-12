@@ -366,6 +366,40 @@ describe('HOURLY whole-unit — same rules, per slot', () => {
   });
 });
 
+describe('AGREEMENT — a BLOCKED date must still report the orphan as booked', () => {
+
+  test('calendar and booking form agree on a night that is both blocked and occupied', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const svc = makeSvc();
+    const act = await makeActivity(seed, { ...DAILY_WHOLE, hasUnits: true, unitCount: 1, unitCapacity: 25, capacity: 25 });
+
+    // An orphaned guest...
+    await seedBooking(seed, act.id, at(d(5), '15:00'), at(d(6), '12:00'));
+    // ...on a night staff ALSO closed by hand, which is exactly what happened
+    // in production: they blocked the dates precisely because the calendar was
+    // not showing the guest.
+    await ctx.prisma.activityBlock.create({
+      data: {
+        activityId: act.id, vendorId: seed.vendor.id,
+        blockStart: at(d(5), '00:00'), blockEnd: at(d(6), '23:59'),
+      },
+    });
+
+    const cal: any = await svc.getCalendarAvailability(act.id, monthOf(d(5)));
+    const day = cal.days.find((x: any) => x.date === d(5));
+    const form: any = await svc.getDailyAvailability(act.id, d(5), d(6));
+
+    // Both must agree the unit is taken. The retirement loop used to be gated
+    // on `available > 0`, and a block has already forced that to 0 — so the
+    // form reported booked = 0 while the calendar reported booked = 1 for the
+    // same night. Availability was right either way; the disagreement was not.
+    expect(day.isBlocked).toBe(true);
+    expect(day.booked).toBe(1);
+    expect(form.units[0].booked).toBeGreaterThan(0);
+    expect(form.units[0].available).toBe(0);
+  });
+});
+
 describe('AGREEMENT — the calendar must not advertise what booking will refuse', () => {
 
   test('multi-unit per-person: calendar availability matches what can be booked', async () => {
