@@ -12,6 +12,7 @@ import { LoyaltyService } from '../common/services/loyalty.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
+import { assertUnitConfigConsistent } from '../common/validators/unit-config';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
 import { assignMissingUnits } from '../bookings/assign-missing-units';
@@ -246,6 +247,13 @@ export class VendorService {
 
     const { hasUnits, unitCount, unitCapacity, ...activityData } = dto;
 
+    // Units ON must come WITH a unit count and per-unit capacity. Without this
+    // the activity is stored half-configured: the calendar computes capacity 0
+    // and reports every day fully booked, while createBooking skips unit logic
+    // and keeps selling against the old seat capacity. DTO-only values here —
+    // there is nothing to merge with on create.
+    assertUnitConfigConsistent({ hasUnits, unitCount, unitCapacity });
+
     // Calculate capacity from units if hasUnits is true
     let capacity = activityData.capacity ?? undefined;
     if (hasUnits && unitCount && unitCount > 0) {
@@ -362,6 +370,15 @@ export class VendorService {
     // off `dto.hasUnits` alone would let such a PATCH slip past the limit.
     let capacityOverride: number | null | undefined;
     const mergedHasUnits = hasUnits ?? activity.hasUnits;
+
+    // Judge the activity on what it will look like AFTER this PATCH, not on
+    // what this request happens to mention — otherwise `{ hasUnits: true }`
+    // alone slips through on an activity that has never had unit values.
+    assertUnitConfigConsistent({
+      hasUnits: mergedHasUnits,
+      unitCount: unitCount ?? activity.unitCount,
+      unitCapacity: unitCapacity ?? activity.unitCapacity,
+    });
     if (mergedHasUnits) {
       const mergedUnitCount = unitCount ?? activity.unitCount ?? 0;
       const mergedUnitCapacity = unitCapacity ?? activity.unitCapacity ?? 1;
