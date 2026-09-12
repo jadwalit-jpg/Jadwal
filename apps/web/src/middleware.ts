@@ -298,7 +298,25 @@ export function middleware(request: NextRequest) {
     // CSP nonce safety: the browser caches headers + body atomically, so
     // the cached `<script nonce="X">` always matches the cached CSP
     // header's `nonce-X` directive. No re-stamping needed.
-    if (pathname === '/') {
+    // NEVER apply this to an RSC payload. Next serves the flight stream for the
+    // SAME pathname as `text/x-component` (`0:{"f":[[["",{"children":...`), and
+    // `Vary: rsc` is supposed to keep the two apart in the browser cache. iOS
+    // Safari does not honour Vary reliably on back/restore navigation, so it
+    // replays the cached flight body for a plain document request and the
+    // visitor gets that raw payload as text on a blank page.
+    //
+    // Reported from an iPhone on 2026-09-12 after a login/logout cycle — the
+    // address bar read `jadwal.qa` with no `?_rsc`, which is the tell: the
+    // browser was not NAVIGATING to an RSC url, it was replaying a cached one
+    // for `/`. Prefetches populate that cache constantly, and logging out
+    // redirects straight to `/`, so the two lined up.
+    //
+    // The document response keeps the 5-minute private cache; only the flight
+    // payload is excluded, so the performance win is untouched.
+    const isRscRequest =
+      request.headers.has('rsc') || request.nextUrl.searchParams.has('_rsc');
+
+    if (pathname === '/' && !isRscRequest) {
       res.headers.set('Cache-Control', 'private, max-age=300, must-revalidate');
     }
 
