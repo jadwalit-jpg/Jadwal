@@ -14,6 +14,7 @@ import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
+import { assignMissingUnits } from '../bookings/assign-missing-units';
 import { createActivityBlockCore } from './activity-blocks.logic';
 import { createSpecialPriceCore, bulkCreateSpecialPricesCore } from './activity-special-prices.logic';
 import { BulkSpecialPriceDto } from './dto/bulk-special-price.dto';
@@ -377,25 +378,53 @@ export class VendorService {
     // Strip DTO-only fields before spreading into Prisma update
     const { capacity: _c, categoryId, cityId, extraServices, ...restUpdateData } = activityData;
 
-    return db.activity.update({
-      where: { id: activityId },
-      data: {
-        ...restUpdateData,
-        ...(extraServices !== undefined ? { extraServices: JSON.parse(JSON.stringify(extraServices)) } : {}),
-        ...(categoryId ? { category: { connect: { id: categoryId } } } : {}),
-        ...(cityId ? { city: { connect: { id: cityId } } } : {}),
-        ...(hasUnits !== undefined ? { hasUnits } : {}),
-        ...(unitCount !== undefined ? { unitCount } : {}),
-        ...(unitCapacity !== undefined ? { unitCapacity } : {}),
-        ...(capacityOverride !== undefined ? { capacity: capacityOverride } : {}),
-        ...(_c !== undefined ? { capacity: _c ?? null } : {}),
-        ...(shouldResetStatus ? { status: 'PENDING' } : {}),
-      },
-      include: {
-        category: { select: { nameEn: true } },
-        city: { select: { nameEn: true } },
-      },
+    // The unit option may be switching ON (or its count growing) in this very
+    // update. A booking taken while units were off carries unitNumber = null,
+    // and every unit-counting availability path ignores null rows — so flipping
+    // the switch WITHOUT backfilling makes existing confirmed guests invisible
+    // and their dates re-sellable. Found live on 2026-09-12. The flip and the
+    // backfill therefore share one transaction: if the backfill cannot run, the
+    // switch does not flip either.
+    const updated = await db.$transaction(async (tx) => {
+      const act = await tx.activity.update({
+        where: { id: activityId },
+        data: {
+          ...restUpdateData,
+          ...(extraServices !== undefined ? { extraServices: JSON.parse(JSON.stringify(extraServices)) } : {}),
+          ...(categoryId ? { category: { connect: { id: categoryId } } } : {}),
+          ...(cityId ? { city: { connect: { id: cityId } } } : {}),
+          ...(hasUnits !== undefined ? { hasUnits } : {}),
+          ...(unitCount !== undefined ? { unitCount } : {}),
+          ...(unitCapacity !== undefined ? { unitCapacity } : {}),
+          ...(capacityOverride !== undefined ? { capacity: capacityOverride } : {}),
+          ...(_c !== undefined ? { capacity: _c ?? null } : {}),
+          ...(shouldResetStatus ? { status: 'PENDING' } : {}),
+        },
+        include: {
+          category: { select: { nameEn: true } },
+          city: { select: { nameEn: true } },
+        },
+      });
+      await assignMissingUnits(tx as never, activityId);
+      return act;
+    }, {
+      // Serializable + explicit timeout, matching createBooking. Serializable
+      // because a booking landing concurrently must not be able to claim the
+      // same unit the backfill is handing out — createBooking holds a Redis
+      // lock this path does not, so the database is the only arbiter left.
+      // The timeout is generous because the backfill issues one statement per
+      // unit; the default 5s would risk rolling back the vendor's own edit.
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      timeout: 15_000,
+      maxWait: 2_000,
     });
+
+    // Unit count/capacity and the backfill both change what every cached month
+    // for this activity says. updateActivity never invalidated before, so a
+    // unit change kept serving pre-change availability until the TTL lapsed.
+    void this.availabilityCache.invalidate(activityId);
+
+    return updated;
   }
 
   async deleteActivity(userId: string, activityId: string) {
