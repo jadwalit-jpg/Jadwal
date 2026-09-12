@@ -313,10 +313,25 @@ export function middleware(request: NextRequest) {
     //
     // The document response keeps the 5-minute private cache; only the flight
     // payload is excluded, so the performance win is untouched.
-    const isRscRequest =
-      request.headers.has('rsc') || request.nextUrl.searchParams.has('_rsc');
+    // Gate POSITIVELY on "this is a top-level document navigation" rather than
+    // trying to detect an RSC request.
+    //
+    // The first attempt tested `request.headers.has('rsc')` and
+    // `nextUrl.searchParams.has('_rsc')`. Verified against production: NEITHER
+    // fires. Next strips its internal `_rsc` param from `nextUrl` before
+    // middleware sees it, and the RSC header does not match there either — the
+    // flight response still came back carrying a five-minute private cache.
+    //
+    // Sec-Fetch-Dest is sent by every modern browser and is unambiguous:
+    // `document` for a real navigation, `empty` for the router's fetches. So
+    // only a navigation gets the cache, and anything we cannot positively
+    // identify simply does not — which is the safe direction. The cost of being
+    // wrong is one uncached page load, not a visitor staring at raw payload
+    // text.
+    const isDocumentNavigation =
+      request.headers.get('sec-fetch-dest') === 'document';
 
-    if (pathname === '/' && !isRscRequest) {
+    if (pathname === '/' && isDocumentNavigation) {
       res.headers.set('Cache-Control', 'private, max-age=300, must-revalidate');
     }
 
