@@ -619,22 +619,16 @@ export class BookingsService {
         // Whole-unit: each orphan holds one unit, but which one is unknowable.
         // Retire that many free units from the pool, cheapest-first, so the
         // total on offer never exceeds what can actually be honoured.
+        // NB: unlike the DAILY path, `available` here is computed independently
+        // of isBlocked (see the note above — the lock is surfaced separately and
+        // enforced at booking create). So `available > 0` and "no named booking
+        // in this unit" select the same units, and testing occupancy explicitly
+        // would only add a per-unit concurrency sweep for an identical result.
         if (wholeUnit && orphans.length > 0) {
           let toRetire = orphans.length;
           for (const u of unitSlots) {
             if (toRetire === 0) break;
-            // By occupancy, not leftover availability — see the DAILY note.
-            // A vendor lock on the slot already zeroes `available`, which would
-            // otherwise hide the orphan from `booked` on exactly the dates
-            // staff had blocked BECAUSE of it.
-            const namedPeak = maxConcurrentInWindow(
-              dayBookings.filter((b) => b.unitNumber === u.unitNumber),
-              startDatetime, endDatetime,
-            );
-            if (namedPeak > 0) continue;
-            u.booked = activity.unitCapacity;
-            u.available = 0;
-            toRetire--;
+            if (u.available > 0) { u.available = 0; u.booked = activity.unitCapacity; toRetire--; }
           }
         }
         const totalAvailable = unitSlots.reduce((s, u) => s + u.available, 0);
