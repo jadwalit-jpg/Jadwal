@@ -23,6 +23,7 @@ import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { ReferenceDataCacheService } from '../redis/reference-data-cache.service';
 import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
+import { assertUnitConfigConsistent } from '../common/validators/unit-config';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage, addMonthsClamped } from '../bookings/bookings.service';
 import { assignMissingUnits } from '../bookings/assign-missing-units';
@@ -2164,6 +2165,15 @@ export class AdminService {
       // must stay editable on unrelated fields (window check still uses merged).
       { checkIn: dto.checkInTime !== undefined, checkOut: dto.checkOutTime !== undefined },
     );
+
+    // Admin can flip the unit switch too, and this path spreads the DTO
+    // straight through. Same merged-state check as the vendor side so an
+    // activity cannot be left with units on and no units configured.
+    assertUnitConfigConsistent({
+      hasUnits: dto.hasUnits ?? activity.hasUnits,
+      unitCount: dto.unitCount ?? activity.unitCount,
+      unitCapacity: dto.unitCapacity ?? activity.unitCapacity,
+    });
 
     const { categoryId, subCategoryId, cityId, ...rest } = dto;
     const data: any = { ...rest };
