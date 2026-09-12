@@ -24,38 +24,48 @@
  * flight payload — while keeping the performance win the header exists for.
  */
 
-/** Mirrors the predicate in middleware.ts. */
-function shouldBrowserCache(
-  pathname: string,
-  headers: Record<string, string>,
-  searchParams: URLSearchParams,
-): boolean {
-  const isRscRequest = 'rsc' in headers || searchParams.has('_rsc');
-  return pathname === '/' && !isRscRequest;
+/**
+ * Mirrors the predicate in middleware.ts.
+ *
+ * The FIRST attempt tried to detect an RSC request — `headers.has('rsc')` or
+ * `searchParams.has('_rsc')`. Verified against production: neither fires. Next
+ * strips its internal `_rsc` param from `nextUrl` before middleware runs, and
+ * the RSC header does not match there either, so the flight payload still came
+ * back with a five-minute private cache.
+ *
+ * Gating POSITIVELY on a document navigation avoids guessing at Next
+ * internals: browsers send `Sec-Fetch-Dest: document` for a real navigation
+ * and `empty` for the router's fetches. Anything unidentified is simply not
+ * cached — one uncached page load, rather than a visitor staring at raw
+ * payload text.
+ */
+function shouldBrowserCache(pathname: string, secFetchDest?: string): boolean {
+  return pathname === '/' && secFetchDest === 'document';
 }
 
-const noParams = () => new URLSearchParams();
+describe('home-page browser cache — document navigations only', () => {
 
-describe('home-page browser cache — the document only', () => {
-
-  test('a plain document request to / IS cached (the win is preserved)', () => {
-    expect(shouldBrowserCache('/', {}, noParams())).toBe(true);
+  test('a real navigation to / IS cached (the win is preserved)', () => {
+    expect(shouldBrowserCache('/', 'document')).toBe(true);
   });
 
-  test('an RSC request to / is NOT cached — this is the fix', () => {
-    // Next's client router sends `RSC: 1` when it fetches a flight payload.
-    expect(shouldBrowserCache('/', { rsc: '1' }, noParams())).toBe(false);
+  test("the router's RSC fetch is NOT cached — this is the fix", () => {
+    // Next's client router fetches the flight payload with fetch(), which the
+    // browser labels `empty`. That response is what appeared as raw text.
+    expect(shouldBrowserCache('/', 'empty')).toBe(false);
   });
 
-  test('a ?_rsc url is NOT cached', () => {
-    // Next redirects RSC requests to `<path>?_rsc` for cache-busting, so the
-    // marker can arrive in the query string rather than the header.
-    expect(shouldBrowserCache('/', {}, new URLSearchParams('_rsc'))).toBe(false);
+  test('a request with NO Sec-Fetch-Dest is not cached', () => {
+    // curl, bots, and anything we cannot positively identify. Erring toward
+    // "do not cache" costs one page load; erring the other way is the bug.
+    expect(shouldBrowserCache('/', undefined)).toBe(false);
   });
 
-  test('both markers together are still not cached', () => {
-    expect(shouldBrowserCache('/', { rsc: '1' }, new URLSearchParams('_rsc'))).toBe(false);
-  });
+  test.each([['iframe'], ['script'], ['image'], ['object']])(
+    'a %s subresource request is not cached', (dest) => {
+      expect(shouldBrowserCache('/', dest)).toBe(false);
+    },
+  );
 });
 
 describe('home-page browser cache — scope is unchanged', () => {
@@ -70,14 +80,7 @@ describe('home-page browser cache — scope is unchanged', () => {
     // The header was always scoped to `/` alone — per-user and per-country
     // content elsewhere must keep hitting the origin. Pinned so a future edit
     // cannot widen it by accident.
-    expect(shouldBrowserCache(pathname, {}, noParams())).toBe(false);
-    expect(shouldBrowserCache(pathname, { rsc: '1' }, noParams())).toBe(false);
-  });
-
-  test('other query parameters on / do not disable the cache', () => {
-    // Only the RSC marker should switch it off. A campaign tag must not cost
-    // every visitor their cached home page.
-    expect(shouldBrowserCache('/', {}, new URLSearchParams('utm_source=x'))).toBe(true);
-    expect(shouldBrowserCache('/', {}, new URLSearchParams('countryId=abc'))).toBe(true);
+    expect(shouldBrowserCache(pathname, 'document')).toBe(false);
+    expect(shouldBrowserCache(pathname, 'empty')).toBe(false);
   });
 });
