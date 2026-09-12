@@ -130,6 +130,10 @@ interface OrphanFixtureOpts {
   guests?: number;
   activityCapacity?: number;
   bookingPhone?: string;
+  /** Turn the seeded activity into a whole-unit rental. */
+  units?: { unitCount: number; unitCapacity: number };
+  /** Unit the snapshotted booking held, so recovery targets that unit. */
+  unitNumber?: number;
 }
 
 async function seedOrphanedPayment(opts: OrphanFixtureOpts = {}) {
@@ -143,6 +147,17 @@ async function seedOrphanedPayment(opts: OrphanFixtureOpts = {}) {
     await ctx.prisma.activity.update({
       where: { id: seed.activity.id },
       data: { capacity: opts.activityCapacity },
+    });
+  }
+  if (opts.units) {
+    await ctx.prisma.activity.update({
+      where: { id: seed.activity.id },
+      data: {
+        hasUnits: true,
+        unitCount: opts.units.unitCount,
+        unitCapacity: opts.units.unitCapacity,
+        pricingModel: 'PER_UNIT',
+      },
     });
   }
 
@@ -169,6 +184,7 @@ async function seedOrphanedPayment(opts: OrphanFixtureOpts = {}) {
       commissionAmount: amountQar * 0.1,
       serviceFee: 5,
       status: 'PENDING',
+      ...(opts.unitNumber !== undefined ? { unitNumber: opts.unitNumber } : {}),
     },
   });
   const snapshot = buildBookingSnapshot(booking);
@@ -333,6 +349,53 @@ describe('§B2 — orphan booking auto-recreates from snapshot', () => {
       .map((c) => c[0])
       .find((c: any) => c.action === 'PAYMENT_RECOVERY_REFUND_QUEUED');
     expect(refundAudit?.details).toMatch(/ACTIVITY_ALREADY_ENDED/);
+  });
+
+  test('a UNIT-specific recovery sees an overlapping booking that holds NO unit', async () => {
+    // The snapshot held unit 1. recoverySlotAvailable used to filter the
+    // conflict query to `unitNumber: 1`, which dropped any overlapping row with
+    // unitNumber = null at the SQL level — so recovery would happily reinstate
+    // a PAID booking into a unit somebody was already occupying. That is the
+    // same blind spot as the availability paths, on the money side.
+    const { svc, auditLogger } = makePaymentService();
+    const { basketId, paymentId, snapshot, amountStr, seed } = await seedOrphanedPayment({
+      units: { unitCount: 1, unitCapacity: 6 },
+      unitNumber: 1,
+      guests: 2,
+    });
+
+    // The intruder carries NO unit — the shape that used to be invisible here.
+    await ctx.prisma.booking.create({
+      data: {
+        ref: 'JDWL-NULLUNIT',
+        activityId: seed.activity.id,
+        vendorId: seed.vendor.id,
+        customerId: seed.customer.id,
+        guests: 2,
+        bookingPhone: '+97455123456',
+        guestBreakdown: {},
+        startDatetime: new Date(snapshot.startDatetime),
+        endDatetime: new Date(snapshot.endDatetime),
+        totalPrice: 200, currencyCode: 'QAR',
+        commissionPct: 10, commissionAmount: 20, serviceFee: 5,
+        status: 'CONFIRMED',
+        unitNumber: null,
+      },
+    });
+
+    await svc.handleCallback({
+      err_code: '00', basket_id: basketId, transaction_id: 'T-NULLUNIT',
+      Response_Key: signCallback(basketId, amountStr, '00'),
+    });
+
+    // Not recreated on top of the occupant...
+    expect(await ctx.prisma.booking.findFirst({ where: { ref: snapshot.ref } })).toBeNull();
+    // ...and the customer's money is queued for refund rather than quietly kept.
+    const p = await ctx.prisma.payment.findUnique({ where: { id: paymentId } });
+    expect(p!.status).toBe('REFUND_PENDING');
+    const reasons = (auditLogger.log as jest.Mock).mock.calls.map((c) => c[0]);
+    expect(reasons.some((c: any) =>
+      c.action === 'PAYMENT_RECOVERY_REFUND_QUEUED' && /SLOT_CONFLICT/.test(c.details))).toBe(true);
   });
 
   test('slot already taken → REFUND_PENDING, audit SLOT_CONFLICT', async () => {

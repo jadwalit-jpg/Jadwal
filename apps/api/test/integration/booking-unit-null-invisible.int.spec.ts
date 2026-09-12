@@ -26,9 +26,18 @@
  * show on the calendar AND it does not block a second booking of the same
  * dates — the inventory is silently double-sellable.
  *
- * These tests assert the BUGGY behaviour on purpose, so they FAIL the moment
- * the fix lands. That is the point: they pin the exact shape of the defect and
- * they are the regression guard afterwards. Each one says what it should become.
+ * HISTORY OF THIS FILE
+ * --------------------
+ * It was written first as a REPRODUCTION: each case asserted the buggy value
+ * and carried a note saying what it must become once the fix landed. The fix
+ * ("Fix A" — availability and createBooking now count a booking that holds no
+ * unit) has landed, so those assertions have been flipped to the corrected
+ * values. The scenario is unchanged: a booking taken while the unit option was
+ * off, then the switch flipped.
+ *
+ * Keeping the file rather than deleting it is deliberate. It reproduces the
+ * original production incident end to end, so if anyone ever reinstates the
+ * `unitNumber != null` skip these go red for the exact reason they were born.
  */
 
 import { getTestContext, seedReference } from './_setup';
@@ -167,7 +176,7 @@ describe('A booking taken while the unit option was OFF', () => {
     expect(row!.unitNumber).toBeNull();
   });
 
-  test('BUG: the calendar reports booked = 0 on nights that are occupied', async () => {
+  test('the calendar counts the guest even though they hold no unit', async () => {
     const checkIn = d(5);
     const { svc, act } = await reproduce(checkIn, d(7));
 
@@ -177,44 +186,42 @@ describe('A booking taken while the unit option was OFF', () => {
     expect(day).toBeDefined();
     expect(day.capacity).toBe(1); // counting in UNITS now that units are on
 
-    // ── the defect ──────────────────────────────────────────────────────────
-    // A CONFIRMED guest occupies the only unit, yet the day reports nobody.
-    // Matches production for Cavilam on 2026-09-17/18/19: booked = 0.
-    expect(day.booked).toBe(0);
-    expect(day.isFullyBooked).toBe(false);
-    expect(day.available).toBe(1);
-    // AFTER THE FIX this must become: booked = 1, available = 0,
-    // isFullyBooked = true.
+    // Production reported booked = 0 here on 2026-09-17/18/19 while a
+    // confirmed guest was in the resort. The guest still holds no unit — that
+    // data has not changed — but availability no longer ignores them.
+    expect(day.booked).toBe(1);
+    expect(day.available).toBe(0);
+    expect(day.isFullyBooked).toBe(true);
   });
 
-  test('BUG: the booking form also shows the unit as free', async () => {
+  test('the booking form shows the unit as taken', async () => {
     const checkIn = d(5);
     const checkOut = d(7);
     const { svc, act } = await reproduce(checkIn, checkOut);
 
     const avail: any = await svc.getDailyAvailability(act.id, checkIn, checkOut);
 
-    // getDailyAvailability skips null-unit rows (`if (g.unitNumber == null) continue`)
-    // so unit 1 looks untouched.
-    expect(avail.units[0].booked).toBe(0);
-    expect(avail.units[0].available).toBe(avail.units[0].capacity);
-    // AFTER THE FIX: booked reflects the guest and available is 0.
+    // getDailyAvailability used to skip null-unit rows outright
+    // (`if (g.unitNumber == null) continue`), so unit 1 looked untouched.
+    expect(avail.units[0].available).toBe(0);
   });
 
-  test('BUG: a SECOND customer can book the very same nights — double-sold', async () => {
+  test('a SECOND customer is refused those nights', async () => {
     const checkIn = d(5);
     const checkOut = d(7);
     const { svc, act } = await reproduce(checkIn, checkOut);
     const second = await makeCustomer();
 
-    // `windowBookings.filter(b => b.unitNumber === unitNum)` never matches the
-    // null row, so unit 1 is offered again. This is the commercial risk: two
-    // paying guests for one resort on the same nights.
-    const dupe = await svc.createBooking(second.id, {
-      activityId: act.id, checkInDate: checkIn, checkOutDate: checkOut,
-      guests: 2, bookingPhone: PHONE,
-    });
-    expect(dupe.booking.unitNumber).toBe(1);
+    // `windowBookings.filter(b => b.unitNumber === unitNum)` never matched the
+    // null row, so unit 1 was offered again — two paying guests, one resort,
+    // the same nights. createBooking now counts unattributed bookings when
+    // deciding which units are free.
+    await expect(
+      svc.createBooking(second.id, {
+        activityId: act.id, checkInDate: checkIn, checkOutDate: checkOut,
+        guests: 2, bookingPhone: PHONE,
+      }),
+    ).rejects.toThrow(/fully booked|all units/i);
 
     const overlapping = await ctx.prisma.booking.count({
       where: {
@@ -224,10 +231,8 @@ describe('A booking taken while the unit option was OFF', () => {
         endDatetime: { gt: new Date(`${checkIn}T15:00:00.000Z`) },
       },
     });
-    // Two live bookings on a one-unit resort for the same nights.
-    expect(overlapping).toBe(2);
-    // AFTER THE FIX the second createBooking must throw BOOKING.CAPACITY_FULL
-    // and this count must stay at 1.
+    // Still exactly one — the resort was not sold twice.
+    expect(overlapping).toBe(1);
   });
 });
 
