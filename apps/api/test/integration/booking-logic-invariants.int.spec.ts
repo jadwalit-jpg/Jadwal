@@ -191,6 +191,34 @@ async function tryBook(
   }
 }
 
+/**
+ * Fill a whole DAY, whatever shape the activity is.
+ *
+ * A DAILY activity has one window, so repeated attempts on the same dates fill
+ * it. An HOURLY activity has a SLOT PER START TIME — filling 09:00 leaves 11:00,
+ * 13:00 and the rest wide open, so the day is correctly NOT "fully booked".
+ * An earlier version of this file booked only 09:00 and then asserted the day
+ * was full; that assertion was simply wrong about the product, not a bug in it.
+ */
+async function fillDay(svc: BookingsService, seed: any, act: any, shape: Shape) {
+  const slots = shape.kind === 'HOURLY'
+    ? computeSlots(act.checkInTime, act.checkOutTime, act.durationValue)
+    : [undefined];
+
+  let first = true;
+  for (const slot of slots) {
+    for (let i = 0; i < 8; i++) {
+      const customerId = first ? seed.customer.id : (await makeCustomer()).id;
+      first = false;
+      const b = await tryBook(svc, customerId, act, shape, { guests: 2, slot });
+      if (!b) break; // this slot is full; move to the next
+      await ctx.prisma.booking.update({
+        where: { id: b.id }, data: { status: 'CONFIRMED', reservedUntil: null },
+      });
+    }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // THE MASTER INVARIANT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -290,16 +318,8 @@ describe('CONSISTENCY — calendar, booking form and createBooking tell one stor
       const svc = makeBookingsService();
       const act = await makeActivity(seed, shape.data);
 
-      // Fill it up.
-      for (let i = 0; i < 8; i++) {
-        const cust = i === 0 ? seed.customer.id : (await makeCustomer()).id;
-        const b = await tryBook(svc, cust, act, shape, { guests: 2 });
-        if (b) {
-          await ctx.prisma.booking.update({
-            where: { id: b.id }, data: { status: 'CONFIRMED', reservedUntil: null },
-          });
-        }
-      }
+      // Fill it up — every slot, not just the first one.
+      await fillDay(svc, seed, act, shape);
 
       const cal: any = await svc.getCalendarAvailability(act.id, monthOf(d(5)));
       const day = cal.days.find((x: any) => x.date === d(5));
@@ -307,11 +327,18 @@ describe('CONSISTENCY — calendar, booking form and createBooking tell one stor
 
       const another = await makeCustomer();
       const extra = await tryBook(svc, another.id, act, shape, { guests: 2 });
+      // (same default slot as fillDay's first pass, so it targets a real,
+      //  now-full slot rather than an hour the activity does not operate)
 
-      if (day.isFullyBooked) {
-        // The calendar promised no room — the booking path must honour that.
-        expect(extra).toBeNull();
-      }
+      // Assert the PREMISE, then the consequence. Wrapping the real assertion
+      // in `if (day.isFullyBooked)` meant a shape that failed to fill up at all
+      // skipped the check entirely and still passed — the test would go green
+      // precisely when the filling loop was broken.
+      expect(day.isFullyBooked).toBe(true);
+
+      // The calendar promised no room — the booking path must honour that.
+      expect(extra).toBeNull();
+
       // Whatever happened, inventory must still be sound.
       await assertNotOversold(act.id);
     });
@@ -392,11 +419,22 @@ describe('TIME — boundaries that have bitten this codebase before', () => {
 
     // The night of the 28th is occupied...
     expect(firstMonth.days.find((x: any) => x.date === start).isFullyBooked).toBe(true);
+
     // ...and so is a night that falls in the NEXT month's calendar. A month
-    // query that only looked at bookings starting inside it would miss this.
-    const nextMonthNight = secondMonth.days.find((x: any) => x.date === d(day + 2))
-      ?? secondMonth.days.find((x: any) => x.date === d(day + 3));
-    if (nextMonthNight) expect(nextMonthNight.isFullyBooked).toBe(true);
+    // query that only looked at bookings STARTING inside it would miss this.
+    //
+    // Pick the occupied night by the month it actually lands in rather than
+    // guessing an offset: from the 28th of a 31-day month, day+2 and day+3 are
+    // both still in the first month, `find` returned undefined, and the test
+    // passed without ever looking at the second calendar.
+    const occupiedNights: string[] = [];
+    for (let i = 0; i < 5; i++) occupiedNights.push(d(day + i));
+    const crossover = occupiedNights.find((ds) => monthOf(ds) !== monthOf(start));
+    expect(crossover).toBeDefined(); // the stay must genuinely cross a boundary
+
+    const nextMonthNight = secondMonth.days.find((x: any) => x.date === crossover);
+    expect(nextMonthNight).toBeDefined();
+    expect(nextMonthNight.isFullyBooked).toBe(true);
   });
 
   test('past dates are never offered as bookable', async () => {

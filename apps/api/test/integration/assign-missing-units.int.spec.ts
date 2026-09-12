@@ -232,26 +232,58 @@ describe('assignMissingUnits — overlap semantics match the rest of the system'
     expect(ua).not.toBe(ub);
   });
 
-  test('reports bookings it cannot place instead of forcing them in', async () => {
+  test('throws rather than leaving a booking unplaced', async () => {
     const seed = await seedReference(ctx.prisma);
     const act = await makeActivity(seed, { hasUnits: true, unitCount: 1, unitCapacity: 10 });
 
-    // Two overlapping stays, one unit. The data is already oversold — this
-    // predates the backfill and must be surfaced, not papered over by
-    // stacking both into unit 1.
+    // Two overlapping stays, one unit. The data is already oversold.
     const a = await seedBooking(seed, act.id, d(5), d(9));
     const b = await seedBooking(seed, act.id, d(6), d(8));
 
+    // Placing one and leaving the other null would make things WORSE, not
+    // neutral: a null-unit booking is invisible to the unit-counting paths, so
+    // the capacity it occupies reads as free and can be sold again. Refuse the
+    // whole operation instead — the caller runs this inside the activity-update
+    // transaction, so the switch does not flip either.
+    await expect(assignMissingUnits(ctx.prisma as never, act.id)).rejects.toThrow(
+      /cannot fit|Resolve those bookings/i,
+    );
+
+    // Both left exactly as they were.
+    expect(await unitOf(a.id)).toBeNull();
+    expect(await unitOf(b.id)).toBeNull();
+  });
+
+  test('throws when a live booking sits above a reduced unitCount', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const act = await makeActivity(seed, { hasUnits: true, unitCount: 3, unitCapacity: 10 });
+
+    // Valid while there were 3 units.
+    const stranded = await seedBooking(seed, act.id, d(5), d(7), { unitNumber: 3 });
+
+    // Now the vendor shrinks to 1 unit. Availability only ever scans units
+    // 1..unitCount, so this guest's nights would read as free and be resold.
+    await ctx.prisma.activity.update({ where: { id: act.id }, data: { unitCount: 1 } });
+
+    await expect(assignMissingUnits(ctx.prisma as never, act.id)).rejects.toThrow(
+      /reduce the number of units|Cancel or move/i,
+    );
+
+    // Not silently remapped — moving a guest is a human decision.
+    expect(await unitOf(stranded.id)).toBe(3);
+  });
+
+  test('a reduction that strands nobody is allowed through', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const act = await makeActivity(seed, { hasUnits: true, unitCount: 3, unitCapacity: 10 });
+    const safe = await seedBooking(seed, act.id, d(5), d(7), { unitNumber: 1 });
+
+    await ctx.prisma.activity.update({ where: { id: act.id }, data: { unitCount: 2 } });
+
+    // The guard must block the harmful case WITHOUT blocking ordinary edits.
     const res = await assignMissingUnits(ctx.prisma as never, act.id);
-
-    expect(res.assigned).toBe(1);
-    expect(res.unassignable).toHaveLength(1);
-
-    // NB: do not .sort() these — JS sorts by string, so [null, 1] becomes
-    // [1, null] and the assertion reads as a code failure when it is not.
-    const units = [await unitOf(a.id), await unitOf(b.id)];
-    expect(units).toContain(1);     // one placed
-    expect(units).toContain(null);  // one honestly left unplaced
+    expect(res.unassignable).toEqual([]);
+    expect(await unitOf(safe.id)).toBe(1);
   });
 });
 

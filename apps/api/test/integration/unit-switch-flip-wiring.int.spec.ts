@@ -257,32 +257,86 @@ describe('ADMIN flips the unit switch', () => {
 
 describe('the flip is all-or-nothing', () => {
 
-  test('two overlapping guests on a 1-unit flip: one placed, the clash reported', async () => {
+  test('refuses the flip when live bookings cannot all fit, and writes nothing', async () => {
     const seed = await seedReference(ctx.prisma);
     const { vendor, bookings } = makeServices();
     const act = await makeResortUnitsOff(seed);
 
     // Both legitimately booked while units were off — seat capacity was 25, so
     // the system was right to accept them at the time. They cannot both fit in
-    // one unit, and the flip must not pretend otherwise.
+    // one unit.
     const a = await bookAndConfirm(bookings, seed.customer.id, act.id);
     const b = await bookAndConfirm(bookings, (await makeCustomer()).id, act.id);
 
-    await vendor.updateActivity(seed.vendorUser.id, act.id, {
-      hasUnits: true, unitCount: 1, unitCapacity: 25,
-    } as any);
+    // Letting this through would not merely preserve the existing oversell, it
+    // would ENLARGE it: the unplaced booking becomes invisible to the
+    // unit-counting paths, so the capacity it really occupies reads as free and
+    // can be sold a third time. Fail closed instead.
+    await expect(
+      vendor.updateActivity(seed.vendorUser.id, act.id, {
+        hasUnits: true, unitCount: 1, unitCapacity: 25,
+      } as any),
+    ).rejects.toThrow(/cannot fit|Cancel or move|units/i);
 
-    const units = [await unitOf(a.id), await unitOf(b.id)];
-    // One gets the unit; the other is left null and logged at error level
-    // rather than being stacked on top of the first.
-    expect(units).toContain(1);
-    expect(units).toContain(null);
-
-    // The switch still flipped — the vendor is not locked out of their own
-    // activity by pre-existing data.
+    // Nothing was written — the activity and BOTH bookings are untouched.
     const after = await ctx.prisma.activity.findUnique({
       where: { id: act.id }, select: { hasUnits: true, unitCount: true },
     });
-    expect(after).toEqual({ hasUnits: true, unitCount: 1 });
+    expect(after).toEqual({ hasUnits: false, unitCount: 0 });
+    expect(await unitOf(a.id)).toBeNull();
+    expect(await unitOf(b.id)).toBeNull();
+  });
+
+  test('refuses a unit-count reduction that would strand a live booking', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { vendor, bookings } = makeServices();
+    const act = await makeResortUnitsOff(seed);
+
+    // Three units, three overlapping stays — one per unit, all legitimate.
+    await vendor.updateActivity(seed.vendorUser.id, act.id, {
+      hasUnits: true, unitCount: 3, unitCapacity: 25,
+    } as any);
+    await reapprove(act.id);
+
+    const a = await bookAndConfirm(bookings, seed.customer.id, act.id);
+    const b = await bookAndConfirm(bookings, (await makeCustomer()).id, act.id);
+    const c = await bookAndConfirm(bookings, (await makeCustomer()).id, act.id);
+    const before = [await unitOf(a.id), await unitOf(b.id), await unitOf(c.id)].sort();
+    expect(before).toEqual([1, 2, 3]);
+
+    // Dropping to 1 unit would leave the guests on units 2 and 3 stranded —
+    // and because availability only ever scans units 1..unitCount, their nights
+    // would read as free and be SOLD AGAIN on top of them. Logging that is not
+    // enough; the reduction itself has to be refused.
+    await expect(
+      vendor.updateActivity(seed.vendorUser.id, act.id, { unitCount: 1 } as any),
+    ).rejects.toThrow(/reduce the number of units|Cancel or move/i);
+
+    // Still 3 units, and nobody was moved.
+    const after = await ctx.prisma.activity.findUnique({
+      where: { id: act.id }, select: { unitCount: true },
+    });
+    expect(after!.unitCount).toBe(3);
+    expect([await unitOf(a.id), await unitOf(b.id), await unitOf(c.id)].sort()).toEqual(before);
+  });
+
+  test('allows a unit-count reduction when no live booking is stranded', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { vendor, bookings } = makeServices();
+    const act = await makeResortUnitsOff(seed);
+
+    await vendor.updateActivity(seed.vendorUser.id, act.id, {
+      hasUnits: true, unitCount: 3, unitCapacity: 25,
+    } as any);
+    await reapprove(act.id);
+
+    // One stay, on unit 1. Shrinking to 2 strands nobody, so it must go through
+    // — the guard has to block the harmful case WITHOUT blocking normal edits.
+    const only = await bookAndConfirm(bookings, seed.customer.id, act.id);
+    expect(await unitOf(only.id)).toBe(1);
+
+    const updated = await vendor.updateActivity(seed.vendorUser.id, act.id, { unitCount: 2 } as any);
+    expect(updated.unitCount).toBe(2);
+    expect(await unitOf(only.id)).toBe(1);
   });
 });

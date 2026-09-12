@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { ConflictException, Logger } from '@nestjs/common';
 import { activeBookingFilter, maxConcurrentInWindow, rentsWholeUnit } from './bookings.service';
 
 /**
@@ -115,20 +115,12 @@ export async function assignMissingUnits(
     endDatetime: { gt: now },
   };
 
-  // Ordered oldest-stay-first, then by creation, so the result is deterministic
-  // and the earliest booking gets the lowest unit — re-running the backfill
-  // produces the same layout instead of reshuffling on every call.
-  const unassigned: Slot[] = (await tx.booking.findMany({
-    where: { ...live, unitNumber: null },
-    select: { id: true, startDatetime: true, endDatetime: true, guests: true, unitNumber: true },
-    orderBy: [{ startDatetime: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-  })) as Slot[];
-
-  if (unassigned.length === 0) {
-    return { skipped: false, assigned: 0, unassignable: [] };
-  }
-
-  // Bookings that already hold a unit. These are immovable obstacles.
+  // Bookings that already hold a unit. These are immovable obstacles, and they
+  // must be loaded and checked BEFORE any early return: a request that only
+  // REDUCES unitCount has nothing to backfill, and an early exit on "nothing
+  // unassigned" would skip the out-of-range check below entirely. That was a
+  // real hole in the first version of this function — a pure unit-count
+  // reduction sailed straight past the guard meant to stop it.
   const placed: Slot[] = (await tx.booking.findMany({
     where: { ...live, unitNumber: { not: null } },
     select: { id: true, startDatetime: true, endDatetime: true, guests: true, unitNumber: true },
@@ -142,13 +134,33 @@ export async function assignMissingUnits(
   // guest the vendor has already planned around needs a human decision.
   const outOfRange = placed.filter((p) => p.unitNumber != null && p.unitNumber > activity.unitCount);
   if (outOfRange.length > 0) {
-    logger.error(
-      `Activity ${activityId}: ${outOfRange.length} live booking(s) reference a unit above ` +
-        `unitCount=${activity.unitCount} — unit numbers ` +
-        `${[...new Set(outOfRange.map((p) => p.unitNumber))].join(', ')}. ` +
-        `These were valid before the unit count shrank. Availability will treat them as ` +
-        `occupied units. Booking ids: ${outOfRange.map((p) => p.id).join(', ')}`,
+    // REJECT, do not merely log. Availability and createBooking both iterate
+    // units 1..unitCount, so a live booking sitting on unit 3 after the count
+    // drops to 1 is not just orphaned — those nights become BOOKABLE AGAIN, on
+    // top of a guest who is still coming. Logging does not stop the resale.
+    //
+    // Not auto-remapped either: moving a guest the vendor has already planned
+    // around is a decision for a person. Refuse the reduction and name the
+    // bookings so they can be cancelled or rescheduled first.
+    const refs = [...new Set(outOfRange.map((p) => p.unitNumber))].sort((a, b) => (a ?? 0) - (b ?? 0));
+    throw new ConflictException(
+      `Cannot reduce the number of units to ${activity.unitCount}: ` +
+        `${outOfRange.length} live booking(s) are still assigned to unit(s) ${refs.join(', ')}. ` +
+        `Cancel or move those bookings first, otherwise their dates would be sold again.`,
     );
+  }
+
+  // Ordered oldest-stay-first, then by creation, so the result is deterministic
+  // and the earliest booking gets the lowest unit — re-running the backfill
+  // produces the same layout instead of reshuffling on every call.
+  const unassigned: Slot[] = (await tx.booking.findMany({
+    where: { ...live, unitNumber: null },
+    select: { id: true, startDatetime: true, endDatetime: true, guests: true, unitNumber: true },
+    orderBy: [{ startDatetime: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+  })) as Slot[];
+
+  if (unassigned.length === 0) {
+    return { skipped: false, assigned: 0, unassignable: [] };
   }
 
   const wholeUnit = rentsWholeUnit(activity);
@@ -193,6 +205,26 @@ export async function assignMissingUnits(
     placed.push({ ...booking, unitNumber: chosen });
   }
 
+  if (unassignable.length > 0) {
+    // ABORT the whole transaction — including the activity update that called
+    // us. Leaving these bookings with unitNumber = null does not merely
+    // preserve an existing oversell, it ENLARGES it: the unit-counting paths
+    // ignore a null booking, so the capacity it is really consuming reads as
+    // free and can be sold again.
+    //
+    // Concretely, on per-person units of capacity 6: two overlapping 4-guest
+    // bookings already exceed one unit. The backfill places one and leaves the
+    // other invisible, and a later 2-guest booking then takes the "remaining"
+    // capacity — three bookings deep in a unit that holds six guests' worth of
+    // two. Failing closed keeps the damage at what it already was.
+    throw new ConflictException(
+      `Cannot enable units on this activity: ${unassignable.length} live booking(s) ` +
+        `cannot fit into ${activity.unitCount} unit(s) for their dates — they overlap each ` +
+        `other. Resolve those bookings first, otherwise they would become invisible to the ` +
+        `calendar and their dates sold again. Booking ids: ${unassignable.join(', ')}`,
+    );
+  }
+
   let assigned = 0;
   for (const [unit, ids] of byUnit) {
     const res = await tx.booking.updateMany({ where: { id: { in: ids } }, data: { unitNumber: unit } });
@@ -202,15 +234,6 @@ export async function assignMissingUnits(
   if (assigned > 0) {
     logger.log(
       `Activity ${activityId}: assigned units to ${assigned} booking(s) that predated its unit configuration.`,
-    );
-  }
-  if (unassignable.length > 0) {
-    // error level on purpose — this is real overselling in the existing data
-    // and needs a person, not a log line nobody reads.
-    logger.error(
-      `Activity ${activityId}: ${unassignable.length} booking(s) could NOT be placed — ` +
-        `every one of its ${activity.unitCount} unit(s) is already taken for their dates. ` +
-        `These remain invisible to availability until resolved. Booking ids: ${unassignable.join(', ')}`,
     );
   }
 

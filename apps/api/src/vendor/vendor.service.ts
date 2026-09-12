@@ -419,10 +419,15 @@ export class VendorService {
       maxWait: 2_000,
     });
 
-    // Unit count/capacity and the backfill both change what every cached month
-    // for this activity says. updateActivity never invalidated before, so a
-    // unit change kept serving pre-change availability until the TTL lapsed.
-    void this.availabilityCache.invalidate(activityId);
+    // Unit config and the backfill both change every cached month for this
+    // activity; this path never invalidated before.
+    //
+    // AWAITED, not fire-and-forget. invalidate() bumps a version key in Redis;
+    // the controller returns this promise straight to the client, so a `void`
+    // here lets the response land BEFORE the bump does. A read arriving in that
+    // window still resolves the old version and serves pre-change availability —
+    // the exact staleness this call exists to prevent.
+    await this.availabilityCache.invalidate(activityId);
 
     return updated;
   }
