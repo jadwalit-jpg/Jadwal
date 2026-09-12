@@ -623,7 +623,18 @@ export class BookingsService {
           let toRetire = orphans.length;
           for (const u of unitSlots) {
             if (toRetire === 0) break;
-            if (u.available > 0) { u.available = 0; u.booked = activity.unitCapacity; toRetire--; }
+            // By occupancy, not leftover availability — see the DAILY note.
+            // A vendor lock on the slot already zeroes `available`, which would
+            // otherwise hide the orphan from `booked` on exactly the dates
+            // staff had blocked BECAUSE of it.
+            const namedPeak = maxConcurrentInWindow(
+              dayBookings.filter((b) => b.unitNumber === u.unitNumber),
+              startDatetime, endDatetime,
+            );
+            if (namedPeak > 0) continue;
+            u.booked = activity.unitCapacity;
+            u.available = 0;
+            toRetire--;
           }
         }
         const totalAvailable = unitSlots.reduce((s, u) => s + u.available, 0);
@@ -738,11 +749,22 @@ export class BookingsService {
         );
         // Whole-unit: each orphan holds one unit; which one is unknowable, so
         // take that many off the board rather than advertising them as free.
+        //
+        // Chosen by OCCUPANCY, not by leftover availability. Gating on
+        // `available > 0` silently skipped every blocked date, because a block
+        // has already forced availability to 0 — so a blocked-and-occupied
+        // night reported `booked: 0` here while the calendar reported
+        // `booked: 1` for the same night. The availability answer was right
+        // either way, but the two views contradicting each other is the exact
+        // class of bug this work exists to remove.
         if (wholeUnit && orphanCount > 0) {
           let toRetire = orphanCount;
           for (const u of unitAvailability) {
             if (toRetire === 0) break;
-            if (u.available > 0) { u.available = 0; u.booked = activity.unitCapacity; toRetire--; }
+            if ((bookedByUnit.get(u.unitNumber) ?? 0) > 0) continue; // already taken by a named booking
+            u.booked = activity.unitCapacity;
+            u.available = 0;
+            toRetire--;
           }
         }
         return { bookingType: 'DAILY', checkInDate, checkOutDate, units: unitAvailability, isBlocked: blocked };
