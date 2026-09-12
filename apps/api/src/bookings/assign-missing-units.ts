@@ -132,7 +132,16 @@ export async function assignMissingUnits(
   // availability maths counts those as occupied units and can pin the activity
   // at zero availability forever. Deliberately NOT auto-moved — relocating a
   // guest the vendor has already planned around needs a human decision.
-  const outOfRange = placed.filter((p) => p.unitNumber != null && p.unitNumber > activity.unitCount);
+  // BOTH bounds. `Booking.unitNumber` is a nullable Int with no range
+  // constraint in the database, so a row can hold 0 or a negative value — from
+  // a direct write, an import, or a bug. Availability and createBooking scan
+  // units 1..unitCount, so such a row matches no unit and is just as invisible
+  // as a null one, with the same result: its nights read as free and get sold
+  // again. Checking only the upper bound would repeat the exact assumption that
+  // caused this incident — that unitNumber is always sane.
+  const outOfRange = placed.filter(
+    (p) => p.unitNumber != null && (p.unitNumber < 1 || p.unitNumber > activity.unitCount),
+  );
   if (outOfRange.length > 0) {
     // REJECT, do not merely log. Availability and createBooking both iterate
     // units 1..unitCount, so a live booking sitting on unit 3 after the count
@@ -144,8 +153,9 @@ export async function assignMissingUnits(
     // bookings so they can be cancelled or rescheduled first.
     const refs = [...new Set(outOfRange.map((p) => p.unitNumber))].sort((a, b) => (a ?? 0) - (b ?? 0));
     throw new ConflictException(
-      `Cannot reduce the number of units to ${activity.unitCount}: ` +
-        `${outOfRange.length} live booking(s) are still assigned to unit(s) ${refs.join(', ')}. ` +
+      `Cannot apply this unit configuration (${activity.unitCount} unit(s)): ` +
+        `${outOfRange.length} live booking(s) sit on unit number(s) ${refs.join(', ')}, ` +
+        `which are outside the valid range 1-${activity.unitCount}. ` +
         `Cancel or move those bookings first, otherwise their dates would be sold again.`,
     );
   }

@@ -273,6 +273,29 @@ describe('assignMissingUnits — overlap semantics match the rest of the system'
     expect(await unitOf(stranded.id)).toBe(3);
   });
 
+  test.each([
+    [0, 'zero'],
+    [-1, 'negative'],
+  ])('throws when a live booking holds unit number %i (%s)', async (bad) => {
+    const seed = await seedReference(ctx.prisma);
+    const act = await makeActivity(seed, { hasUnits: true, unitCount: 2, unitCapacity: 10 });
+
+    // Booking.unitNumber is a nullable Int with no range constraint, so a row
+    // can hold 0 or a negative from a direct write, an import or a bug. The
+    // 1..unitCount scans in availability and createBooking match no unit for
+    // such a row, leaving it as invisible as a null — and its nights resellable.
+    // Guarding only the upper bound would repeat the very assumption that
+    // caused this whole incident.
+    const bogus = await seedBooking(seed, act.id, d(5), d(7), { unitNumber: bad });
+
+    await expect(assignMissingUnits(ctx.prisma as never, act.id)).rejects.toThrow(
+      /outside the valid range|Cancel or move/i,
+    );
+
+    // Untouched — this needs a human, not a silent remap.
+    expect(await unitOf(bogus.id)).toBe(bad);
+  });
+
   test('a reduction that strands nobody is allowed through', async () => {
     const seed = await seedReference(ctx.prisma);
     const act = await makeActivity(seed, { hasUnits: true, unitCount: 3, unitCapacity: 10 });
