@@ -219,10 +219,12 @@ describe('PRICING MODEL flipped under a live booking (HOURLY)', () => {
       where: { id: act.id }, data: { pricingModel: 'PER_PERSON' },
     });
 
-    // Whatever the model says, the platform must not end up owing more than it
-    // can deliver on that slot.
+    // FIVE guests, not four. 2 + 4 = 6 fits the post-flip capacity whether or
+    // not the existing booking is counted, so a 4-guest request proves nothing.
+    // 2 + 5 = 7 exceeds 6, so this can only succeed if the existing guest has
+    // been forgotten — which is exactly what we are testing for.
     const second = await svc.createBooking((await makeCustomer()).id, {
-      activityId: act.id, checkInDate: d(5), slotTime: '09:00', guests: 4, bookingPhone: PHONE,
+      activityId: act.id, checkInDate: d(5), slotTime: '09:00', guests: 5, bookingPhone: PHONE,
     } as any).catch(() => null);
 
     if (second) {
@@ -237,17 +239,10 @@ describe('PRICING MODEL flipped under a live booking (HOURLY)', () => {
     const live = await ctx.prisma.booking.count({
       where: { activityId: act.id, status: 'CONFIRMED' },
     });
-    if (second) {
-      // The flip DID open the boat to a second party. Not an oversell — 2 + 4
-      // fits the 6 seats the activity now claims to sell — but the first
-      // customer hired the WHOLE yacht and is now sharing it with strangers.
-      // That is a commercial/contract problem rather than a capacity one, and
-      // it is the honest result: the system protects seats, not the promise
-      // that was sold.
-      expect(live).toBe(2);
-    } else {
-      expect(live).toBe(1);
-    }
+    // The existing 2 guests must still be counted after the flip, so a 5-guest
+    // request cannot fit into 6 seats.
+    expect(second).toBeNull();
+    expect(live).toBe(1);
   });
 });
 
@@ -311,8 +306,12 @@ describe('BOOKING TYPE flipped under a live booking', () => {
       data: { bookingType: 'DAILY', durationValue: null, checkInTime: '15:00', checkOutTime: '12:00' },
     });
 
+    // d(4) -> d(5) spans d(4) 15:00 to d(5) 12:00, which CONTAINS the stored
+    // d(5) 09:00-11:00 slot. The earlier version used d(5) -> d(6), starting at
+    // 15:00 — after the slot had already ended — so it could not detect the
+    // booking being ignored and passed for the wrong reason.
     const attempt = await svc.createBooking((await makeCustomer()).id, {
-      activityId: act.id, checkInDate: d(5), checkOutDate: d(6), guests: 2, bookingPhone: PHONE,
+      activityId: act.id, checkInDate: d(4), checkOutDate: d(5), guests: 2, bookingPhone: PHONE,
     } as any).catch(() => null);
 
     if (attempt) {
@@ -322,12 +321,8 @@ describe('BOOKING TYPE flipped under a live booking', () => {
     }
     await assertNotOversold(act.id);
 
-    // The 09:00-11:00 slot booking overlaps the d(5)->d(6) night window
-    // (15:00 -> 12:00 next day)? It does not: the slot ends at 11:00, the night
-    // starts at 15:00. So this SHOULD be allowed, and the invariant confirms
-    // the two do not collide. Asserting it explicitly so the reasoning is
-    // pinned rather than assumed.
-    expect(attempt).not.toBeNull();
+    // The night genuinely covers the stored slot, so it must be refused.
+    expect(attempt).toBeNull();
   });
 });
 

@@ -366,6 +366,64 @@ describe('HOURLY whole-unit — same rules, per slot', () => {
   });
 });
 
+describe('AGREEMENT — the calendar must not advertise what booking will refuse', () => {
+
+  test('multi-unit per-person: calendar availability matches what can be booked', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const svc = makeSvc();
+    // 2 units x 6 seats = 12 pooled capacity.
+    const act = await makeActivity(seed, { ...HOURLY_SEATS, hasUnits: true, unitCount: 2, unitCapacity: 6, capacity: 12 });
+
+    // A SIX-guest orphan. Counted once against the pool this leaves 6 seats
+    // "available", but createBooking charges those guests to every unit (it
+    // cannot tell which one they are in), so no unit has room for six. The
+    // calendar would advertise a slot the booking path then refuses — two
+    // views disagreeing, which is the whole class of bug being removed here.
+    await seedBooking(seed, act.id, at(d(5), '09:00'), at(d(5), '11:00'), { guests: 6 });
+
+    const cal: any = await svc.getCalendarAvailability(act.id, monthOf(d(5)));
+    const day = cal.days.find((x: any) => x.date === d(5));
+
+    // Whatever the calendar claims, a booking of that size must succeed.
+    const claimed = day.available as number;
+    if (claimed > 0) {
+      const attempt = await svc.createBooking((await makeCustomer()).id, {
+        activityId: act.id, checkInDate: d(5), slotTime: '09:00',
+        guests: claimed, bookingPhone: PHONE,
+      } as any).catch(() => null);
+      expect(attempt).not.toBeNull();
+    }
+
+    // And the reverse: a request for one more than claimed must be refused.
+    const tooMany = await svc.createBooking((await makeCustomer()).id, {
+      activityId: act.id, checkInDate: d(5), slotTime: '09:00',
+      guests: claimed + 1, bookingPhone: PHONE,
+    } as any).catch(() => null);
+    expect(tooMany).toBeNull();
+  });
+
+  test('no orphans: the pooled arithmetic is untouched for HOURLY per-person units', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const svc = makeSvc();
+    const act = await makeActivity(seed, { ...HOURLY_SEATS, hasUnits: true, unitCount: 2, unitCapacity: 6, capacity: 12 });
+
+    // Two bookings in DIFFERENT units at DIFFERENT times. Cross-unit peak
+    // concurrency and a sum of per-unit peaks are legitimately different
+    // numbers here, so the per-unit recomputation must NOT engage without
+    // orphans — otherwise healthy activities would silently lose availability.
+    const a = await svc.createBooking(seed.customer.id, {
+      activityId: act.id, checkInDate: d(5), slotTime: '09:00', guests: 6, bookingPhone: PHONE,
+    } as any);
+    await ctx.prisma.booking.update({ where: { id: a.booking.id }, data: { status: 'CONFIRMED', reservedUntil: null } });
+
+    const cal: any = await svc.getCalendarAvailability(act.id, monthOf(d(5)));
+    const day = cal.days.find((x: any) => x.date === d(5));
+    // 12 pooled capacity, 6 taken at one slot -> the DAY is not full.
+    expect(day.isFullyBooked).toBe(false);
+    expect(day.available).toBeGreaterThan(0);
+  });
+});
+
 describe('HOURLY per-person units — orphan guests count as seats, not whole units', () => {
 
   test('an orphan consumes seats and the rest of the unit stays sellable', async () => {

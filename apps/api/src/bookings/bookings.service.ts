@@ -974,6 +974,37 @@ export class BookingsService {
           capacity = activity.capacity;
         }
         available = capacity != null ? Math.max(0, capacity - booked) : null;
+
+        // Per-person UNITS with an unattributed booking present: the total
+        // above counts those guests ONCE against the pooled capacity, but
+        // createBooking charges them to EVERY unit (it cannot tell which one
+        // they are in). Left as-is the calendar advertises seats the booking
+        // path then refuses — two views disagreeing, which is the whole class
+        // of bug this work exists to remove.
+        //
+        // So recompute the same way createBooking decides: per unit, with the
+        // orphans added to each, then sum. Gated on orphans existing so that a
+        // healthy activity keeps the pooled arithmetic exactly as before —
+        // notably for HOURLY, where cross-unit peak concurrency and a sum of
+        // per-unit peaks are legitimately different numbers.
+        if (activity.hasUnits && !unitNumber && capacity != null) {
+          const orphansToday = unassignedOverlapping(bookings, dayCheckIn, dayCheckOut);
+          if (orphansToday.length > 0) {
+            let free = 0;
+            for (let u = 1; u <= activity.unitCount; u++) {
+              const inUnit = bookings.filter(
+                (b) => b.unitNumber === u && b.startDatetime < dayCheckOut && b.endDatetime > dayCheckIn,
+              );
+              const combined = [...inUnit, ...orphansToday];
+              const used = activity.bookingType === 'HOURLY'
+                ? maxConcurrentInWindow(combined, dayCheckIn, dayCheckOut)
+                : combined.reduce((sum, b) => sum + b.guests, 0);
+              free += Math.max(0, activity.unitCapacity - used);
+            }
+            available = free;
+            booked = capacity - free;
+          }
+        }
       }
 
       let isFullyBooked = capacity != null ? available === 0 : false;
