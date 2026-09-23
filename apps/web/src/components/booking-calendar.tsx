@@ -219,12 +219,38 @@ export function computeCrossingBlockedDates(
 }
 
 /**
+ * Is a day the vendor has closed OUTRIGHT (as opposed to one a guest has taken)?
+ *
+ * The API sets both flags for a full-day block — see the `fullyBlocked` branch
+ * in getCalendarAvailability. A PARTIAL time block sets only isBlocked, and
+ * those days stay bookable, so both flags are required here.
+ */
+function isVendorClosed(day: CalendarDay): boolean {
+  return !!day.isBlocked && day.isFullyBooked;
+}
+
+/**
  * Is this date unselectable?
  *
  *   past / inactive             -> inert, always
+ *   vendor-closed outright      -> inert in BOTH roles (see below)
  *   would cross an unavailable  -> CLICKABLE, so the tap can shake + explain
  *   booked, and not a departure -> inert (it would be an arrival on a taken night)
  *   otherwise                   -> selectable
+ *
+ * The vendor-closed case is NOT symmetric with the booked case, which is the
+ * subtlety that nearly shipped a dead end here. Both show as "full", but they
+ * occupy different hours:
+ *
+ *   a guest's booking   18th 14:00 -> 19th 11:00   (they arrive in the afternoon)
+ *   a vendor's block    18th 00:00 -> 19th 00:00   (the whole calendar day)
+ *
+ * A stay leaving on the 18th runs until checkOutTime, 11:00. That misses the
+ * guest entirely — which is exactly why a booked night IS a valid departure —
+ * but it lands squarely inside the block's 00:00-11:00. createBooking tests
+ * blocks against [checkIn 14:00, checkOut 11:00) and rejects the stay. Offering
+ * that date would send the customer to a failed submission, which is worse than
+ * the greyed-out cell this fix set out to remove.
  */
 export function isDateDisabled(
   day: CalendarDay,
@@ -237,6 +263,7 @@ export function isDateDisabled(
   },
 ): boolean {
   if (day.isPast || !day.isActiveDay) return true;
+  if (isVendorClosed(day)) return true;
   // Kept clickable on purpose — the tap shakes and explains, which is far less
   // confusing than an inert cell.
   if (crossingShakes(day, opts.crossingBlocked)) return false;

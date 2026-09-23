@@ -167,6 +167,66 @@ describe('BUG 1 — a booked night must still be a valid DEPARTURE', () => {
   });
 });
 
+describe('VENDOR-CLOSED days are NOT symmetric with booked ones', () => {
+
+  /**
+   * Caught by the user reading the fix, before merge: "what happens if the
+   * vendor closed the 18th?"
+   *
+   * Both show as full, but they occupy different hours:
+   *
+   *   a guest's booking   18th 14:00 -> 19th 11:00   (arrives in the afternoon)
+   *   a vendor's block    18th 00:00 -> 19th 00:00   (the whole calendar day)
+   *
+   * A stay leaving on the 18th runs to checkOutTime, 11:00. That misses the
+   * guest — which is why a booked night IS a valid departure — but sits inside
+   * the block's 00:00-11:00. createBooking tests blocks against
+   * [checkIn 14:00, checkOut 11:00) and refuses the stay.
+   *
+   * Offering it would put the customer through the whole flow to a failed
+   * submission: worse than the greyed-out cell this fix removes.
+   */
+  const none = new Set<string>();
+
+  test('a vendor-closed date is NOT offered as a check-out', () => {
+    expect(
+      isDateDisabled(locked('2026-09-18'), {
+        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
+      }),
+    ).toBe(true);
+  });
+
+  test('...while a GUEST-booked date on the same day still is', () => {
+    // The contrast that makes the rule legible. Same cell, same "full" look,
+    // opposite answer — because the hours differ.
+    expect(
+      isDateDisabled(booked('2026-09-18'), {
+        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
+      }),
+    ).toBe(false);
+  });
+
+  test('a PARTIALLY blocked day stays selectable — only full-day closures are inert', () => {
+    // A partial time block sets isBlocked WITHOUT isFullyBooked, and the API
+    // comment is explicit that such a day stays bookable. An 11:00 check-out
+    // clears an afternoon block, so refusing it would lose a valid booking.
+    const partial = day('2026-09-18', { isBlocked: true });
+    expect(
+      isDateDisabled(partial, {
+        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
+      }),
+    ).toBe(false);
+  });
+
+  test('a vendor-closed date is inert as an ARRIVAL too', () => {
+    expect(
+      isDateDisabled(locked('2026-09-18'), {
+        checkIn: null, checkOut: null, minNights: null, crossingBlocked: none,
+      }),
+    ).toBe(true);
+  });
+});
+
 describe('BUG 2 — a range may not span an unavailable night', () => {
 
   test('16 -> 18 is refused because the 17th is booked', () => {

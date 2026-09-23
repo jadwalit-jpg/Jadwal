@@ -118,6 +118,48 @@ describe('BUG 1 in the DOM — the booked night is a clickable check-out', () =>
   });
 });
 
+describe('VENDOR-CLOSED vs BOOKED in the DOM — same look, opposite answer', () => {
+
+  // Raised by the user before merge. A vendor block covers the day from 00:00,
+  // a guest's booking only from 14:00, and a stay leaves at 11:00 — so a
+  // check-out clears the guest but not the block. The server refuses the
+  // second one, so the calendar must not offer it.
+  const mixed: CalendarDay[] = [
+    day('2026-09-17'),
+    day('2026-09-18', { isBlocked: true, isFullyBooked: true, available: 0 }), // closed
+    day('2026-09-19'),
+    booked('2026-09-20'),                                                      // taken
+  ];
+
+  it('the vendor-closed day is inert as a check-out', () => {
+    const onDateSelect = jest.fn();
+    render(
+      <BookingCalendar
+        month="2026-09" daysLeft={mixed} daysRight={[]} onMonthChange={() => {}}
+        checkIn="2026-09-17" checkOut={null}
+        onDateSelect={onDateSelect} currency="QAR"
+      />,
+    );
+    expect(cell(18)).toBeDisabled();
+    fireEvent.click(cell(18));
+    expect(onDateSelect).not.toHaveBeenCalled();
+  });
+
+  it('the guest-booked day IS offered as a check-out', () => {
+    const onDateSelect = jest.fn();
+    render(
+      <BookingCalendar
+        month="2026-09" daysLeft={mixed} daysRight={[]} onMonthChange={() => {}}
+        checkIn="2026-09-19" checkOut={null}
+        onDateSelect={onDateSelect} currency="QAR"
+      />,
+    );
+    expect(cell(20)).not.toBeDisabled();
+    fireEvent.click(cell(20));
+    expect(onDateSelect).toHaveBeenCalledWith('2026-09-20');
+  });
+});
+
 describe('BUG 2 in the DOM — a span across the booked night shakes instead of selecting', () => {
 
   it('16 -> 18 does NOT select, and asks the parent to warn', () => {
