@@ -1268,6 +1268,37 @@ export class BookingsService {
         throw new BadRequestException('This time slot exceeds the activity closing time');
       }
 
+      // A slot that has already STARTED today is not bookable.
+      //
+      // The date guard above is date-granular — `checkInDate < todayStr` — so on
+      // today's date every slot passed it, including ones that finished hours
+      // ago. Measured, not theorised: at 11:14 local a 00:00 slot was accepted.
+      //
+      // getHourlyAvailability already marks such slots isPast and the picker
+      // greys them out, so the everyday customer never saw this. The calendar is
+      // not the authority though: a stale tab, a retry, or a direct API call all
+      // reach here, and the result is a paid booking for a trip that has sailed.
+      //
+      // Compared in the activity's own timezone, like the date guard and
+      // getHourlyAvailability — server UTC would refuse valid slots in Doha for
+      // part of every day. DAILY is untouched: a stay is booked by date, and its
+      // 14:00 check-in has no equivalent intra-day deadline.
+      if (dto.checkInDate === todayStr) {
+        let nowLocal = '';
+        try {
+          nowLocal = new Intl.DateTimeFormat('en-GB', {
+            timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+          }).format(new Date());
+        } catch {
+          // An unreadable timezone must not hand out past slots. getHourly-
+          // Availability fails the same way here, marking everything past.
+          nowLocal = '23:59';
+        }
+        if (dto.slotTime <= nowLocal) {
+          throw new BadRequestException('This time slot has already started');
+        }
+      }
+
       startDatetime = buildDatetime(dto.checkInDate, dto.slotTime);
       endDatetime = buildDatetime(dto.checkInDate, fromMinutes(slotEndMins));
     } else {

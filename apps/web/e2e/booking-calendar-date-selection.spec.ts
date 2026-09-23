@@ -45,12 +45,28 @@ type CalDay = {
 };
 
 /**
+ * The availability endpoints key on activity ID, not slug, so the slug has to
+ * be resolved through the public catalog first. Verified against a running API
+ * rather than inferred from the route files — my first attempt guessed
+ * `/activities/:slug/availability/calendar`, which does not exist, and every
+ * test skipped as a result.
+ */
+async function activityId(request: APIRequestContext): Promise<string | null> {
+  const res = await request.get(`${API}/catalog/activities/${SLUG}`);
+  if (!res.ok()) return null;
+  const body = await res.json();
+  return body?.id ?? null;
+}
+
+/**
  * Read the days straight from the availability API rather than recomputing the
  * seeded offsets here. The seed and the spec can run either side of midnight,
  * and a date the spec derived itself would drift from the one the fixture
  * actually created — a failure that looks like a bug in the calendar.
  */
 async function calendarDays(request: APIRequestContext): Promise<CalDay[]> {
+  const id = await activityId(request);
+  if (!id) return [];
   const months: string[] = [];
   const now = new Date();
   for (const add of [0, 1]) {
@@ -59,7 +75,7 @@ async function calendarDays(request: APIRequestContext): Promise<CalDay[]> {
   }
   const all: CalDay[] = [];
   for (const month of months) {
-    const res = await request.get(`${API}/activities/${SLUG}/availability/calendar?month=${month}`);
+    const res = await request.get(`${API}/availability/calendar/${id}?month=${month}`);
     if (!res.ok()) return [];
     const body = await res.json();
     if (Array.isArray(body?.days)) all.push(...body.days);
@@ -89,26 +105,39 @@ function nextDay(date: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** "October 2026" — how MonthGrid titles each half of the two-month view. */
+function monthHeading(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00.000Z`).toLocaleString('en-US', {
+    month: 'long', year: 'numeric', timeZone: 'UTC',
+  });
+}
+
 /**
- * The grid renders bare day numbers, so a cell is located by its number within
- * the month heading that contains it. Both months are on screen at once and a
- * number repeats across them, hence the scoping.
+ * Cells render as bare day numbers and both months are on screen at once, so
+ * the same number appears twice. Scope to the right half by walking up from
+ * that month's <h3> to the MonthGrid root, which wraps the heading and its own
+ * grid.
+ *
+ * Anchored on the heading rather than the month-navigation arrows: those
+ * buttons carry no accessible name at all, only a bare icon, so the
+ * getByLabel(/previous/) I first reached for matched nothing and every test sat
+ * waiting for a control that cannot be found by name.
  */
 async function cellFor(page: Page, isoDate: string) {
   const dayNum = String(Number(isoDate.slice(8, 10)));
-  const monthLabel = new Date(`${isoDate}T00:00:00.000Z`).toLocaleString('en-US', {
-    month: 'long', year: 'numeric', timeZone: 'UTC',
-  });
-  const grid = page.locator('div').filter({
-    has: page.getByText(monthLabel, { exact: true }),
-  }).last();
-  return grid.getByRole('button', { name: new RegExp(`^${dayNum}(\\s|$)`) }).first();
+  const monthRoot = page
+    .getByRole('heading', { name: monthHeading(isoDate), exact: true })
+    .locator('xpath=..');
+  return monthRoot.getByRole('button', { name: new RegExp(`^${dayNum}(\\D|$)`) }).first();
 }
 
-async function openBookingPage(page: Page) {
+async function openBookingPage(page: Page, anyDateInView: string) {
   await page.goto(`/activity/${SLUG}/book`, { waitUntil: 'domcontentloaded' });
-  // The calendar mounts once availability resolves; the month nav is its tell.
-  await expect(page.getByLabel(/previous/i).first()).toBeVisible({ timeout: 20_000 });
+  // The calendar mounts only once availability resolves, so wait for the month
+  // heading rather than for the page shell.
+  await expect(
+    page.getByRole('heading', { name: monthHeading(anyDateInView), exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 /**
@@ -126,7 +155,7 @@ async function openBookingPage(page: Page) {
 test.describe('booking calendar — fixture integrity', () => {
 
   test('the seeded fixture has a guest-booked night AND a vendor-closed day', async ({ request }) => {
-    const res = await request.get(`${API}/activities/${SLUG}/availability/calendar?month=${new Date().toISOString().slice(0, 7)}`);
+    const res = await request.get(`${API}/catalog/activities/${SLUG}`);
     test.skip(res.status() === 0 || res.status() >= 500, 'API unreachable — not a fixture problem');
     expect(
       res.ok(),
@@ -162,7 +191,7 @@ test.describe('booking calendar — a booked night is a valid check-out', () => 
     const arrivalDay = days.find((d) => d.date === arrival);
     test.skip(!arrivalDay || arrivalDay.isFullyBooked || arrivalDay.isPast, 'night before the booking is not free');
 
-    await openBookingPage(page);
+    await openBookingPage(page, booked!.date);
 
     // Pick the free night before the occupied one.
     await (await cellFor(page, arrival)).click();
@@ -196,7 +225,7 @@ test.describe('booking calendar — a stay may not span an unavailable night', (
       'neighbouring days are not both free',
     );
 
-    await openBookingPage(page);
+    await openBookingPage(page, booked!.date);
     await (await cellFor(page, arrival)).click();
 
     // [arrival, beyond) swallows the occupied night. Before the fix the picker
@@ -223,7 +252,7 @@ test.describe('booking calendar — a vendor-closed day is not selectable', () =
     const arrivalDay = days.find((d) => d.date === arrival);
     test.skip(!arrivalDay || arrivalDay.isFullyBooked || arrivalDay.isPast, 'day before the closure is not free');
 
-    await openBookingPage(page);
+    await openBookingPage(page, closed!.date);
     await (await cellFor(page, arrival)).click();
 
     // The asymmetry. A guest arrives at 14:00, so an 11:00 departure misses
@@ -244,7 +273,7 @@ test.describe('booking calendar — the ordinary path still works', () => {
     const pair = free.find((d) => free.some((n) => n.date === nextDay(d.date)));
     test.skip(!pair, 'no two consecutive free days in view');
 
-    await openBookingPage(page);
+    await openBookingPage(page, pair!.date);
     await (await cellFor(page, pair!.date)).click();
     await (await cellFor(page, nextDay(pair!.date))).click();
 
