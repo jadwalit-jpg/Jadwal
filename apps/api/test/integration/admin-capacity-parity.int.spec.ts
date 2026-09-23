@@ -175,10 +175,15 @@ describe('admin PATCH — capacity is required when units are OFF', () => {
     ).rejects.toThrow(/capacity is required/i);
   });
 
-  it('turning units OFF without supplying a capacity is refused', async () => {
-    // The merged next-state matters, not what this request mentions. Here the
-    // activity's own capacity was unit-derived; switching units off without
-    // stating a replacement leaves a figure that no longer means anything.
+  it('turning units OFF keeps the existing capacity, which is still a valid seat count', async () => {
+    // Title and body used to disagree — it claimed the update was refused while
+    // asserting it succeeds, so a failure would have reported the opposite of
+    // the rule under test. CodeRabbit caught it.
+    //
+    // The rule is "capacity must never end up null or <= 0", not "always
+    // restate capacity". The merged next-state decides, not what this request
+    // happens to mention: here the stored 6 survives and is still a usable
+    // seat count, so the update is allowed.
     const seed = await seedReference(ctx.prisma);
     const svc = makeAdminService();
     const act = await makeActivity(seed, {

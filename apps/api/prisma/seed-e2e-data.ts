@@ -628,6 +628,23 @@ async function main() {
   // booking above — same "full" look in the calendar, opposite meaning.
   const calBlockStart = new Date(`${calBlockedDate}T00:00:00.000Z`);
   const calBlockEnd = new Date(calBlockStart.getTime() + 24 * 60 * 60 * 1000);
+
+  // Retire blocks from EARLIER seed runs before adding this one.
+  //
+  // Both fixture dates are offsets from "today", so a rerun moves them. The
+  // booking is an upsert on a fixed ref and therefore moves cleanly, but blocks
+  // have no such key and would accumulate. Four days later the new booked night
+  // (today+20) lands exactly on the previous run's closure (oldToday+24), the
+  // night stops being "booked but not closed", and the tripwire spec fails —
+  // pointing at the calendar rather than at the seed.
+  //
+  // Soft-delete rather than delete: `deletedAt` is what every availability path
+  // already filters on, so this matches how a vendor removing a block behaves.
+  await prisma.activityBlock.updateMany({
+    where: { activityId: calActivity.id, deletedAt: null, NOT: { blockStart: calBlockStart } },
+    data: { deletedAt: new Date() },
+  });
+
   const existingCalBlock = await prisma.activityBlock.findFirst({
     where: { activityId: calActivity.id, blockStart: calBlockStart, deletedAt: null },
   });

@@ -285,9 +285,16 @@ describe('DAILY — a VENDOR-CLOSED day is NOT a valid check-out', () => {
       },
     });
 
-    const cal: any = await svc.getCalendarAvailability(act.id, closed.slice(0, 7));
-    const closedDay = cal.days.find((x: any) => x.date === closed);
-    const partialDay = cal.days.find((x: any) => x.date === partial);
+    // Query each date in ITS OWN month. d(3) and d(5) straddle a month end on
+    // several days a year — the 27th of a 31-day month, say — and fetching one
+    // month for both would leave partialDay undefined and fail for a reason
+    // that has nothing to do with the code. That is the same date-fragility
+    // that broke unassigned-booking-counted earlier this week; I wrote it
+    // again here and CodeRabbit caught it.
+    const closedCal: any = await svc.getCalendarAvailability(act.id, closed.slice(0, 7));
+    const partialCal: any = await svc.getCalendarAvailability(act.id, partial.slice(0, 7));
+    const closedDay = closedCal.days.find((x: any) => x.date === closed);
+    const partialDay = partialCal.days.find((x: any) => x.date === partial);
     expect(closedDay).toBeDefined();
     expect(partialDay).toBeDefined();
 
