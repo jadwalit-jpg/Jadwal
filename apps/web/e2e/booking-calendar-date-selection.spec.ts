@@ -204,8 +204,15 @@ test.describe('booking calendar — a booked night is a valid check-out', () => 
 
     await departure.click();
 
-    // Both ends chosen: the page shows a check-out summary.
-    await expect(page.getByText(/check.?out/i).first()).toBeVisible();
+    // Assert a NON-ZERO night count. Two vacuous versions preceded this one:
+    //   /check.?out/i        also matched the static "Check in & Check out"
+    //                        heading, on screen before anything is picked
+    //   /\d+\s+nights?/i      also matched "500 x 0 night" in the price
+    //                        breakdown, likewise rendered from the start
+    // Both would have passed with nothing selected. The first was caught by
+    // CodeRabbit, the second by deleting the click and watching the test pass
+    // anyway. A non-zero count can only appear once check-out is set.
+    await expect(page.getByText(/[1-9]\d*\s+nights?/i).first()).toBeVisible();
   });
 });
 
@@ -278,7 +285,8 @@ test.describe('booking calendar — the ordinary path still works', () => {
     await (await cellFor(page, nextDay(pair!.date))).click();
 
     // The guard must not overreach: an ordinary one-night stay is unaffected
-    // by any of the rules above.
-    await expect(page.getByText(/check.?out/i).first()).toBeVisible();
+    // by any of the rules above. Night count again, for the same reason —
+    // the check-out heading is static and proves nothing.
+    await expect(page.getByText(/[1-9]\d*\s+nights?/i).first()).toBeVisible();
   });
 });

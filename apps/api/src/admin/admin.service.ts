@@ -2169,11 +2169,20 @@ export class AdminService {
     // Admin can flip the unit switch too, and this path spreads the DTO
     // straight through. Same merged-state check as the vendor side so an
     // activity cannot be left with units on and no units configured.
-    const mergedHasUnits = dto.hasUnits ?? activity.hasUnits;
+    // `!== undefined` throughout, not `??`. UpdateActivityDto is @IsOptional(),
+    // so a JSON `null` passes validation and arrives here meaning "set this to
+    // null". With `??` the guards below would silently read the STORED value
+    // and pass, while the spread still sent `null` on to Prisma — and
+    // unitCount/unitCapacity are required Int columns, so the write blows up
+    // with a driver error instead of a clear 400. Same trap as the capacity
+    // guard below, which was caught by its own test using `??` first.
+    const mergedHasUnits = dto.hasUnits !== undefined ? dto.hasUnits : activity.hasUnits;
+    const mergedUnitCount = dto.unitCount !== undefined ? dto.unitCount : activity.unitCount;
+    const mergedUnitCapacity = dto.unitCapacity !== undefined ? dto.unitCapacity : activity.unitCapacity;
     assertUnitConfigConsistent({
       hasUnits: mergedHasUnits,
-      unitCount: dto.unitCount ?? activity.unitCount,
-      unitCapacity: dto.unitCapacity ?? activity.unitCapacity,
+      unitCount: mergedUnitCount as number,
+      unitCapacity: mergedUnitCapacity as number,
     });
 
     // Capacity is required when there are no units — the same guard the vendor
@@ -2206,10 +2215,10 @@ export class AdminService {
     // values, so a partial PATCH that sends only one of the two is still
     // recomputed and ceiling-checked.
     if (mergedHasUnits) {
-      const mergedUnitCount = dto.unitCount ?? activity.unitCount ?? 0;
-      const mergedUnitCapacity = dto.unitCapacity ?? activity.unitCapacity ?? 1;
-      if (mergedUnitCount > 0) {
-        const derived = mergedUnitCount * mergedUnitCapacity;
+      const derivedCount = mergedUnitCount ?? 0;
+      const derivedCapacity = mergedUnitCapacity ?? 1;
+      if (derivedCount > 0) {
+        const derived = derivedCount * derivedCapacity;
         // Same ceiling as createActivity and the vendor update — the units
         // product is otherwise unbounded, and the admin DTO has no @Max on
         // either factor.

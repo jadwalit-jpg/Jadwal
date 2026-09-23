@@ -194,6 +194,29 @@ describe('admin PATCH — capacity is required when units are OFF', () => {
     expect(after.capacity).toBe(6);
   });
 
+  it('an explicit null unitCount is refused, not passed through to Prisma', async () => {
+    // UpdateActivityDto is @IsOptional(), so a JSON null clears validation and
+    // arrives meaning "set this to null". Merging with `??` would read the
+    // STORED value, let the guard pass, and still spread the null on to Prisma
+    // — and unitCount is a required Int column, so the write fails with a
+    // driver error instead of a clear 400. Same trap the capacity guard fell
+    // into first; caught here by CodeRabbit.
+    const seed = await seedReference(ctx.prisma);
+    const svc = makeAdminService();
+    const act = await makeActivity(seed, {
+      hasUnits: true, unitCount: 3, unitCapacity: 2, capacity: 6,
+    });
+
+    await expect(
+      svc.updateActivity(act.id, { unitCount: null } as any),
+    ).rejects.toThrow();
+
+    // And the row is untouched — no half-applied update.
+    const after = await capacityOf(act.id);
+    expect(after.unitCount).toBe(3);
+    expect(after.capacity).toBe(6);
+  });
+
   it('a unit-less activity with a real capacity still updates normally', async () => {
     // The guard must not block ordinary edits.
     const seed = await seedReference(ctx.prisma);
