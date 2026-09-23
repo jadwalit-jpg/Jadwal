@@ -974,6 +974,9 @@ export default function BookActivityPage() {
                     onDateSelect={handleHourlyDateSelect}
                     currency={currency}
                     showPrices={false}
+                    // One day then a time slot — there is no stay here, so the
+                    // range rules must not read `checkIn` as an arrival.
+                    selectionMode="single"
                     isLoading={hourlyCalendarLoading}
                   />
                   {selectedDate && (

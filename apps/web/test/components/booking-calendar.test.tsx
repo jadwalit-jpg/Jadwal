@@ -219,6 +219,79 @@ describe('WIRING — minNights actually reaches the CELLS, not just the guard', 
   });
 });
 
+/**
+ * The same component renders the HOURLY calendar, where the customer picks one
+ * day and then a time slot. That flow reuses `checkIn` to carry "the selected
+ * day" and passes no checkOut, no minNights and — critically — no
+ * onBlockedAttempt.
+ *
+ * My first version of this fix broke it in two ways, and neither test above
+ * noticed, because every one of them renders the daily calendar. CodeRabbit
+ * caught it on the PR.
+ */
+describe('HOURLY (single-date mode) — the range rules must not apply', () => {
+
+  function renderHourly(selectedDate: string | null, days: CalendarDay[] = SEPT) {
+    const onDateSelect = jest.fn();
+    render(
+      <BookingCalendar
+        month="2026-09"
+        daysLeft={days}
+        daysRight={[]}
+        onMonthChange={() => {}}
+        checkIn={selectedDate}
+        checkOut={null}
+        onDateSelect={onDateSelect}
+        currency="QAR"
+        showPrices={false}
+        selectionMode="single"
+      />,
+    );
+    return { onDateSelect };
+  }
+
+  it('a fully-booked day stays inert after another day is picked', () => {
+    // REGRESSION 1. In range mode, any date after check-in reads as a departure
+    // and a booked one is offered. Here the 17th has no free slots left, and
+    // handleHourlyDateSelect has no isFullyBooked guard of its own — it trusts
+    // the calendar. Offering it lands the customer on a day with nothing to book.
+    const { onDateSelect } = renderHourly('2026-09-16');
+
+    expect(cell(17)).toBeDisabled();
+    fireEvent.click(cell(17));
+    expect(onDateSelect).not.toHaveBeenCalled();
+  });
+
+  it('a free day BEYOND a booked one is still selectable', () => {
+    // REGRESSION 2, and the worse of the two. The crossing guard would see
+    // [16, 18) covering the booked 17th and block the 18th — along with every
+    // later date in the view. The hourly flow passes no onBlockedAttempt, so
+    // those clicks would have died silently, with the customer unable to move
+    // forward at all. That loses the very bookings this PR is about.
+    const { onDateSelect } = renderHourly('2026-09-16');
+
+    const eighteenth = cell(18);
+    expect(eighteenth).not.toBeDisabled();
+    fireEvent.click(eighteenth);
+    expect(onDateSelect).toHaveBeenCalledWith('2026-09-18');
+  });
+
+  it('with nothing picked yet, a booked day is inert and a free one is not', () => {
+    const { onDateSelect } = renderHourly(null);
+
+    expect(cell(17)).toBeDisabled();
+    fireEvent.click(cell(15));
+    expect(onDateSelect).toHaveBeenCalledWith('2026-09-15');
+  });
+
+  it('re-picking an EARLIER day works, so the customer is never trapped', () => {
+    const { onDateSelect } = renderHourly('2026-09-20');
+
+    fireEvent.click(cell(15));
+    expect(onDateSelect).toHaveBeenCalledWith('2026-09-15');
+  });
+});
+
 describe('UNCHANGED — the ordinary paths still work', () => {
 
   it('a free date is selectable as a first pick', () => {

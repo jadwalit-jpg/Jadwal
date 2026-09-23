@@ -23,6 +23,20 @@ export interface CalendarDay {
   isBlocked?: boolean;
 }
 
+/**
+ * How the calendar interprets a click.
+ *
+ *   'range'  — DAILY / per-unit stays: two picks bounding [checkIn, checkOut).
+ *   'single' — HOURLY activities: one day, then a time slot. No stay, no
+ *              check-out, so none of the range rules apply.
+ *
+ * Both modes render the same grid, which is why the distinction has to be
+ * explicit: the hourly flow reuses the `checkIn` prop to carry "the day the
+ * customer picked", and range logic reading that as an arrival draws exactly
+ * the wrong conclusions.
+ */
+export type SelectionMode = 'range' | 'single';
+
 interface BookingCalendarProps {
   /** Current left-month in "YYYY-MM" format */
   month: string;
@@ -47,6 +61,8 @@ interface BookingCalendarProps {
   showPrices?: boolean;
   /** Minimum stay (nights) — selection logic lives in the parent; informational here */
   minNights?: number | null;
+  /** 'range' for DAILY stays (default), 'single' for HOURLY one-day picks. */
+  selectionMode?: SelectionMode;
   /** Loading state */
   isLoading?: boolean;
   /** Max months in advance the customer may navigate/book (default 6) */
@@ -125,7 +141,13 @@ export function willSetCheckOut(
   checkIn: string | null,
   checkOut: string | null,
   minNights?: number | null,
+  selectionMode: SelectionMode = 'range',
 ): boolean {
+  // An HOURLY activity picks ONE day and then a time slot — there is no stay and
+  // no check-out, so no click can ever be a departure. Without this the hourly
+  // calendar reuses `checkIn` to mean "the selected day", every later date reads
+  // as a departure, and a fully-booked day becomes clickable.
+  if (selectionMode === 'single') return false;
   if (!checkIn || date <= checkIn) return false;
   // Min-night mode always extends. Flexible mode extends only while no check-out
   // is set yet — once both ends exist the next tap re-picks a fresh check-in,
@@ -147,8 +169,14 @@ export function computeCrossingBlockedDates(
   checkIn: string | null,
   checkOut: string | null,
   minNights?: number | null,
+  selectionMode: SelectionMode = 'range',
 ): Set<string> {
   const set = new Set<string>();
+  // Nothing spans anything in single-date mode. Left to run, it would read the
+  // hourly "selected day" as a check-in and silently block every later date
+  // sitting beyond a full one — and the hourly flow passes no onBlockedAttempt,
+  // so those clicks would die with no explanation at all.
+  if (selectionMode === 'single') return set;
   const all = [...daysLeft, ...daysRight];
   // A night is UNAVAILABLE whether the vendor LOCKED it or a guest BOOKED it.
   // Only `isBlocked` was considered before, so a range could be dragged across
@@ -205,6 +233,7 @@ export function isDateDisabled(
     checkOut: string | null;
     minNights?: number | null;
     crossingBlocked: Set<string>;
+    selectionMode?: SelectionMode;
   },
 ): boolean {
   if (day.isPast || !day.isActiveDay) return true;
@@ -213,7 +242,9 @@ export function isDateDisabled(
   if (crossingShakes(day, opts.crossingBlocked)) return false;
   if (!day.isFullyBooked) return false;
   // A booked night is still a valid DEPARTURE.
-  return !willSetCheckOut(day.date, opts.checkIn, opts.checkOut, opts.minNights);
+  return !willSetCheckOut(
+    day.date, opts.checkIn, opts.checkOut, opts.minNights, opts.selectionMode,
+  );
 }
 
 /** Does tapping this date shake-and-warn instead of selecting? */
@@ -234,6 +265,7 @@ function MonthGrid({
   currency,
   showPrices,
   minNights,
+  selectionMode,
 }: {
   month: string;
   days: CalendarDay[];
@@ -246,6 +278,7 @@ function MonthGrid({
   showPrices?: boolean;
   /** Needed so a cell can tell an ARRIVAL pick from a DEPARTURE pick. */
   minNights?: number | null;
+  selectionMode?: SelectionMode;
 }) {
   const { t, i18n } = useTranslation();
   const [shakeDate, setShakeDate] = useState<string | null>(null);
@@ -310,7 +343,8 @@ function MonthGrid({
           // day, which is inert).
           const isLockShake = crossingShakes(day, lockBlockedStarts);
           const isDisabled = isDateDisabled(day, {
-            checkIn, checkOut, minNights, crossingBlocked: lockBlockedStarts,
+            checkIn, checkOut, minNights, selectionMode,
+            crossingBlocked: lockBlockedStarts,
           });
           const isCheckIn = checkIn === day.date;
           const isCheckOut = checkOut === day.date;
@@ -394,6 +428,7 @@ export default function BookingCalendar({
   currency,
   showPrices = true,
   minNights,
+  selectionMode = 'range',
   isLoading = false,
   maxAdvanceMonths = 6,
 }: BookingCalendarProps) {
@@ -410,8 +445,10 @@ export default function BookingCalendar({
   // Hourly date-locks are whole-day → surface as fully-booked, so this stays
   // empty there. Lookahead spans both visible months; the server is the backstop.
   const lockBlockedStarts = useMemo(
-    () => computeCrossingBlockedDates(daysLeft, daysRight, checkIn, checkOut, minNights),
-    [daysLeft, daysRight, minNights, checkIn, checkOut],
+    () => computeCrossingBlockedDates(
+      daysLeft, daysRight, checkIn, checkOut, minNights, selectionMode,
+    ),
+    [daysLeft, daysRight, minNights, checkIn, checkOut, selectionMode],
   );
 
   // Can't go before current month
@@ -484,6 +521,7 @@ export default function BookingCalendar({
           currency={currency}
           showPrices={showPrices}
           minNights={minNights}
+          selectionMode={selectionMode}
         />
         <div className="hidden sm:block w-px bg-gray-200 dark:bg-slate-800 shrink-0" />
         <MonthGrid
@@ -497,6 +535,7 @@ export default function BookingCalendar({
           currency={currency}
           showPrices={showPrices}
           minNights={minNights}
+          selectionMode={selectionMode}
         />
       </div>
 
