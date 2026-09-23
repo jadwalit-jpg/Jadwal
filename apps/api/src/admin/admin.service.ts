@@ -2169,14 +2169,56 @@ export class AdminService {
     // Admin can flip the unit switch too, and this path spreads the DTO
     // straight through. Same merged-state check as the vendor side so an
     // activity cannot be left with units on and no units configured.
+    const mergedHasUnits = dto.hasUnits ?? activity.hasUnits;
     assertUnitConfigConsistent({
-      hasUnits: dto.hasUnits ?? activity.hasUnits,
+      hasUnits: mergedHasUnits,
       unitCount: dto.unitCount ?? activity.unitCount,
       unitCapacity: dto.unitCapacity ?? activity.unitCapacity,
     });
 
+    // Capacity is required when there are no units — the same guard the vendor
+    // path has carried all along. Without it an admin PATCH could leave
+    // `capacity` null on a unit-less activity, and createBooking reads that as
+    // `activity.capacity ?? Infinity`: the activity would sell without limit,
+    // silently and with nothing in the calendar to show it.
+    //
+    // `!== undefined` rather than `??`: a PATCH sending `capacity: null` MEANS
+    // null, and `??` would read it as "not supplied" and validate the old value
+    // instead — while the null still reached Prisma through the spread below.
+    // The guard would pass on a number the request was in the act of erasing.
+    // (The vendor path uses `??` but is safe by a different route: it strips
+    // `capacity` from the update data entirely and writes only the unit-derived
+    // value, so a null there never lands.)
+    const mergedCapacity = dto.capacity !== undefined ? dto.capacity : activity.capacity;
+    if (!mergedHasUnits && (mergedCapacity == null || mergedCapacity <= 0)) {
+      throw new BadRequestException('Capacity is required when units are not enabled');
+    }
+
     const { categoryId, subCategoryId, cityId, ...rest } = dto;
     const data: any = { ...rest };
+
+    // Derive capacity from the units, exactly as the vendor path does. Admin
+    // previously spread the DTO straight through, so a PATCH setting unitCount
+    // or unitCapacity without also restating `capacity` left the stored total
+    // disagreeing with units × capacity-per-unit. Whether that oversells
+    // depends on which code path reads which field, and a discrepancy nobody
+    // can see is the shape of the 2026-09-12 incident. Merged next-state
+    // values, so a partial PATCH that sends only one of the two is still
+    // recomputed and ceiling-checked.
+    if (mergedHasUnits) {
+      const mergedUnitCount = dto.unitCount ?? activity.unitCount ?? 0;
+      const mergedUnitCapacity = dto.unitCapacity ?? activity.unitCapacity ?? 1;
+      if (mergedUnitCount > 0) {
+        const derived = mergedUnitCount * mergedUnitCapacity;
+        // Same ceiling as createActivity and the vendor update — the units
+        // product is otherwise unbounded, and the admin DTO has no @Max on
+        // either factor.
+        if (derived > 10000) {
+          throw new BadRequestException('Total capacity (units × capacity per unit) cannot exceed 10000');
+        }
+        data.capacity = derived;
+      }
+    }
     if (categoryId) data.category = { connect: { id: categoryId } };
     if (subCategoryId !== undefined) data.subCategoryId = subCategoryId || null;
     if (cityId) data.city = { connect: { id: cityId } };
