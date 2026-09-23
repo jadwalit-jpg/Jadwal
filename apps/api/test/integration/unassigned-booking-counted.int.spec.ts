@@ -330,8 +330,20 @@ describe('DAILY whole-unit — the reported production case', () => {
     } as any);
     expect(b.booking.unitNumber).toBe(1);
 
-    const cal: any = await svc.getCalendarAvailability(act.id, monthOf(d(5)));
-    expect(cal.days.find((x: any) => x.date === d(10)).isFullyBooked).toBe(false);
+    // Query the month the probe date ACTUALLY belongs to, and assert the day
+    // exists before reading it.
+    //
+    // This originally asked September's calendar for d(10) while seeding d(5).
+    // Those land in the same month on most days of the year, so it passed —
+    // until 23 September 2026, when d(5) was 28 Sep and d(10) was 3 Oct. `find`
+    // returned undefined and the test died on a TypeError rather than on
+    // anything the code had done. A date assumption that holds "usually" is the
+    // same trap as a test that cannot fail.
+    const probe = d(10);
+    const cal: any = await svc.getCalendarAvailability(act.id, monthOf(probe));
+    const probeDay = cal.days.find((x: any) => x.date === probe);
+    expect(probeDay).toBeDefined();
+    expect(probeDay.isFullyBooked).toBe(false);
   });
 });
 

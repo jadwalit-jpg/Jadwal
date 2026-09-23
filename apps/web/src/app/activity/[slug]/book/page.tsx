@@ -1072,7 +1072,7 @@ export default function BookActivityPage() {
                   checkIn={checkIn}
                   checkOut={checkOut}
                   onDateSelect={handleDailyDateSelect}
-                  onBlockedAttempt={() => toast(t('booking.cantBookOverOffDays', { defaultValue: "Can't book over the host's off-days — your stay would cross a locked date." }), 'error')}
+                  onBlockedAttempt={() => toast(t('booking.cantBookOverUnavailable', { defaultValue: "Your stay would cover a date that isn't available — pick dates that don't include it." }), 'error')}
                   currency={currency}
                   showPrices={false}
                   minNights={minNights}
