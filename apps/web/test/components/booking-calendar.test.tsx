@@ -276,6 +276,29 @@ describe('HOURLY (single-date mode) — the range rules must not apply', () => {
     expect(onDateSelect).toHaveBeenCalledWith('2026-09-18');
   });
 
+  it('a free day beyond a PARTIALLY BLOCKED one is selectable — a bug that predates this PR', () => {
+    // A vendor lock on part of a day sets isBlocked WITHOUT isFullyBooked, and
+    // `main` already fed that into the crossing guard for hourly: isExtend was
+    // true for every date after the picked one, because `!checkOut` holds when
+    // the hourly flow passes checkOut={null}.
+    //
+    // So on main, picking the 16th made the 18th — and everything after it —
+    // shake and die silently. Nobody reported it because it needs a partial
+    // time block, which is rarer than a full day. selectionMode fixes it as a
+    // side effect; pinning it so it stays fixed.
+    const partialBlock: CalendarDay[] = [
+      day('2026-09-16'),
+      day('2026-09-17', { isBlocked: true }),
+      day('2026-09-18'),
+    ];
+    const { onDateSelect } = renderHourly('2026-09-16', partialBlock);
+
+    const eighteenth = cell(18);
+    expect(eighteenth).not.toBeDisabled();
+    fireEvent.click(eighteenth);
+    expect(onDateSelect).toHaveBeenCalledWith('2026-09-18');
+  });
+
   it('with nothing picked yet, a booked day is inert and a free one is not', () => {
     const { onDateSelect } = renderHourly(null);
 
