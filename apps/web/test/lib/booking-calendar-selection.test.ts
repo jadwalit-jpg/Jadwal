@@ -52,7 +52,7 @@ function day(date: string, over: Partial<CalendarDay> = {}): CalendarDay {
 }
 
 const booked = (date: string) => day(date, { isFullyBooked: true, booked: 1, available: 0 });
-const locked = (date: string) => day(date, { isBlocked: true, isFullyBooked: true, available: 0 });
+const locked = (date: string) => day(date, { isBlocked: true, isFullyBooked: true, isFullyBlocked: true, available: 0 });
 
 /** The reported scenario: Cavilam, September, the 17th taken by a guest. */
 const SEPT = [
@@ -216,6 +216,49 @@ describe('VENDOR-CLOSED days are NOT symmetric with booked ones', () => {
         checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
       }),
     ).toBe(false);
+  });
+
+  test('a PARTIAL block on a day that is ALSO fully booked stays a valid check-out', () => {
+    // Raised by CodeRabbit against the first version of this guard, which read
+    // `isBlocked && isFullyBooked`. Both flags are set here, but neither came
+    // from a full-day closure:
+    //
+    //   isBlocked      an afternoon time-window block
+    //   isFullyBooked  every unit taken by guests, who arrive at 14:00
+    //
+    // An 11:00 check-out clears the guests and precedes the block, so the
+    // server accepts the stay. Deriving "closed" from the two flags refused it
+    // — the same class of lost booking this whole file exists to fix.
+    const partialAndFull = day('2026-09-18', {
+      isBlocked: true, isFullyBooked: true, available: 0, isFullyBlocked: false,
+    });
+    expect(
+      isDateDisabled(partialAndFull, {
+        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
+      }),
+    ).toBe(false);
+  });
+
+  test('a full-day closure is identified by the API flag, not inferred', () => {
+    expect(
+      isDateDisabled(day('2026-09-18', { isBlocked: true, isFullyBooked: true, isFullyBlocked: true }), {
+        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
+      }),
+    ).toBe(true);
+  });
+
+  test('a response with no isFullyBlocked field falls back to the old, stricter rule', () => {
+    // Availability responses are cached, so entries predating the new field
+    // keep arriving for a while. The fallback errs toward refusing rather than
+    // offering — a rare lost booking beats a dead end at submission — and
+    // self-heals as the cache turns over.
+    const legacy = day('2026-09-18', { isBlocked: true, isFullyBooked: true });
+    delete (legacy as Partial<CalendarDay>).isFullyBlocked;
+    expect(
+      isDateDisabled(legacy, {
+        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
+      }),
+    ).toBe(true);
   });
 
   test('a vendor-closed date is inert as an ARRIVAL too', () => {

@@ -21,6 +21,12 @@ export interface CalendarDay {
   isFullyBooked: boolean;
   /** A vendor availability lock touches this date (whole- or part-day). */
   isBlocked?: boolean;
+  /**
+   * The vendor closed this date OUTRIGHT — a block covering the whole calendar
+   * day, as opposed to a time window inside it. Distinct from `isBlocked`
+   * because only a full-day closure makes the date unusable as a check-out.
+   */
+  isFullyBlocked?: boolean;
 }
 
 /**
@@ -221,12 +227,26 @@ export function computeCrossingBlockedDates(
 /**
  * Is a day the vendor has closed OUTRIGHT (as opposed to one a guest has taken)?
  *
- * The API sets both flags for a full-day block — see the `fullyBlocked` branch
- * in getCalendarAvailability. A PARTIAL time block sets only isBlocked, and
- * those days stay bookable, so both flags are required here.
+ * The API answers this directly with `isFullyBlocked`. It has to, because
+ * neither flag nor any combination of them can be derived here:
+ *
+ *   isBlocked alone            also true for a PARTIAL time-window block, and
+ *                              those days stay bookable
+ *   isBlocked && isFullyBooked both true for a day with an afternoon block AND
+ *                              every unit taken by guests — yet an 11:00
+ *                              check-out clears the guests and precedes the
+ *                              block, so the server accepts it
+ *
+ * The second case is why the derived form was wrong: it refused a stay the
+ * server would have taken, which is the exact bug this file exists to fix.
+ *
+ * The `??` fallback covers responses served from the availability cache before
+ * this field existed. It is the old, slightly over-strict rule — during that
+ * window a rare day is wrongly refused rather than wrongly offered, which is
+ * the safer of the two failures and self-heals as the cache turns over.
  */
 function isVendorClosed(day: CalendarDay): boolean {
-  return !!day.isBlocked && day.isFullyBooked;
+  return day.isFullyBlocked ?? (!!day.isBlocked && day.isFullyBooked);
 }
 
 /**

@@ -264,6 +264,39 @@ describe('DAILY — a VENDOR-CLOSED day is NOT a valid check-out', () => {
     expect(day.isFullyBooked).toBe(true);
   });
 
+  it('isFullyBlocked distinguishes a full-day closure from a partial block', async () => {
+    // The flag the picker actually keys on. It cannot be derived from the other
+    // two: a day with an afternoon block AND every unit taken sets isBlocked and
+    // isFullyBooked without being closed, and an 11:00 check-out on such a day
+    // is accepted by createBooking. Deriving it refused a stay the server takes.
+    const seed = await seedReference(ctx.prisma);
+    const svc = makeBookingsService();
+    const act = await makeOneRoomDaily(seed);
+
+    const closed = d(3);
+    const partial = d(5);
+    await blockWholeDay(act.id, seed.vendor.id, closed);
+    // An afternoon-only lock on a different day.
+    await ctx.prisma.activityBlock.create({
+      data: {
+        activityId: act.id, vendorId: seed.vendor.id,
+        blockStart: new Date(`${partial}T14:00:00.000Z`),
+        blockEnd: new Date(`${partial}T18:00:00.000Z`),
+      },
+    });
+
+    const cal: any = await svc.getCalendarAvailability(act.id, closed.slice(0, 7));
+    const closedDay = cal.days.find((x: any) => x.date === closed);
+    const partialDay = cal.days.find((x: any) => x.date === partial);
+    expect(closedDay).toBeDefined();
+    expect(partialDay).toBeDefined();
+
+    expect(closedDay.isFullyBlocked).toBe(true);
+    // Flagged, but NOT closed — the day stays sellable.
+    expect(partialDay.isBlocked).toBe(true);
+    expect(partialDay.isFullyBlocked).toBe(false);
+  });
+
   it('a guest-BOOKED day reports isFullyBooked but NOT isBlocked', async () => {
     // The contrast. Same isFullyBooked, different isBlocked — which is the only
     // signal the picker has to tell the two apart.

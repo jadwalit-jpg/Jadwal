@@ -894,6 +894,7 @@ export class BookingsService {
       date: string; dayOfWeek: string; price: number; isSpecialPrice: boolean; isActiveDay: boolean;
       isPast: boolean; capacity: number | null; booked: number;
       available: number | null; isFullyBooked: boolean; isBlocked: boolean;
+      isFullyBlocked: boolean;
     }[] = [];
 
     const pricePerPerson = Number(activity.pricePerPerson);
@@ -1071,8 +1072,14 @@ export class BookingsService {
       const isBlocked = monthBlocks.some((b) => b.blockStart < dayEndUtc && b.blockEnd > dayDate);
       const fullyBlocked = monthBlocks.some((b) => b.blockStart <= dayDate && b.blockEnd >= dayEndUtc);
       if (fullyBlocked) { available = 0; isFullyBooked = true; }
+      // `isBlocked` alone cannot answer "did the vendor close this day?" — it is
+      // true for a partial time-window block too. Nor can isBlocked && isFullyBooked:
+      // a day with an afternoon block AND every unit taken by guests sets both,
+      // yet an 11:00 check-out clears the guests and precedes the block, so the
+      // server accepts it. The picker needs the distinction to avoid refusing a
+      // stay the server would take, so surface the full-day case explicitly.
 
-      days.push({ date: dateStr, dayOfWeek: dow, price: specialPriceByDate.get(dateStr) ?? pricePerPerson, isSpecialPrice: specialPriceByDate.has(dateStr), isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked });
+      days.push({ date: dateStr, dayOfWeek: dow, price: specialPriceByDate.get(dateStr) ?? pricePerPerson, isSpecialPrice: specialPriceByDate.has(dateStr), isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked, isFullyBlocked: fullyBlocked });
     }
 
     const response = {
