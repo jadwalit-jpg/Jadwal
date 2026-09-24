@@ -22,15 +22,18 @@
  *
  * THE RULE THEY ENCODE
  * --------------------
- * A stay occupies [checkIn 14:00, checkOut 11:00). The departure date's night
- * belongs to the next guest. So the same calendar cell means different things:
+ * A stay CONSUMES the nights [checkInDate, checkOutDate). The departure date's
+ * night belongs to the next guest, so it is not the leaving guest's to hold.
  *
- *   another guest's booking   D 14:00 -> D+1 11:00   (arrives in the afternoon)
- *   a vendor's full-day block D 00:00 -> D+1 00:00   (the whole calendar day)
+ * A night is unavailable for one of two reasons, and they mean the same thing:
  *
- * Leaving on D at 11:00 misses the guest entirely but lands inside the block.
- * Hence: a BOOKED day is a valid check-out, a CLOSED day is not. They render
- * identically, which is precisely why this needs a test rather than a comment.
+ *   another guest booked it    someone sleeps there
+ *   the vendor closed it       nobody may sleep there
+ *
+ * Either way a stay merely LEAVING that morning never occupies it, and is
+ * accepted; a stay SLEEPING through it is refused. Judging a closure against the
+ * 14:00 -> 11:00 clock window instead made closing the 17th also make the 16th
+ * unsellable — a night lost for nothing (reported 2026-09-24).
  */
 
 import { getTestContext, seedReference } from './_setup';
@@ -204,15 +207,17 @@ describe('DAILY — a stay may not SPAN an occupied night', () => {
   });
 });
 
-describe('DAILY — a VENDOR-CLOSED day is NOT a valid check-out', () => {
+describe('DAILY — a VENDOR-CLOSED day behaves exactly like a BOOKED night', () => {
 
-  it('leaving ON a fully-blocked day is refused, though leaving on a BOOKED day is not', async () => {
-    // The asymmetry this whole file exists for. A guest arrives at 14:00, so a
-    // 11:00 departure misses them. A block starts at 00:00, so the same 11:00
-    // departure lands inside it.
+  it('leaving ON a closed day is ACCEPTED — the guest never sleeps there', async () => {
+    // Reported from the live calendar, 2026-09-24. Closing the 17th was also
+    // making the 16th unsellable, because a stay 16 -> 17 was judged against its
+    // 14:00 -> 11:00 clock window and a block starts at 00:00.
     //
-    // Nearly shipped as a dead end: the picker offered the closed day because
-    // the API reports isFullyBooked for it, identically to a taken night.
+    // Commercially that costs the vendor a night for nothing: nobody would have
+    // slept on the 17th. "Closed" means the same as "booked" — no guest sleeps
+    // that night — so it is now measured the same way, against the NIGHTS the
+    // stay consumes: [checkInDate, checkOutDate).
     const seed = await seedReference(ctx.prisma);
     const svc = makeBookingsService();
     const act = await makeOneRoomDaily(seed);
@@ -220,7 +225,21 @@ describe('DAILY — a VENDOR-CLOSED day is NOT a valid check-out', () => {
 
     await blockWholeDay(act.id, seed.vendor.id, d(3));
 
-    await expect(book(svc, guest.id, act.id, d(2), d(3)))
+    const res = await book(svc, guest.id, act.id, d(2), d(3));
+    expect(res.booking.id).toBeTruthy();
+  });
+
+  it('SPANNING a closed night is refused', async () => {
+    // The other half of the same rule, and the reason it is not simply "allow
+    // closed days". d(2) -> d(4) sleeps through the closed night of d(3).
+    const seed = await seedReference(ctx.prisma);
+    const svc = makeBookingsService();
+    const act = await makeOneRoomDaily(seed);
+    const guest = await makeCustomer();
+
+    await blockWholeDay(act.id, seed.vendor.id, d(3));
+
+    await expect(book(svc, guest.id, act.id, d(2), d(4)))
       .rejects.toThrow(/not available for booking/i);
   });
 

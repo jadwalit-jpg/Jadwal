@@ -167,106 +167,56 @@ describe('BUG 1 — a booked night must still be a valid DEPARTURE', () => {
   });
 });
 
-describe('VENDOR-CLOSED days are NOT symmetric with booked ones', () => {
+describe('VENDOR-CLOSED days behave exactly like BOOKED ones', () => {
 
   /**
-   * Caught by the user reading the fix, before merge: "what happens if the
-   * vendor closed the 18th?"
+   * Reported from the live calendar, 2026-09-24, after an earlier version of
+   * this file made closed days inert in BOTH roles.
    *
-   * Both show as full, but they occupy different hours:
+   * That version reasoned from the clock: a guest arrives at 14:00, a block
+   * starts at 00:00, so an 11:00 departure lands inside the block. True of the
+   * server as it then stood — and commercially wrong. Closing the 17th also
+   * made the 16th unsellable, though nobody would have slept on the 17th. A
+   * night lost for nothing.
    *
-   *   a guest's booking   18th 14:00 -> 19th 11:00   (arrives in the afternoon)
-   *   a vendor's block    18th 00:00 -> 19th 00:00   (the whole calendar day)
-   *
-   * A stay leaving on the 18th runs to checkOutTime, 11:00. That misses the
-   * guest — which is why a booked night IS a valid departure — but sits inside
-   * the block's 00:00-11:00. createBooking tests blocks against
-   * [checkIn 14:00, checkOut 11:00) and refuses the stay.
-   *
-   * Offering it would put the customer through the whole flow to a failed
-   * submission: worse than the greyed-out cell this fix removes.
+   * "Closed" and "booked" say the same thing: no guest sleeps that night. The
+   * server now measures a DAILY block against the NIGHTS a stay consumes,
+   * [checkInDate, checkOutDate), exactly as it measures bookings — so the two
+   * cases are one case, and this block pins that they stay one case.
    */
   const none = new Set<string>();
+  const opts = (checkIn: string | null, checkOut: string | null = null) =>
+    ({ checkIn, checkOut, minNights: null, crossingBlocked: none });
 
-  test('a vendor-closed date is NOT offered as a check-out', () => {
-    expect(
-      isDateDisabled(locked('2026-09-18'), {
-        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
-      }),
-    ).toBe(true);
+  test('a vendor-closed date IS offered as a check-out', () => {
+    expect(isDateDisabled(locked('2026-09-18'), opts('2026-09-17'))).toBe(false);
   });
 
-  test('...while a GUEST-booked date on the same day still is', () => {
-    // The contrast that makes the rule legible. Same cell, same "full" look,
-    // opposite answer — because the hours differ.
-    expect(
-      isDateDisabled(booked('2026-09-18'), {
-        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
-      }),
-    ).toBe(false);
+  test('...and so is a GUEST-booked one — the same answer, deliberately', () => {
+    expect(isDateDisabled(booked('2026-09-18'), opts('2026-09-17'))).toBe(false);
   });
 
-  test('a PARTIALLY blocked day stays selectable — only full-day closures are inert', () => {
-    // A partial time block sets isBlocked WITHOUT isFullyBooked, and the API
-    // comment is explicit that such a day stays bookable. An 11:00 check-out
-    // clears an afternoon block, so refusing it would lose a valid booking.
+  test('a vendor-closed date is NOT offered as an ARRIVAL', () => {
+    // The half that must not move: arriving means sleeping there.
+    expect(isDateDisabled(locked('2026-09-18'), opts(null))).toBe(true);
+  });
+
+  test('a stay SPANNING a vendor-closed night is refused', () => {
+    // 17 -> 19 sleeps through the closed 18th. The crossing guard already
+    // counted closed nights as unavailable; this pins that it still does now
+    // that the cell itself is selectable.
+    const withClosure = [day('2026-09-17'), locked('2026-09-18'), day('2026-09-19')];
+    const blocked = computeCrossingBlockedDates(withClosure, [], '2026-09-17', null, null);
+    expect(blocked.has('2026-09-19')).toBe(true);
+    // ...but leaving ON the closed day is fine.
+    expect(blocked.has('2026-09-18')).toBe(false);
+  });
+
+  test('a PARTIALLY blocked day stays selectable in both roles', () => {
+    // isBlocked without isFullyBooked: an afternoon lock, the day is still sold.
     const partial = day('2026-09-18', { isBlocked: true });
-    expect(
-      isDateDisabled(partial, {
-        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
-      }),
-    ).toBe(false);
-  });
-
-  test('a PARTIAL block on a day that is ALSO fully booked stays a valid check-out', () => {
-    // Raised by CodeRabbit against the first version of this guard, which read
-    // `isBlocked && isFullyBooked`. Both flags are set here, but neither came
-    // from a full-day closure:
-    //
-    //   isBlocked      an afternoon time-window block
-    //   isFullyBooked  every unit taken by guests, who arrive at 14:00
-    //
-    // An 11:00 check-out clears the guests and precedes the block, so the
-    // server accepts the stay. Deriving "closed" from the two flags refused it
-    // — the same class of lost booking this whole file exists to fix.
-    const partialAndFull = day('2026-09-18', {
-      isBlocked: true, isFullyBooked: true, available: 0, isFullyBlocked: false,
-    });
-    expect(
-      isDateDisabled(partialAndFull, {
-        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
-      }),
-    ).toBe(false);
-  });
-
-  test('a full-day closure is identified by the API flag, not inferred', () => {
-    expect(
-      isDateDisabled(day('2026-09-18', { isBlocked: true, isFullyBooked: true, isFullyBlocked: true }), {
-        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
-      }),
-    ).toBe(true);
-  });
-
-  test('a response with no isFullyBlocked field falls back to the old, stricter rule', () => {
-    // Availability responses are cached, so entries predating the new field
-    // keep arriving for a while. The fallback errs toward refusing rather than
-    // offering — a rare lost booking beats a dead end at submission — and
-    // self-heals as the cache turns over.
-    const legacy = day('2026-09-18', { isBlocked: true, isFullyBooked: true });
-    delete (legacy as Partial<CalendarDay>).isFullyBlocked;
-    expect(
-      isDateDisabled(legacy, {
-        checkIn: '2026-09-17', checkOut: null, minNights: null, crossingBlocked: none,
-      }),
-    ).toBe(true);
-  });
-
-  test('a vendor-closed date is inert as an ARRIVAL too', () => {
-    expect(
-      isDateDisabled(locked('2026-09-18'), {
-        checkIn: null, checkOut: null, minNights: null, crossingBlocked: none,
-      }),
-    ).toBe(true);
+    expect(isDateDisabled(partial, opts('2026-09-17'))).toBe(false);
+    expect(isDateDisabled(partial, opts(null))).toBe(false);
   });
 });
 

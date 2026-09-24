@@ -248,9 +248,9 @@ test.describe('booking calendar — a stay may not span an unavailable night', (
   });
 });
 
-test.describe('booking calendar — a vendor-closed day is not selectable', () => {
+test.describe('booking calendar — a vendor-closed day is a valid check-out', () => {
 
-  test('a whole-day closure is inert, unlike a guest-booked night', async ({ page, request }) => {
+  test('a closed day can be left on, but not arrived on', async ({ page, request }) => {
     const days = await calendarDays(request);
     const closed = vendorClosedDay(days);
     test.skip(!closed, 'vendor-closed fixture not seeded');
@@ -260,12 +260,26 @@ test.describe('booking calendar — a vendor-closed day is not selectable', () =
     test.skip(!arrivalDay || arrivalDay.isFullyBooked || arrivalDay.isPast, 'day before the closure is not free');
 
     await openBookingPage(page, closed!.date);
-    await (await cellFor(page, arrival)).click();
 
-    // The asymmetry. A guest arrives at 14:00, so an 11:00 departure misses
-    // them. A closure runs from 00:00, so the same departure lands inside it —
-    // createBooking rejects the stay. Offering it would walk the customer
-    // through the whole form to a failure.
+    // Closing a day means "nobody sleeps that night" — the same thing a booking
+    // means. A guest leaving that morning never occupies it, so the night
+    // BEFORE a closure stays sellable. Refusing it cost the vendor a night for
+    // nothing (reported 2026-09-24 from the live calendar).
+    await (await cellFor(page, arrival)).click();
+    const departure = await cellFor(page, closed!.date);
+    await expect(departure).toBeEnabled();
+    await departure.click();
+    await expect(page.getByText(/[1-9]\d*\s+nights?/i).first()).toBeVisible();
+  });
+
+  test('a closed day is inert before anything is picked — it cannot be an arrival', async ({ page, request }) => {
+    const days = await calendarDays(request);
+    const closed = vendorClosedDay(days);
+    test.skip(!closed, 'vendor-closed fixture not seeded');
+
+    await openBookingPage(page, closed!.date);
+
+    // The half that must not move: arriving means sleeping there.
     await expect(await cellFor(page, closed!.date)).toBeDisabled();
   });
 });

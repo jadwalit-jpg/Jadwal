@@ -1,0 +1,61 @@
+[
+  {
+    "bug": "BUG 1 - booked night rejected as a check-out",
+    "result": "DETECTED (6 tests red)",
+    "failing": [
+      "BUG 1 \u2014 a booked night must still be a valid DEPARTURE \u203a with the 16th picked, the booked 17th is SELECTABLE as the departure",
+      "VENDOR-CLOSED days are NOT symmetric with booked ones \u203a ...while a GUEST-booked date on the same day still is",
+      "VENDOR-CLOSED days are NOT symmetric with booked ones \u203a a PARTIAL block on a day that is ALSO fully booked stays a valid check-out",
+      "BUG 1 in the DOM \u2014 the booked night is a clickable check-out \u203a with the 16th picked, the booked 17th is ENABLED and reports the date",
+      "VENDOR-CLOSED vs BOOKED in the DOM \u2014 same look, opposite answer \u203a the guest-booked day IS offered as a check-out",
+      "WIRING \u2014 minNights actually reaches the CELLS, not just the guard \u203a min-night mode: with BOTH ends set, a later booked date is still a valid check-out"
+    ]
+  },
+  {
+    "bug": "BUG 2 - range could span a booked night",
+    "result": "DETECTED (8 tests red)",
+    "failing": [
+      "BUG 2 \u2014 a range may not span an unavailable night \u203a 16 -> 18 is refused because the 17th is booked",
+      "BUG 2 \u2014 a range may not span an unavailable night \u203a a long range spanning the booked night is refused",
+      "MINIMUM-NIGHTS mode \u203a an arrival whose minimum stay would cross the booked night is blocked",
+      "MINIMUM-NIGHTS mode \u203a a too-short departure pick is judged on the SNAPPED range, not the clicked one",
+      "TWO-MONTH view \u2014 the guard spans both grids \u203a a stay crossing the month boundary sees a booked night in the next month",
+      "BUG 2 in the DOM \u2014 a span across the booked night shakes instead of selecting \u203a 16 -> 18 does NOT select, and asks the parent to warn",
+      "WIRING \u2014 minNights actually reaches the CELLS, not just the guard \u203a a 2-night minimum blocks the 16th as an ARRIVAL (nights 16 + 17, 17 taken)",
+      "WIRING \u2014 minNights actually reaches the CELLS, not just the guard \u203a min-night mode judges a too-short departure on the SNAPPED range"
+    ]
+  },
+  {
+    "bug": "BUG 3 - hourly: booked day clickable + later days dead (regression I introduced)",
+    "result": "DETECTED (3 tests red)",
+    "failing": [
+      "HOURLY (single-date mode) \u2014 the range rules must not apply \u203a a fully-booked day stays inert after another day is picked",
+      "HOURLY (single-date mode) \u2014 the range rules must not apply \u203a a free day BEYOND a booked one is still selectable",
+      "HOURLY (single-date mode) \u2014 the range rules must not apply \u203a a free day beyond a PARTIALLY BLOCKED one is selectable \u2014 a bug that predates this PR"
+    ]
+  },
+  {
+    "bug": "BUG 4 - vendor-closed day offered as a check-out (server would reject)",
+    "result": "DETECTED (4 tests red)",
+    "failing": [
+      "VENDOR-CLOSED days are NOT symmetric with booked ones \u203a a vendor-closed date is NOT offered as a check-out",
+      "VENDOR-CLOSED days are NOT symmetric with booked ones \u203a a full-day closure is identified by the API flag, not inferred",
+      "VENDOR-CLOSED days are NOT symmetric with booked ones \u203a a response with no isFullyBlocked field falls back to the old, stricter rule",
+      "VENDOR-CLOSED vs BOOKED in the DOM \u2014 same look, opposite answer \u203a the vendor-closed day is inert as a check-out"
+    ]
+  },
+  {
+    "bug": "BUG 5 - minNights never reached the cells (wiring)",
+    "result": "DETECTED (1 tests red)",
+    "failing": [
+      "WIRING \u2014 minNights actually reaches the CELLS, not just the guard \u203a min-night mode: with BOTH ends set, a later booked date is still a valid check-out"
+    ]
+  },
+  {
+    "bug": "BUG 6 - hourly calendar not marked single-select (call site)",
+    "result": "DETECTED (1 tests red)",
+    "failing": [
+      "booking page \u2014 calendar selection mode is declared at the call site \u203a the HOURLY calendar declares selectionMode=\"single\""
+    ]
+  }
+]

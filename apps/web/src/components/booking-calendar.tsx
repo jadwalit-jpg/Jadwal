@@ -23,8 +23,12 @@ export interface CalendarDay {
   isBlocked?: boolean;
   /**
    * The vendor closed this date OUTRIGHT — a block covering the whole calendar
-   * day, as opposed to a time window inside it. Distinct from `isBlocked`
-   * because only a full-day closure makes the date unusable as a check-out.
+   * day, as opposed to a time window inside it.
+   *
+   * The picker deliberately does NOT branch on this: a closed night and a booked
+   * night both mean "nobody sleeps here", so both stay valid as a CHECK-OUT.
+   * Kept because it is the only way to tell the two apart, which the wording of
+   * a future "host unavailable" vs "fully booked" message would need.
    */
   isFullyBlocked?: boolean;
 }
@@ -225,52 +229,29 @@ export function computeCrossingBlockedDates(
 }
 
 /**
- * Is a day the vendor has closed OUTRIGHT (as opposed to one a guest has taken)?
- *
- * The API answers this directly with `isFullyBlocked`. It has to, because
- * neither flag nor any combination of them can be derived here:
- *
- *   isBlocked alone            also true for a PARTIAL time-window block, and
- *                              those days stay bookable
- *   isBlocked && isFullyBooked both true for a day with an afternoon block AND
- *                              every unit taken by guests — yet an 11:00
- *                              check-out clears the guests and precedes the
- *                              block, so the server accepts it
- *
- * The second case is why the derived form was wrong: it refused a stay the
- * server would have taken, which is the exact bug this file exists to fix.
- *
- * The `??` fallback covers responses served from the availability cache before
- * this field existed. It is the old, slightly over-strict rule — during that
- * window a rare day is wrongly refused rather than wrongly offered, which is
- * the safer of the two failures and self-heals as the cache turns over.
- */
-function isVendorClosed(day: CalendarDay): boolean {
-  return day.isFullyBlocked ?? (!!day.isBlocked && day.isFullyBooked);
-}
-
-/**
  * Is this date unselectable?
  *
  *   past / inactive             -> inert, always
- *   vendor-closed outright      -> inert in BOTH roles (see below)
  *   would cross an unavailable  -> CLICKABLE, so the tap can shake + explain
- *   booked, and not a departure -> inert (it would be an arrival on a taken night)
+ *   unavailable, not a departure-> inert (it would be an arrival on a taken night)
  *   otherwise                   -> selectable
  *
- * The vendor-closed case is NOT symmetric with the booked case, which is the
- * subtlety that nearly shipped a dead end here. Both show as "full", but they
- * occupy different hours:
+ * A vendor-CLOSED day and a guest-BOOKED day are treated identically, because
+ * they mean the same thing: nobody sleeps that night. Both therefore remain
+ * valid as a CHECK-OUT — the guest leaves in the morning and never occupies the
+ * night at all.
  *
- *   a guest's booking   18th 14:00 -> 19th 11:00   (they arrive in the afternoon)
- *   a vendor's block    18th 00:00 -> 19th 00:00   (the whole calendar day)
+ * An earlier version of this file made closed days inert in both roles, on the
+ * grounds that a block runs from 00:00 while a guest only arrives at 14:00, so
+ * an 11:00 departure lands inside the block. That was true of the server as it
+ * then stood, and it cost the vendor a night for nothing: closing the 17th also
+ * made the 16th unsellable, though no one would have slept on the 17th.
  *
- * A stay leaving on the 18th runs until checkOutTime, 11:00. That misses the
- * guest entirely — which is exactly why a booked night IS a valid departure —
- * but it lands squarely inside the block's 00:00-11:00. createBooking tests
- * blocks against [checkIn 14:00, checkOut 11:00) and rejects the stay. Offering
- * that date would send the customer to a failed submission, which is worse than
- * the greyed-out cell this fix set out to remove.
+ * Reported from the live calendar on 2026-09-24. The server now measures a
+ * DAILY block against the NIGHTS a stay consumes — [checkInDate, checkOutDate),
+ * exactly as it measures bookings — so leaving on a closed day is genuinely
+ * accepted and the picker can offer it. The two sides are pinned together by
+ * calendar-server-contract.int.spec.ts; neither may move alone.
  */
 export function isDateDisabled(
   day: CalendarDay,
@@ -283,7 +264,6 @@ export function isDateDisabled(
   },
 ): boolean {
   if (day.isPast || !day.isActiveDay) return true;
-  if (isVendorClosed(day)) return true;
   // Kept clickable on purpose — the tap shakes and explains, which is far less
   // confusing than an inert cell.
   if (crossingShakes(day, opts.crossingBlocked)) return false;
