@@ -12,9 +12,15 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
  *
  * - DAILY activity  → block whole day(s): `date` (+ optional `endDate` range).
  * - HOURLY activity → block whole day(s) (default), OR specific START-TIME slots
- *   on one `date` via `slotTimes` (each "HH:MM"). A slot lock makes ONLY a
- *   booking that STARTS at that time unbookable — bookings that start earlier
- *   and run across it are still accepted.
+ *   on one `date` via `slotTimes` (each "HH:MM"). `slotTimes` names the START of
+ *   each locked hour; the lock then covers that whole hour and REJECTS ANY
+ *   booking overlapping it, including one that starts earlier and runs across.
+ *   (createBooking tests blocks by range overlap — bookings.service.ts, the
+ *   getBlocksInWindow call. A 2-hour booking at 11:00 is refused by a 12:00
+ *   lock.) This comment previously claimed only bookings STARTING at that time
+ *   were refused, which is the opposite of what ships; corrected 2026-09-24
+ *   after a review flagged the contradiction. Enforcement was always right —
+ *   the risk was a reader "fixing" a guard that already worked.
  * - `repeatWeekly` → whole-day weekday recurrence (incompatible with slotTimes).
  *
  * Format-only validation here. Domain rules (real calendar date, endDate ≥ date,
