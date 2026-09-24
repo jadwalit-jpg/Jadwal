@@ -15,9 +15,13 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
  *   on one `date` via `slotTimes` (each "HH:MM"). `slotTimes` names the START of
  *   each locked hour; the lock then covers that whole hour and REJECTS ANY
  *   booking overlapping it, including one that starts earlier and runs across.
- *   (createBooking tests blocks by range overlap — bookings.service.ts, the
- *   getBlocksInWindow call. A 2-hour booking at 11:00 is refused by a 12:00
- *   lock.) This comment previously claimed only bookings STARTING at that time
+ *   (Enforced in bookings.service.ts by the `activityBlock.findFirst` guard in
+ *   createBooking, just after the start/end datetimes are built; the
+ *   availability endpoints use `getBlocksInWindow` with the same predicate. A
+ *   2-hour booking at 11:00 is refused by a 12:00 lock.) DAILY blocks are
+ *   compared against the NIGHTS a stay consumes rather than its clock window,
+ *   so a stay merely leaving on a closed morning is accepted — see the note at
+ *   that guard. This comment previously claimed only bookings STARTING at that time
  *   were refused, which is the opposite of what ships; corrected 2026-09-24
  *   after a review flagged the contradiction. Enforcement was always right —
  *   the risk was a reader "fixing" a guard that already worked.
