@@ -212,9 +212,15 @@ describe('admin PATCH — capacity is required when units are OFF', () => {
       hasUnits: true, unitCount: 3, unitCapacity: 2, capacity: 6,
     });
 
+    // Assert the VALIDATION message, not merely that something threw. A bare
+    // .rejects.toThrow() passes either way: with the `??` merge the guard lets
+    // the null past and Prisma rejects the write instead, which also throws.
+    // The test would then be green for both the fix and the bug. CodeRabbit
+    // caught that; it is the same discriminating-assertion problem as the
+    // vacuous E2E ones, in a different disguise.
     await expect(
       svc.updateActivity(act.id, { unitCount: null } as any),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Number of Units is required/i);
 
     // And the row is untouched — no half-applied update.
     const after = await capacityOf(act.id);
