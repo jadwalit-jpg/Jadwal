@@ -54,6 +54,25 @@ const CONFIRMED_BOOKING_REF = 'JDWL-E2ECNF';
 const REFUND_BOOKING_REF = 'JDWL-E2ERFD';
 const COMPLETED_BOOKING_REF = 'JDWL-E2ECMP';
 
+// ─── Booking-calendar fixture ──────────────────────────────────────────
+// A DAILY activity with exactly ONE unit, so a single booking makes a night
+// genuinely unavailable rather than merely reducing a seat count. The calendar
+// specs need three distinguishable kinds of day on one activity:
+//
+//   a night taken by a GUEST      -> still a valid CHECK-OUT (they arrive 14:00)
+//   a day the vendor CLOSED       -> not a valid check-out (block runs 00:00)
+//   a free day                    -> valid in both roles
+//
+// One unit also makes the assertions honest: with spare capacity the calendar
+// would never mark anything full and the specs would pass without testing
+// anything.
+const CAL_SLUG = 'e2e-calendar-daily';
+const CAL_BOOKING_REF = 'JDWL-E2ECAL';
+/** Days from today. Far enough out to be unambiguous, close enough that the
+ *  two-month calendar view shows them without navigation. */
+const CAL_BOOKED_OFFSET = 20;
+const CAL_BLOCKED_OFFSET = 24;
+
 async function main() {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('Refusing to seed E2E data in production');
@@ -536,6 +555,110 @@ async function main() {
     }
   }
 
+  // ─── Booking-calendar fixture ────────────────────────────────────────
+  // See the constants block for why this activity is separate and single-unit.
+  const calDayStr = (offset: number) => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + offset);
+    return d.toISOString().slice(0, 10);
+  };
+  const calBookedDate = calDayStr(CAL_BOOKED_OFFSET);
+  const calBlockedDate = calDayStr(CAL_BLOCKED_OFFSET);
+
+  const calActivity = await prisma.activity.upsert({
+    where: { slug: CAL_SLUG },
+    create: {
+      slug: CAL_SLUG,
+      vendorId: vendorUser.vendorProfile.id,
+      countryId: country.id,
+      categoryId: category.id,
+      cityId: city.id,
+      titleEn: 'E2E Calendar Chalet',
+      titleAr: 'شاليه اختبار التقويم',
+      descriptionEn: 'Single-unit DAILY fixture for booking-calendar specs. Long enough to clear the wizard validation rule that requires at least 50 characters in the description field.',
+      descriptionAr: 'وحدة واحدة يومية لاختبارات تقويم الحجز. طويل بما يكفي لاجتياز قاعدة التحقق التي تتطلب 50 حرفًا على الأقل في حقل الوصف.',
+      pricePerPerson: 500,
+      capacity: 4,
+      hasUnits: true,
+      unitCount: 1,
+      unitCapacity: 4,
+      locationLat: 25.286,
+      locationLng: 51.534,
+      locationAddress: 'Doha, Qatar',
+      bookingType: 'DAILY',
+      pricingModel: 'PER_UNIT',
+      // Real hotel semantics — the whole point of the calendar rules under test.
+      checkInTime: '14:00',
+      checkOutTime: '11:00',
+      status: 'ACTIVE',
+      activeDays: ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'],
+    },
+    update: { status: 'ACTIVE', hasUnits: true, unitCount: 1, unitCapacity: 4 },
+  });
+
+  // A guest occupies the night of calBookedDate: 14:00 that day -> 11:00 the
+  // next. A stay LEAVING on calBookedDate at 11:00 misses them entirely, which
+  // is exactly what the specs assert the calendar now offers.
+  await prisma.booking.upsert({
+    where: { ref: CAL_BOOKING_REF },
+    create: {
+      ref: CAL_BOOKING_REF,
+      activityId: calActivity.id,
+      vendorId: vendorUser.vendorProfile.id,
+      customerId: customerUser.id,
+      startDatetime: new Date(`${calBookedDate}T14:00:00.000Z`),
+      endDatetime: new Date(`${calDayStr(CAL_BOOKED_OFFSET + 1)}T11:00:00.000Z`),
+      unitNumber: 1,
+      guests: 2,
+      bookingPhone: '+97455123456',
+      totalPrice: 500,
+      serviceFee: 0,
+      status: 'CONFIRMED',
+      emailOtpVerifiedAt: new Date(),
+    },
+    update: {
+      status: 'CONFIRMED',
+      startDatetime: new Date(`${calBookedDate}T14:00:00.000Z`),
+      endDatetime: new Date(`${calDayStr(CAL_BOOKED_OFFSET + 1)}T11:00:00.000Z`),
+      unitNumber: 1,
+    },
+  });
+
+  // A whole-day vendor closure: midnight to midnight. Contrast with the guest
+  // booking above — same "full" look in the calendar, opposite meaning.
+  const calBlockStart = new Date(`${calBlockedDate}T00:00:00.000Z`);
+  const calBlockEnd = new Date(calBlockStart.getTime() + 24 * 60 * 60 * 1000);
+
+  // Retire blocks from EARLIER seed runs before adding this one.
+  //
+  // Both fixture dates are offsets from "today", so a rerun moves them. The
+  // booking is an upsert on a fixed ref and therefore moves cleanly, but blocks
+  // have no such key and would accumulate. Four days later the new booked night
+  // (today+20) lands exactly on the previous run's closure (oldToday+24), the
+  // night stops being "booked but not closed", and the tripwire spec fails —
+  // pointing at the calendar rather than at the seed.
+  //
+  // Soft-delete rather than delete: `deletedAt` is what every availability path
+  // already filters on, so this matches how a vendor removing a block behaves.
+  await prisma.activityBlock.updateMany({
+    where: { activityId: calActivity.id, deletedAt: null, NOT: { blockStart: calBlockStart } },
+    data: { deletedAt: new Date() },
+  });
+
+  const existingCalBlock = await prisma.activityBlock.findFirst({
+    where: { activityId: calActivity.id, blockStart: calBlockStart, deletedAt: null },
+  });
+  if (!existingCalBlock) {
+    await prisma.activityBlock.create({
+      data: {
+        activityId: calActivity.id,
+        vendorId: vendorUser.vendorProfile.id,
+        blockStart: calBlockStart,
+        blockEnd: calBlockEnd,
+      },
+    });
+  }
+
   console.log('E2E data seeded:');
   console.log('  activities (5):    1 ACTIVE-HOURLY (e2e-activity) + 1 ACTIVE-HOURLY +');
   console.log('                     1 ACTIVE-DAILY + 1 PENDING-DAILY + 1 INACTIVE-HOURLY');
@@ -546,6 +669,8 @@ async function main() {
   console.log('  payout-request:    1 PENDING for 450 QAR');
   console.log('  audit-logs (3):    1 FINANCIAL (4y old) + 2 OPERATIONAL');
   console.log('  loyalty points:    50 (customer)');
+  console.log('  calendar fixture:  ' + CAL_SLUG + ' (1 unit, DAILY 14:00->11:00)');
+  console.log('                     booked night ' + calBookedDate + ', vendor-closed ' + calBlockedDate);
   console.log('  vendor bank:       set (payout-eligible)');
 }
 

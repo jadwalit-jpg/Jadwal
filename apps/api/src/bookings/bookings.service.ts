@@ -672,9 +672,16 @@ export class BookingsService {
     const endDatetime = buildDatetime(checkOutDate, activity.checkOutTime ?? '11:00');
     const now = new Date();
 
-    // Vendor availability lock — if any block overlaps the requested stay,
-    // the whole range is unbookable (can't stay across a blocked night).
-    const blocked = (await this.getBlocksInWindow(activityId, startDatetime, endDatetime)).length > 0;
+    // Vendor availability lock — if any block overlaps the NIGHTS the stay
+    // consumes, the range is unbookable. Measured on [checkInDate, checkOutDate)
+    // rather than the 14:00->11:00 clock window, so this agrees with
+    // createBooking: a stay merely LEAVING on a closed day never sleeps there
+    // and is allowed. See the long note at the createBooking block check.
+    const blocked = (await this.getBlocksInWindow(
+      activityId,
+      new Date(`${checkInDate}T00:00:00.000Z`),
+      new Date(`${checkOutDate}T00:00:00.000Z`),
+    )).length > 0;
 
     // Overlap condition — excludes CANCELLED and expired PENDING reservations
     const overlapCondition = {
@@ -894,6 +901,7 @@ export class BookingsService {
       date: string; dayOfWeek: string; price: number; isSpecialPrice: boolean; isActiveDay: boolean;
       isPast: boolean; capacity: number | null; booked: number;
       available: number | null; isFullyBooked: boolean; isBlocked: boolean;
+      isFullyBlocked: boolean;
     }[] = [];
 
     const pricePerPerson = Number(activity.pricePerPerson);
@@ -1071,8 +1079,14 @@ export class BookingsService {
       const isBlocked = monthBlocks.some((b) => b.blockStart < dayEndUtc && b.blockEnd > dayDate);
       const fullyBlocked = monthBlocks.some((b) => b.blockStart <= dayDate && b.blockEnd >= dayEndUtc);
       if (fullyBlocked) { available = 0; isFullyBooked = true; }
+      // `isBlocked` alone cannot answer "did the vendor close this day?" — it is
+      // true for a partial time-window block too. Nor can isBlocked && isFullyBooked:
+      // a day with an afternoon block AND every unit taken by guests sets both,
+      // yet an 11:00 check-out clears the guests and precedes the block, so the
+      // server accepts it. The picker needs the distinction to avoid refusing a
+      // stay the server would take, so surface the full-day case explicitly.
 
-      days.push({ date: dateStr, dayOfWeek: dow, price: specialPriceByDate.get(dateStr) ?? pricePerPerson, isSpecialPrice: specialPriceByDate.has(dateStr), isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked });
+      days.push({ date: dateStr, dayOfWeek: dow, price: specialPriceByDate.get(dateStr) ?? pricePerPerson, isSpecialPrice: specialPriceByDate.has(dateStr), isActiveDay, isPast, capacity, booked, available, isFullyBooked, isBlocked, isFullyBlocked: fullyBlocked });
     }
 
     const response = {
@@ -1261,6 +1275,37 @@ export class BookingsService {
         throw new BadRequestException('This time slot exceeds the activity closing time');
       }
 
+      // A slot that has already STARTED today is not bookable.
+      //
+      // The date guard above is date-granular — `checkInDate < todayStr` — so on
+      // today's date every slot passed it, including ones that finished hours
+      // ago. Measured, not theorised: at 11:14 local a 00:00 slot was accepted.
+      //
+      // getHourlyAvailability already marks such slots isPast and the picker
+      // greys them out, so the everyday customer never saw this. The calendar is
+      // not the authority though: a stale tab, a retry, or a direct API call all
+      // reach here, and the result is a paid booking for a trip that has sailed.
+      //
+      // Compared in the activity's own timezone, like the date guard and
+      // getHourlyAvailability — server UTC would refuse valid slots in Doha for
+      // part of every day. DAILY is untouched: a stay is booked by date, and its
+      // 14:00 check-in has no equivalent intra-day deadline.
+      if (dto.checkInDate === todayStr) {
+        let nowLocal = '';
+        try {
+          nowLocal = new Intl.DateTimeFormat('en-GB', {
+            timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+          }).format(new Date());
+        } catch {
+          // An unreadable timezone must not hand out past slots. getHourly-
+          // Availability fails the same way here, marking everything past.
+          nowLocal = '23:59';
+        }
+        if (dto.slotTime <= nowLocal) {
+          throw new BadRequestException('This time slot has already started');
+        }
+      }
+
       startDatetime = buildDatetime(dto.checkInDate, dto.slotTime);
       endDatetime = buildDatetime(dto.checkInDate, fromMinutes(slotEndMins));
     } else {
@@ -1294,11 +1339,33 @@ export class BookingsService {
     // Vendor availability lock. Checked here, before the Redis lock + capacity
     // transaction, so a locked slot fails fast with a clear message rather than
     // appearing as "no capacity".
-    //   Both HOURLY and DAILY → RANGE OVERLAP: reject if the booking's full
-    //   range [start, end) crosses any locked window, even when it starts before
-    //   the lock. A 3-hour or 3-night booking may not span an off-hour / off-day.
-    //   Half-open overlap: block.start < booking.end && block.end > booking.start.
-    const blockWhere = { blockStart: { lt: endDatetime }, blockEnd: { gt: startDatetime } };
+    //   RANGE OVERLAP: reject if the booking crosses any locked window, even
+    //   when it starts before the lock. A 3-hour or 3-night booking may not span
+    //   an off-hour / off-day. Half-open: block.start < end && block.end > start.
+    //
+    // DAILY compares the NIGHTS the stay consumes, not its clock window.
+    //
+    // A stay runs 14:00 -> 11:00, but the nights it OCCUPIES are the dates
+    // [checkInDate, checkOutDate) — the departure date's night belongs to the
+    // next guest. Judging a vendor block against the 14:00/11:00 window made a
+    // whole-day lock on D also refuse a stay merely LEAVING on D, because the
+    // lock starts at 00:00 and the guest is still there until 11:00.
+    //
+    // That cost the vendor a night for nothing: closing the 17th made the 16th
+    // unsellable too, even though nobody would sleep on the 17th. Closing a day
+    // means "no guest sleeps that night" — the same thing a booking means — so
+    // it is measured the same way. Reported 2026-09-24 from the live calendar.
+    //
+    // HOURLY is unchanged: its bookings are clock windows within one day, and a
+    // slot lock genuinely is about the hours.
+    const blockWindow =
+      activity.bookingType === 'DAILY'
+        ? {
+            start: new Date(`${dto.checkInDate}T00:00:00.000Z`),
+            end: new Date(`${dto.checkOutDate}T00:00:00.000Z`),
+          }
+        : { start: startDatetime, end: endDatetime };
+    const blockWhere = { blockStart: { lt: blockWindow.end }, blockEnd: { gt: blockWindow.start } };
     const overlappingBlock = await db.activityBlock.findFirst({
       where: { activityId: dto.activityId, deletedAt: null, ...blockWhere },
       select: { id: true },

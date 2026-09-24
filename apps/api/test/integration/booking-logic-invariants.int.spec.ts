@@ -393,6 +393,56 @@ describe('TIME — boundaries that have bitten this codebase before', () => {
     await assertNotOversold(act.id);
   });
 
+  test('DAILY: a stay ENDING on an occupied night is accepted', async () => {
+    // The contract the booking calendar depends on after the 2026-09-18 fix.
+    // The picker now offers a fully-booked date as a DEPARTURE, so the server
+    // must genuinely accept it — otherwise the customer is invited to choose
+    // dates that fail at payment, which is worse than the original refusal.
+    //
+    // Nights 7 and 8 are taken. A stay of night 5-6 departing ON the 7th never
+    // touches them: it ends at 12:00 and the occupant arrives at 15:00.
+    const seed = await seedReference(ctx.prisma);
+    const svc = makeBookingsService();
+    const act = await makeActivity(seed, SHAPES[0].data);
+
+    const occupant = await svc.createBooking(seed.customer.id, {
+      activityId: act.id, checkInDate: d(7), checkOutDate: d(9), guests: 2, bookingPhone: PHONE,
+    } as any);
+    await ctx.prisma.booking.update({
+      where: { id: occupant.booking.id }, data: { status: 'CONFIRMED', reservedUntil: null },
+    });
+
+    const departing = await svc.createBooking((await makeCustomer()).id, {
+      activityId: act.id, checkInDate: d(5), checkOutDate: d(7), guests: 2, bookingPhone: PHONE,
+    } as any);
+    expect(departing.booking).toBeTruthy();
+    await assertNotOversold(act.id);
+  });
+
+  test('DAILY: a stay SPANNING an occupied night is refused', async () => {
+    // The other half of the same contract. The picker now refuses this range up
+    // front instead of letting it fail at submission — but the server stays the
+    // authority, so pin that it genuinely rejects it.
+    const seed = await seedReference(ctx.prisma);
+    const svc = makeBookingsService();
+    const act = await makeActivity(seed, SHAPES[0].data);
+
+    const occupant = await svc.createBooking(seed.customer.id, {
+      activityId: act.id, checkInDate: d(7), checkOutDate: d(8), guests: 2, bookingPhone: PHONE,
+    } as any);
+    await ctx.prisma.booking.update({
+      where: { id: occupant.booking.id }, data: { status: 'CONFIRMED', reservedUntil: null },
+    });
+
+    // d(6) -> d(9) covers nights 6, 7 and 8 — the 7th belongs to the occupant.
+    await expect(
+      svc.createBooking((await makeCustomer()).id, {
+        activityId: act.id, checkInDate: d(6), checkOutDate: d(9), guests: 2, bookingPhone: PHONE,
+      } as any),
+    ).rejects.toThrow(/fully booked|all units/i);
+    await assertNotOversold(act.id);
+  });
+
   test('DAILY: a stay spanning a month boundary is counted in BOTH months', async () => {
     const seed = await seedReference(ctx.prisma);
     const svc = makeBookingsService();

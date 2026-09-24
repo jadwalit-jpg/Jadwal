@@ -145,7 +145,7 @@ describe('Booking email-OTP — once-per-user', () => {
 
   test('clearing the OTP stamps User.bookingOtpVerifiedAt (set-once)', async () => {
     const seed = await seedReference(ctx.prisma);
-    const { svc } = makeBookingsService();
+    const { svc, emailService } = makeBookingsService();
 
     const res = await svc.createBooking(seed.customer.id, {
       activityId: seed.activity.id,
@@ -155,6 +155,12 @@ describe('Booking email-OTP — once-per-user', () => {
       bookingPhone: '+97455123456',
     });
 
+    // createBooking sends the real OTP fire-and-forget, and that send stamps its
+    // own emailOtpHash. Stamping ours before it lands means the real code wins
+    // and the verify below fails with "Invalid code" — which is exactly how this
+    // flaked on CI. Every other stampOtp in this file already waits first; this
+    // was the one that did not.
+    await waitForOtpSends(emailService.sendBookingOtp, 1);
     await stampOtp(res.booking.id, '123456');
     await svc.verifyBookingEmailOtp(seed.customer.id, res.booking.id, '123456');
 

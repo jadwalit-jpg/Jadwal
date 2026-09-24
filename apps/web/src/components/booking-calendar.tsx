@@ -21,7 +21,31 @@ export interface CalendarDay {
   isFullyBooked: boolean;
   /** A vendor availability lock touches this date (whole- or part-day). */
   isBlocked?: boolean;
+  /**
+   * The vendor closed this date OUTRIGHT — a block covering the whole calendar
+   * day, as opposed to a time window inside it.
+   *
+   * The picker deliberately does NOT branch on this: a closed night and a booked
+   * night both mean "nobody sleeps here", so both stay valid as a CHECK-OUT.
+   * Kept because it is the only way to tell the two apart, which the wording of
+   * a future "host unavailable" vs "fully booked" message would need.
+   */
+  isFullyBlocked?: boolean;
 }
+
+/**
+ * How the calendar interprets a click.
+ *
+ *   'range'  — DAILY / per-unit stays: two picks bounding [checkIn, checkOut).
+ *   'single' — HOURLY activities: one day, then a time slot. No stay, no
+ *              check-out, so none of the range rules apply.
+ *
+ * Both modes render the same grid, which is why the distinction has to be
+ * explicit: the hourly flow reuses the `checkIn` prop to carry "the day the
+ * customer picked", and range logic reading that as an arrival draws exactly
+ * the wrong conclusions.
+ */
+export type SelectionMode = 'range' | 'single';
 
 interface BookingCalendarProps {
   /** Current left-month in "YYYY-MM" format */
@@ -47,6 +71,8 @@ interface BookingCalendarProps {
   showPrices?: boolean;
   /** Minimum stay (nights) — selection logic lives in the parent; informational here */
   minNights?: number | null;
+  /** 'range' for DAILY stays (default), 'single' for HOURLY one-day picks. */
+  selectionMode?: SelectionMode;
   /** Loading state */
   isLoading?: boolean;
   /** Max months in advance the customer may navigate/book (default 6) */
@@ -95,6 +121,164 @@ function addDaysStr(dateStr: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Whole nights between two YYYY-MM-DD dates. */
+function nightsBetween(from: string, to: string): number {
+  const a = new Date(`${from}T00:00:00.000Z`).getTime();
+  const b = new Date(`${to}T00:00:00.000Z`).getTime();
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * Will clicking `date` set the CHECK-OUT of the current selection?
+ *
+ * This matters because a date plays TWO roles, and only one consumes a night:
+ *
+ *   as an ARRIVAL   the guest sleeps there       -> the night must be free
+ *   as a DEPARTURE  the guest leaves at checkout -> the night is NOT theirs
+ *
+ * A stay is the half-open range [checkIn, checkOut): the departure date is
+ * excluded. So a fully-booked night can still be a perfectly valid DEPARTURE —
+ * the outgoing guest leaves at 12:00, the incoming one arrives at 15:00, and
+ * the two never meet. Treating a booked date as unusable for every purpose is
+ * what was refusing valid one-night stays (reported 2026-09-18).
+ *
+ * Mirrors handleDailyDateSelect in the booking page exactly. Defined ONCE and
+ * used by both the range guard and the per-cell disabled state — two copies of
+ * this rule drifting apart is how the original bug survived since April.
+ */
+export function willSetCheckOut(
+  date: string,
+  checkIn: string | null,
+  checkOut: string | null,
+  minNights?: number | null,
+  selectionMode: SelectionMode = 'range',
+): boolean {
+  // An HOURLY activity picks ONE day and then a time slot — there is no stay and
+  // no check-out, so no click can ever be a departure. Without this the hourly
+  // calendar reuses `checkIn` to mean "the selected day", every later date reads
+  // as a departure, and a fully-booked day becomes clickable.
+  if (selectionMode === 'single') return false;
+  if (!checkIn || date <= checkIn) return false;
+  // Min-night mode always extends. Flexible mode extends only while no check-out
+  // is set yet — once both ends exist the next tap re-picks a fresh check-in,
+  // which is an ARRIVAL and must obey the normal rules.
+  return (minNights ?? 0) >= 1 || !checkOut;
+}
+
+/**
+ * Dates whose selection would produce a stay crossing an UNAVAILABLE night.
+ * Returns the set that must SHAKE + warn rather than select.
+ *
+ * Exported and pure so it can be tested directly. It used to live inside a
+ * useMemo, so the only way to exercise it was to render the calendar — which is
+ * why the fully-booked half of "unavailable" went unnoticed for five months.
+ */
+export function computeCrossingBlockedDates(
+  daysLeft: CalendarDay[],
+  daysRight: CalendarDay[],
+  checkIn: string | null,
+  checkOut: string | null,
+  minNights?: number | null,
+  selectionMode: SelectionMode = 'range',
+): Set<string> {
+  const set = new Set<string>();
+  // Nothing spans anything in single-date mode. Left to run, it would read the
+  // hourly "selected day" as a check-in and silently block every later date
+  // sitting beyond a full one — and the hourly flow passes no onBlockedAttempt,
+  // so those clicks would die with no explanation at all.
+  if (selectionMode === 'single') return set;
+  const all = [...daysLeft, ...daysRight];
+  // A night is UNAVAILABLE whether the vendor LOCKED it or a guest BOOKED it.
+  // Only `isBlocked` was considered before, so a range could be dragged across
+  // a booked night: 16 -> 18 over a booked 17 was accepted by the picker and
+  // only refused later by the server. The tester spotted the tell — the same
+  // drag over a vendor-locked date WAS refused, because only that half of
+  // "unavailable" had ever been implemented.
+  const unavailable = new Set(
+    all.filter((d) => d.isBlocked || d.isFullyBooked).map((d) => d.date),
+  );
+  if (unavailable.size === 0) return set;
+  const nights = minNights ?? 0;
+  const isMinNight = nights >= 1;
+  // Half-open [from, to): exactly the nights the stay consumes. `to` is the
+  // DEPARTURE day and is deliberately excluded — see willSetCheckOut.
+  const rangeHitsUnavailable = (from: string, to: string) => {
+    for (let n = from; n < to; n = addDaysStr(n, 1)) if (unavailable.has(n)) return true;
+    return false;
+  };
+  for (const d of all) {
+    if (d.isPast || !d.isActiveDay) continue;
+    if (d.date === checkIn) continue; // the selected check-in — a tap clears it
+    if (willSetCheckOut(d.date, checkIn, checkOut, minNights)) {
+      // Validate the range that will ACTUALLY result. Min-night mode SNAPS a
+      // too-short pick up to the minimum check-out, so checking [checkIn, d)
+      // alone would miss the nights between d and that snapped end.
+      const end =
+        isMinNight && nightsBetween(checkIn as string, d.date) < nights
+          ? addDaysStr(checkIn as string, nights)
+          : d.date;
+      if (rangeHitsUnavailable(checkIn as string, end)) set.add(d.date);
+    } else if (isMinNight) {
+      // Check-IN candidate: the minimum stay [d, d+minNights) must not cross an
+      // unavailable night. Flexible mode has no minimum, so a lone arrival is
+      // never blocked — the overlap is judged when the departure is picked.
+      if (rangeHitsUnavailable(d.date, addDaysStr(d.date, nights))) set.add(d.date);
+    }
+  }
+  return set;
+}
+
+/**
+ * Is this date unselectable?
+ *
+ *   past / inactive             -> inert, always
+ *   would cross an unavailable  -> CLICKABLE, so the tap can shake + explain
+ *   unavailable, not a departure-> inert (it would be an arrival on a taken night)
+ *   otherwise                   -> selectable
+ *
+ * A vendor-CLOSED day and a guest-BOOKED day are treated identically, because
+ * they mean the same thing: nobody sleeps that night. Both therefore remain
+ * valid as a CHECK-OUT — the guest leaves in the morning and never occupies the
+ * night at all.
+ *
+ * An earlier version of this file made closed days inert in both roles, on the
+ * grounds that a block runs from 00:00 while a guest only arrives at 14:00, so
+ * an 11:00 departure lands inside the block. That was true of the server as it
+ * then stood, and it cost the vendor a night for nothing: closing the 17th also
+ * made the 16th unsellable, though no one would have slept on the 17th.
+ *
+ * Reported from the live calendar on 2026-09-24. The server now measures a
+ * DAILY block against the NIGHTS a stay consumes — [checkInDate, checkOutDate),
+ * exactly as it measures bookings — so leaving on a closed day is genuinely
+ * accepted and the picker can offer it. The two sides are pinned together by
+ * calendar-server-contract.int.spec.ts; neither may move alone.
+ */
+export function isDateDisabled(
+  day: CalendarDay,
+  opts: {
+    checkIn: string | null;
+    checkOut: string | null;
+    minNights?: number | null;
+    crossingBlocked: Set<string>;
+    selectionMode?: SelectionMode;
+  },
+): boolean {
+  if (day.isPast || !day.isActiveDay) return true;
+  // Kept clickable on purpose — the tap shakes and explains, which is far less
+  // confusing than an inert cell.
+  if (crossingShakes(day, opts.crossingBlocked)) return false;
+  if (!day.isFullyBooked) return false;
+  // A booked night is still a valid DEPARTURE.
+  return !willSetCheckOut(
+    day.date, opts.checkIn, opts.checkOut, opts.minNights, opts.selectionMode,
+  );
+}
+
+/** Does tapping this date shake-and-warn instead of selecting? */
+export function crossingShakes(day: CalendarDay, crossingBlocked: Set<string>): boolean {
+  return !day.isPast && day.isActiveDay && crossingBlocked.has(day.date);
+}
+
 /* ─── Month Grid ──────────────────────────────────────────── */
 
 function MonthGrid({
@@ -107,6 +291,8 @@ function MonthGrid({
   lockBlockedStarts,
   currency,
   showPrices,
+  minNights,
+  selectionMode,
 }: {
   month: string;
   days: CalendarDay[];
@@ -117,6 +303,9 @@ function MonthGrid({
   lockBlockedStarts: Set<string>;
   currency: string;
   showPrices?: boolean;
+  /** Needed so a cell can tell an ARRIVAL pick from a DEPARTURE pick. */
+  minNights?: number | null;
+  selectionMode?: SelectionMode;
 }) {
   const { t, i18n } = useTranslation();
   const [shakeDate, setShakeDate] = useState<string | null>(null);
@@ -179,8 +368,11 @@ function MonthGrid({
           // A min-night stay starting here would cross a host lock — stays
           // clickable so the tap can shake + warn (vs. a genuinely full / past
           // day, which is inert).
-          const isLockShake = !day.isPast && day.isActiveDay && lockBlockedStarts.has(day.date);
-          const isDisabled = day.isPast || !day.isActiveDay || (day.isFullyBooked && !isLockShake);
+          const isLockShake = crossingShakes(day, lockBlockedStarts);
+          const isDisabled = isDateDisabled(day, {
+            checkIn, checkOut, minNights, selectionMode,
+            crossingBlocked: lockBlockedStarts,
+          });
           const isCheckIn = checkIn === day.date;
           const isCheckOut = checkOut === day.date;
           const isSelected = isCheckIn || isCheckOut;
@@ -263,6 +455,7 @@ export default function BookingCalendar({
   currency,
   showPrices = true,
   minNights,
+  selectionMode = 'range',
   isLoading = false,
   maxAdvanceMonths = 6,
 }: BookingCalendarProps) {
@@ -278,41 +471,12 @@ export default function BookingCalendar({
   //     already contains a lock.
   // Hourly date-locks are whole-day → surface as fully-booked, so this stays
   // empty there. Lookahead spans both visible months; the server is the backstop.
-  const lockBlockedStarts = useMemo(() => {
-    const set = new Set<string>();
-    const all = [...daysLeft, ...daysRight];
-    const blocked = new Set(all.filter((d) => d.isBlocked).map((d) => d.date));
-    if (blocked.size === 0) return set;
-    const nights = minNights ?? 0;
-    const isMinNight = nights >= 1;
-    const rangeHitsLock = (from: string, to: string) => {
-      for (let n = from; n < to; n = addDaysStr(n, 1)) if (blocked.has(n)) return true;
-      return false;
-    };
-    for (const d of all) {
-      if (d.isPast || !d.isActiveDay) continue;
-      if (d.date === checkIn) continue; // the selected check-in — a tap clears it
-      // Does tapping d.date EXTEND the current stay (set / grow the check-out)?
-      //   • min-night mode: the check-out is auto-set, so any date after check-in
-      //     extends it.
-      //   • flexible mode: only while a check-in is set AND no check-out yet. Once
-      //     BOTH are set, the next tap RE-PICKS a fresh check-in (handleDailyDate-
-      //     Select), so it must NOT be treated as an extension — otherwise a valid
-      //     new check-in that happens to cross the OLD check-in's lock is wrongly
-      //     blocked.
-      const isExtend = !!checkIn && d.date > checkIn && (isMinNight || !checkOut);
-      if (isExtend) {
-        // The stay [checkIn, d) must not cross a locked night.
-        if (rangeHitsLock(checkIn!, d.date)) set.add(d.date);
-      } else if (isMinNight) {
-        // Check-IN candidate (first pick or re-pick): the minimum stay
-        // [d, d+minNights) must not cross a lock. Flexible mode imposes no minimum,
-        // so a lone check-in is never blocked — overlap is checked at check-out.
-        if (rangeHitsLock(d.date, addDaysStr(d.date, nights))) set.add(d.date);
-      }
-    }
-    return set;
-  }, [daysLeft, daysRight, minNights, checkIn, checkOut]);
+  const lockBlockedStarts = useMemo(
+    () => computeCrossingBlockedDates(
+      daysLeft, daysRight, checkIn, checkOut, minNights, selectionMode,
+    ),
+    [daysLeft, daysRight, minNights, checkIn, checkOut, selectionMode],
+  );
 
   // Can't go before current month
   const today = new Date();
@@ -383,6 +547,8 @@ export default function BookingCalendar({
           lockBlockedStarts={lockBlockedStarts}
           currency={currency}
           showPrices={showPrices}
+          minNights={minNights}
+          selectionMode={selectionMode}
         />
         <div className="hidden sm:block w-px bg-gray-200 dark:bg-slate-800 shrink-0" />
         <MonthGrid
@@ -395,6 +561,8 @@ export default function BookingCalendar({
           lockBlockedStarts={lockBlockedStarts}
           currency={currency}
           showPrices={showPrices}
+          minNights={minNights}
+          selectionMode={selectionMode}
         />
       </div>
 
