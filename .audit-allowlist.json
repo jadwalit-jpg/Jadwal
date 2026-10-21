@@ -15,13 +15,5 @@
     "  - Adding an entry is a security decision and needs review, like any other",
     "    change to a merge gate."
   ],
-  "allow": [
-    {
-      "id": "GHSA-ggr8-5vv4-36mx",
-      "package": "deepmerge-ts",
-      "reason": "Reached only via prisma -> @prisma/config -> deepmerge-ts. NO patched prisma release exists: latest stable is 7.9.1 and the advisory's vulnerable range extends past it, so there is nothing to upgrade to. Not reachable from untrusted input (prisma config is loaded from our own repo at build/CLI time, not from user data).",
-      "reviewBy": "2026-09-30",
-      "trackedBy": "monitor prisma releases for >7.10.0 stable, then drop this entry"
-    }
-  ]
+  "allow": []
 }
