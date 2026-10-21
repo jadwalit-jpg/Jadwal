@@ -70,7 +70,9 @@ describe('web Dockerfile — runtime-writable paths', () => {
   const runner = stage(src, 'runner');
   const prepRuns = prep.filter((l) => /^RUN\b/.test(l));
   const grants = prepRuns.flatMap((r) => chowns(r));
-  const runnerCopies = runner.filter((l) => /^COPY\s+--from=/.test(l));
+  // Every file-adding instruction, with or without --from: a plain `COPY --chown=... . /app`
+  // from the build context must not be able to slip past the count and ownership checks.
+  const runnerCopies = runner.filter((l) => /^(COPY|ADD)\b/.test(l));
 
   it('the runner drops to the non-root jadwal user (why ownership matters)', () => {
     expect(runner.some((l) => /^USER\s+jadwal\s*$/.test(l))).toBe(true);
@@ -105,7 +107,7 @@ describe('web Dockerfile — runtime-writable paths', () => {
     for (const g of grants) expect(g.target.startsWith('/')).toBe(true);
   });
 
-  it('the runner copies exactly three trees and none uses --chown', () => {
+  it('the runner adds exactly three trees (COPY or ADD) and none uses --chown', () => {
     // If this count changes, the assertions below no longer cover every copy.
     expect(runnerCopies).toHaveLength(3);
     for (const c of runnerCopies) expect(c).not.toMatch(/--chown/);
