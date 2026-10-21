@@ -33,11 +33,16 @@ updates:
       # eslint 10 fails the repo's Lint job (#626); needs its own config work.
       - dependency-name: "eslint"
         update-types: ["version-update:semver-major"]
+    # Dependabot assigns each update to the FIRST group that matches it, so the
+    # specific groups must come BEFORE the catch-all. With minor-and-patch first
+    # (as it was), it swallowed everything: #705 (2026-10-21) bundled next
+    # 16.3.8 -> 16.4.2, react 19.2 -> 19.3 and svix 2.0 -> 2.8 with 150 other
+    # packages and failed CI, and the next-react / security-critical groups
+    # could never trigger for minor/patch updates.
     groups:
-      # Bulk minor/patch into one PR — keeps the queue manageable.
-      minor-and-patch:
-        update-types: ["minor", "patch"]
-      # Security-critical runtime deps reviewed individually.
+      # Security-critical runtime deps, one reviewable PR (kept apart from the
+      # catch-all). svix / standardwebhooks / resend sit on the webhook
+      # signature-verification and email paths.
       security-critical:
         patterns:
           - "bcrypt"
@@ -52,17 +57,26 @@ updates:
           - "class-transformer"
           - "sharp"
           - "file-type"
+          - "multer"
           - "@prisma/client"
           - "prisma"
           - "@aws-sdk/*"
-      # Frontend framework grouped — Next + React always bumped together.
+          - "svix"
+          - "standardwebhooks"
+          - "resend"
+      # Frontend framework grouped — Next + React always bumped together, and
+      # kept out of the catch-all (a Next minor is a deliberate upgrade).
       next-react:
         patterns:
           - "next"
           - "react"
           - "react-dom"
           - "eslint-config-next"
+          - "@next/*"
           - "@types/react*"
+      # Everything else, minor/patch only. MUST stay last.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
 
   # ─── GitHub Actions (supply chain) ────────────────────────────────
   - package-ecosystem: "github-actions"
