@@ -17,6 +17,22 @@ updates:
     open-pull-requests-limit: 15
     commit-message:
       prefix: "chore(deps)"
+    # MAJOR versions we cannot take yet. Each of these opened PRs that fail CI
+    # (2026-10-21: #620-#627, and #694's jwt/passport half) and bury the real
+    # security PRs in noise. Minor/patch updates for these packages still flow.
+    ignore:
+      # NestJS 12 must be ONE coordinated migration, not eight separate bumps.
+      # Dependabot bumps each @nestjs/* package alone, which leaves mixed
+      # 11/12 versions: unit tests fail with "Cannot use import statement
+      # outside a module" (12.x is ESM; the API is CommonJS) and E2E fails with
+      # "Cannot find module '@nestjs/common/internal'" (#620-#627, #694).
+      # Upstream peers (@nestjs/throttler 6.7.1, @sentry/nestjs) already allow
+      # 12 as of 2026-10-21, so the remaining work is ours: ESM/CJS plan first.
+      - dependency-name: "@nestjs/*"
+        update-types: ["version-update:semver-major"]
+      # eslint 10 fails the repo's Lint job (#626); needs its own config work.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
     groups:
       # Bulk minor/patch into one PR — keeps the queue manageable.
       minor-and-patch:
