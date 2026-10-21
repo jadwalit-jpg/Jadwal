@@ -222,7 +222,7 @@ export default function Navbar({ variant = 'transparent' }: { variant?: 'transpa
           <button
             type="button"
             onClick={toggleLanguage}
-            aria-label={!mounted ? 'Switch language' : isAr ? 'Switch to English' : 'التبديل إلى العربية'}
+            aria-label={!mounted ? 'Switch language' : isAr ? 'EN: Switch to English' : 'التبديل إلى العربية'}
             title={!mounted ? '' : isAr ? 'English' : 'العربية'}
             className={`flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${iconBtnCls}`}
           >

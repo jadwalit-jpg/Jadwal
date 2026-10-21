@@ -769,6 +769,7 @@ function ExploreContent({
         {totalPages > 1 && (
           <div className="mt-10 flex items-center justify-center gap-2">
             <button
+              aria-label={t('common.previousPage', { defaultValue: 'Previous page' })}
               onClick={() => setPage(p => Math.max(1, p - 1))}
               disabled={page <= 1}
               className="p-2 rounded-xl border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-30 transition-colors"
@@ -797,6 +798,7 @@ function ExploreContent({
               );
             })}
             <button
+              aria-label={t('common.nextPage', { defaultValue: 'Next page' })}
               onClick={() => setPage(p => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
               className="p-2 rounded-xl border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-30 transition-colors"
