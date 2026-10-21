@@ -9,6 +9,7 @@
     "decline": "Decline"
   },
   "nav": {
+    "country": "Country",
     "home": "Home",
     "explore": "Explore",
     "guides": "Guides",
@@ -764,6 +765,8 @@
     "back": "Back",
     "prev": "Prev",
     "next": "Next",
+    "previousPage": "Previous page",
+    "nextPage": "Next page",
     "save": "Save",
     "delete": "Delete",
     "confirm": "Confirm",
