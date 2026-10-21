@@ -143,15 +143,21 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # Copy the standalone build output. `outputFileTracingRoot` = monorepo root,
 # so the standalone bundle lives at apps/web/.next/standalone/apps/web/.
-# --chown (not a later `RUN chown -R`): Next.js writes its ISR/prerender, image
-# optimizer and fetch caches to apps/web/.next/cache at runtime, as the non-root
-# `jadwal` user. COPY otherwise leaves these dirs root-owned, so every cache
-# write fails with EACCES (thousands of log lines a day) and nothing persists.
-# `RUN chown -R` would re-write every file into a new layer and inflate the
-# image (see docker-size-budget.yml); --chown costs nothing.
-COPY --from=builder --chown=jadwal:jadwal /app/apps/web/public ./apps/web/public
-COPY --from=builder --chown=jadwal:jadwal /app/apps/web/.next/standalone ./
-COPY --from=builder --chown=jadwal:jadwal /app/apps/web/.next/static ./apps/web/.next/static
+# The app code stays ROOT-owned and read-only to the runtime user: a compromised
+# process must not be able to rewrite server.js or its own bundle. Next.js only
+# WRITES to two places at runtime (measured by diffing the filesystem while
+# serving pages, the image optimizer and the sitemap):
+#   .next/cache       image optimizer + fetch/ISR data cache (created here: the
+#                     standalone output does not ship it, and .next is root-owned)
+#   .next/server/app  prerendered .html/.rsc rewritten by ISR revalidation
+# Without this, every write fails with EACCES (thousands of log lines a day in
+# prod; requests still return 200, so nothing visibly breaks).
+COPY --from=builder /app/apps/web/public ./apps/web/public
+COPY --from=builder /app/apps/web/.next/standalone ./
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+RUN mkdir -p apps/web/.next/cache \
+ && chown jadwal:jadwal apps/web/.next/cache \
+ && chown -R jadwal:jadwal apps/web/.next/server/app
 
 USER jadwal
 
