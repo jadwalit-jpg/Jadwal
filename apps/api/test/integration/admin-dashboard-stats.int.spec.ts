@@ -35,8 +35,8 @@ beforeAll(async () => { await ctx.start(); }, 30_000);
 beforeEach(async () => { await ctx.reset(); });
 afterAll(async () => { await ctx.stop(); });
 
-function makeAdmin() {
-  const prismaSvc = { client: ctx.prisma } as any;
+function makeAdmin(client: any = ctx.prisma) {
+  const prismaSvc = { client } as any;
   const notificationService = {
     send: jest.fn().mockResolvedValue(undefined),
     notifyAdmins: jest.fn().mockResolvedValue(undefined),
@@ -185,5 +185,74 @@ describe('AdminService.getDashboardStats', () => {
       expect(s[k]).toBe(0);
     }
     expect(Number(s.totalRevenue)).toBe(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Concurrency: how many queries are in flight at the same moment
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Wraps the Prisma delegates the dashboard uses so every count()/aggregate()
+ * is counted while it is running. Each in-flight query holds one pooled
+ * connection, and each open connection costs the 1 GB db.t3.micro ~1.3 MB
+ * (CloudWatch: ~6 connections -> ~95 MB free, ~30 -> ~63 MB, alarm line
+ * ~105 MB). Opening the dashboard used to fire 13 at once.
+ */
+function instrumented() {
+  const stats = { inFlight: 0, peak: 0, total: 0 };
+  const wrapModel = (model: any) =>
+    new Proxy(model, {
+      get(target, prop) {
+        const orig = target[prop];
+        if ((prop === 'count' || prop === 'aggregate') && typeof orig === 'function') {
+          return (...args: any[]) => {
+            stats.inFlight++;
+            stats.total++;
+            stats.peak = Math.max(stats.peak, stats.inFlight);
+            // Prisma promises are lazy: resolving here is what starts the query.
+            return Promise.resolve(orig.apply(target, args)).finally(() => { stats.inFlight--; });
+          };
+        }
+        return typeof orig === 'function' ? orig.bind(target) : orig;
+      },
+    });
+  const client = {
+    user: wrapModel(ctx.prisma.user),
+    vendor: wrapModel(ctx.prisma.vendor),
+    activity: wrapModel(ctx.prisma.activity),
+    booking: wrapModel(ctx.prisma.booking),
+    payment: wrapModel(ctx.prisma.payment),
+  };
+  return { client, stats };
+}
+
+describe('AdminService.getDashboardStats — connection pressure', () => {
+  test('never has more than 5 queries in flight (was 13), and still runs all 13', async () => {
+    await seedDataset();
+    const { client, stats } = instrumented();
+    await makeAdmin(client).getDashboardStats();
+
+    expect(stats.total).toBe(13);          // none dropped, none added
+    expect(stats.peak).toBeLessThanOrEqual(5);
+    expect(stats.inFlight).toBe(0);        // everything settled
+  });
+
+  test('the instrumented path returns exactly the same numbers as the plain one', async () => {
+    await seedDataset();
+    const plain: any = await makeAdmin().getDashboardStats('all');
+    const { client } = instrumented();
+    const wrapped: any = await makeAdmin(client).getDashboardStats('all');
+    expect(wrapped).toEqual(plain);
+  });
+
+  test('a failing query still rejects (the grouping does not swallow errors)', async () => {
+    await seedDataset();
+    const { client } = instrumented();
+    (client as any).payment = {
+      count: client.payment.count,
+      aggregate: () => Promise.reject(new Error('boom')),
+    };
+    await expect(makeAdmin(client).getDashboardStats()).rejects.toThrow('boom');
   });
 });
