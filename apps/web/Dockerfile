@@ -101,6 +101,27 @@ ENV API_PROXY_TARGET=$API_PROXY_TARGET
 WORKDIR /app/apps/web
 RUN npm run build
 
+# ── Stage 2b: runtime-writable paths ────────────────────────────────
+# The app runs as the non-root `jadwal` user (uid 1001, created in the runner
+# stage). Next.js writes at runtime to exactly two places (found by diffing the
+# filesystem while serving pages, the image optimizer and the sitemap):
+#   .next/cache       image optimizer + fetch/ISR data cache (the standalone
+#                     output does not ship it, so it is created here)
+#   .next/server/app  prerendered .html/.rsc rewritten by ISR revalidation
+# Without write access to them every cache write fails with EACCES (thousands of
+# log lines a day in prod; requests still return 200, so nothing visibly breaks).
+#
+# The ownership is set HERE, in a stage that never ships, and the runner COPYs
+# the result in ONE layer. Doing the same with `RUN chown` in the runner would
+# re-write the files into a second layer and fail the image-waste budget
+# (.dive-ci userWastedPercent), and COPY --chown on the whole tree would let a
+# compromised process rewrite server.js and its own bundle. Everything else
+# stays root-owned and read-only to the runtime user.
+FROM builder AS runtime-writable
+RUN mkdir -p /app/apps/web/.next/standalone/apps/web/.next/cache \
+ && chown 1001:1001 /app/apps/web/.next/standalone/apps/web/.next/cache \
+ && chown -R 1001:1001 /app/apps/web/.next/standalone/apps/web/.next/server/app
+
 # ── Stage 3: Production image ──────────────────────────────────────
 # Next.js standalone output produces a minimal server.js + only the
 # node_modules files actually imported at runtime.
@@ -143,21 +164,12 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # Copy the standalone build output. `outputFileTracingRoot` = monorepo root,
 # so the standalone bundle lives at apps/web/.next/standalone/apps/web/.
-# The app code stays ROOT-owned and read-only to the runtime user: a compromised
-# process must not be able to rewrite server.js or its own bundle. Next.js only
-# WRITES to two places at runtime (measured by diffing the filesystem while
-# serving pages, the image optimizer and the sitemap):
-#   .next/cache       image optimizer + fetch/ISR data cache (created here: the
-#                     standalone output does not ship it, and .next is root-owned)
-#   .next/server/app  prerendered .html/.rsc rewritten by ISR revalidation
-# Without this, every write fails with EACCES (thousands of log lines a day in
-# prod; requests still return 200, so nothing visibly breaks).
+# The standalone tree comes from the `runtime-writable` stage (same files as the
+# builder, plus an owned .next/cache and .next/server/app); BuildKit preserves
+# that per-path ownership, so no `RUN chown` is needed here. See Stage 2b.
 COPY --from=builder /app/apps/web/public ./apps/web/public
-COPY --from=builder /app/apps/web/.next/standalone ./
+COPY --from=runtime-writable /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
-RUN mkdir -p apps/web/.next/cache \
- && chown jadwal:jadwal apps/web/.next/cache \
- && chown -R jadwal:jadwal apps/web/.next/server/app
 
 USER jadwal
 

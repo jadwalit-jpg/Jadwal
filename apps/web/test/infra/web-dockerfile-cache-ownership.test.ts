@@ -1,43 +1,48 @@
 /**
  * Contract — the web image's non-root runtime user can write exactly the two
- * places Next.js writes at runtime, and nothing else.
+ * places Next.js writes at runtime, and nothing else, WITHOUT a second image
+ * layer.
  *
  * WHY A TEST THAT READS THE DOCKERFILE
  * ------------------------------------
- * The runner stage copies the standalone build in as root and then drops to
- * `USER jadwal`. If nothing hands `jadwal` its cache folders, every ISR /
- * prerender / image-optimizer write fails with EACCES. Production logged
- * thousands of those lines a day while every request still returned 200, so
- * nothing visible fails and only a test can pin it.
+ * The runner stage drops to `USER jadwal`. If nothing hands that user its cache
+ * folders, every ISR / prerender / image-optimizer write fails with EACCES.
+ * Production logged thousands of those lines a day while every request still
+ * returned 200, so nothing visible fails and only a test can pin it.
  *
- * The opposite mistake is just as real: chown-ing the whole tree to `jadwal`
- * lets a compromised process rewrite server.js and its own bundle. So the app
- * code must stay root-owned and ONLY these two paths may be handed over
- * (found by diffing the filesystem while serving pages, the image optimizer
- * and the sitemap):
- *   apps/web/.next/cache       image optimizer + fetch/ISR data cache
- *   apps/web/.next/server/app  prerendered html/rsc rewritten by revalidation
+ * Three ways to get this wrong, all of which happened or nearly did:
+ *   1. Hand the whole tree to `jadwal` (COPY --chown): a compromised process can
+ *      then rewrite server.js and its own bundle.
+ *   2. Fix ownership with `RUN chown -R` in the runner: the files are rewritten
+ *      into a second layer and the PR fails the image-waste budget
+ *      (.dive-ci highestUserWastedPercent 7%; measured 8.5%).
+ *   3. Forget that the builder ends in WORKDIR /app/apps/web, so relative paths
+ *      in a new stage point at the wrong place.
+ * So the ownership is prepared in a stage that never ships (`runtime-writable`)
+ * and the runner copies the result in one layer, keeping everything else
+ * root-owned.
  *
- * Measured with the real image: without the RUN, `mkdir .next/cache` fails with
- * EACCES; with it, the same requests log nothing, the cache is written, and
- * server.js / .next/static remain unwritable by `jadwal`.
+ * Measured on the real image: cache + server/app owned by uid 1001, server.js
+ * and .next/static owned by root and unwritable by `jadwal`, 0 EACCES across a
+ * mixed request set, dive efficiency 97.4% / waste 5.5%.
  */
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
 const DOCKERFILE = join(__dirname, '../../Dockerfile');
-const WRITABLE = ['apps/web/.next/cache', 'apps/web/.next/server/app'];
+const BASE = '/app/apps/web/.next/standalone/apps/web/.next';
+const WRITABLE = [`${BASE}/cache`, `${BASE}/server/app`];
 const BACKSLASH = String.fromCharCode(92);
 
-/** Instructions of the final (runner) stage, with line continuations folded. */
-function runnerInstructions(src: string): string[] {
-  const stages = src.split(/^FROM\s+/m).slice(1);
-  const runner = stages.find((s) => /\sAS\s+runner\b/i.test(s.split('\n')[0]));
-  expect(runner).toBeDefined();
+/** Instructions of one named stage, with line continuations folded. */
+function stage(src: string, name: string): string[] {
+  const chunks = src.split(/^FROM\s+/m).slice(1);
+  const chunk = chunks.find((c) => new RegExp('\\sAS\\s+' + name + '\\b', 'i').test(c.split('\n')[0]));
+  expect(chunk).toBeDefined();
   const out: string[] = [];
   let acc = '';
-  for (const raw of runner!.split(/\r?\n/)) {
+  for (const raw of chunk!.split(/\r?\n/)) {
     const l = raw.trim();
     if (!acc && (!l || l.startsWith('#'))) continue;
     if (l.endsWith(BACKSLASH)) {
@@ -50,49 +55,72 @@ function runnerInstructions(src: string): string[] {
   return out;
 }
 
-/** Every `chown ...` in a RUN line, as { owner, target }. */
+/** Every `chown ...` in a line, as { recursive, owner, target }. */
 function chowns(line: string) {
-  const out: Array<{ owner: string; target: string }> = [];
+  const out: Array<{ recursive: boolean; owner: string; target: string }> = [];
   for (const m of line.matchAll(/chown\s+((?:-\w+\s+)*)(\S+)\s+(\S+)/g)) {
-    out.push({ owner: m[2], target: m[3] });
+    out.push({ recursive: /-\w*R/.test(m[1]), owner: m[2], target: m[3] });
   }
   return out;
 }
 
-describe('web Dockerfile — runner stage ownership', () => {
-  const lines = runnerInstructions(readFileSync(DOCKERFILE, 'utf8'));
-  const userIdx = lines.findIndex((l) => /^USER\s+/.test(l));
-  const runs = lines.slice(0, userIdx).filter((l) => /^RUN\b/.test(l));
-  const grants = runs.flatMap((r) => chowns(r));
-  const appCopies = lines.filter((l) => /^COPY\s+--from=builder\b/.test(l));
+describe('web Dockerfile — runtime-writable paths', () => {
+  const src = readFileSync(DOCKERFILE, 'utf8');
+  const prep = stage(src, 'runtime-writable');
+  const runner = stage(src, 'runner');
+  const prepRuns = prep.filter((l) => /^RUN\b/.test(l));
+  const grants = prepRuns.flatMap((r) => chowns(r));
+  const runnerCopies = runner.filter((l) => /^COPY\s+--from=/.test(l));
 
-  it('drops to the non-root jadwal user (the reason ownership matters)', () => {
-    expect(userIdx).toBeGreaterThan(-1);
-    expect(lines[userIdx]).toMatch(/^USER\s+jadwal\s*$/);
+  it('the runner drops to the non-root jadwal user (why ownership matters)', () => {
+    expect(runner.some((l) => /^USER\s+jadwal\s*$/.test(l))).toBe(true);
   });
 
-  it('copies exactly the three app trees: public, standalone, static', () => {
-    // If this count changes, the "stays root-owned" assertion below no longer
-    // covers every copy and must be revisited rather than quietly passing.
-    expect(appCopies).toHaveLength(3);
+  it('the prep stage builds on the builder (so it sees the standalone output)', () => {
+    expect(prep[0]).toMatch(/^builder\s+AS\s+runtime-writable\b/i);
   });
 
-  it.each([0, 1, 2])('app COPY #%i stays ROOT-owned (no --chown)', (i) => {
-    expect(appCopies[i]).not.toMatch(/--chown/);
+  it('the uid used in the prep stage equals the uid of the runner user', () => {
+    const adduser = runner.find((l) => /adduser\b/.test(l));
+    expect(adduser).toBeDefined();
+    const uid = adduser!.match(/--uid\s+(\d+)/)![1];
+    expect(grants.length).toBeGreaterThan(0);
+    for (const g of grants) expect(g.owner).toBe(`${uid}:${uid}`);
   });
 
-  it.each(WRITABLE)('hands %s to jadwal before USER jadwal', (path) => {
-    const mine = grants.filter((g) => g.target === path);
-    expect(mine.length).toBeGreaterThan(0);
-    for (const g of mine) expect(g.owner).toMatch(/^jadwal(:jadwal)?$/);
+  it.each(WRITABLE)('hands %s to the runtime user', (path) => {
+    expect(grants.some((g) => g.target === path)).toBe(true);
   });
 
   it('creates .next/cache (the standalone output does not ship it)', () => {
-    expect(runs.some((r) => /mkdir\s+-p\s+apps\/web\/\.next\/cache\b/.test(r))).toBe(true);
+    expect(prepRuns.some((r) => r.includes(`mkdir -p ${BASE}/cache`))).toBe(true);
   });
 
-  it('never hands anything ELSE to jadwal (no /app, server.js, static, public)', () => {
+  it('never hands anything ELSE to the runtime user (no /app, server.js, static)', () => {
     expect(grants.length).toBeGreaterThan(0);
     for (const g of grants) expect(WRITABLE).toContain(g.target);
+  });
+
+  it('uses ABSOLUTE paths (the builder ends in WORKDIR /app/apps/web)', () => {
+    for (const g of grants) expect(g.target.startsWith('/')).toBe(true);
+  });
+
+  it('the runner copies exactly three trees and none uses --chown', () => {
+    // If this count changes, the assertions below no longer cover every copy.
+    expect(runnerCopies).toHaveLength(3);
+    for (const c of runnerCopies) expect(c).not.toMatch(/--chown/);
+  });
+
+  it('the standalone tree comes from the prep stage; public and static from the builder', () => {
+    const from = (needle: string) => runnerCopies.find((c) => c.includes(needle))!;
+    expect(from('.next/standalone')).toMatch(/--from=runtime-writable\b/);
+    expect(from('/public')).toMatch(/--from=builder\b/);
+    expect(from('.next/static')).toMatch(/--from=builder\b/);
+  });
+
+  it('the runner has no RUN chown / mkdir (no second layer, no image-waste failure)', () => {
+    const before = runner.slice(0, runner.findIndex((l) => /^USER\s+/.test(l)));
+    const offending = before.filter((l) => /^RUN\b.*\b(chown|chmod)\b/.test(l) && !/addgroup|adduser/.test(l));
+    expect(offending).toEqual([]);
   });
 });
