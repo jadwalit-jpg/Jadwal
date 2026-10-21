@@ -30,7 +30,7 @@ import { useEffect, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useCookieConsent } from '@/context/cookie-consent';
 import { onIdle, type IdleDisposer } from '@/lib/defer-idle';
-import { GA4_MEASUREMENT_ID, GOOGLE_ADS_ID } from '@/lib/gtag';
+import { GA4_MEASUREMENT_ID, GA4_OWNER_ID, GOOGLE_ADS_ID } from '@/lib/gtag';
 
 function loadGtag(ids: string[]): IdleDisposer {
   if (window.gtag || ids.length === 0) return () => false;
@@ -68,7 +68,7 @@ function loadGtag(ids: string[]): IdleDisposer {
 
 /** Ads + GA4, minus any that were blanked out via env to disable them. */
 function activeIds(): string[] {
-  return [GOOGLE_ADS_ID, GA4_MEASUREMENT_ID].filter(Boolean);
+  return [GOOGLE_ADS_ID, GA4_MEASUREMENT_ID, GA4_OWNER_ID].filter(Boolean);
 }
 
 /** Skip our own dashboards — the tag is for customer-facing pages only. */
