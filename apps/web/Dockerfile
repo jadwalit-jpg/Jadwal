@@ -143,9 +143,15 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # Copy the standalone build output. `outputFileTracingRoot` = monorepo root,
 # so the standalone bundle lives at apps/web/.next/standalone/apps/web/.
-COPY --from=builder /app/apps/web/public ./apps/web/public
-COPY --from=builder /app/apps/web/.next/standalone ./
-COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+# --chown (not a later `RUN chown -R`): Next.js writes its ISR/prerender, image
+# optimizer and fetch caches to apps/web/.next/cache at runtime, as the non-root
+# `jadwal` user. COPY otherwise leaves these dirs root-owned, so every cache
+# write fails with EACCES (thousands of log lines a day) and nothing persists.
+# `RUN chown -R` would re-write every file into a new layer and inflate the
+# image (see docker-size-budget.yml); --chown costs nothing.
+COPY --from=builder --chown=jadwal:jadwal /app/apps/web/public ./apps/web/public
+COPY --from=builder --chown=jadwal:jadwal /app/apps/web/.next/standalone ./
+COPY --from=builder --chown=jadwal:jadwal /app/apps/web/.next/static ./apps/web/.next/static
 
 USER jadwal
 
