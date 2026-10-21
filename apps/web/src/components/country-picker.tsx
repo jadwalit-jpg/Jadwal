@@ -64,6 +64,12 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
   const { t, i18n } = useTranslation();
   const { country, setCountry, source } = useGeo();
   const lang = i18n.language;
+  // WCAG 2.5.3 (Label in Name): the accessible name must CONTAIN the visible
+  // text, otherwise voice-control users who say the country they see ("Qatar")
+  // cannot target the button. A bare aria-label="Country" hid it. axe 4.14's
+  // `label-content-name-mismatch` flags this on every page (navbar).
+  const countryLabel = t('nav.country', { defaultValue: 'Country' });
+  const accessibleName = country ? `${countryLabel}: ${pickName(country, lang)}` : countryLabel;
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -153,7 +159,7 @@ export function CountryPicker({ variant = 'desktop', isOpaque = true, onSelect }
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        aria-label={t('nav.country', { defaultValue: 'Country' })}
+        aria-label={accessibleName}
         title={source === 'unsupported-default' ? t('nav.countryFallback', { defaultValue: 'Showing Qatar — your country isn\'t available yet' }) : undefined}
         className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-medium transition-colors ${pillCls}`}
       >
