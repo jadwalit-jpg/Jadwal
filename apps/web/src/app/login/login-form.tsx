@@ -168,7 +168,7 @@ function LoginFormContent() {
       <div className="flex justify-center mb-8">
         <Link
           href="/"
-          aria-label="AL Jadwal"
+          aria-label="AL Jadwal الجدول"
           className="text-2xl font-bold tracking-tight bg-[linear-gradient(90deg,#F6B34B_0%,#F07D4C_18%,#E84D6E_38%,#8E58A3_58%,#2E9D93_78%,#3D98D1_100%)] bg-clip-text text-transparent"
         >
           AL Jadwal الجدول
