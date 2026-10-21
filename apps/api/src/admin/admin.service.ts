@@ -177,15 +177,26 @@ export class AdminService {
     const cutoff = range === 'all' ? null : new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
     const createdWindow = cutoff ? { createdAt: { gte: cutoff } } : {};
 
+    // Three small groups (4 + 4 + 5 in flight) instead of one 13-wide burst.
+    // Every query holds its own pooled connection, and each open connection
+    // costs the db.t3.micro roughly 1.3 MB of its ~1 GB (measured from CloudWatch:
+    // ~6 connections -> ~95 MB free, ~30 -> ~63 MB). Opening the dashboard used
+    // to open ~13 connections at once and dip free memory under the
+    // jadwal-rds-memory-low alarm line each time. The queries and the returned
+    // numbers are unchanged; the page is a little slower to load (admin-only).
+    const [totalUsers, totalVendors, activeVendors, pendingVendors] = await Promise.all([
+      db.user.count(),
+      db.vendor.count(),
+      db.vendor.count({ where: { status: 'ACTIVE' } }),
+      db.vendor.count({ where: { status: 'PENDING' } }),
+    ]);
+    const [totalActivities, pendingActivities, totalBookings, confirmedBookings] = await Promise.all([
+      db.activity.count(),
+      db.activity.count({ where: { status: 'PENDING' } }),
+      db.booking.count({ where: createdWindow }),
+      db.booking.count({ where: { status: 'CONFIRMED', ...createdWindow } }),
+    ]);
     const [
-      totalUsers,
-      totalVendors,
-      activeVendors,
-      pendingVendors,
-      totalActivities,
-      pendingActivities,
-      totalBookings,
-      confirmedBookings,
       revenueResult,
       // Volume + commission + service fee: ONE aggregate over the paid bookings
       // in the window (they share the identical filter; three separate scans of
@@ -197,14 +208,6 @@ export class AdminService {
       pointsIssued,
       refundPendingStats,
     ] = await Promise.all([
-      db.user.count(),
-      db.vendor.count(),
-      db.vendor.count({ where: { status: 'ACTIVE' } }),
-      db.vendor.count({ where: { status: 'PENDING' } }),
-      db.activity.count(),
-      db.activity.count({ where: { status: 'PENDING' } }),
-      db.booking.count({ where: createdWindow }),
-      db.booking.count({ where: { status: 'CONFIRMED', ...createdWindow } }),
       // Cash collected (PAY2M-settled portion). Wanasa-only bookings have
       // payment.amount=0 so they correctly do NOT count toward cash revenue.
       db.payment.aggregate({ where: { status: 'SUCCESS', ...createdWindow }, _sum: { amount: true } }),
