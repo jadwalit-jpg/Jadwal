@@ -187,11 +187,12 @@ export class AdminService {
       totalBookings,
       confirmedBookings,
       revenueResult,
-      volumeResult,
-      // New: financial-health KPIs. See the matching cards on the admin
-      // dashboard — platform revenue decomposition + liability exposure.
-      commissionResult,
-      serviceFeeResult,
+      // Volume + commission + service fee: ONE aggregate over the paid bookings
+      // in the window (they share the identical filter; three separate scans of
+      // the same rows only multiplied the work on the dashboard's burst).
+      paidBookingSums,
+      // Financial-health KPIs. See the matching cards on the admin dashboard —
+      // platform revenue decomposition + liability exposure.
       pendingVendorBalance,
       pointsIssued,
       refundPendingStats,
@@ -212,22 +213,22 @@ export class AdminService {
       // only add back couponDiscount to reconstruct the nominal activity
       // value. pointsDiscount is NOT added — it's a customer-side saving,
       // not a deduction from vendor revenue.
+      //
+      // Same query also yields:
+      //   - commissionAmount: commission earned by the platform — gross margin
+      //     on every successfully-paid booking regardless of payout status.
+      //   - serviceFee: platform service-fee revenue. Zero on Wanasa-paid
+      //     bookings (fee is waived as a loyalty incentive), so this is only
+      //     the cash-path fee revenue.
       db.booking.aggregate({
         where: { payment: { status: 'SUCCESS' }, ...createdWindow },
-        _sum: { totalPrice: true, pointsDiscount: true, couponDiscount: true },
-      }),
-      // Commission earned by the platform — lifetime gross margin on
-      // every successfully-paid booking regardless of payout status.
-      db.booking.aggregate({
-        where: { payment: { status: 'SUCCESS' }, ...createdWindow },
-        _sum: { commissionAmount: true },
-      }),
-      // Service fee earned by the platform. Zero on Wanasa-paid bookings
-      // (fee is waived as a loyalty incentive), so this represents only
-      // the cash-path fee revenue.
-      db.booking.aggregate({
-        where: { payment: { status: 'SUCCESS' }, ...createdWindow },
-        _sum: { serviceFee: true },
+        _sum: {
+          totalPrice: true,
+          pointsDiscount: true,
+          couponDiscount: true,
+          commissionAmount: true,
+          serviceFee: true,
+        },
       }),
       // Pending vendor payout balance: what the platform OWES vendors.
       // SUCCESS + UNPAID bookings' vendor share. When this grows large,
@@ -255,12 +256,12 @@ export class AdminService {
     // of overall volume flowed through loyalty redemption — but it's NOT
     // added to totalPrice (that would double-count under the new vendor
     // accounting).
-    const wanasaFundedValue = Number(volumeResult._sum.pointsDiscount ?? 0);
+    const wanasaFundedValue = Number(paidBookingSums._sum.pointsDiscount ?? 0);
     const bookingsValue =
-      Number(volumeResult._sum.totalPrice ?? 0) +
-      Number(volumeResult._sum.couponDiscount ?? 0);
-    const totalCommission = Number(commissionResult._sum.commissionAmount ?? 0);
-    const totalServiceFees = Number(serviceFeeResult._sum.serviceFee ?? 0);
+      Number(paidBookingSums._sum.totalPrice ?? 0) +
+      Number(paidBookingSums._sum.couponDiscount ?? 0);
+    const totalCommission = Number(paidBookingSums._sum.commissionAmount ?? 0);
+    const totalServiceFees = Number(paidBookingSums._sum.serviceFee ?? 0);
     const pendingPayoutOwed =
       Number(pendingVendorBalance._sum.totalPrice ?? 0) -
       Number(pendingVendorBalance._sum.commissionAmount ?? 0);
