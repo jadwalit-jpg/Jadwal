@@ -195,8 +195,9 @@ ENV NODE_ENV=production
 ARG APK_SECURITY_BUST=dev
 # zlib rides the same layer: CVE-2026-85091 (heap overflow, MEDIUM) is in the
 # base image's zlib 1.3.2-r0 and fixed in 1.3.2-r1 (found by the Trivy SARIF scan).
+# musl/musl-utils likewise: CVE-2026-107891 (severity UNKNOWN) in 1.2.5-r23, fixed in r24.
 RUN echo "apk security upgrade (bust=${APK_SECURITY_BUST})" \
- && apk upgrade --no-cache libcrypto3 libssl3 zlib
+ && apk upgrade --no-cache libcrypto3 libssl3 zlib musl musl-utils
 
 # Security: run as non-root user
 RUN addgroup --system --gid 1001 jadwal && \

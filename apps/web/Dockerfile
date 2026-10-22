@@ -108,6 +108,8 @@ RUN npm run build
 #   .next/cache       image optimizer + fetch/ISR data cache (the standalone
 #                     output does not ship it, so it is created here)
 #   .next/server/app  prerendered .html/.rsc rewritten by ISR revalidation
+#   .next/server/route-cache  cached /sitemap.xml output; Next mkdirs it at
+#                     runtime, which fails inside the root-owned server/
 # Without write access to them every cache write fails with EACCES (thousands of
 # log lines a day in prod; requests still return 200, so nothing visibly breaks).
 #
@@ -119,7 +121,9 @@ RUN npm run build
 # stays root-owned and read-only to the runtime user.
 FROM builder AS runtime-writable
 RUN mkdir -p /app/apps/web/.next/standalone/apps/web/.next/cache \
+ && mkdir -p /app/apps/web/.next/standalone/apps/web/.next/server/route-cache \
  && chown 1001:1001 /app/apps/web/.next/standalone/apps/web/.next/cache \
+ && chown 1001:1001 /app/apps/web/.next/standalone/apps/web/.next/server/route-cache \
  && chown -R 1001:1001 /app/apps/web/.next/standalone/apps/web/.next/server/app
 
 # ── Stage 3: Production image ──────────────────────────────────────
@@ -150,8 +154,9 @@ ENV NODE_ENV=production
 ARG APK_SECURITY_BUST=dev
 # zlib rides the same layer: CVE-2026-85091 (heap overflow, MEDIUM) is in the
 # base image's zlib 1.3.2-r0 and fixed in 1.3.2-r1 (found by the Trivy SARIF scan).
+# musl/musl-utils likewise: CVE-2026-107891 (severity UNKNOWN) in 1.2.5-r23, fixed in r24.
 RUN echo "apk security upgrade (bust=${APK_SECURITY_BUST})" \
- && apk upgrade --no-cache libcrypto3 libssl3 zlib
+ && apk upgrade --no-cache libcrypto3 libssl3 zlib musl musl-utils
 
 # Security: non-root user
 RUN addgroup --system --gid 1001 jadwal && \
