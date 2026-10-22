@@ -32,7 +32,7 @@ import { join } from 'path';
 
 const DOCKERFILE = join(__dirname, '../../Dockerfile');
 const BASE = '/app/apps/web/.next/standalone/apps/web/.next';
-const WRITABLE = [`${BASE}/cache`, `${BASE}/server/app`];
+const WRITABLE = [`${BASE}/cache`, `${BASE}/server/app`, `${BASE}/server/route-cache`];
 const BACKSLASH = String.fromCharCode(92);
 
 /** Instructions of one named stage, with line continuations folded. */
@@ -96,6 +96,10 @@ describe('web Dockerfile — runtime-writable paths', () => {
 
   it('creates .next/cache (the standalone output does not ship it)', () => {
     expect(prepRuns.some((r) => r.includes(`mkdir -p ${BASE}/cache`))).toBe(true);
+  });
+
+  it('creates .next/server/route-cache (Next mkdirs it at runtime for /sitemap.xml)', () => {
+    expect(prepRuns.some((r) => r.includes(`mkdir -p ${BASE}/server/route-cache`))).toBe(true);
   });
 
   it('never hands anything ELSE to the runtime user (no /app, server.js, static)', () => {
