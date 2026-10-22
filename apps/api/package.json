@@ -40,7 +40,7 @@
     "@nestjs/throttler": "^6.7.1",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
-    "@sentry/nestjs": "^10.70.0",
+    "@sentry/nestjs": "^11.8.0",
     "@sentry/profiling-node": "^10.70.0",
     "@types/helmet": "^4.0.0",
     "@types/passport-google-oauth20": "^2.0.17",
