@@ -408,6 +408,19 @@ describe('BookingsService.getCalendarAvailability', () => {
       .rejects.toThrow(/invalid month format/i);
   });
 
+  test.each([undefined, 'garbage', '2026', '2026-', '2026-05-01', ['2026-05', '2026-06']])(
+    '400 (not a TypeError/500) when month is %p',
+    async (month) => {
+      const ctx = await buildSut();
+      ctx.prisma._client.activity.findUnique.mockResolvedValueOnce({
+        id: 'a1', status: 'ACTIVE', bookingType: 'HOURLY',
+        country: { currencyCode: 'QAR', defaultTimezone: 'UTC' },
+      });
+      await expect(ctx.sut.getCalendarAvailability('a1', month as unknown as string))
+        .rejects.toThrow(/invalid month format/i);
+    },
+  );
+
   test('cache hit short-circuits before any compute', async () => {
     const ctx = await buildSut();
     ctx.prisma._client.activity.findUnique.mockResolvedValueOnce({

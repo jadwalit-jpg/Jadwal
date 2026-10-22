@@ -410,6 +410,8 @@ function weekdayOf(dateStr: string): string {
  * FIX #10: Reject invalid dates like "2026-13-45"
  */
 export function isValidDate(dateStr: string): boolean {
+  // Query params arrive as undefined (missing) or string[] (repeated) too.
+  if (typeof dateStr !== 'string') return false;
   const [y, m, d] = dateStr.split('-').map(Number);
   const date = new Date(Date.UTC(y, m - 1, d));
   return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
@@ -839,6 +841,10 @@ export class BookingsService {
     }
 
     // FIX #5: Safe month parsing — use Date.UTC to handle December correctly
+    // A missing/garbled month made NaN slip past the range check (NaN < 1 is false) -> 500.
+    if (typeof month !== 'string' || !/^\d{4}-\d{1,2}$/.test(month)) {
+      throw new BadRequestException('Invalid month format');
+    }
     const [year, mon] = month.split('-').map(Number);
     if (mon < 1 || mon > 12 || year < 2000 || year > 2100) {
       throw new BadRequestException('Invalid month format');
