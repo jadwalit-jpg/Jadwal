@@ -193,8 +193,10 @@ ENV NODE_ENV=production
 # every build. Cost: a few seconds and one uncached layer. The alternative is
 # rediscovering this by hand the next time an OpenSSL CVE lands.
 ARG APK_SECURITY_BUST=dev
+# zlib rides the same layer: CVE-2026-85091 (heap overflow, MEDIUM) is in the
+# base image's zlib 1.3.2-r0 and fixed in 1.3.2-r1 (found by the Trivy SARIF scan).
 RUN echo "apk security upgrade (bust=${APK_SECURITY_BUST})" \
- && apk upgrade --no-cache libcrypto3 libssl3
+ && apk upgrade --no-cache libcrypto3 libssl3 zlib
 
 # Security: run as non-root user
 RUN addgroup --system --gid 1001 jadwal && \
