@@ -408,7 +408,7 @@ describe('BookingsService.getCalendarAvailability', () => {
       .rejects.toThrow(/invalid month format/i);
   });
 
-  test.each([undefined, 'garbage', '2026', '2026-', '2026-05-01', ['2026-05', '2026-06']])(
+  test.each([[undefined], ['garbage'], ['2026'], ['2026-'], ['2026-05-01'], [['2026-05', '2026-06']]])(
     '400 (not a TypeError/500) when month is %p',
     async (month) => {
       const ctx = await buildSut();

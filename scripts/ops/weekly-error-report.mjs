@@ -41,6 +41,9 @@ for (const group of GROUPS) {
     if (!['Running', 'Scheduled'].includes(res.status)) break;
     await sleep(2000);
   }
+  if (res.status !== 'Complete') {
+    throw new Error(`${group}: query ended as ${res.status}, refusing to report partial results - retry`);
+  }
   const rows = res.results.map((r) => Object.fromEntries(r.map((x) => [x.field, x.value])));
   console.log(`\n=== ${group}: ${rows.length} error lines in the last ${days} day(s) (${res.status}) ===`);
   if (rows.length === 1000) console.log('(capped at 1000 - narrow the window)');

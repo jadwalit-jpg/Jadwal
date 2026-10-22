@@ -71,7 +71,7 @@ describe('isValidDate — year boundaries', () => {
 describe('isValidDate — non-string input (missing / repeated query params)', () => {
   // GET /availability/* passes @Query() straight in: undefined when the param is
   // absent, string[] when repeated. These used to throw TypeError -> HTTP 500.
-  test.each([undefined, null, ['2026-05-01', '2026-05-02'], 20260501, {}])(
+  test.each([[undefined], [null], [['2026-05-01', '2026-05-02']], [20260501], [{}]])(
     'returns false (never throws) for %p',
     (v) => {
       expect(isValidDate(v as unknown as string)).toBe(false);
