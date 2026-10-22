@@ -41,7 +41,7 @@
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
     "@sentry/nestjs": "^10.70.0",
-    "@sentry/profiling-node": "^10.70.0",
+    "@sentry/profiling-node": "^11.8.0",
     "@types/helmet": "^4.0.0",
     "@types/passport-google-oauth20": "^2.0.17",
     "@types/pg": "^8.21.0",
