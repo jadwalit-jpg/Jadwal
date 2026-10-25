@@ -34,6 +34,14 @@ export const GOOGLE_ADS_ID = process.env.NEXT_PUBLIC_GOOGLE_ADS_ID ?? 'AW-110055
 export const GA4_MEASUREMENT_ID = process.env.NEXT_PUBLIC_GA4_ID ?? 'G-L7XMHJZNQQ';
 
 /**
+ * Second GA4 property — the site owner's own "AL Jadwal" property. gtag.js
+ * sends every event to each configured destination, so this property receives
+ * the same page_views as GA4_MEASUREMENT_ID above. Same rules: public, not a
+ * secret, and settable to '' via env to disable it.
+ */
+export const GA4_OWNER_ID = process.env.NEXT_PUBLIC_GA4_OWNER_ID ?? 'G-RRWG1HCTXN';
+
+/**
  * Fire a Google Ads conversion. Safe to call unconditionally from anywhere in
  * the customer flow: it no-ops until gtag is loaded, and under opt-in gtag only
  * loads for a visitor who accepted — so anyone who declined OR never chose is
