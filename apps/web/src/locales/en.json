@@ -453,8 +453,9 @@
     "validNumber": "Enter a valid phone number (digits only)",
     "tooShortOrLong": "Phone number is too short or too long",
     "phoneNumber": "Phone Number",
-    "withoutCountryCode": "Enter your number without the country code",
+    "withoutCountryCode": "Qatar mobile number without the country code, for example 55123456",
     "saveAndContinue": "Save & Continue",
+    "saving": "Saving…",
     "skipForNow": "Skip for now"
   },
   "notifications": {

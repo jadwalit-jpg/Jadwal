@@ -165,6 +165,9 @@ export default function BookActivityPage() {
   const fmtLocale = i18n.language?.toLowerCase().startsWith('ar') ? 'ar-u-nu-latn' : 'en-US';
   const queryClient = useQueryClient();
   const [showPhoneModal, setShowPhoneModal] = useState(false);
+  // Server error from the booking POST, shown under the phone field while the
+  // pop-up stays open (item 3). Cleared on the next Save & Continue.
+  const [phoneSubmitError, setPhoneSubmitError] = useState<string | null>(null);
   // Per-booking phone the customer enters via the modal. Distinct from
   // `user.phone` (account-level) — customer may use a different number
   // for this specific booking. Submitted as `bookingPhone` in the
@@ -742,19 +745,41 @@ export default function BookActivityPage() {
       queryClient.invalidateQueries({ queryKey: ['hourly-slots'], refetchType: 'all' });
       queryClient.invalidateQueries({ queryKey: ['hourly-cal'], refetchType: 'all' });
       queryClient.invalidateQueries({ queryKey: ['calendar'], refetchType: 'all' });
+      // The phone pop-up stays mounted during the request (item 3); close it
+      // before leaving so a back-navigation doesn't restore it open.
+      setPhoneSubmitError(null);
+      setShowPhoneModal(false);
       router.push(`/bookings/${bookingId}`);
     },
     onError: (err) => {
+      // The booking POST is what the phone pop-up's "Save & Continue" ends up
+      // calling, so a failure here is where customers were silently lost
+      // (toast only, pop-up already closed). Record WHAT the server answered —
+      // HTTP status + error code only, never the phone number — and surface the
+      // message inside the still-open pop-up (see BookingPhoneModal below).
+      const response = (err as { response?: { status?: number; data?: { errorCode?: unknown; message?: unknown } } })?.response;
+      const status = typeof response?.status === 'number' ? response.status : 0;
+      const serverCode = typeof response?.data?.errorCode === 'string' ? response.data.errorCode : undefined;
+      trackEvent('phone_save_failed', {
+        stage: 'server',
+        status,
+        code: serverCode ?? (status === 0 ? 'NETWORK' : `HTTP_${status}`),
+      });
+
       // Server-side consent guard (TermsAcceptedGuard) — defense in depth if the
       // inline accept step below was somehow bypassed. Refresh so the inline
       // accept prompt surfaces, and show a clear message instead of a generic error.
-      const detail = String((err as { response?: { data?: { message?: unknown } } })?.response?.data?.message ?? '');
+      const detail = String(response?.data?.message ?? '');
       if (/TERMS_NOT_ACCEPTED/i.test(detail)) {
         void checkAuth();
-        toast(t('booking.termsRequired', 'Please accept our Terms & Privacy to book.'), 'error');
+        const msg = t('booking.termsRequired', 'Please accept our Terms & Privacy to book.');
+        setPhoneSubmitError(msg);
+        toast(msg, 'error');
         return;
       }
-      toast(getApiError(err, 'Failed to create booking'), 'error');
+      const msg = getApiError(err, 'Failed to create booking');
+      setPhoneSubmitError(msg);
+      toast(msg, 'error');
     },
   });
 
@@ -1721,16 +1746,27 @@ export default function BookActivityPage() {
 
       <BookingPhoneModal
         isOpen={showPhoneModal}
-        onClose={() => setShowPhoneModal(false)}
+        onClose={() => {
+          setPhoneSubmitError(null);
+          setShowPhoneModal(false);
+        }}
         onSubmit={(phone) => {
           // Persist the phone for any subsequent retry/edit AND submit the
           // booking immediately with the freshly-entered value. We can't
           // rely on bookingPhone state here — React batches setState, so
           // a follow-up handleSubmit() in the same tick would still see ''.
+          //
+          // The pop-up now STAYS OPEN until the booking POST settles: success
+          // navigates to /bookings/<id> (onSuccess closes it first), failure
+          // shows the server's message under the field with the number kept,
+          // instead of closing and leaving the customer on the booking page
+          // with only a toast. The POST itself is unchanged.
           setBookingPhone(phone);
-          setShowPhoneModal(false);
+          setPhoneSubmitError(null);
           submitWithPhone(phone);
         }}
+        submitting={bookMutation.isPending}
+        submitError={phoneSubmitError}
         initialPhone={user?.phone || ''}
         detectedCountryIso={geoCountry?.isoCode}
       />

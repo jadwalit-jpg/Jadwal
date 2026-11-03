@@ -3,8 +3,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, X, ChevronDown } from 'lucide-react';
+import { Phone, X, ChevronDown, Loader2 } from 'lucide-react';
 import { validatePhone } from '@/lib/validation';
+import { trackEvent } from '@/lib/track';
 
 /* ─── Country codes ────────────────────────────────────────────
  *
@@ -56,6 +57,17 @@ interface BookingPhoneModalProps {
   detectedCountryIso?: string;
   /** When true, the customer can dismiss without submitting (e.g. profile-edit context). */
   allowSkip?: boolean;
+  /**
+   * The parent's request (the booking POST that `onSubmit` triggers) is in
+   * flight: Save & Continue shows a spinner and the field/close are locked so
+   * the number can't be changed mid-request. Optional — defaults to false.
+   */
+  submitting?: boolean;
+  /**
+   * Server-side failure message for the last `onSubmit`, rendered in red under
+   * the field. The typed number is kept so the customer can retry. Optional.
+   */
+  submitError?: string | null;
 }
 
 export function BookingPhoneModal({
@@ -65,6 +77,8 @@ export function BookingPhoneModal({
   initialPhone,
   detectedCountryIso,
   allowSkip,
+  submitting = false,
+  submitError = null,
 }: BookingPhoneModalProps) {
   const { t } = useTranslation();
   const [selectedCountry, setSelectedCountry] = useState(() => getDefaultCountry(detectedCountryIso));
@@ -72,6 +86,12 @@ export function BookingPhoneModal({
   const [error, setError] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Funnel measurement: the pop-up is where recordings show customers
+  // dropping. Fires once per open. No personal data — never the number.
+  useEffect(() => {
+    if (isOpen) trackEvent('phone_modal_opened');
+  }, [isOpen]);
 
   // Reset state when modal opens. Pre-fill from `initialPhone` (typically
   // User.phone) so repeat customers don't re-type. The `+CC` prefix is
@@ -105,10 +125,13 @@ export function BookingPhoneModal({
   }, [showDropdown]);
 
   const handleSubmit = useCallback(() => {
+    if (submitting) return;
     setError('');
+    trackEvent('phone_save_attempted', { country: selectedCountry.iso });
     const cleaned = localNumber.replace(/[\s\-()]/g, '');
     if (!/^[0-9]+$/.test(cleaned)) {
       setError(t('phone.validNumber'));
+      trackEvent('phone_save_failed', { stage: 'client', code: 'NOT_DIGITS' });
       return;
     }
     const normalized = `${selectedCountry.code}${cleaned}`;
@@ -121,10 +144,15 @@ export function BookingPhoneModal({
     const result = validatePhone(normalized, selectedCountry.iso);
     if (!result.valid) {
       setError(t('phone.tooShortOrLong'));
+      trackEvent('phone_save_failed', { stage: 'client', code: 'LENGTH', country: selectedCountry.iso });
       return;
     }
     onSubmit(normalized);
-  }, [localNumber, selectedCountry, onSubmit, t]);
+  }, [localNumber, selectedCountry, onSubmit, t, submitting]);
+
+  // Either the local validation message or the parent's server-side error —
+  // whichever is current. Both render under the field.
+  const fieldError = error || submitError || '';
 
   if (!isOpen) return null;
 
@@ -156,7 +184,8 @@ export function BookingPhoneModal({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              disabled={submitting}
+              className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               aria-label="Close"
             >
               <X className="h-5 w-5 text-gray-400" />
@@ -164,12 +193,6 @@ export function BookingPhoneModal({
           </div>
 
           <div className="px-6 pb-6 pt-4">
-            {error && (
-              <div className="mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 text-sm text-red-700 dark:text-red-400">
-                {error}
-              </div>
-            )}
-
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
                 {t('phone.phoneNumber')}
@@ -209,20 +232,42 @@ export function BookingPhoneModal({
                   value={localNumber}
                   onChange={e => setLocalNumber(e.target.value.replace(/[^0-9]/g, ''))}
                   onKeyDown={e => { if (e.key === 'Enter') handleSubmit(); }}
-                  placeholder="12345678"
+                  placeholder="55123456"
                   maxLength={14}
-                  className="flex-1 px-4 py-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
+                  disabled={submitting}
+                  aria-invalid={!!fieldError}
+                  aria-describedby="booking-phone-hint"
+                  className={`flex-1 px-4 py-3 bg-white dark:bg-slate-800 border rounded-xl text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 outline-none focus:ring-2 transition-all disabled:opacity-60 ${
+                    fieldError
+                      ? 'border-red-400 dark:border-red-700 focus:border-red-500 focus:ring-red-500/20'
+                      : 'border-gray-200 dark:border-slate-700 focus:border-blue-500 focus:ring-blue-500/20'
+                  }`}
                   autoFocus
                 />
               </div>
-              <p className="text-xs text-gray-400 dark:text-slate-500 mt-1.5">{t('phone.withoutCountryCode')}</p>
+              {/* Error under the field (local validation OR the server's answer
+                  to the booking request) — the number stays in the field. */}
+              {fieldError ? (
+                <p role="alert" className="text-xs text-red-600 dark:text-red-400 mt-1.5">
+                  {fieldError}
+                </p>
+              ) : null}
+              <p id="booking-phone-hint" className="text-xs text-gray-400 dark:text-slate-500 mt-1.5">{t('phone.withoutCountryCode')}</p>
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={!localNumber.trim()}
+                disabled={!localNumber.trim() || submitting}
+                aria-busy={submitting}
                 className="w-full mt-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
               >
-                {t('phone.saveAndContinue')}
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    {t('phone.saving')}
+                  </>
+                ) : (
+                  t('phone.saveAndContinue')
+                )}
               </button>
               {allowSkip && (
                 <button

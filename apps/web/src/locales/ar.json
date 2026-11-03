@@ -453,8 +453,9 @@
     "validNumber": "أدخل رقم هاتف صحيح (أرقام فقط)",
     "tooShortOrLong": "رقم الهاتف قصير جداً أو طويل جداً",
     "phoneNumber": "رقم الهاتف",
-    "withoutCountryCode": "أدخل رقمك بدون رمز الدولة",
+    "withoutCountryCode": "رقم الجوال القطري بدون رمز الدولة، مثال: 55123456",
     "saveAndContinue": "حفظ ومتابعة",
+    "saving": "جارٍ الحفظ…",
     "skipForNow": "تخطي الآن"
   },
   "notifications": {
