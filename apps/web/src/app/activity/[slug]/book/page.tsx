@@ -484,6 +484,11 @@ export default function BookActivityPage() {
     return base + extrasTotal;
   }, [isHourly, isPerUnit, effectivePrice, guests, nights, slotHours, extrasTotal, activity?.durationValue, checkIn, checkOut, price, priceByDate]);
 
+  // DAILY booking with no check-in/check-out yet. Display-only flag: the price
+  // box shows "Select your dates to see the total" instead of the 1-night
+  // fallback breakdown. The calculation above is deliberately untouched.
+  const needsDates = !isHourly && nights === 0;
+
   // Per-night prices for the DAILY breakdown label — so a stay mixing special and
   // normal nights is shown explicitly (e.g. "2000 + 300") instead of a misleading
   // flat "rate × N nights". The total above already sums these.
@@ -1150,6 +1155,9 @@ export default function BookActivityPage() {
                   max={maxGuests}
                   onChange={setGuests}
                   ariaLabel={t('activity.guests')}
+                  // Typed entry bound to the same `guests` state and the same
+                  // 1..maxGuests bounds the +/− buttons enforce.
+                  editable
                 />
               </div>
               {guests >= maxGuests && maxGuests < 99 ? (
@@ -1189,7 +1197,11 @@ export default function BookActivityPage() {
                   )}
                   <div className="min-w-0">
                     <p className="font-semibold text-gray-900 dark:text-white text-sm leading-tight truncate">
-                      {localized(activity, 'title')}
+                      {/* Link back to the activity page (same slug) so the
+                          customer can re-check details without the back button. */}
+                      <Link href={`/activity/${slug}`} className="hover:text-jadwal-primary hover:underline transition-colors">
+                        {localized(activity, 'title')}
+                      </Link>
                     </p>
                     {activity.category && (
                       <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5 truncate">
@@ -1355,6 +1367,17 @@ export default function BookActivityPage() {
 
                 {/* Price Breakdown */}
                 <h3 className="font-semibold text-gray-900 dark:text-white mb-3">{t('booking.priceBreakdown')}</h3>
+                {/* DAILY with no dates yet: `bookingCost` still holds the 1-night
+                    fallback (see the useMemo above — unchanged), which rendered as
+                    "QAR 1200 × 0 night / Total 1200.00". Display-only: show a
+                    prompt instead of that misleading breakdown until dates exist. */}
+                {needsDates ? (
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    {t('booking.selectDatesForTotal', {
+                      defaultValue: 'Select your dates to see the total',
+                    })}
+                  </p>
+                ) : (
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-gray-500 dark:text-slate-400">{t('booking.basePrice')}</span>
@@ -1403,6 +1426,7 @@ export default function BookActivityPage() {
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* Vendor coupon code input — only show when logged in and no voucher selected */}
                 {!appliedCoupon && !selectedVoucher && user && (
@@ -1585,7 +1609,7 @@ export default function BookActivityPage() {
                     {t('booking.total')}
                   </span>
                   <span className="font-display text-2xl font-bold tracking-[-0.5px] text-jadwal-text tabular-nums">
-                    {bookingCost > 0
+                    {bookingCost > 0 && !needsDates
                       ? isPointsOnly
                         ? t('booking.paidWithPoints', { defaultValue: 'Paid with points' })
                         : `${currency} ${cashDue.toFixed(2)}`
@@ -1601,7 +1625,8 @@ export default function BookActivityPage() {
                 !isPointsOnly &&
                 loyaltyData &&
                 loyaltyData.pointsPerQar > 0 &&
-                bookingCost > 0 ? (
+                bookingCost > 0 &&
+                !needsDates ? (
                   <div className="mt-3 flex items-center gap-1.5 text-[11px] text-jadwal-accent-text justify-end">
                     <Gift
                       className="h-3 w-3 text-jadwal-accent"
@@ -1674,9 +1699,17 @@ export default function BookActivityPage() {
                 ) : null}
 
                 <p className="text-[11px] text-jadwal-text-muted text-center mt-3">
-                  {t('booking.termsNote', {
-                    defaultValue: 'By confirming you agree to our Terms',
+                  {/* Same sentence as before; the word "Terms" now links to the
+                      Terms page (LocaleLink keeps /ar/terms on the Arabic site). */}
+                  {t('booking.termsNotePrefix', {
+                    defaultValue: 'By confirming you agree to our ',
                   })}
+                  <Link
+                    href="/terms"
+                    className="underline underline-offset-2 hover:text-jadwal-primary transition-colors"
+                  >
+                    {t('booking.termsNoteLink', { defaultValue: 'Terms' })}
+                  </Link>
                 </p>
               </motion.div>
             </div>
