@@ -21,6 +21,7 @@ import api from '@/lib/api';
 import { getApiError } from '@/lib/api-error';
 import { sanitizeObject } from '@/lib/validation';
 import { fbTrack } from '@/lib/fb-pixel';
+import { trackEvent } from '@/lib/track';
 import { localized } from '@/lib/localize';
 import { useAuth } from '@/context/auth-context';
 import { useGeo } from '@/context/geo-context';
@@ -754,6 +755,12 @@ export default function BookActivityPage() {
 
   const handleSubmit = () => {
     if (!user) {
+      // Funnel measurement: "Continue to Book" tapped while signed out (the
+      // step right before the login redirect). No personal data in params.
+      trackEvent('continue_to_book_click', {
+        activity_slug: slug,
+        booking_type: isHourly ? 'HOURLY' : 'DAILY',
+      });
       // Save everything the user has picked so the redirect round-trip
       // doesn't force them to re-enter it. useEffect above hydrates from
       // the same key on mount and clears it. sessionStorage is tab-scoped,
@@ -1655,6 +1662,16 @@ export default function BookActivityPage() {
                         : t('booking.confirmAndPay')}
                   </Button>
                 )}
+
+                {/* Signed-out helper: tells the customer what "Continue to Book"
+                    leads to (a 10-second Google/email sign-in), so the login
+                    redirect doesn't read as a dead end. Same muted style as the
+                    terms note below. */}
+                {!user ? (
+                  <p className="text-[11px] text-jadwal-text-muted text-center mt-3">
+                    {t('booking.loginToBookHelper')}
+                  </p>
+                ) : null}
 
                 <p className="text-[11px] text-jadwal-text-muted text-center mt-3">
                   {t('booking.termsNote', {

@@ -255,7 +255,8 @@
     "specialPriceDay": "سعر خاص",
     "basePrice": "السعر الأساسي",
     "extras": "الإضافات",
-    "loginToBook": "سجل الدخول للحجز",
+    "loginToBook": "متابعة الحجز",
+    "loginToBookHelper": "سجّل الدخول بحساب Google أو البريد الإلكتروني لتأكيد حجزك. يستغرق نحو 10 ثوانٍ.",
     "termsRequired": "يرجى الموافقة على الشروط وسياسة الخصوصية للحجز.",
     "selectStartTime": "اضغط على ساعة البداية — سيتم تحديد الساعات التالية ({{hours}} ساعة) تلقائياً",
     "hourRangeHint": "الحد الأدنى {{hours}} ساعة. اضغط على ساعة لاحقة للتمديد. وقت الإغلاق: {{closing}}.",
@@ -279,6 +280,7 @@
   },
   "auth": {
     "welcomeBack": "مرحباً بعودتك",
+    "almostDoneBooking": "خطوة أخيرة. سجّل الدخول لتأكيد حجزك.",
     "signInToAccount": "سجل الدخول إلى حسابك",
     "signInWithGoogle": "تسجيل الدخول بجوجل",
     "continueWithGoogle": "المتابعة بجوجل",

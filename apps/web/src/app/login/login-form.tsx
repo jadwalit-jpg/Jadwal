@@ -59,6 +59,11 @@ function LoginFormContent() {
   // Security: only allow relative paths — block open redirect
   const raw = searchParams.get('callbackUrl') ?? '';
   const callbackUrl = raw.startsWith('/') && !raw.startsWith('//') && !raw.includes(':') ? raw : null;
+  // Arrived from "Continue to Book" (booking page pushes
+  // `/login?callbackUrl=/activity/<slug>/book`) → the heading reassures the
+  // customer that signing in is the last step of the booking, not a detour.
+  // Copy-only; the redirect target and auth flow are untouched.
+  const fromBooking = /^(?:\/ar)?\/activity\/[^/]+\/book(?:[/?#]|$)/.test(callbackUrl ?? '');
   const oauthError = searchParams.get('error');
 
   useEffect(() => {
@@ -176,7 +181,9 @@ function LoginFormContent() {
       </div>
 
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-white text-center mb-1">{t('auth.welcomeBack')}</h1>
+        <h1 className="text-xl font-bold text-white text-center mb-1">
+          {fromBooking ? t('auth.almostDoneBooking') : t('auth.welcomeBack')}
+        </h1>
         <p className="text-sm text-white/40 text-center">{t('auth.signInToAccount')}</p>
       </div>
 

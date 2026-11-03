@@ -255,7 +255,8 @@
     "specialPriceDay": "Special price",
     "basePrice": "Base price",
     "extras": "Extras",
-    "loginToBook": "Login to book",
+    "loginToBook": "Continue to Book",
+    "loginToBookHelper": "Sign in with Google or email to confirm your booking. It takes about 10 seconds.",
     "termsRequired": "Please accept our Terms & Privacy to book.",
     "selectStartTime": "Tap an hour to start — the next {{hours}}h are auto-selected",
     "hourRangeHint": "Minimum {{hours}}h. Tap a later hour to extend. Closing: {{closing}}.",
@@ -279,6 +280,7 @@
   },
   "auth": {
     "welcomeBack": "Welcome Back",
+    "almostDoneBooking": "Almost done. Sign in to confirm your booking.",
     "signInToAccount": "Sign in to your account",
     "signInWithGoogle": "Sign in with Google",
     "continueWithGoogle": "Continue with Google",
