@@ -14,14 +14,23 @@
  * with no cache/refresh dependency. The text is still in the SSR HTML (client
  * components are server-rendered), so SEO/LCP are unaffected — the boat Image
  * stays the LCP candidate. DO NOT move this back to a server component.
+ *
+ * The headline + subtitle are one LocaleLink to /explore (→ /ar/explore on the
+ * Arabic site): the hero is an illustrated SVG scene with no photo, so the text
+ * block is the tappable "hero area". Text and classes are unchanged; the h1
+ * stays the h1.
  */
 
 import { useTranslation } from 'react-i18next';
+import { LocaleLink } from '@/components/locale-link';
 
 export function HeroTitle() {
   const { t } = useTranslation();
   return (
-    <>
+    <LocaleLink
+      href="/explore"
+      className="block w-full no-underline text-inherit focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 rounded-2xl"
+    >
       <h1 className="font-display text-4xl sm:text-5xl md:text-6xl font-semibold ltr:tracking-[-1.2px] text-white leading-[1.05] max-w-4xl mx-auto drop-shadow-lg ltr:text-balance">
         {t('home.heroTitle1')}{' '}
         <span className="text-amber-200 drop-shadow-md">
@@ -34,6 +43,6 @@ export function HeroTitle() {
       <p className="mt-5 hidden sm:block text-base md:text-lg text-white/80 max-w-2xl mx-auto leading-relaxed">
         {t('home.heroSubtitle')}
       </p>
-    </>
+    </LocaleLink>
   );
 }
