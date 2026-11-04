@@ -53,8 +53,8 @@ export interface SeoLanding {
    */
   adLanding?: boolean;
   /**
-   * FAQ rendered under the cards. A language with no entry renders no FAQ
-   * (e.g. Arabic until the bracketed facts are confirmed). Answers may contain
+   * FAQ rendered under the cards. A language with no entry renders no FAQ.
+   * Answers may contain
    * `[…]` placeholders while facts are pending — the page then skips the
    * FAQPage structured data so placeholders never reach Google's rich results.
    */
@@ -107,10 +107,10 @@ export const SEO_LANDINGS: SeoLanding[] = [
       },
     },
     adLanding: true,
-    // Answers use only what the live listings say (Nov 2026). Every […] is a
-    // fact still to be confirmed by the business — replace before merging.
-    // Arabic FAQ is intentionally absent until those facts are confirmed;
-    // write it in Gulf wording (سفاري، كشتة، مخيم، تخييم في سيلين).
+    // Answers use only what the live listings say (Nov 2026) plus the facts
+    // confirmed by the business (pickup, children, what to bring, payment).
+    // The Arabic FAQ carries the same facts, with the names used in the Arabic
+    // intro (سفاري اليوم الكامل، مخيم سيلين، واتساب، على مدار الساعة).
     faq: {
       en: [
         {
@@ -123,15 +123,15 @@ export const SEO_LANDINGS: SeoLanding[] = [
         },
         {
           q: 'Is pickup from Doha included?',
-          a: 'The shared full-day trip and the overnight camp include transport from Sealine Beach Resort. [Confirm: is pickup from Doha available, and from which areas or hotels?]',
+          a: 'The shared full-day trip and the overnight camp include transport from Sealine Beach Resort. Pickup from Doha is available for an extra fee. Message us on WhatsApp to arrange it.',
         },
         {
           q: 'Is it suitable for children and families?',
-          a: '[Confirm age limits per trip, and whether children pay the full price on the shared trip.]',
+          a: "Yes. Children are welcome and get a discount on the shared full-day trip. Message us on WhatsApp and we'll apply it before you pay.",
         },
         {
           q: 'What should we bring?',
-          a: '[Confirm the list: sunglasses, light clothes, water.] Soft drinks and water are included on the camp trips.',
+          a: 'Sunglasses, light clothes and water. Soft drinks and water are included on the camp trips.',
         },
         {
           q: 'Can we stay overnight?',
@@ -139,7 +139,37 @@ export const SEO_LANDINGS: SeoLanding[] = [
         },
         {
           q: 'How do I book?',
-          a: 'Choose a trip above and book online, or message us on WhatsApp and we reply within 15 minutes, 24/7. Payment is made online by card when you book [confirm whether paying on the day is also offered].',
+          a: 'Choose a trip above and book online, or message us on WhatsApp and we reply within 15 minutes, 24/7. Payment is made online by card when you book.',
+        },
+      ],
+      ar: [
+        {
+          q: 'كم تكلفة سفاري الصحراء في قطر؟',
+          a: 'يبدأ سفاري اليوم الكامل المشترك من 150 ريال للشخص، ويبدأ مبيت مخيم سيلين من 500 ريال، أما التخييم الخاص في مخيم الرحلة فسعره 1,500 ريال لمجموعتك.',
+        },
+        {
+          q: 'كم تستغرق الرحلة؟',
+          a: 'تستغرق رحلة سفاري اليوم الكامل المشتركة نحو 8 ساعات، من الساعة 2 ظهراً حتى 10 مساءً. ويمتد المبيت في المخيم من الساعة 2 ظهراً حتى 9 صباح اليوم التالي.',
+        },
+        {
+          q: 'هل يشمل السعر التوصيل من الدوحة؟',
+          a: 'تشمل رحلة سفاري اليوم الكامل المشتركة ومبيت المخيم التوصيل من منتجع شاطئ سيلين. ويتوفر التوصيل من الدوحة مقابل رسوم إضافية، راسلنا على واتساب لترتيبه.',
+        },
+        {
+          q: 'هل الرحلة مناسبة للأطفال والعائلات؟',
+          a: 'نعم. الأطفال مرحَّب بهم ويحصلون على خصم في رحلة سفاري اليوم الكامل المشتركة. راسلنا على واتساب وسنطبّق الخصم قبل الدفع.',
+        },
+        {
+          q: 'ماذا نحضر معنا؟',
+          a: 'نظارات شمسية وملابس خفيفة وماء. وتشمل رحلات المخيم المشروبات الغازية والماء.',
+        },
+        {
+          q: 'هل يمكننا المبيت؟',
+          a: 'نعم. يبدأ سفاري المبيت في مخيم سيلين من 500 ريال، مع تسجيل الوصول الساعة 2 ظهراً والمغادرة الساعة 9 صباحاً، ويشمل التوصيل من منتجع شاطئ سيلين والعشاء والخيام العربية التقليدية والتزلج على الرمال والسباحة. وللتخييم الخاص بمجموعتك، يضم مخيم الرحلة في روضة راشد جلسات داخلية وخارجية ومنطقة للنار.',
+        },
+        {
+          q: 'كيف أحجز؟',
+          a: 'اختر رحلة من الأعلى واحجز أونلاين، أو راسلنا على واتساب ونرد خلال 15 دقيقة على مدار الساعة. يتم الدفع أونلاين بالبطاقة عند الحجز.',
         },
       ],
     },

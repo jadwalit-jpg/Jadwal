@@ -85,6 +85,20 @@ describe('seo-landings config integrity', () => {
     expect(SEO_LANDINGS.filter((l) => l.adLanding).map((l) => l.slug)).toEqual(['desert-safari-qatar']);
   });
 
+  test('desert-safari-qatar FAQ is complete in English and Arabic, with no [ ] placeholders', () => {
+    // A bracket placeholder suppresses the FAQPage structured data on the page,
+    // so both languages must stay placeholder-free.
+    const desert = SEO_LANDINGS.find((l) => l.slug === 'desert-safari-qatar')!;
+    const en = desert.faq?.en ?? [];
+    const ar = desert.faq?.ar ?? [];
+    expect(en).toHaveLength(7);
+    expect(ar).toHaveLength(7);
+    for (const { q, a } of [...en, ...ar]) {
+      expect(q).not.toMatch(/\[[^\]]*\]/);
+      expect(a).not.toMatch(/\[[^\]]*\]/);
+    }
+  });
+
   test('landingCopy always returns non-empty strings (override or templated)', () => {
     for (const l of SEO_LANDINGS) {
       for (const lang of ['en', 'ar'] as const) {
