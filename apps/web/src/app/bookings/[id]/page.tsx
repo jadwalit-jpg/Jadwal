@@ -21,6 +21,7 @@ import {
 import { motion } from 'framer-motion';
 import api from '@/lib/api';
 import { fbTrack } from '@/lib/fb-pixel';
+import { GA4_MEASUREMENT_ID } from '@/lib/gtag';
 import { localized } from '@/lib/localize';
 import { getApiError } from '@/lib/api-error';
 import { isAllowedPay2mFormAction } from '@/lib/pay2m';
@@ -162,6 +163,54 @@ export default function BookingDetailPage() {
     const cur = booking.currencyCode ?? booking.activity?.country?.currencyCode ?? 'QAR';
     const value = Number(booking.totalPrice ?? 0) + Number(booking.serviceFee ?? 0);
     fbTrack('Purchase', { currency: cur, value });
+  }, [booking, id]);
+
+  // Item 10 — purchase measurement for Clarity + GA4, same trigger as the Meta
+  // Purchase above (status CONFIRMED: card-paid or points-only). Each sink has
+  // its own once-per-tab guard, set only when that sink actually fired, so a
+  // tag that loads late (consent accepted on this page) still gets the event.
+  useEffect(() => {
+    if (booking?.status !== 'CONFIRMED' || !id) return;
+    const once = (key: string, fire: () => void) => {
+      try {
+        if (sessionStorage.getItem(key)) return;
+        fire();
+        sessionStorage.setItem(key, '1');
+      } catch {
+        fire(); // sessionStorage unavailable — at worst a rare double-count
+      }
+    };
+
+    // Clarity custom event. NOTE: Clarity is intentionally NOT loaded on
+    // /bookings/* (privacy block-list, lib/clarity.ts), so this only records
+    // when Clarity happens to be present; GA4 below is the reliable signal.
+    if (typeof window.clarity === 'function') {
+      once(`clarity_purchase_${id}`, () => window.clarity!('event', 'purchase_success'));
+    }
+
+    // GA4 `purchase`. transaction_id = booking id, which also lets GA4 itself
+    // de-dupe across devices/reloads. send_to keeps it off the Ads tag (Ads
+    // conversions need their own label). No personal data in params.
+    if (typeof window.gtag === 'function' && GA4_MEASUREMENT_ID) {
+      const currency = booking.currencyCode ?? booking.activity?.country?.currencyCode ?? 'QAR';
+      const value = Number(booking.totalPrice ?? 0) + Number(booking.serviceFee ?? 0);
+      once(`ga_purchase_${id}`, () =>
+        window.gtag!('event', 'purchase', {
+          send_to: GA4_MEASUREMENT_ID,
+          transaction_id: String(id),
+          value,
+          currency,
+          items: [
+            {
+              item_id: booking.activity?.slug ?? booking.activityId ?? 'activity',
+              item_name: booking.activity?.titleEn ?? booking.activity?.slug ?? 'Activity',
+              price: value,
+              quantity: 1,
+            },
+          ],
+        }),
+      );
+    }
   }, [booking, id]);
 
   const handleOtpVerified = useCallback(() => {
