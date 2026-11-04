@@ -67,7 +67,7 @@ export const SEO_LANDINGS: SeoLanding[] = [
     slug: 'desert-safari-qatar',
     cluster: 'desert',
     // Sub-categories of "Leisure & Fun" (admin: Category → Sub-category on the
-    // listing). "Desert Camp" holds the four safari trips, "camping" the private
+    // listing). "Desert Camp" holds the safari trips, "camping" the private
     // camp. The old `category: 'leisure-fun'` filter also pulled in the
     // "Tour Trip" city tours. NOTE: the API's categoryId filter ALSO matches a
     // Leisure & Fun listing that has NO sub-category set at all, so every
@@ -81,23 +81,26 @@ export const SEO_LANDINGS: SeoLanding[] = [
     copy: {
       en: {
         h1: 'Desert Safari in Qatar',
-        // Prices and inclusions come from the live listings (Nov 2026): shared
-        // full-day QAR 150/person, private 8-hour 4x4 trip QAR 1,700/group,
-        // private full-day QAR 1,800/group, overnight Sealine camp QAR 500,
-        // private camp QAR 1,500. No camel ride or Inland Sea stop is listed on
-        // any trip, so neither is claimed here.
+        // Max 3 lines on a phone (measured with the real Outfit font at 360,
+        // 375, 390 and 412px): the price line + the WhatsApp line only.
+        // Prices = live listings (4 Nov 2026): shared full-day trip QAR 150 per
+        // person, overnight Sealine camp QAR 500. The private 4x4 safaris
+        // (QAR 1,700 / 1,800) were removed from the catalog on 4 Nov, so they
+        // are not quoted. WhatsApp replies: 24/7 (confirmed by the business).
         intro:
-          'From QAR 150 per person for a shared full-day trip, private 4x4 trips for your group from QAR 1,700, and an overnight camp at Sealine from QAR 500. Private trips include a Land Cruiser with an experienced driver for dune bashing, transport and a camp visit. The shared and overnight camp trips include transport from Sealine Beach Resort, dinner, traditional Arabian tents, sandboarding, volleyball, swimming, soft drinks and water. Book online or message us on WhatsApp and we reply within 15 minutes, 9am to 11pm.',
+          'Day trips from QAR 150 per person, overnight from QAR 500. Book online or WhatsApp us: we reply within 15 minutes, 24/7.',
         metaTitle: 'Desert Safari Qatar | Dune Adventures & Prices',
         metaDescription:
-          'Experience the thrill of Qatar\'s golden dunes. Compare overnight desert safari Qatar prices and enjoy dune bashing, camel rides and more with AL Jadwal.',
+          // No camel rides (none of the trips include one) and no dune bashing
+          // (only the removed private 4x4 trips listed it).
+          'Experience the thrill of Qatar\'s golden dunes. Compare overnight desert safari Qatar prices and enjoy sandboarding, desert camps and more with AL Jadwal.',
       },
       ar: {
         h1: 'سفاري الصحراء في قطر',
-        // Gulf wording (سفاري، كشتة، مخيم، تخييم في سيلين). Same facts as the
-        // English intro; refine once the remaining details are confirmed.
+        // Gulf wording. Same facts as the English intro, 3 lines on a phone
+        // (measured with the real Tajawal font at 360–412px).
         intro:
-          'سفاري صحراء بيوم كامل مشتركة من 150 ريال للشخص، كشتة خاصة بسيارات دفع رباعي لمجموعتك من 1,700 ريال، ومبيت في مخيم سيلين من 500 ريال. الرحلات الخاصة تشمل لاندكروزر مع سواق خبرة للتطعيس، والنقل، وزيارة المخيم. ورحلات المخيم المشتركة والمبيت تشمل النقل من منتجع سيلين بيتش، والعشاء، والخيام العربية التقليدية، والتزلج على الرمل، والكرة الطائرة، والسباحة، والمشروبات الغازية والماء. احجز أونلاين أو راسلنا على واتساب ونرد عليك خلال 15 دقيقة من 9 صباحاً إلى 11 مساءً.',
+          'سفاري اليوم الكامل من 150 ريال للشخص، ومبيت مخيم سيلين من 500 ريال. احجز أونلاين أو راسلنا على واتساب: نرد خلال 15 دقيقة على مدار الساعة.',
         metaTitle: 'سفاري الصحراء في قطر — رحلات سيلين ومخيمات المبيت',
         metaDescription:
           'احجز سفاري الصحراء في قطر: رحلات سيلين، مخيمات يوم كامل ومبيت مع العشاء. قارن الأسعار والتقييمات عبر AL Jadwal.',
@@ -112,19 +115,19 @@ export const SEO_LANDINGS: SeoLanding[] = [
       en: [
         {
           q: 'How much does a desert safari in Qatar cost?',
-          a: 'A shared full-day desert safari starts from QAR 150 per person. Private 4x4 trips are priced per group: QAR 1,700 for the 8-hour safari and QAR 1,800 for the full-day trip. The overnight Sealine camp starts from QAR 500, and private camping at Al Rehlah Camp is QAR 1,500 for your group.',
+          a: 'A shared full-day desert safari starts from QAR 150 per person. The overnight Sealine camp starts from QAR 500, and private camping at Al Rehlah Camp is QAR 1,500 for your group.',
         },
         {
           q: 'How long does it take?',
-          a: 'The shared full-day trip runs about 8 hours, from 2pm to 10pm. The private 8-hour safari is listed from 2pm to 10pm [confirm: its inclusions say "Duration of trip: 4 hours"]. The private full-day trip and the overnight camp run from 2pm to 9am the next morning [confirm how much of that is driving vs. time at camp].',
+          a: 'The shared full-day trip runs about 8 hours, from 2pm to 10pm. The overnight camp runs from 2pm to 9am the next morning.',
         },
         {
           q: 'Is pickup from Doha included?',
-          a: 'The shared full-day trip and the overnight camp include transport from Sealine Beach Resort. The private 4x4 trips include transportation [confirm: pickup from Doha? which areas or hotels].',
+          a: 'The shared full-day trip and the overnight camp include transport from Sealine Beach Resort. [Confirm: is pickup from Doha available, and from which areas or hotels?]',
         },
         {
           q: 'Is it suitable for children and families?',
-          a: '[Confirm age limits per trip, e.g. minimum age for dune bashing, and whether children pay the full price on the shared trip.]',
+          a: '[Confirm age limits per trip, and whether children pay the full price on the shared trip.]',
         },
         {
           q: 'What should we bring?',
@@ -136,7 +139,7 @@ export const SEO_LANDINGS: SeoLanding[] = [
         },
         {
           q: 'How do I book?',
-          a: 'Choose a trip above and book online, or message us on WhatsApp and we reply within 15 minutes, 9am to 11pm. Payment is made online by card when you book [confirm whether paying on the day is also offered].',
+          a: 'Choose a trip above and book online, or message us on WhatsApp and we reply within 15 minutes, 24/7. Payment is made online by card when you book [confirm whether paying on the day is also offered].',
         },
       ],
     },
