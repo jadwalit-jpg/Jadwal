@@ -13,6 +13,7 @@ import CookieConsentBanner from "@/components/cookie-consent-banner";
 import MetaPixel from "@/components/meta-pixel";
 import GoogleTag from "@/components/google-tag";
 import Clarity from "@/components/clarity";
+import { InAppBrowserGuard } from "@/components/in-app-browser-guard";
 import { Suspense } from "react";
 // CustomerShell conditionally wraps children with GeoProvider + LazyPrompts
 // based on pathname. Staff (admin / vendor) and auth routes skip both —
@@ -251,6 +252,10 @@ export default async function RootLayout({
                           and skip staff routes. Suspense wraps them because they
                           read useSearchParams (route-change page-view tracking). */}
                       <CookieConsentBanner />
+                      {/* Must stay ABOVE the tags: swallows only the Android
+                          Facebook in-app browser's "Java object is gone"
+                          postMessage error. See lib/in-app-browser-guard.ts. */}
+                      <InAppBrowserGuard />
                       <Suspense fallback={null}>
                         <MetaPixel />
                         <GoogleTag />
