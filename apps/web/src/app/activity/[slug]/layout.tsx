@@ -46,6 +46,21 @@ interface PublicActivity {
 }
 
 /** Strip stray HTML brackets and clamp to a social-card-friendly length. */
+/**
+ * Hand-written meta descriptions for listings whose own description makes a
+ * poor search snippet (e.g. it opens with the security-deposit note and gets
+ * cut mid-sentence). Meta only — the description shown on the page is still
+ * the listing's own text. Facts must match the listing (location, price).
+ */
+const META_DESCRIPTION_OVERRIDES: Record<string, { en: string; ar: string }> = {
+  // Listing (Nov 2026): Al Ruwais; QAR 1,200 per night (DAILY, PER_UNIT);
+  // pool, bedrooms, men & women majlis, games room.
+  'cavilam-resort': {
+    en: 'Cavilam Resort: private family resort in Al Ruwais with pool, bedrooms, majlis and games room. From QAR 1,200 per night. Book with AL Jadwal.',
+    ar: 'منتجع كافيلام: منتجع عائلي خاص في الرويس مع مسبح وغرف نوم ومجلس وغرفة ألعاب. من 1,200 ريال لليلة. احجز مع الجدول.',
+  },
+};
+
 function safeDescription(raw: string | null | undefined): string {
   if (!raw) return '';
   const stripped = raw.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
@@ -159,9 +174,10 @@ export async function generateMetadata({
 
   const title =
     (lang === 'ar' ? activity.titleAr : activity.titleEn) || activity.titleEn || 'AL Jadwal';
-  const description = safeDescription(
-    lang === 'ar' ? activity.descriptionAr : activity.descriptionEn,
-  );
+  const override = META_DESCRIPTION_OVERRIDES[slug];
+  const description = override
+    ? override[lang === 'ar' ? 'ar' : 'en']
+    : safeDescription(lang === 'ar' ? activity.descriptionAr : activity.descriptionEn);
   const image = absoluteImageUrl(activity.coverImage);
 
   const og: NonNullable<Metadata['openGraph']> = {
@@ -210,9 +226,10 @@ export default async function ActivityLayout({
   const activityUrl = `${origin}/activity/${slug}`;
   const title =
     (lang === 'ar' ? activity.titleAr : activity.titleEn) || activity.titleEn || 'AL Jadwal';
-  const description = safeDescription(
-    lang === 'ar' ? activity.descriptionAr : activity.descriptionEn,
-  );
+  const override = META_DESCRIPTION_OVERRIDES[slug];
+  const description = override
+    ? override[lang === 'ar' ? 'ar' : 'en']
+    : safeDescription(lang === 'ar' ? activity.descriptionAr : activity.descriptionEn);
   const image = absoluteImageUrl(activity.coverImage);
   const price = activity.pricePerPerson != null ? Number(activity.pricePerPerson) : null;
   const currency = activity.country?.currencyCode || 'QAR';

@@ -17,13 +17,19 @@ export async function generateMetadata(): Promise<Metadata> {
   // NO brand suffix here: the root layout applies `template: '%s · AL Jadwal'`,
   // so adding it again rendered "Explore Activities — AL Jadwal · AL Jadwal"
   // and burned ~11 characters of the 60-char SERP title on a repeat.
-  const title = lang === 'ar' ? 'استكشف الأنشطة' : 'Explore Activities';
+  // Item 11 (Nov 2026). Rendered as "<title> · AL Jadwal" via the root template.
+  const title =
+    lang === 'ar'
+      ? 'الأنشطة في قطر: يخوت، منتجعات، سفاري الصحراء ورياضات مائية'
+      : 'Activities in Qatar: Yachts, Resorts, Desert Safari & Water Sports';
   // og:title has no template applied, so it carries the brand itself.
   const ogTitle = lang === 'ar' ? 'استكشف الأنشطة — الجدول' : 'Explore Activities — AL Jadwal';
+  // Counts and prices checked against the live catalog (Nov 2026): 46 active
+  // listings, cheapest = Kayak Ride QAR 100. Keep these true when inventory changes.
   const description =
     lang === 'ar'
-      ? 'تصفح أكثر من 50 تجربة موثوقة عبر قطر — رحلات السفاري، الجولات الثقافية، الرياضات المائية، تجارب الطعام والمزيد.'
-      : 'Browse 50+ vetted experiences across Qatar — desert safaris, dhow cruises, cultural tours, water sports and dining. Compare prices and book online in minutes.';
+      ? 'تصفّح أكثر من 45 نشاطاً في قطر: تأجير اليخوت، المنتجعات والشاليهات الخاصة، سفاري الصحراء، الكرفانات والرياضات المائية. الأسعار تبدأ من 100 ريال. احجز أونلاين مع الجدول.'
+      : 'Browse 45+ activities in Qatar: yacht rental, private resorts and chalets, desert safari, caravans and water sports. Prices from QAR 100. Book online with AL Jadwal.';
 
   return {
     title,
