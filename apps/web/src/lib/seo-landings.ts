@@ -83,16 +83,16 @@ export const SEO_LANDINGS: SeoLanding[] = [
         h1: 'Desert Safari in Qatar',
         // Max 3 lines on a phone (measured with the real Outfit font at 360,
         // 375, 390 and 412px): the price line + the WhatsApp line only.
-        // Prices = live listings (4 Nov 2026): shared full-day trip QAR 150 per
-        // person, overnight Sealine camp QAR 500. The private 4x4 safaris
-        // (QAR 1,700 / 1,800) were removed from the catalog on 4 Nov, so they
-        // are not quoted. WhatsApp replies: 24/7 (confirmed by the business).
+        // Prices confirmed by the business (Nov 2026): full-day camp trip QAR 150
+        // per person, overnight Sealine camp QAR 250 per person. The private 4x4
+        // safaris (QAR 1,700 / 1,800) were removed from the catalog on 4 Nov, so
+        // they are not quoted. WhatsApp replies: 24/7 (confirmed by the business).
         intro:
-          'Day trips from QAR 150 per person, overnight from QAR 500. Book online or WhatsApp us: we reply within 15 minutes, 24/7.',
+          'Day trips from QAR 150 per person, overnight from QAR 250 per person. Book online or WhatsApp us: we reply within 15 minutes, 24/7.',
         metaTitle: 'Desert Safari Qatar | Dune Adventures & Prices',
         metaDescription:
           // No camel rides (none of the trips include one) and no dune bashing
-          // (only the removed private 4x4 trips listed it).
+          // (not included on the camp trips; only the private Safari Trip has it).
           'Experience the thrill of Qatar\'s golden dunes. Compare overnight desert safari Qatar prices and enjoy sandboarding, desert camps and more with AL Jadwal.',
       },
       ar: {
@@ -100,42 +100,42 @@ export const SEO_LANDINGS: SeoLanding[] = [
         // Gulf wording. Same facts as the English intro, 3 lines on a phone
         // (measured with the real Tajawal font at 360–412px).
         intro:
-          'سفاري اليوم الكامل من 150 ريال للشخص، ومبيت مخيم سيلين من 500 ريال. احجز أونلاين أو راسلنا على واتساب: نرد خلال 15 دقيقة على مدار الساعة.',
+          'سفاري اليوم الكامل من 150 ريال للشخص، ومبيت مخيم سيلين من 250 ريال للشخص. احجز أونلاين أو راسلنا على واتساب: نرد خلال 15 دقيقة على مدار الساعة.',
         metaTitle: 'سفاري الصحراء في قطر — رحلات سيلين ومخيمات المبيت',
         metaDescription:
           'احجز سفاري الصحراء في قطر: رحلات سيلين، مخيمات يوم كامل ومبيت مع العشاء. قارن الأسعار والتقييمات عبر AL Jadwal.',
       },
     },
     adLanding: true,
-    // Answers use only what the live listings say (Nov 2026) plus the facts
-    // confirmed by the business (pickup, children, what to bring, payment).
+    // Answers use the camp facts confirmed by the business (Nov 2026): hours,
+    // prices, pickup, children's prices, bathrooms and payment.
     // The Arabic FAQ carries the same facts, with the names used in the Arabic
     // intro (سفاري اليوم الكامل، مخيم سيلين، واتساب، على مدار الساعة).
     faq: {
       en: [
         {
           q: 'How much does a desert safari in Qatar cost?',
-          a: 'A shared full-day desert safari starts from QAR 150 per person. The overnight Sealine camp starts from QAR 500, and private camping at Al Rehlah Camp is QAR 1,500 for your group.',
+          a: 'The full-day camp trip is QAR 150 per person and the overnight camp is QAR 250 per person. Private camping at Al Rehlah Camp is QAR 1,500 for your group.',
         },
         {
           q: 'How long does it take?',
-          a: 'The shared full-day trip runs about 8 hours, from 2pm to 10pm. The overnight camp runs from 2pm to 9am the next morning.',
+          a: 'The full-day trip runs from 2pm to 9pm. The overnight camp runs from 2pm to 9am the next morning.',
         },
         {
           q: 'Is pickup from Doha included?',
-          a: 'The shared full-day trip and the overnight camp include transport from Sealine Beach Resort. Pickup from Doha is available for an extra fee. Message us on WhatsApp to arrange it.',
+          a: "No. You drive to Sealine Beach Resort, and the camp transport takes you to the camp from there. If you'd like pickup from your location in Doha, or dune bashing, our private Safari Trip includes both. Message us on WhatsApp with your group size and location for a price.",
         },
         {
           q: 'Is it suitable for children and families?',
-          a: "Yes. Children are welcome and get a discount on the shared full-day trip. Message us on WhatsApp and we'll apply it before you pay.",
+          a: 'Yes. Children under 3 go free, children aged 3 to 10 pay QAR 90 for the full day or QAR 150 overnight, and from 11 years they pay the adult price. Message us on WhatsApp to book with children\'s prices.',
         },
         {
           q: 'What should we bring?',
-          a: 'Sunglasses, light clothes and water. Soft drinks and water are included on the camp trips.',
+          a: 'Sunglasses, light clothes and water. Soft drinks and water are included on the camp trips, and the camp has bathrooms.',
         },
         {
           q: 'Can we stay overnight?',
-          a: 'Yes. The Overnight Desert Safari at Sealine Camp starts from QAR 500, with check-in at 2pm and check-out at 9am, and includes transport from Sealine Beach Resort, dinner, traditional Arabian tents, sandboarding and swimming. For a private group camp, Al Rehlah Camp in Rawdet Rashid has indoor and outdoor seating and a bonfire area.',
+          a: 'Yes. The overnight camp at Sealine is QAR 250 per person, from 2pm to 9am the next morning. It includes everything in the full-day trip plus breakfast and dome tents for sleeping, 2 to 3 people per tent. For a private group camp, Al Rehlah Camp in Rawdet Rashid has indoor and outdoor seating and a bonfire area.',
         },
         {
           q: 'How do I book?',
@@ -145,27 +145,27 @@ export const SEO_LANDINGS: SeoLanding[] = [
       ar: [
         {
           q: 'كم تكلفة سفاري الصحراء في قطر؟',
-          a: 'يبدأ سفاري اليوم الكامل المشترك من 150 ريال للشخص، ويبدأ مبيت مخيم سيلين من 500 ريال، أما التخييم الخاص في مخيم الرحلة فسعره 1,500 ريال لمجموعتك.',
+          a: 'سعر سفاري اليوم الكامل 150 ريال للشخص، وسعر مبيت مخيم سيلين 250 ريال للشخص. أما التخييم الخاص في مخيم الرحلة فسعره 1,500 ريال لمجموعتك.',
         },
         {
           q: 'كم تستغرق الرحلة؟',
-          a: 'تستغرق رحلة سفاري اليوم الكامل المشتركة نحو 8 ساعات، من الساعة 2 ظهراً حتى 10 مساءً. ويمتد المبيت في المخيم من الساعة 2 ظهراً حتى 9 صباح اليوم التالي.',
+          a: 'تمتد رحلة سفاري اليوم الكامل من الساعة 2 ظهراً حتى 9 مساءً. ويمتد المبيت في المخيم من الساعة 2 ظهراً حتى 9 صباح اليوم التالي.',
         },
         {
           q: 'هل يشمل السعر التوصيل من الدوحة؟',
-          a: 'تشمل رحلة سفاري اليوم الكامل المشتركة ومبيت المخيم التوصيل من منتجع شاطئ سيلين. ويتوفر التوصيل من الدوحة مقابل رسوم إضافية، راسلنا على واتساب لترتيبه.',
+          a: 'لا. تصل بسيارتك إلى منتجع شاطئ سيلين، ومن هناك تنقلك مواصلات المخيم إلى المخيم. وإذا رغبت في التوصيل من موقعك في الدوحة أو في التطعيس، فرحلة السفاري الخاصة تشملهما. راسلنا على واتساب بعدد أفراد مجموعتك وموقعك لنرسل لك السعر.',
         },
         {
           q: 'هل الرحلة مناسبة للأطفال والعائلات؟',
-          a: 'نعم. الأطفال مرحَّب بهم ويحصلون على خصم في رحلة سفاري اليوم الكامل المشتركة. راسلنا على واتساب وسنطبّق الخصم قبل الدفع.',
+          a: 'نعم. الأطفال دون 3 سنوات مجاناً، ومن 3 إلى 10 سنوات يدفعون 90 ريال لسفاري اليوم الكامل أو 150 ريال للمبيت، ومن 11 سنة يدفعون سعر البالغين. راسلنا على واتساب للحجز بأسعار الأطفال.',
         },
         {
           q: 'ماذا نحضر معنا؟',
-          a: 'نظارات شمسية وملابس خفيفة وماء. وتشمل رحلات المخيم المشروبات الغازية والماء.',
+          a: 'نظارات شمسية وملابس خفيفة وماء. وتشمل رحلات المخيم المشروبات الغازية والماء، وتتوفر دورات مياه في المخيم.',
         },
         {
           q: 'هل يمكننا المبيت؟',
-          a: 'نعم. يبدأ سفاري المبيت في مخيم سيلين من 500 ريال، مع تسجيل الوصول الساعة 2 ظهراً والمغادرة الساعة 9 صباحاً، ويشمل التوصيل من منتجع شاطئ سيلين والعشاء والخيام العربية التقليدية والتزلج على الرمال والسباحة. وللتخييم الخاص بمجموعتك، يضم مخيم الرحلة في روضة راشد جلسات داخلية وخارجية ومنطقة للنار.',
+          a: 'نعم. سعر مبيت مخيم سيلين 250 ريال للشخص، من الساعة 2 ظهراً حتى 9 صباح اليوم التالي. ويشمل كل ما في سفاري اليوم الكامل، بالإضافة إلى الفطور وخيام قبّة للنوم تتسع الواحدة منها لشخصين إلى 3 أشخاص. وللتخييم الخاص بمجموعتك، يضم مخيم الرحلة في روضة راشد جلسات داخلية وخارجية ومنطقة للنار.',
         },
         {
           q: 'كيف أحجز؟',
