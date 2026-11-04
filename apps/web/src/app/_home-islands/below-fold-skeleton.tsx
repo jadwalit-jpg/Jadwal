@@ -92,18 +92,20 @@ export function CardGridSkeleton() {
 export function BelowFoldSkeleton() {
   return (
     <>
-      {/* Trending */}
-      <section className="bg-jadwal-bg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
-          <HeaderBar wide />
-          <TrendingRowSkeleton />
-        </div>
-      </section>
+      {/* Same order as home-below-fold.tsx (Featured first, then Trending) so
+          the skeleton → live swap never moves content. */}
       {/* Featured — a scrolling ROW, not a grid (see CardRowSkeleton). */}
       <section className="bg-jadwal-bg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
           <HeaderBar />
           <CardRowSkeleton />
+        </div>
+      </section>
+      {/* Trending */}
+      <section className="bg-jadwal-bg">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-14">
+          <HeaderBar wide />
+          <TrendingRowSkeleton />
         </div>
       </section>
       {/* Near You */}

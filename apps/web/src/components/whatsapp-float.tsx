@@ -34,10 +34,9 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { usePathname } from 'next/navigation';
-
-// +974 7749 9399 with spaces stripped, no leading plus —
-// wa.me expects digits only (E.164 minus the +).
-const WHATSAPP_NUMBER = '97477499399';
+// Number + link format live in lib/whatsapp.ts so the Red Sea package buttons
+// and the desert-safari cards reuse exactly the same wa.me deep link.
+import { whatsappHref } from '@/lib/whatsapp';
 
 export function WhatsAppFloat() {
   const { i18n } = useTranslation();
@@ -64,7 +63,7 @@ export function WhatsAppFloat() {
     ? 'مرحبًا، لدي سؤال بخصوص الجدول'
     : 'Hi, I have a question about AL Jadwal';
 
-  const href = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(greeting)}`;
+  const href = whatsappHref(greeting);
   const label = isRtl ? 'تواصل معنا على واتساب' : 'Chat with us on WhatsApp';
 
   // Compose responsive visibility:

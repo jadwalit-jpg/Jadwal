@@ -21,7 +21,8 @@ import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 import { ActivityCard, type ActivityCardActivity } from '@/components/ui';
 import { JsonLd } from '@/components/json-ld';
-import { fetchActivities } from '@/lib/seo-fetch';
+import { fetchActivitiesForLanding, type PublicActivityCard } from '@/lib/seo-fetch';
+import { whatsappHref } from '@/lib/whatsapp';
 import { getLanding, landingCopy, type LandingLang } from '@/lib/seo-landings';
 
 // Fully dynamic: the page reads the `jadwal_lang` cookie to render EN/AR
@@ -62,6 +63,15 @@ const GRID_LIMIT = 12;
  * both, so the count is stable across the launched registry.
  */
 const LCP_CANDIDATE_CARDS = 1;
+
+/**
+ * Ad landing pages only (`adLanding` in the registry): cards after the LCP
+ * candidate up to this index load EAGERLY (no preload hint). Paid visitors
+ * scroll fast; at ~640px wide the 2-column grid puts cards 3-4 just below the
+ * fold, and as lazy images they were met by the placeholder for several
+ * seconds — which read as a broken "black box" with the old placeholder.
+ */
+const EAGER_CARDS_AD_LANDING = 4;
 
 function siteOrigin(): string {
   try {
@@ -111,7 +121,7 @@ export async function generateMetadata({
 }
 
 /** Map a fetched catalog activity to the ActivityCard shape (coerce price to number). */
-function toCard(a: Awaited<ReturnType<typeof fetchActivities>>['data'][number]): ActivityCardActivity {
+function toCard(a: PublicActivityCard): ActivityCardActivity {
   return {
     id: a.id,
     slug: a.slug,
@@ -125,7 +135,23 @@ function toCard(a: Awaited<ReturnType<typeof fetchActivities>>['data'][number]):
     avgRating: a.avgRating ?? null,
     reviewCount: a.reviewCount ?? 0,
     bookingType: a.bookingType,
+    // Already in the list response; passed through so ad-landing cards can
+    // show the duration and per-person / per-group pricing.
+    durationValue: a.durationValue ?? null,
+    pricingModel: a.pricingModel ?? undefined,
+    checkInTime: a.checkInTime ?? null,
+    checkOutTime: a.checkOutTime ?? null,
   };
+}
+
+/** WhatsApp enquiry for one listing, in the page language (same wa.me format as the floating button). */
+function listingWhatsappHref(a: PublicActivityCard, isAr: boolean, origin: string): string {
+  const url = `${origin}${localePath(`/activity/${a.slug}`, isAr ? 'ar' : 'en')}`;
+  return whatsappHref(
+    isAr
+      ? `مرحباً الجدول، أرغب بالاستفسار عن: ${a.titleAr || a.titleEn}. أرجو إرسال التفاصيل. ${url}`
+      : `Hi AL Jadwal, I'm interested in: ${a.titleEn}. Please send me details. ${url}`,
+  );
 }
 
 export default async function LandingPage({
@@ -140,8 +166,13 @@ export default async function LandingPage({
   const isAr = lang === 'ar';
   const copy = landingCopy(landing, lang);
 
-  const { data } = await fetchActivities({ ...landing.filter, limit: GRID_LIMIT });
+  const { data } = await fetchActivitiesForLanding(landing.filter, GRID_LIMIT);
   const cards = data.map(toCard);
+  const ad = landing.adLanding === true;
+  const faq = landing.faq?.[lang] ?? [];
+  // Structured data only once every […] placeholder has been replaced, so a
+  // pending fact can never surface in Google's FAQ rich result.
+  const faqReady = faq.length > 0 && faq.every((f) => !/\[[^\]]*\]/.test(f.a));
 
   const related = landing.related
     .map(getLanding)
@@ -157,9 +188,20 @@ export default async function LandingPage({
     ],
   };
 
+  const faqJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faq.map((f) => ({
+      '@type': 'Question',
+      name: f.q,
+      acceptedAnswer: { '@type': 'Answer', text: f.a },
+    })),
+  };
+
   return (
     <>
       {landing.launched && <JsonLd data={breadcrumb} />}
+      {landing.launched && faqReady && <JsonLd data={faqJsonLd} />}
       <Navbar variant="solid" />
       <main className="min-h-[60vh] bg-jadwal-bg">
         {/* Hero */}
@@ -188,6 +230,16 @@ export default async function LandingPage({
                   // one of Lighthouse's LCP-discovery checks failed. See
                   // LCP_CANDIDATE_CARDS above for why the count is exactly 1.
                   preload={i < LCP_CANDIDATE_CARDS}
+                  {...(ad
+                    ? {
+                        eager: i < EAGER_CARDS_AD_LANDING,
+                        stayWindow: true,
+                        // PER_UNIT is one flat price for the whole booking (the
+                        // site showed it as "/ unit"); PER_PERSON is × guests.
+                        priceUnit: c.pricingModel === 'PER_UNIT' ? ('group' as const) : ('person' as const),
+                        whatsappHref: listingWhatsappHref(data[i], isAr, origin),
+                      }
+                    : {})}
                 />
               ))}
             </div>
@@ -208,6 +260,29 @@ export default async function LandingPage({
             </div>
           )}
         </section>
+
+        {/* FAQ (ad landing pages). Native <details> — no JS, readable by
+            crawlers, keyboard accessible. Omitted for a language without copy. */}
+        {faq.length > 0 && (
+          <section className="max-w-7xl mx-auto px-4 sm:px-6 pb-14">
+            <div className="max-w-3xl">
+            <h2 className="text-lg font-bold text-jadwal-text mb-4 text-start">
+              {isAr ? 'الأسئلة الشائعة' : 'Frequently asked questions'}
+            </h2>
+            <div className="divide-y divide-jadwal-border-subtle rounded-2xl border border-jadwal-border-subtle bg-jadwal-surface">
+              {faq.map((f) => (
+                <details key={f.q} className="group px-5 py-4">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-semibold text-jadwal-text text-start [&::-webkit-details-marker]:hidden">
+                    {f.q}
+                    <span aria-hidden="true" className="text-jadwal-text-muted transition-transform group-open:rotate-45 text-xl leading-none">+</span>
+                  </summary>
+                  <p className="mt-3 text-jadwal-text-muted leading-relaxed text-start">{f.a}</p>
+                </details>
+              ))}
+            </div>
+            </div>
+          </section>
+        )}
 
         {/* Internal links to related landing pages (launched only) */}
         {related.length > 0 && (

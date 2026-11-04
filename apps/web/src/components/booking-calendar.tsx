@@ -293,6 +293,7 @@ function MonthGrid({
   showPrices,
   minNights,
   selectionMode,
+  loading = false,
 }: {
   month: string;
   days: CalendarDay[];
@@ -306,6 +307,9 @@ function MonthGrid({
   /** Needed so a cell can tell an ARRIVAL pick from a DEPARTURE pick. */
   minNights?: number | null;
   selectionMode?: SelectionMode;
+  /** Availability still loading: day cells render as pulse placeholders of
+   *  the SAME size, so the grid's height never changes when data arrives. */
+  loading?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const [shakeDate, setShakeDate] = useState<string | null>(null);
@@ -361,6 +365,15 @@ function MonthGrid({
       <div className="grid grid-cols-7 gap-0">
         {cells.map((day, idx) => {
           if (!day) {
+            // Leading blanks stay blank; while loading, real day slots get a
+            // same-size pulse placeholder (h-14, like every day cell).
+            if (loading && idx >= firstDayOfWeek) {
+              return (
+                <div key={`loading-${idx}`} className="h-14 p-1" aria-hidden="true">
+                  <div className="h-full w-full rounded-lg bg-gray-100 dark:bg-slate-800/60 animate-pulse" />
+                </div>
+              );
+            }
             return <div key={`empty-${idx}`} className="h-14" />;
           }
 
@@ -488,30 +501,17 @@ export default function BookingCalendar({
   const maxMonth = `${maxDate.getFullYear()}-${String(maxDate.getMonth() + 1).padStart(2, '0')}`;
   const canGoForward = rightMonth < maxMonth;
 
-  if (isLoading) {
-    return (
-      <div className="p-6 rounded-2xl border border-gray-200/80 dark:border-slate-800/60 bg-white dark:bg-slate-900/50">
-        <div className="animate-pulse space-y-4">
-          <div className="h-5 bg-gray-200 dark:bg-slate-800 rounded w-48 mx-auto" />
-          <div className="grid grid-cols-2 gap-6">
-            <div className="space-y-2">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="h-10 bg-gray-100 dark:bg-slate-800/60 rounded" />
-              ))}
-            </div>
-            <div className="space-y-2">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="h-10 bg-gray-100 dark:bg-slate-800/60 rounded" />
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  // While availability loads, render the SAME frame (nav + two month grids +
+  // legend) with pulse placeholders in the day cells, instead of a separate
+  // compact skeleton. The grid's height depends only on the month, so nothing
+  // below the calendar moves when the data arrives. (Item 8, CLS: the old
+  // skeleton was ~350px vs ~800px loaded on a phone — a 0.267 layout shift on
+  // every booking page.)
   return (
-    <div className="p-4 sm:p-6 rounded-2xl border border-gray-200/80 dark:border-slate-800/60 bg-white dark:bg-slate-900/50">
+    <div
+      className="p-4 sm:p-6 rounded-2xl border border-gray-200/80 dark:border-slate-800/60 bg-white dark:bg-slate-900/50"
+      aria-busy={isLoading}
+    >
       {/* Navigation */}
       <div className="flex items-center justify-between mb-4">
         <button
@@ -549,6 +549,7 @@ export default function BookingCalendar({
           showPrices={showPrices}
           minNights={minNights}
           selectionMode={selectionMode}
+          loading={isLoading}
         />
         <div className="hidden sm:block w-px bg-gray-200 dark:bg-slate-800 shrink-0" />
         <MonthGrid
@@ -563,6 +564,7 @@ export default function BookingCalendar({
           showPrices={showPrices}
           minNights={minNights}
           selectionMode={selectionMode}
+          loading={isLoading}
         />
       </div>
 

@@ -28,8 +28,13 @@ export interface LandingCopy {
 export interface SeoLanding {
   slug: string;
   cluster: string;
-  /** How to surface matching activities: a real category slug OR a free-text search. */
-  filter: { category?: string; search?: string };
+  /**
+   * How to surface matching activities: a real category slug, a free-text
+   * search, OR a list of SUB-category slugs (resolved to ids at request time and
+   * queried via the catalog's `categoryId` filter, which honours child
+   * categories — the `category` slug filter does not).
+   */
+  filter: { category?: string; search?: string; subCategories?: string[] };
   /** Indexed + in sitemap only when true. Others are built but noindex (dormant). */
   launched: boolean;
   /** Sitemap priority (used only when launched). */
@@ -41,6 +46,19 @@ export interface SeoLanding {
   keywordAr: string;
   /** Full bilingual copy for launched pages; unlaunched derive from the keyword. */
   copy?: Partial<Record<LandingLang, LandingCopy>>;
+  /**
+   * Paid-ads landing page: cards show duration + "per person / per group",
+   * a WhatsApp enquiry button next to "View", and the first few card images
+   * load eagerly. Off by default so the other landing pages are unchanged.
+   */
+  adLanding?: boolean;
+  /**
+   * FAQ rendered under the cards. A language with no entry renders no FAQ.
+   * Answers may contain
+   * `[…]` placeholders while facts are pending — the page then skips the
+   * FAQPage structured data so placeholders never reach Google's rich results.
+   */
+  faq?: Partial<Record<LandingLang, { q: string; a: string }[]>>;
 }
 
 export const SEO_LANDINGS: SeoLanding[] = [
@@ -48,7 +66,13 @@ export const SEO_LANDINGS: SeoLanding[] = [
   {
     slug: 'desert-safari-qatar',
     cluster: 'desert',
-    filter: { category: 'leisure-fun' },
+    // Sub-categories of "Leisure & Fun" (admin: Category → Sub-category on the
+    // listing). "Desert Camp" holds the safari trips, "camping" the private
+    // camp. The old `category: 'leisure-fun'` filter also pulled in the
+    // "Tour Trip" city tours. NOTE: the API's categoryId filter ALSO matches a
+    // Leisure & Fun listing that has NO sub-category set at all, so every
+    // leisure listing should carry a sub-category in the admin.
+    filter: { subCategories: ['desert-camp', 'camping'] },
     launched: true,
     priority: 0.8,
     related: ['caravan-rental-qatar', 'water-activities-qatar'],
@@ -56,21 +80,98 @@ export const SEO_LANDINGS: SeoLanding[] = [
     keywordAr: 'سفاري الصحراء في قطر',
     copy: {
       en: {
-        h1: 'Desert Safari & Camping in Qatar',
+        h1: 'Desert Safari in Qatar',
+        // Max 3 lines on a phone (measured with the real Outfit font at 360,
+        // 375, 390 and 412px): the price line + the WhatsApp line only.
+        // Prices = live listings (4 Nov 2026): shared full-day trip QAR 150 per
+        // person, overnight Sealine camp QAR 500. The private 4x4 safaris
+        // (QAR 1,700 / 1,800) were removed from the catalog on 4 Nov, so they
+        // are not quoted. WhatsApp replies: 24/7 (confirmed by the business).
         intro:
-          'Book a desert safari in Qatar — Sealine dune trips, full-day adventures and overnight desert camps with dinner, dune bashing and stargazing. Compare packages from trusted local operators and reserve your spot on AL Jadwal.',
+          'Day trips from QAR 150 per person, overnight from QAR 500. Book online or WhatsApp us: we reply within 15 minutes, 24/7.',
         metaTitle: 'Desert Safari Qatar | Dune Adventures & Prices',
         metaDescription:
-          'Experience the thrill of Qatar\'s golden dunes. Compare overnight desert safari Qatar prices and enjoy dune bashing, camel rides and more with AL Jadwal.',
+          // No camel rides (none of the trips include one) and no dune bashing
+          // (only the removed private 4x4 trips listed it).
+          'Experience the thrill of Qatar\'s golden dunes. Compare overnight desert safari Qatar prices and enjoy sandboarding, desert camps and more with AL Jadwal.',
       },
       ar: {
-        h1: 'سفاري الصحراء والتخييم في قطر',
+        h1: 'سفاري الصحراء في قطر',
+        // Gulf wording. Same facts as the English intro, 3 lines on a phone
+        // (measured with the real Tajawal font at 360–412px).
         intro:
-          'احجز رحلة سفاري في صحراء قطر — رحلات الكثبان في سيلين، مغامرات اليوم الكامل ومخيمات المبيت مع العشاء وتطعيس الكثبان ومراقبة النجوم. قارن الباقات من مشغّلين موثوقين عبر AL Jadwal.',
+          'سفاري اليوم الكامل من 150 ريال للشخص، ومبيت مخيم سيلين من 500 ريال. احجز أونلاين أو راسلنا على واتساب: نرد خلال 15 دقيقة على مدار الساعة.',
         metaTitle: 'سفاري الصحراء في قطر — رحلات سيلين ومخيمات المبيت',
         metaDescription:
           'احجز سفاري الصحراء في قطر: رحلات سيلين، مخيمات يوم كامل ومبيت مع العشاء. قارن الأسعار والتقييمات عبر AL Jadwal.',
       },
+    },
+    adLanding: true,
+    // Answers use only what the live listings say (Nov 2026) plus the facts
+    // confirmed by the business (pickup, children, what to bring, payment).
+    // The Arabic FAQ carries the same facts, with the names used in the Arabic
+    // intro (سفاري اليوم الكامل، مخيم سيلين، واتساب، على مدار الساعة).
+    faq: {
+      en: [
+        {
+          q: 'How much does a desert safari in Qatar cost?',
+          a: 'A shared full-day desert safari starts from QAR 150 per person. The overnight Sealine camp starts from QAR 500, and private camping at Al Rehlah Camp is QAR 1,500 for your group.',
+        },
+        {
+          q: 'How long does it take?',
+          a: 'The shared full-day trip runs about 8 hours, from 2pm to 10pm. The overnight camp runs from 2pm to 9am the next morning.',
+        },
+        {
+          q: 'Is pickup from Doha included?',
+          a: 'The shared full-day trip and the overnight camp include transport from Sealine Beach Resort. Pickup from Doha is available for an extra fee. Message us on WhatsApp to arrange it.',
+        },
+        {
+          q: 'Is it suitable for children and families?',
+          a: "Yes. Children are welcome and get a discount on the shared full-day trip. Message us on WhatsApp and we'll apply it before you pay.",
+        },
+        {
+          q: 'What should we bring?',
+          a: 'Sunglasses, light clothes and water. Soft drinks and water are included on the camp trips.',
+        },
+        {
+          q: 'Can we stay overnight?',
+          a: 'Yes. The Overnight Desert Safari at Sealine Camp starts from QAR 500, with check-in at 2pm and check-out at 9am, and includes transport from Sealine Beach Resort, dinner, traditional Arabian tents, sandboarding and swimming. For a private group camp, Al Rehlah Camp in Rawdet Rashid has indoor and outdoor seating and a bonfire area.',
+        },
+        {
+          q: 'How do I book?',
+          a: 'Choose a trip above and book online, or message us on WhatsApp and we reply within 15 minutes, 24/7. Payment is made online by card when you book.',
+        },
+      ],
+      ar: [
+        {
+          q: 'كم تكلفة سفاري الصحراء في قطر؟',
+          a: 'يبدأ سفاري اليوم الكامل المشترك من 150 ريال للشخص، ويبدأ مبيت مخيم سيلين من 500 ريال، أما التخييم الخاص في مخيم الرحلة فسعره 1,500 ريال لمجموعتك.',
+        },
+        {
+          q: 'كم تستغرق الرحلة؟',
+          a: 'تستغرق رحلة سفاري اليوم الكامل المشتركة نحو 8 ساعات، من الساعة 2 ظهراً حتى 10 مساءً. ويمتد المبيت في المخيم من الساعة 2 ظهراً حتى 9 صباح اليوم التالي.',
+        },
+        {
+          q: 'هل يشمل السعر التوصيل من الدوحة؟',
+          a: 'تشمل رحلة سفاري اليوم الكامل المشتركة ومبيت المخيم التوصيل من منتجع شاطئ سيلين. ويتوفر التوصيل من الدوحة مقابل رسوم إضافية، راسلنا على واتساب لترتيبه.',
+        },
+        {
+          q: 'هل الرحلة مناسبة للأطفال والعائلات؟',
+          a: 'نعم. الأطفال مرحَّب بهم ويحصلون على خصم في رحلة سفاري اليوم الكامل المشتركة. راسلنا على واتساب وسنطبّق الخصم قبل الدفع.',
+        },
+        {
+          q: 'ماذا نحضر معنا؟',
+          a: 'نظارات شمسية وملابس خفيفة وماء. وتشمل رحلات المخيم المشروبات الغازية والماء.',
+        },
+        {
+          q: 'هل يمكننا المبيت؟',
+          a: 'نعم. يبدأ سفاري المبيت في مخيم سيلين من 500 ريال، مع تسجيل الوصول الساعة 2 ظهراً والمغادرة الساعة 9 صباحاً، ويشمل التوصيل من منتجع شاطئ سيلين والعشاء والخيام العربية التقليدية والتزلج على الرمال والسباحة. وللتخييم الخاص بمجموعتك، يضم مخيم الرحلة في روضة راشد جلسات داخلية وخارجية ومنطقة للنار.',
+        },
+        {
+          q: 'كيف أحجز؟',
+          a: 'اختر رحلة من الأعلى واحجز أونلاين، أو راسلنا على واتساب ونرد خلال 15 دقيقة على مدار الساعة. يتم الدفع أونلاين بالبطاقة عند الحجز.',
+        },
+      ],
     },
   },
   {

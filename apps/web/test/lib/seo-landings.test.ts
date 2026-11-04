@@ -57,9 +57,45 @@ describe('seo-landings config integrity', () => {
     }
   });
 
-  test('every landing has a usable filter (category OR search)', () => {
+  test('every landing has a usable filter (category, search OR sub-categories)', () => {
     for (const l of SEO_LANDINGS) {
-      expect(Boolean(l.filter.category) || Boolean(l.filter.search)).toBe(true);
+      expect(
+        Boolean(l.filter.category) || Boolean(l.filter.search) || Boolean(l.filter.subCategories?.length),
+      ).toBe(true);
+    }
+  });
+
+  test('desert-safari-qatar filters by the desert sub-categories, not the broad leisure category', () => {
+    // The broad `category: 'leisure-fun'` filter pulled the city tours onto the
+    // safari ad landing page. Guard against a revert.
+    const desert = SEO_LANDINGS.find((l) => l.slug === 'desert-safari-qatar')!;
+    expect(desert.filter.category).toBeUndefined();
+    expect(desert.filter.subCategories).toEqual(['desert-camp', 'camping']);
+  });
+
+  test('FAQ entries are complete and only ad landings carry the ad-card extras', () => {
+    for (const l of SEO_LANDINGS) {
+      for (const items of Object.values(l.faq ?? {})) {
+        for (const { q, a } of items ?? []) {
+          expect(q.trim().length).toBeGreaterThan(0);
+          expect(a.trim().length).toBeGreaterThan(0);
+        }
+      }
+    }
+    expect(SEO_LANDINGS.filter((l) => l.adLanding).map((l) => l.slug)).toEqual(['desert-safari-qatar']);
+  });
+
+  test('desert-safari-qatar FAQ is complete in English and Arabic, with no [ ] placeholders', () => {
+    // A bracket placeholder suppresses the FAQPage structured data on the page,
+    // so both languages must stay placeholder-free.
+    const desert = SEO_LANDINGS.find((l) => l.slug === 'desert-safari-qatar')!;
+    const en = desert.faq?.en ?? [];
+    const ar = desert.faq?.ar ?? [];
+    expect(en).toHaveLength(7);
+    expect(ar).toHaveLength(7);
+    for (const { q, a } of [...en, ...ar]) {
+      expect(q).not.toMatch(/\[[^\]]*\]/);
+      expect(a).not.toMatch(/\[[^\]]*\]/);
     }
   });
 

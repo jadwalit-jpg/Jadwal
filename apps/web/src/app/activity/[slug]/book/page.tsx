@@ -21,6 +21,7 @@ import api from '@/lib/api';
 import { getApiError } from '@/lib/api-error';
 import { sanitizeObject } from '@/lib/validation';
 import { fbTrack } from '@/lib/fb-pixel';
+import { trackEvent } from '@/lib/track';
 import { localized } from '@/lib/localize';
 import { useAuth } from '@/context/auth-context';
 import { useGeo } from '@/context/geo-context';
@@ -164,6 +165,9 @@ export default function BookActivityPage() {
   const fmtLocale = i18n.language?.toLowerCase().startsWith('ar') ? 'ar-u-nu-latn' : 'en-US';
   const queryClient = useQueryClient();
   const [showPhoneModal, setShowPhoneModal] = useState(false);
+  // Server error from the booking POST, shown under the phone field while the
+  // pop-up stays open (item 3). Cleared on the next Save & Continue.
+  const [phoneSubmitError, setPhoneSubmitError] = useState<string | null>(null);
   // Per-booking phone the customer enters via the modal. Distinct from
   // `user.phone` (account-level) — customer may use a different number
   // for this specific booking. Submitted as `bookingPhone` in the
@@ -483,6 +487,11 @@ export default function BookActivityPage() {
     return base + extrasTotal;
   }, [isHourly, isPerUnit, effectivePrice, guests, nights, slotHours, extrasTotal, activity?.durationValue, checkIn, checkOut, price, priceByDate]);
 
+  // DAILY booking with no check-in/check-out yet. Display-only flag: the price
+  // box shows "Select your dates to see the total" instead of the 1-night
+  // fallback breakdown. The calculation above is deliberately untouched.
+  const needsDates = !isHourly && nights === 0;
+
   // Per-night prices for the DAILY breakdown label — so a stay mixing special and
   // normal nights is shown explicitly (e.g. "2000 + 300") instead of a misleading
   // flat "rate × N nights". The total above already sums these.
@@ -736,24 +745,52 @@ export default function BookActivityPage() {
       queryClient.invalidateQueries({ queryKey: ['hourly-slots'], refetchType: 'all' });
       queryClient.invalidateQueries({ queryKey: ['hourly-cal'], refetchType: 'all' });
       queryClient.invalidateQueries({ queryKey: ['calendar'], refetchType: 'all' });
+      // The phone pop-up stays mounted during the request (item 3); close it
+      // before leaving so a back-navigation doesn't restore it open.
+      setPhoneSubmitError(null);
+      setShowPhoneModal(false);
       router.push(`/bookings/${bookingId}`);
     },
     onError: (err) => {
+      // The booking POST is what the phone pop-up's "Save & Continue" ends up
+      // calling, so a failure here is where customers were silently lost
+      // (toast only, pop-up already closed). Record WHAT the server answered —
+      // HTTP status + error code only, never the phone number — and surface the
+      // message inside the still-open pop-up (see BookingPhoneModal below).
+      const response = (err as { response?: { status?: number; data?: { errorCode?: unknown; message?: unknown } } })?.response;
+      const status = typeof response?.status === 'number' ? response.status : 0;
+      const serverCode = typeof response?.data?.errorCode === 'string' ? response.data.errorCode : undefined;
+      trackEvent('phone_save_failed', {
+        stage: 'server',
+        status,
+        code: serverCode ?? (status === 0 ? 'NETWORK' : `HTTP_${status}`),
+      });
+
       // Server-side consent guard (TermsAcceptedGuard) — defense in depth if the
       // inline accept step below was somehow bypassed. Refresh so the inline
       // accept prompt surfaces, and show a clear message instead of a generic error.
-      const detail = String((err as { response?: { data?: { message?: unknown } } })?.response?.data?.message ?? '');
+      const detail = String(response?.data?.message ?? '');
       if (/TERMS_NOT_ACCEPTED/i.test(detail)) {
         void checkAuth();
-        toast(t('booking.termsRequired', 'Please accept our Terms & Privacy to book.'), 'error');
+        const msg = t('booking.termsRequired', 'Please accept our Terms & Privacy to book.');
+        setPhoneSubmitError(msg);
+        toast(msg, 'error');
         return;
       }
-      toast(getApiError(err, 'Failed to create booking'), 'error');
+      const msg = getApiError(err, 'Failed to create booking');
+      setPhoneSubmitError(msg);
+      toast(msg, 'error');
     },
   });
 
   const handleSubmit = () => {
     if (!user) {
+      // Funnel measurement: "Continue to Book" tapped while signed out (the
+      // step right before the login redirect). No personal data in params.
+      trackEvent('continue_to_book_click', {
+        activity_slug: slug,
+        booking_type: isHourly ? 'HOURLY' : 'DAILY',
+      });
       // Save everything the user has picked so the redirect round-trip
       // doesn't force them to re-enter it. useEffect above hydrates from
       // the same key on mount and clears it. sessionStorage is tab-scoped,
@@ -1143,6 +1180,9 @@ export default function BookActivityPage() {
                   max={maxGuests}
                   onChange={setGuests}
                   ariaLabel={t('activity.guests')}
+                  // Typed entry bound to the same `guests` state and the same
+                  // 1..maxGuests bounds the +/− buttons enforce.
+                  editable
                 />
               </div>
               {guests >= maxGuests && maxGuests < 99 ? (
@@ -1182,7 +1222,11 @@ export default function BookActivityPage() {
                   )}
                   <div className="min-w-0">
                     <p className="font-semibold text-gray-900 dark:text-white text-sm leading-tight truncate">
-                      {localized(activity, 'title')}
+                      {/* Link back to the activity page (same slug) so the
+                          customer can re-check details without the back button. */}
+                      <Link href={`/activity/${slug}`} className="hover:text-jadwal-primary hover:underline transition-colors">
+                        {localized(activity, 'title')}
+                      </Link>
                     </p>
                     {activity.category && (
                       <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5 truncate">
@@ -1348,6 +1392,17 @@ export default function BookActivityPage() {
 
                 {/* Price Breakdown */}
                 <h3 className="font-semibold text-gray-900 dark:text-white mb-3">{t('booking.priceBreakdown')}</h3>
+                {/* DAILY with no dates yet: `bookingCost` still holds the 1-night
+                    fallback (see the useMemo above — unchanged), which rendered as
+                    "QAR 1200 × 0 night / Total 1200.00". Display-only: show a
+                    prompt instead of that misleading breakdown until dates exist. */}
+                {needsDates ? (
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    {t('booking.selectDatesForTotal', {
+                      defaultValue: 'Select your dates to see the total',
+                    })}
+                  </p>
+                ) : (
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-gray-500 dark:text-slate-400">{t('booking.basePrice')}</span>
@@ -1396,6 +1451,7 @@ export default function BookActivityPage() {
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* Vendor coupon code input — only show when logged in and no voucher selected */}
                 {!appliedCoupon && !selectedVoucher && user && (
@@ -1578,7 +1634,7 @@ export default function BookActivityPage() {
                     {t('booking.total')}
                   </span>
                   <span className="font-display text-2xl font-bold tracking-[-0.5px] text-jadwal-text tabular-nums">
-                    {bookingCost > 0
+                    {bookingCost > 0 && !needsDates
                       ? isPointsOnly
                         ? t('booking.paidWithPoints', { defaultValue: 'Paid with points' })
                         : `${currency} ${cashDue.toFixed(2)}`
@@ -1594,7 +1650,8 @@ export default function BookActivityPage() {
                 !isPointsOnly &&
                 loyaltyData &&
                 loyaltyData.pointsPerQar > 0 &&
-                bookingCost > 0 ? (
+                bookingCost > 0 &&
+                !needsDates ? (
                   <div className="mt-3 flex items-center gap-1.5 text-[11px] text-jadwal-accent-text justify-end">
                     <Gift
                       className="h-3 w-3 text-jadwal-accent"
@@ -1656,10 +1713,28 @@ export default function BookActivityPage() {
                   </Button>
                 )}
 
+                {/* Signed-out helper: tells the customer what "Continue to Book"
+                    leads to (a 10-second Google/email sign-in), so the login
+                    redirect doesn't read as a dead end. Same muted style as the
+                    terms note below. */}
+                {!user ? (
+                  <p className="text-[11px] text-jadwal-text-muted text-center mt-3">
+                    {t('booking.loginToBookHelper')}
+                  </p>
+                ) : null}
+
                 <p className="text-[11px] text-jadwal-text-muted text-center mt-3">
-                  {t('booking.termsNote', {
-                    defaultValue: 'By confirming you agree to our Terms',
+                  {/* Same sentence as before; the word "Terms" now links to the
+                      Terms page (LocaleLink keeps /ar/terms on the Arabic site). */}
+                  {t('booking.termsNotePrefix', {
+                    defaultValue: 'By confirming you agree to our ',
                   })}
+                  <Link
+                    href="/terms"
+                    className="underline underline-offset-2 hover:text-jadwal-primary transition-colors"
+                  >
+                    {t('booking.termsNoteLink', { defaultValue: 'Terms' })}
+                  </Link>
                 </p>
               </motion.div>
             </div>
@@ -1671,16 +1746,27 @@ export default function BookActivityPage() {
 
       <BookingPhoneModal
         isOpen={showPhoneModal}
-        onClose={() => setShowPhoneModal(false)}
+        onClose={() => {
+          setPhoneSubmitError(null);
+          setShowPhoneModal(false);
+        }}
         onSubmit={(phone) => {
           // Persist the phone for any subsequent retry/edit AND submit the
           // booking immediately with the freshly-entered value. We can't
           // rely on bookingPhone state here — React batches setState, so
           // a follow-up handleSubmit() in the same tick would still see ''.
+          //
+          // The pop-up now STAYS OPEN until the booking POST settles: success
+          // navigates to /bookings/<id> (onSuccess closes it first), failure
+          // shows the server's message under the field with the number kept,
+          // instead of closing and leaving the customer on the booking page
+          // with only a toast. The POST itself is unchanged.
           setBookingPhone(phone);
-          setShowPhoneModal(false);
+          setPhoneSubmitError(null);
           submitWithPhone(phone);
         }}
+        submitting={bookMutation.isPending}
+        submitError={phoneSubmitError}
         initialPhone={user?.phone || ''}
         detectedCountryIso={geoCountry?.isoCode}
       />
