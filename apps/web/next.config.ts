@@ -86,6 +86,18 @@ const nextConfig: NextConfig = {
       // (2026-06-04). /home was already indexed, so 301 it to the apex to
       // consolidate ranking signals and avoid duplicate content.
       { source: "/home", destination: "/", permanent: true },
+      // ── Old addresses Google still lists (item 7, Nov 2026) ──
+      // Previous site's /en|ar/activities/<id>, /en|ar/categories/<name> and
+      // site pages, renamed activities, /products/versace-yacht, /index.html.
+      // Data + rules in legacy-redirects.ts (unit-tested). Placed BEFORE the
+      // Shopify catch-alls so a specific /products/<handle> rule wins; the
+      // module's own catch-alls only cover /activities and /categories.
+      //
+      // /en/explore?page=N → /explore. Next.js passes the incoming query
+      // through to the destination, and the new /explore has fewer pages than
+      // the old one (?page=4 would be empty), so a `page` query resets to 1.
+      { source: "/en/explore", has: [{ type: "query", key: "page" }], destination: "/explore?page=1", permanent: true },
+      ...legacyRedirects(),
       // ── Legacy Shopify URL equity recovery (301) ──
       // The old store lived on Shopify with /collections/* and /products/*
       // (and /ar/* mirrors). ~900 backlinks still point there. The new
@@ -102,13 +114,6 @@ const nextConfig: NextConfig = {
       // Legacy Shopify `/ar/collections|/ar/products` equity is still recovered
       // above (now to the Arabic /ar/explore). Genuinely-dead legacy /ar paths
       // now correctly 404 instead of 301→/.
-
-      // ── Old addresses Google still lists (item 7, Nov 2026) ──
-      // Renamed / removed activities, the previous site's /ar|en/activities/<id>
-      // and /ar|en/categories/<name> patterns, /en/auth and /index.html.
-      // Data + rules live in legacy-redirects.ts (unit-tested). Catch-alls come
-      // last there, so specific rules always win.
-      ...legacyRedirects(),
     ];
   },
   async rewrites() {
