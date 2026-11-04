@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Minus, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -47,9 +47,13 @@ export function Stepper({
   // every valid keystroke and normalised on blur. Re-synced whenever `value`
   // changes from the outside (the +/− buttons, a parent clamp, hydration).
   const [draft, setDraft] = useState(String(value));
-  useEffect(() => {
+  // Adjust-state-during-render (React's recommended alternative to a syncing
+  // effect): when `value` changes from outside, reset the draft in the same render.
+  const [syncedValue, setSyncedValue] = useState(value);
+  if (value !== syncedValue) {
+    setSyncedValue(value);
     setDraft(String(value));
-  }, [value]);
+  }
 
   const commitDraft = (raw: string) => {
     setDraft(raw);
