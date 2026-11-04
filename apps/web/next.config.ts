@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { resolve } from "path";
+import { legacyRedirects } from "./legacy-redirects";
 
 // NEXT_PUBLIC_API_URL is required — dev reads it from apps/web/.env,
 // production reads it from the CI/Docker build arg. No fallbacks.
@@ -101,6 +102,13 @@ const nextConfig: NextConfig = {
       // Legacy Shopify `/ar/collections|/ar/products` equity is still recovered
       // above (now to the Arabic /ar/explore). Genuinely-dead legacy /ar paths
       // now correctly 404 instead of 301→/.
+
+      // ── Old addresses Google still lists (item 7, Nov 2026) ──
+      // Renamed / removed activities, the previous site's /ar|en/activities/<id>
+      // and /ar|en/categories/<name> patterns, /en/auth and /index.html.
+      // Data + rules live in legacy-redirects.ts (unit-tested). Catch-alls come
+      // last there, so specific rules always win.
+      ...legacyRedirects(),
     ];
   },
   async rewrites() {
