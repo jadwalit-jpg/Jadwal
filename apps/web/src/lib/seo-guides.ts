@@ -108,12 +108,12 @@ export const SEO_GUIDES: SeoGuide[] = [
             ar: 'البحر الداخلي (خور العديد) هو المشهد الطبيعي الوحيد الذي تملكه قطر ولا يكاد يوجد في مكان آخر — صحراء مفتوحة تصبّ مباشرة في خليج بحري تتحكّم فيه المدّ والجزر، على بُعد ساعة جنوب الدوحة. وهو محمية طبيعية معترف بها من اليونسكو، والوصول إليه يتطلب القيادة فوق الكثبان، ولهذا يستخدم كل المشغّلين سيارات الدفع الرباعي بدل الحافلات.',
           },
           {
-            en: 'A Full-Day Desert Safari starts at QAR 150 per person, which is the best-value single activity in the whole catalogue. Longer options run deeper into the day: an eight-hour Safari trip is QAR 1,700 and a full-day nineteen-hour version QAR 1,800.',
-            ar: 'يبدأ سفاري الصحراء ليوم كامل من 150 ر.ق للشخص، وهو أفضل نشاط منفرد من حيث القيمة في الكتالوج كله. وتمتد الخيارات الأطول أعمق في اليوم: رحلة سفاري من ثماني ساعات بـ1,700 ر.ق، ونسخة اليوم الكامل من تسع عشرة ساعة بـ1,800 ر.ق.',
+            en: 'A Full-Day Desert Safari is QAR 150 per person, from 2pm to 9pm, which is the best-value single activity in the whole catalogue. For pickup from your location in Doha and dune bashing, our private Safari Trip includes both, priced by group size and pickup location and booked on WhatsApp.',
+            ar: 'سفاري الصحراء ليوم كامل بـ150 ر.ق للشخص، من الساعة 2 ظهراً حتى 9 مساءً، وهو أفضل نشاط منفرد من حيث القيمة في الكتالوج كله. وللتوصيل من موقعك في الدوحة والتطعيس، تشملهما رحلة السفاري الخاصة، ويُحدَّد سعرها حسب عدد أفراد المجموعة وموقع التوصيل وتُحجز عبر واتساب.',
           },
           {
-            en: 'Staying the night is a different experience altogether. An Overnight Desert Safari at the Sealine Camp is QAR 500, and Al Rehlah Camp QAR 1,500. The reason to do it is the sky: Sealine is far enough from Doha that the light pollution drops away, which you will not get on a day trip.',
-            ar: 'المبيت تجربة مختلفة تماماً. سفاري صحراوي مع مبيت في مخيم سيلين بـ500 ر.ق، ومخيم الرحلة بـ1,500 ر.ق. والسبب الحقيقي للمبيت هو السماء: سيلين بعيدة بما يكفي عن الدوحة ليختفي التلوّث الضوئي، وهو ما لن تحصل عليه في رحلة نهارية.',
+            en: 'Staying the night is a different experience altogether. An Overnight Desert Safari at the Sealine Camp is QAR 250 per person, and Al Rehlah Camp QAR 1,500. The reason to do it is the sky: Sealine is far enough from Doha that the light pollution drops away, which you will not get on a day trip.',
+            ar: 'المبيت تجربة مختلفة تماماً. سفاري صحراوي مع مبيت في مخيم سيلين بـ250 ر.ق للشخص، ومخيم الرحلة بـ1,500 ر.ق. والسبب الحقيقي للمبيت هو السماء: سيلين بعيدة بما يكفي عن الدوحة ليختفي التلوّث الضوئي، وهو ما لن تحصل عليه في رحلة نهارية.',
           },
         ],
       },
@@ -229,12 +229,12 @@ export const SEO_GUIDES: SeoGuide[] = [
         heading: { en: 'Day 2 — the desert', ar: 'اليوم الثاني — الصحراء' },
         body: [
           {
-            en: 'Give the whole second day to the Inland Sea. A Full-Day Desert Safari at QAR 150 per person is the best value in the catalogue and covers dune driving and the drive south to Khor Al Adaid, where the desert meets tidal seawater.',
-            ar: 'خصّص اليوم الثاني بأكمله للبحر الداخلي. سفاري الصحراء ليوم كامل بـ150 ر.ق للشخص هو أفضل قيمة في الكتالوج، ويشمل القيادة على الكثبان والتوجّه جنوباً إلى خور العديد حيث تلتقي الصحراء بمياه البحر.',
+            en: 'Give the whole second day to the Inland Sea. A Full-Day Desert Safari at QAR 150 per person is the best value in the catalogue and covers the drive south to Khor Al Adaid, where the desert meets tidal seawater.',
+            ar: 'خصّص اليوم الثاني بأكمله للبحر الداخلي. سفاري الصحراء ليوم كامل بـ150 ر.ق للشخص هو أفضل قيمة في الكتالوج، ويشمل التوجّه جنوباً إلى خور العديد حيث تلتقي الصحراء بمياه البحر.',
           },
           {
-            en: 'If you want the longer version, an eight-hour Safari trip is QAR 1,700. And if your flight is not until the following day, an Overnight Desert Safari at Sealine Camp at QAR 500 is the better ending — the stars there are the part people actually remember, and you cannot see them from the city.',
-            ar: 'وإن أردت النسخة الأطول، فرحلة سفاري من ثماني ساعات بـ1,700 ر.ق. وإن كانت رحلتك في اليوم التالي، فسفاري صحراوي مع مبيت في مخيم سيلين بـ500 ر.ق نهاية أفضل — فالنجوم هناك هي ما يتذكّره الناس فعلاً، ولا يمكن رؤيتها من المدينة.',
+            en: 'If you want pickup from your location in Doha and dune bashing, our private Safari Trip includes both, priced by group size and pickup location and booked on WhatsApp. And if your flight is not until the following day, an Overnight Desert Safari at Sealine Camp at QAR 250 per person is the better ending — the stars there are the part people actually remember, and you cannot see them from the city.',
+            ar: 'وإن أردت التوصيل من موقعك في الدوحة والتطعيس، فرحلة السفاري الخاصة تشملهما، ويُحدَّد سعرها حسب عدد أفراد المجموعة وموقع التوصيل وتُحجز عبر واتساب. وإن كانت رحلتك في اليوم التالي، فسفاري صحراوي مع مبيت في مخيم سيلين بـ250 ر.ق للشخص نهاية أفضل — فالنجوم هناك هي ما يتذكّره الناس فعلاً، ولا يمكن رؤيتها من المدينة.',
           },
         ],
       },
@@ -285,12 +285,12 @@ export const SEO_GUIDES: SeoGuide[] = [
             ar: 'هل يكفي يومان للدوحة؟ للمدينة نفسها نعم — فهي صغيرة ومعالمها الرئيسية تقع على بُعد كيلومترات قليلة من بعضها. لكن ما لا يتيحه اليومان هو شمال البلاد: الزبارة وأشجار القرم في الذخيرة وقرية الجميل المهجورة تحتاج يوماً ثالثاً، تغطّيه جولة شمال قطر التاريخية بـ1,100 ر.ق.',
           },
           {
-            en: 'Do I need to hire a car? No. Taxis and ride apps are cheap and everywhere, and the metro is fast on the lines it covers, including the airport, Msheireb and Katara. The one thing you cannot reach on public transport is the desert — but every safari includes the drive, so that is handled.',
-            ar: 'هل أحتاج لاستئجار سيارة؟ لا. سيارات الأجرة وتطبيقات النقل رخيصة ومنتشرة، والمترو سريع على الخطوط التي يغطيها، ومنها المطار ومشيرب وكتارا. والشيء الوحيد الذي لا يمكن الوصول إليه بالمواصلات العامة هو الصحراء — لكن كل رحلة سفاري تشمل الطريق، فالأمر مُعالَج.',
+            en: 'Do I need to hire a car? Not for the city. Taxis and ride apps are cheap and everywhere, and the metro is fast on the lines it covers, including the airport, Msheireb and Katara. The desert is the exception: the camp trips start from Sealine Beach Resort, so you drive there yourself, or our private Safari Trip includes pickup from your location in Doha, priced by group size and pickup location and booked on WhatsApp.',
+            ar: 'هل أحتاج لاستئجار سيارة؟ ليس داخل المدينة. سيارات الأجرة وتطبيقات النقل رخيصة ومنتشرة، والمترو سريع على الخطوط التي يغطيها، ومنها المطار ومشيرب وكتارا. والاستثناء هو الصحراء: تنطلق رحلات المخيم من منتجع شاطئ سيلين، فتصل إليه بسيارتك، أو تشمل رحلة السفاري الخاصة التوصيل من موقعك في الدوحة، ويُحدَّد سعرها حسب عدد أفراد المجموعة وموقع التوصيل وتُحجز عبر واتساب.',
           },
           {
-            en: 'Which day should be the desert day? The second, if you can. It is the longer and more tiring of the two, and finishing on the Inland Sea leaves a better last impression than finishing in a souq. It also gives you day one to adjust to the heat before spending eight hours in it.',
-            ar: 'أي يوم ينبغي أن يكون يوم الصحراء؟ الثاني إن أمكن. فهو الأطول والأكثر إرهاقاً بين الاثنين، وإنهاء الرحلة عند البحر الداخلي يترك انطباعاً أخيراً أفضل من إنهائها في سوق. كما يمنحك اليوم الأول للتأقلم مع الحرارة قبل قضاء ثماني ساعات فيها.',
+            en: 'Which day should be the desert day? The second, if you can. It is the longer and more tiring of the two, and finishing on the Inland Sea leaves a better last impression than finishing in a souq. It also gives you day one to adjust to the heat before spending seven hours in it, from 2pm to 9pm.',
+            ar: 'أي يوم ينبغي أن يكون يوم الصحراء؟ الثاني إن أمكن. فهو الأطول والأكثر إرهاقاً بين الاثنين، وإنهاء الرحلة عند البحر الداخلي يترك انطباعاً أخيراً أفضل من إنهائها في سوق. كما يمنحك اليوم الأول للتأقلم مع الحرارة قبل قضاء سبع ساعات فيها، من الساعة 2 ظهراً حتى 9 مساءً.',
           },
           {
             en: 'What should I book before arriving? The desert day and anything on the water for a Friday or Saturday. Those two days are the local weekend, so demand concentrates there, and the larger boats and camps have limited places. Walking the souq, the Corniche and Katara needs no booking at all.',
@@ -353,12 +353,12 @@ export const SEO_GUIDES: SeoGuide[] = [
         heading: { en: 'Day trip or overnight?', ar: 'رحلة نهارية أم مبيت؟' },
         body: [
           {
-            en: 'They are genuinely different experiences and the price gap is smaller than people assume. A Full-Day Desert Safari is QAR 150 per person and covers the dunes and the Inland Sea. An Overnight Desert Safari at the Sealine Camp is QAR 500 — for that you add the evening and, crucially, the night sky.',
-            ar: 'هما تجربتان مختلفتان فعلاً، وفارق السعر أصغر مما يظن الناس. سفاري الصحراء ليوم كامل بـ150 ر.ق للشخص ويغطي الكثبان والبحر الداخلي. أما سفاري المبيت في مخيم سيلين فبـ500 ر.ق — وتضيف مقابله الأمسية، والأهم: سماء الليل.',
+            en: 'They are genuinely different experiences and the price gap is smaller than people assume. A Full-Day Desert Safari is QAR 150 per person and covers the dunes and the Inland Sea. An Overnight Desert Safari at the Sealine Camp is QAR 250 per person — for that you add the evening and, crucially, the night sky.',
+            ar: 'هما تجربتان مختلفتان فعلاً، وفارق السعر أصغر مما يظن الناس. سفاري الصحراء ليوم كامل بـ150 ر.ق للشخص ويغطي الكثبان والبحر الداخلي. أما سفاري المبيت في مخيم سيلين فبـ250 ر.ق للشخص — وتضيف مقابله الأمسية، والأهم: سماء الليل.',
           },
           {
-            en: 'If the stars are the reason you are going, the overnight is the only version that delivers, because Doha\'s light pollution reaches further than you would think. Longer packages exist too: an eight-hour Safari trip at QAR 1,700, a nineteen-hour full-day version at QAR 1,800, and Al Rehlah Camp at QAR 1,500.',
-            ar: 'إن كانت النجوم هي سبب ذهابك، فالمبيت هو النسخة الوحيدة التي تحقّق ذلك، لأن التلوّث الضوئي للدوحة يمتد أبعد مما تتصوّر. وتوجد باقات أطول أيضاً: رحلة سفاري من ثماني ساعات بـ1,700 ر.ق، ونسخة يوم كامل من تسع عشرة ساعة بـ1,800 ر.ق، ومخيم الرحلة بـ1,500 ر.ق.',
+            en: 'If the stars are the reason you are going, the overnight is the only version that delivers, because Doha\'s light pollution reaches further than you would think. Other options exist too: our private Safari Trip, with pickup from your location and dune bashing, priced by group size and pickup location and booked on WhatsApp, and Al Rehlah Camp at QAR 1,500.',
+            ar: 'إن كانت النجوم هي سبب ذهابك، فالمبيت هو النسخة الوحيدة التي تحقّق ذلك، لأن التلوّث الضوئي للدوحة يمتد أبعد مما تتصوّر. وتوجد خيارات أخرى أيضاً: رحلة السفاري الخاصة مع التوصيل من موقعك والتطعيس، ويُحدَّد سعرها حسب عدد أفراد المجموعة وموقع التوصيل وتُحجز عبر واتساب، ومخيم الرحلة بـ1,500 ر.ق.',
           },
         ],
       },
@@ -388,16 +388,16 @@ export const SEO_GUIDES: SeoGuide[] = [
         heading: { en: 'Which safari actually suits you', ar: 'أي سفاري يناسبك فعلاً' },
         body: [
           {
-            en: 'The word "safari" covers trips that differ by a factor of twelve in price, so it is worth knowing what separates them. The Full-Day Desert Safari at QAR 150 per person runs eight hours and is the one most visitors want: dune driving, the Inland Sea, and back to Doha the same evening. Everything above it is either longer, smaller, or both.',
-            ar: 'تشمل كلمة «سفاري» رحلات يفصل بينها فارق يصل إلى اثني عشر ضعفاً في السعر، لذا يستحق الأمر معرفة ما يميّزها. سفاري الصحراء ليوم كامل بـ150 ر.ق للشخص يمتد ثماني ساعات وهو ما يريده معظم الزوّار: قيادة على الكثبان، والبحر الداخلي، والعودة إلى الدوحة في المساء نفسه. وكل ما فوقه إما أطول أو أصغر أو كلاهما.',
+            en: 'The word "safari" covers quite different trips, so it is worth knowing what separates them. The Full-Day Desert Safari at QAR 150 per person runs from 2pm to 9pm and is the one most visitors want: the dunes and the Inland Sea, with camp transport from Sealine Beach Resort, where you drive yourself. Everything else is either longer, private, or both.',
+            ar: 'تشمل كلمة «سفاري» رحلات مختلفة تماماً، لذا يستحق الأمر معرفة ما يميّزها. سفاري الصحراء ليوم كامل بـ150 ر.ق للشخص يمتد من الساعة 2 ظهراً حتى 9 مساءً وهو ما يريده معظم الزوّار: الكثبان والبحر الداخلي، مع مواصلات المخيم من منتجع شاطئ سيلين الذي تصل إليه بسيارتك. وكل ما عداه إما أطول أو خاص أو كلاهما.',
           },
           {
-            en: 'The Safari trip at QAR 1,700 is also eight hours but takes up to 300 people, which tells you it is built for groups rather than couples. The full-day nineteen-hour version at QAR 1,800 caps at 80 and is the one that genuinely fills a day and a night. Both launch from Sealine, an hour south of Doha.',
-            ar: 'ورحلة السفاري بـ1,700 ر.ق مدّتها ثماني ساعات أيضاً لكنها تتّسع حتى 300 شخص، وهو ما يخبرك أنها مصمّمة للمجموعات لا للثنائيات. أما نسخة اليوم الكامل من تسع عشرة ساعة بـ1,800 ر.ق فتتّسع لثمانين وهي التي تملأ يوماً وليلة فعلاً. وكلتاهما تنطلقان من سيلين، على بُعد ساعة جنوب الدوحة.',
+            en: 'For pickup from your location in Doha and dune bashing, there is our private Safari Trip, priced by group size and pickup location and booked on WhatsApp.',
+            ar: 'وللتوصيل من موقعك في الدوحة والتطعيس، هناك رحلة السفاري الخاصة، ويُحدَّد سعرها حسب عدد أفراد المجموعة وموقع التوصيل وتُحجز عبر واتساب.',
           },
           {
-            en: 'For the night, the Overnight Desert Safari at the Sealine Camp is QAR 500 and takes up to 60. Al Rehlah Camp at QAR 1,500 is a different proposition again — it sits at Al Shahaniya rather than Sealine and caps at 30, so it is the quieter, more private end of the range.',
-            ar: 'وللمبيت، سفاري الصحراء الليلي في مخيم سيلين بـ500 ر.ق ويتّسع حتى ستين. أما مخيم الرحلة بـ1,500 ر.ق فهو خيار مختلف تماماً — يقع في الشحانية لا في سيلين ويتّسع لثلاثين فقط، وهو بذلك الطرف الأهدأ والأكثر خصوصية.',
+            en: 'For the night, the Overnight Desert Safari at the Sealine Camp is QAR 250 per person and takes up to 60. Al Rehlah Camp at QAR 1,500 is a different proposition again — it sits at Al Shahaniya rather than Sealine and caps at 30, so it is the quieter, more private end of the range.',
+            ar: 'وللمبيت، سفاري الصحراء الليلي في مخيم سيلين بـ250 ر.ق للشخص ويتّسع حتى ستين. أما مخيم الرحلة بـ1,500 ر.ق فهو خيار مختلف تماماً — يقع في الشحانية لا في سيلين ويتّسع لثلاثين فقط، وهو بذلك الطرف الأهدأ والأكثر خصوصية.',
           },
         ],
       },
@@ -418,8 +418,8 @@ export const SEO_GUIDES: SeoGuide[] = [
         heading: { en: 'Common questions', ar: 'أسئلة شائعة' },
         body: [
           {
-            en: 'How long does a desert safari take? The standard full-day trip runs eight hours door to door. Shorter versions exist but cut the drive south, which is most of what you came for. The nineteen-hour option is effectively a day plus an overnight.',
-            ar: 'كم تستغرق رحلة السفاري الصحراوي؟ تمتد رحلة اليوم الكامل المعتادة ثماني ساعات من الباب إلى الباب. وتوجد نسخ أقصر لكنها تختصر الطريق جنوباً، وهو معظم ما جئت من أجله. أما خيار التسع عشرة ساعة فهو عملياً يوم كامل مع مبيت.',
+            en: 'How long does a desert safari take? The full-day camp trip runs from 2pm to 9pm, and the overnight camp from 2pm to 9am the next morning.',
+            ar: 'كم تستغرق رحلة السفاري الصحراوي؟ تمتد رحلة اليوم الكامل من الساعة 2 ظهراً حتى 9 مساءً، ويمتد المبيت في المخيم من الساعة 2 ظهراً حتى 9 صباح اليوم التالي.',
           },
           {
             en: 'Do I need to book ahead? In peak season — November to February — yes, a few days out, and more for a Friday or Saturday, which is the local weekend. Outside those months availability is usually comfortable in the same week.',
@@ -430,8 +430,8 @@ export const SEO_GUIDES: SeoGuide[] = [
             ar: 'هل تستحق الزيارة صيفاً؟ بين يونيو وأغسطس تكون الصحراء نهاراً قاسية فعلاً — تتجاوز الحرارة 45 مئوية وتتوقف القيادة على الكثبان في منتصف النهار عن كونها نشاط عطلة. ولا تزال الرحلات تعمل، لكن اختر صباحاً باكراً أو مبيتاً، وفكّر في قضاء عصر الصيف على الماء بدلاً من ذلك.',
           },
           {
-            en: 'What does it cost for a family or a group? Because the day trip is priced per person at QAR 150, a family of four is QAR 600 for the day. The camps price differently — the QAR 500 overnight at Sealine takes up to 60 people, so for a larger group the per-head figure drops sharply. Work that out before assuming the cheaper headline price is the cheaper option.',
-            ar: 'كم تكلّف لعائلة أو مجموعة؟ لأن رحلة اليوم الواحد تُسعَّر للشخص بـ150 ر.ق، فإن عائلة من أربعة أفراد تدفع 600 ر.ق لليوم. أما المخيمات فتُسعَّر بطريقة مختلفة — فمبيت سيلين بـ500 ر.ق يتّسع حتى ستين شخصاً، ومع مجموعة أكبر ينخفض نصيب الفرد بشدة. احسب ذلك قبل أن تفترض أن السعر المعلن الأرخص هو الخيار الأرخص.',
+            en: 'What does it cost for a family or a group? The camp trips are priced per person: QAR 150 for the full day and QAR 250 overnight. Children under 3 go free, children aged 3 to 10 pay QAR 90 for the full day or QAR 150 overnight, and from 11 they pay the adult price, so two adults and two children aged 3 to 10 pay QAR 480 for the full day or QAR 800 overnight. The website charges every guest the adult price, so message us on WhatsApp to book with children\'s prices.',
+            ar: 'كم تكلّف لعائلة أو مجموعة؟ تُسعَّر رحلات المخيم للشخص: 150 ر.ق لليوم الكامل و250 ر.ق للمبيت. الأطفال دون 3 سنوات مجاناً، ومن 3 إلى 10 سنوات يدفعون 90 ر.ق لليوم الكامل أو 150 ر.ق للمبيت، ومن 11 سنة يدفعون سعر البالغين، فتدفع عائلة من شخصين بالغين وطفلين بين 3 و10 سنوات 480 ر.ق لليوم الكامل أو 800 ر.ق للمبيت. ويحتسب الموقع سعر البالغين لكل ضيف، لذا راسلنا على واتساب للحجز بأسعار الأطفال.',
           },
         ],
       },
@@ -600,8 +600,8 @@ export const SEO_GUIDES: SeoGuide[] = [
             ar: 'لا تحتاج للابتعاد كثيراً عن الدوحة للوصول إلى صحراء حقيقية. سفاري الصحراء ليوم كامل بـ150 ر.ق للشخص هو أفضل نشاط من حيث القيمة، ويتجه جنوباً إلى البحر الداخلي في خور العديد حيث تلتقي الكثبان بمياه البحر. ويستخدم المشغّلون سيارات الدفع الرباعي لأن المسافة الأخيرة فوق الرمل.',
           },
           {
-            en: 'If you have a free evening rather than a free day, an Overnight Desert Safari at Sealine Camp is QAR 500. The stars are the actual reason to do it — Doha\'s light reaches further than you would expect, and you will not see a sky like that from the city.',
-            ar: 'وإن كان لديك مساء حر بدل يوم حر، فسفاري صحراوي مع مبيت في مخيم سيلين بـ500 ر.ق. والنجوم هي السبب الحقيقي للقيام به — فضوء الدوحة يمتد أبعد مما تتوقّع، ولن ترى سماءً كهذه من المدينة.',
+            en: 'If you have a free evening rather than a free day, an Overnight Desert Safari at Sealine Camp is QAR 250 per person. The stars are the actual reason to do it — Doha\'s light reaches further than you would expect, and you will not see a sky like that from the city.',
+            ar: 'وإن كان لديك مساء حر بدل يوم حر، فسفاري صحراوي مع مبيت في مخيم سيلين بـ250 ر.ق للشخص. والنجوم هي السبب الحقيقي للقيام به — فضوء الدوحة يمتد أبعد مما تتوقّع، ولن ترى سماءً كهذه من المدينة.',
           },
         ],
       },
