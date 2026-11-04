@@ -9,7 +9,7 @@ import { legacyRedirects, allTargets, ar } from '../legacy-redirects';
 /** Minimal path-to-regexp subset used by these rules: literal segments, `:name`, `:name*`. */
 function matches(source: string, path: string): boolean {
   const re = '^' + source
-    .replace(/[.]/g, '\\.')
+    .replace(/[\\.]/g, '\\$&')
     .replace(/\/:(\w+)\*/g, '(?:/.*)?')
     .replace(/:(\w+)/g, '[^/]+') + '$';
   return new RegExp(re).test(path);
