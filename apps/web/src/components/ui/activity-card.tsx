@@ -12,9 +12,14 @@ import { Rating } from './rating';
 
 // Neutral soft-gradient blur-up placeholder shown while a card image loads —
 // replaces the hard grey box with a gentle reveal. Generic (not per-image) so
-// there is ZERO backend/fetch surface: a tiny (~20×13) WebP, ~99 bytes, inlined.
+// there is ZERO backend/fetch surface: a tiny (20×13) WebP, 66 bytes, inlined.
+//
+// 2026-11: the previous placeholder decoded to PURE BLACK (avg RGB 0,0,0), so a
+// lazy card that had not loaded yet — e.g. just below the fold on
+// /desert-safari-qatar — showed as a black box and read as a broken image.
+// This one is a light sand→slate gradient (avg RGB 231,233,239).
 export const CARD_IMG_BLUR =
-  'data:image/webp;base64,UklGRjAAAABXRUJQVlA4ICQAAACwAgCdASoUAA0APt1cpkyopSOiMAgBEBuJaQAAeyAA/vKhAAA=';
+  'data:image/webp;base64,UklGRjoAAABXRUJQVlA4IC4AAADwAgCdASoUAA0APrVKnkonJCKhsAgA4BaJaQDCgDDWAAD+8ciLBdFl+DaiAAAA';
 
 type Size = 'sm' | 'md' | 'lg' | 'fill';
 
@@ -42,6 +47,10 @@ export interface ActivityCardActivity {
   durationType?: string | null;
   bookingType?: string;
   pricingModel?: string;
+  /** DAILY listings: check-in / check-out clock times ("14:00"), shown as the
+   *  duration when `durationValue` is null (flexible night count). */
+  checkInTime?: string | null;
+  checkOutTime?: string | null;
   badge?: 'bestseller' | 'toprated' | 'new' | null;
   bookedToday?: number;
   capacity?: number;
@@ -62,6 +71,30 @@ export interface ActivityCardProps {
    * they do, which is the opposite of the intent.
    */
   preload?: boolean;
+  /**
+   * Fetch the image immediately (`loading="eager"`) without the preload hint.
+   * For the first few cards of a page that is the ad landing page, so a
+   * visitor who scrolls within a second or two never meets the placeholder.
+   * Ignored when `preload` is set (preload already implies eager).
+   */
+  eager?: boolean;
+  /**
+   * Show how the price is charged next to it: per person, or a flat price for
+   * the whole group/unit. Maps from the listing's `pricingModel`
+   * (PER_PERSON / PER_UNIT). Omitted → price only (unchanged default).
+   */
+  priceUnit?: 'person' | 'group';
+  /**
+   * When set, renders a WhatsApp button next to "View" that opens this
+   * pre-built wa.me link (new tab). Omitted → "View" only (unchanged default).
+   */
+  whatsappHref?: string;
+  /**
+   * DAILY listings with no fixed night count have no `durationValue`; with this
+   * on, the card shows the listing's check-in – check-out window ("14:00 – 09:00")
+   * in the duration slot instead of nothing. Omitted → unchanged default.
+   */
+  stayWindow?: boolean;
 }
 
 const sizeClass: Record<Size, { w: string; img: string; title: string; price: string }> = {
@@ -76,6 +109,8 @@ function formatDuration(
   durationMinutes: number | null | undefined,
   bookingType: string | undefined,
   lang: string,
+  checkInTime?: string | null,
+  checkOutTime?: string | null,
 ): string | null {
   // Prefer explicit durationValue from API (HOURLY → hours, DAILY → nights)
   if (durationValue && durationValue > 0) {
@@ -85,6 +120,11 @@ function formatDuration(
     }
     if (lang === 'ar') return `${durationValue} ساعة`;
     return `${durationValue}h`;
+  }
+  // DAILY with no fixed night count (flexible stay): show the listing's own
+  // check-in → check-out window instead of nothing (e.g. "14:00 – 09:00").
+  if (bookingType === 'DAILY' && checkInTime && checkOutTime) {
+    return `${checkInTime} – ${checkOutTime}`;
   }
   // Legacy fallback: durationMinutes
   if (durationMinutes && durationMinutes > 0) {
@@ -118,6 +158,10 @@ export function ActivityCard({
   className,
   href,
   preload = false,
+  eager = false,
+  priceUnit,
+  whatsappHref,
+  stayWindow = false,
 }: ActivityCardProps) {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
@@ -143,6 +187,9 @@ export function ActivityCard({
     activity.durationMinutes,
     activity.bookingType,
     lang,
+    // Opt-in only (landing pages) so other card lists are unchanged.
+    stayWindow ? activity.checkInTime : undefined,
+    stayWindow ? activity.checkOutTime : undefined,
   );
 
   const badgeLabel = activity.badge
@@ -196,7 +243,9 @@ export function ActivityCard({
               // /explore fix (#602).
               {...(preload
                 ? ({ preload: true } as const)
-                : ({ loading: 'lazy' } as const))}
+                : eager
+                  ? ({ loading: 'eager' } as const)
+                  : ({ loading: 'lazy' } as const))}
               // In dev the API serves uploads from `http://localhost:4000/...`,
               // which the Next.js image optimizer (running *inside* the
               // `jadwal-web` container) cannot reach — localhost resolves to
@@ -295,6 +344,13 @@ export function ActivityCard({
                     {wasStr}
                   </span>
                 ) : null}
+                {priceUnit ? (
+                  <span className="text-[12px] text-jadwal-text-muted">
+                    {priceUnit === 'group'
+                      ? t('activity.perGroup', { defaultValue: 'per group' })
+                      : t('activity.perPerson', { defaultValue: 'per person' })}
+                  </span>
+                ) : null}
               </div>
             </div>
             {activity.avgRating != null ? (
@@ -311,13 +367,31 @@ export function ActivityCard({
               activity title because the same card already has TWO links
               to the same href (image + title); a third unlabeled "View"
               link would read as duplicate to screen-reader users. */}
-          <Link
-            href={finalHref}
-            aria-label={`${t('explore.view', { defaultValue: 'View' })} ${title}`}
-            className="inline-flex w-full items-center justify-center rounded-xl bg-blue-600 px-4 py-2 text-xs font-medium text-white transition-all hover:bg-blue-700"
-          >
-            {t('explore.view', { defaultValue: 'View' })}
-          </Link>
+          <div className={whatsappHref ? 'grid grid-cols-2 gap-2' : 'flex'}>
+            <Link
+              href={finalHref}
+              aria-label={`${t('explore.view', { defaultValue: 'View' })} ${title}`}
+              className="inline-flex w-full items-center justify-center rounded-xl bg-blue-600 px-4 py-2 text-xs font-medium text-white transition-all hover:bg-blue-700"
+            >
+              {t('explore.view', { defaultValue: 'View' })}
+            </Link>
+            {whatsappHref ? (
+              // Opt-in (SEO landing pages): a WhatsApp enquiry pre-filled with
+              // the listing name, same wa.me format as the floating button.
+              <a
+                href={whatsappHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`${t('activity.whatsapp', { defaultValue: 'WhatsApp' })} · ${title}`}
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#25D366] px-4 py-2 text-xs font-medium text-white transition-all hover:bg-[#1ebe5b]"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="h-3.5 w-3.5 fill-white shrink-0">
+                  <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" />
+                </svg>
+                {t('activity.whatsapp', { defaultValue: 'WhatsApp' })}
+              </a>
+            ) : null}
+          </div>
         </div>
       </div>
     </article>

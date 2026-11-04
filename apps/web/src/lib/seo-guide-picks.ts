@@ -10,7 +10,7 @@
  */
 
 import type { ActivityCardActivity } from '@/components/ui';
-import { fetchActivities, type PublicActivityCard } from '@/lib/seo-fetch';
+import { fetchActivitiesForLanding, type PublicActivityCard } from '@/lib/seo-fetch';
 import type { SeoLanding } from '@/lib/seo-landings';
 
 /** How many activities to pull per related landing before de-duping. */
@@ -45,14 +45,18 @@ export function toCard(a: PublicActivityCard): ActivityCardActivity {
  *
  * Round-robin, not concatenate: a guide related to three landings should show
  * all three topics, not four cards from whichever landing happened to sort
- * first. `fetchActivities` swallows its own failures and returns an empty list,
+ * first. The fetch helpers swallow their own failures and returns an empty list,
  * so a dead API degrades this block to nothing instead of 500-ing the article.
  */
 export async function guidePicks(landings: SeoLanding[]): Promise<ActivityCardActivity[]> {
   if (landings.length === 0) return [];
 
+  // fetchActivitiesForLanding understands every filter shape a landing can
+  // have (category slug, free-text search, or sub-category slugs such as the
+  // desert page's ['desert-camp', 'camping']), so guides draw from exactly the
+  // same inventory as the landing page they link to.
   const results = await Promise.all(
-    landings.map((l) => fetchActivities({ ...l.filter, limit: PICKS_PER_LANDING })),
+    landings.map((l) => fetchActivitiesForLanding(l.filter, PICKS_PER_LANDING)),
   );
 
   const seen = new Set<string>();

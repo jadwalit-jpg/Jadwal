@@ -102,6 +102,10 @@ export default function Footer() {
                   {t('footer.trending')}
                 </button>
               </li>
+              {/* Ad landing page — linked here (not the main nav) so the menu
+                  structure stays as is. LocaleLink → /ar/desert-safari-qatar
+                  on the Arabic site. */}
+              <li><Link href="/desert-safari-qatar" className="text-sm text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{t('footer.desertSafari')}</Link></li>
             </ul>
           </div>
 

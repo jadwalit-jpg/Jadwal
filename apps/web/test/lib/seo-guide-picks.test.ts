@@ -11,8 +11,14 @@ const fetchActivities = jest.fn();
 
 // Mocked with a factory so the real module (which does `import 'server-only'`)
 // never executes — that import throws outside a React Server Component.
+// guidePicks calls fetchActivitiesForLanding(filter, limit); for a plain
+// category/search landing that is exactly fetchActivities({ ...filter, limit }),
+// so the mock forwards in that shape and the assertions below stay on the one
+// spy. The sub-category resolution itself is covered in seo-fetch-landing.test.ts.
 jest.mock('@/lib/seo-fetch', () => ({
   fetchActivities: (...args: unknown[]) => fetchActivities(...args),
+  fetchActivitiesForLanding: (filter: Record<string, unknown>, limit: number) =>
+    fetchActivities({ ...filter, limit }),
 }));
 
 import { guidePicks, MAX_PICKS, PICKS_PER_LANDING } from '@/lib/seo-guide-picks';

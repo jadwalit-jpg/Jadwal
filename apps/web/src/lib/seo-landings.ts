@@ -28,8 +28,13 @@ export interface LandingCopy {
 export interface SeoLanding {
   slug: string;
   cluster: string;
-  /** How to surface matching activities: a real category slug OR a free-text search. */
-  filter: { category?: string; search?: string };
+  /**
+   * How to surface matching activities: a real category slug, a free-text
+   * search, OR a list of SUB-category slugs (resolved to ids at request time and
+   * queried via the catalog's `categoryId` filter, which honours child
+   * categories — the `category` slug filter does not).
+   */
+  filter: { category?: string; search?: string; subCategories?: string[] };
   /** Indexed + in sitemap only when true. Others are built but noindex (dormant). */
   launched: boolean;
   /** Sitemap priority (used only when launched). */
@@ -41,6 +46,19 @@ export interface SeoLanding {
   keywordAr: string;
   /** Full bilingual copy for launched pages; unlaunched derive from the keyword. */
   copy?: Partial<Record<LandingLang, LandingCopy>>;
+  /**
+   * Paid-ads landing page: cards show duration + "per person / per group",
+   * a WhatsApp enquiry button next to "View", and the first few card images
+   * load eagerly. Off by default so the other landing pages are unchanged.
+   */
+  adLanding?: boolean;
+  /**
+   * FAQ rendered under the cards. A language with no entry renders no FAQ
+   * (e.g. Arabic until the bracketed facts are confirmed). Answers may contain
+   * `[…]` placeholders while facts are pending — the page then skips the
+   * FAQPage structured data so placeholders never reach Google's rich results.
+   */
+  faq?: Partial<Record<LandingLang, { q: string; a: string }[]>>;
 }
 
 export const SEO_LANDINGS: SeoLanding[] = [
@@ -48,7 +66,13 @@ export const SEO_LANDINGS: SeoLanding[] = [
   {
     slug: 'desert-safari-qatar',
     cluster: 'desert',
-    filter: { category: 'leisure-fun' },
+    // Sub-categories of "Leisure & Fun" (admin: Category → Sub-category on the
+    // listing). "Desert Camp" holds the four safari trips, "camping" the private
+    // camp. The old `category: 'leisure-fun'` filter also pulled in the
+    // "Tour Trip" city tours. NOTE: the API's categoryId filter ALSO matches a
+    // Leisure & Fun listing that has NO sub-category set at all, so every
+    // leisure listing should carry a sub-category in the admin.
+    filter: { subCategories: ['desert-camp', 'camping'] },
     launched: true,
     priority: 0.8,
     related: ['caravan-rental-qatar', 'water-activities-qatar'],
@@ -56,21 +80,65 @@ export const SEO_LANDINGS: SeoLanding[] = [
     keywordAr: 'سفاري الصحراء في قطر',
     copy: {
       en: {
-        h1: 'Desert Safari & Camping in Qatar',
+        h1: 'Desert Safari in Qatar',
+        // Prices and inclusions come from the live listings (Nov 2026): shared
+        // full-day QAR 150/person, private 8-hour 4x4 trip QAR 1,700/group,
+        // private full-day QAR 1,800/group, overnight Sealine camp QAR 500,
+        // private camp QAR 1,500. No camel ride or Inland Sea stop is listed on
+        // any trip, so neither is claimed here.
         intro:
-          'Book a desert safari in Qatar — Sealine dune trips, full-day adventures and overnight desert camps with dinner, dune bashing and stargazing. Compare packages from trusted local operators and reserve your spot on AL Jadwal.',
+          'From QAR 150 per person for a shared full-day trip, private 4x4 trips for your group from QAR 1,700, and an overnight camp at Sealine from QAR 500. Private trips include a Land Cruiser with an experienced driver for dune bashing, transport and a camp visit. The shared and overnight camp trips include transport from Sealine Beach Resort, dinner, traditional Arabian tents, sandboarding, volleyball, swimming, soft drinks and water. Book online or message us on WhatsApp and we reply within 15 minutes, 9am to 11pm.',
         metaTitle: 'Desert Safari Qatar | Dune Adventures & Prices',
         metaDescription:
           'Experience the thrill of Qatar\'s golden dunes. Compare overnight desert safari Qatar prices and enjoy dune bashing, camel rides and more with AL Jadwal.',
       },
       ar: {
-        h1: 'سفاري الصحراء والتخييم في قطر',
+        h1: 'سفاري الصحراء في قطر',
+        // Gulf wording (سفاري، كشتة، مخيم، تخييم في سيلين). Same facts as the
+        // English intro; refine once the remaining details are confirmed.
         intro:
-          'احجز رحلة سفاري في صحراء قطر — رحلات الكثبان في سيلين، مغامرات اليوم الكامل ومخيمات المبيت مع العشاء وتطعيس الكثبان ومراقبة النجوم. قارن الباقات من مشغّلين موثوقين عبر AL Jadwal.',
+          'سفاري صحراء بيوم كامل مشتركة من 150 ريال للشخص، كشتة خاصة بسيارات دفع رباعي لمجموعتك من 1,700 ريال، ومبيت في مخيم سيلين من 500 ريال. الرحلات الخاصة تشمل لاندكروزر مع سواق خبرة للتطعيس، والنقل، وزيارة المخيم. ورحلات المخيم المشتركة والمبيت تشمل النقل من منتجع سيلين بيتش، والعشاء، والخيام العربية التقليدية، والتزلج على الرمل، والكرة الطائرة، والسباحة، والمشروبات الغازية والماء. احجز أونلاين أو راسلنا على واتساب ونرد عليك خلال 15 دقيقة من 9 صباحاً إلى 11 مساءً.',
         metaTitle: 'سفاري الصحراء في قطر — رحلات سيلين ومخيمات المبيت',
         metaDescription:
           'احجز سفاري الصحراء في قطر: رحلات سيلين، مخيمات يوم كامل ومبيت مع العشاء. قارن الأسعار والتقييمات عبر AL Jadwal.',
       },
+    },
+    adLanding: true,
+    // Answers use only what the live listings say (Nov 2026). Every […] is a
+    // fact still to be confirmed by the business — replace before merging.
+    // Arabic FAQ is intentionally absent until those facts are confirmed;
+    // write it in Gulf wording (سفاري، كشتة، مخيم، تخييم في سيلين).
+    faq: {
+      en: [
+        {
+          q: 'How much does a desert safari in Qatar cost?',
+          a: 'A shared full-day desert safari starts from QAR 150 per person. Private 4x4 trips are priced per group: QAR 1,700 for the 8-hour safari and QAR 1,800 for the full-day trip. The overnight Sealine camp starts from QAR 500, and private camping at Al Rehlah Camp is QAR 1,500 for your group.',
+        },
+        {
+          q: 'How long does it take?',
+          a: 'The shared full-day trip runs about 8 hours, from 2pm to 10pm. The private 8-hour safari is listed from 2pm to 10pm [confirm: its inclusions say "Duration of trip: 4 hours"]. The private full-day trip and the overnight camp run from 2pm to 9am the next morning [confirm how much of that is driving vs. time at camp].',
+        },
+        {
+          q: 'Is pickup from Doha included?',
+          a: 'The shared full-day trip and the overnight camp include transport from Sealine Beach Resort. The private 4x4 trips include transportation [confirm: pickup from Doha? which areas or hotels].',
+        },
+        {
+          q: 'Is it suitable for children and families?',
+          a: '[Confirm age limits per trip, e.g. minimum age for dune bashing, and whether children pay the full price on the shared trip.]',
+        },
+        {
+          q: 'What should we bring?',
+          a: '[Confirm the list: sunglasses, light clothes, water.] Soft drinks and water are included on the camp trips.',
+        },
+        {
+          q: 'Can we stay overnight?',
+          a: 'Yes. The Overnight Desert Safari at Sealine Camp starts from QAR 500, with check-in at 2pm and check-out at 9am, and includes transport from Sealine Beach Resort, dinner, traditional Arabian tents, sandboarding and swimming. For a private group camp, Al Rehlah Camp in Rawdet Rashid has indoor and outdoor seating and a bonfire area.',
+        },
+        {
+          q: 'How do I book?',
+          a: 'Choose a trip above and book online, or message us on WhatsApp and we reply within 15 minutes, 9am to 11pm. Payment is made online by card when you book [confirm whether paying on the day is also offered].',
+        },
+      ],
     },
   },
   {
