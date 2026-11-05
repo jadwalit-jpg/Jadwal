@@ -685,7 +685,9 @@
         "mapPinRequired": "يرجى تحديد الموقع على الخريطة",
         "coverRequired": "صورة الغلاف مطلوبة",
         "galleryMin": "يرجى رفع صورتين على الأقل لمعرض الصور",
-        "cancellationRequired": "يرجى اختيار سياسة الإلغاء"
+        "cancellationRequired": "يرجى اختيار سياسة الإلغاء",
+        "minGuestsRange": "يجب أن يكون الحد الأدنى لعدد الضيوف بين 1 و500",
+        "minGuestsOverCapacity": "لا يمكن أن يتجاوز الحد الأدنى لعدد الضيوف ما يتسع له الحجز الواحد ({{max}})"
       },
       "cover": {
         "invalidType": "نوع الملف غير صالح. استخدم JPG أو PNG أو WebP أو GIF.",
@@ -834,7 +836,14 @@
         "policyNonRefDesc": "لا يتوفر استرداد عند الإلغاء",
         "navBack": "← رجوع",
         "navNext": "التالي →",
-        "submitActivity": "إرسال النشاط"
+        "submitActivity": "إرسال النشاط",
+        "fieldMinGuests": "الحد الأدنى لعدد الضيوف",
+        "hintMinGuests": "يُحتسب السعر لهذا العدد من الضيوف على الأقل. يمكن للعميل حجز عدد أقل ويدفع سعر الحد الأدنى. اترك 1 لعدم وجود حد أدنى.",
+        "pricePerPersonNight": "السعر لكل شخص / ليلة (ر.ق)",
+        "previewTagDailyPerson": "لكل شخص · لكل ليلة",
+        "previewPerPersonNight": "لكل شخص / ليلة",
+        "pmPerPersonExampleDaily": "مخيم صحراوي 250 ر.ق/شخص × 3 ضيوف × ليلة واحدة = 750 ر.ق",
+        "pmPerUnitExampleDaily": "شاليه 1,200 ر.ق/ليلة (نفس السعر لأي عدد من الضيوف)"
       }
     }
   }

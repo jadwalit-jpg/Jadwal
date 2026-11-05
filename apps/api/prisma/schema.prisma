@@ -326,6 +326,10 @@ model Activity {
   gallery           String[]
   bookingType       BookingType        @default(HOURLY)
   pricingModel      PricingModel       @default(PER_PERSON)
+  // Minimum number of guests charged on a PER_PERSON listing: the price uses
+  // max(guests, minGuests) while the booking keeps the real guest count.
+  // Ignored for PER_UNIT (flat) pricing. 1 = no minimum.
+  minGuests         Int                @default(1)
   // HOURLY: checkInTime = activity start, checkOutTime = activity end (same day)
   // DAILY:  checkInTime = guest arrival time, checkOutTime = departure time (different days, checkOutTime can be earlier than checkInTime)
   checkInTime       String?
@@ -374,8 +378,8 @@ enum BookingType {
 }
 
 enum PricingModel {
-  PER_PERSON // price × guests (HOURLY default; not applicable to DAILY)
-  PER_UNIT   // flat price — guests don't affect price (e.g. ship, villa, yacht)
+  PER_PERSON // price × guests (HOURLY default). DAILY: nightly price × nights × guests (opt-in)
+  PER_UNIT   // flat price — guests don't affect price (e.g. ship, villa, yacht). DAILY default
 }
 
 enum ActivityStatus {

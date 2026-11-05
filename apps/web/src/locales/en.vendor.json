@@ -685,7 +685,9 @@
         "mapPinRequired": "Please pin the location on the map",
         "coverRequired": "Cover image is required",
         "galleryMin": "Please upload at least 2 gallery images",
-        "cancellationRequired": "Please select a cancellation policy"
+        "cancellationRequired": "Please select a cancellation policy",
+        "minGuestsRange": "Minimum guests must be between 1 and 500",
+        "minGuestsOverCapacity": "Minimum guests cannot be more than one booking can hold ({{max}})"
       },
       "cover": {
         "invalidType": "Invalid file type. Use JPG, PNG, WebP, or GIF.",
@@ -834,7 +836,14 @@
         "policyNonRefDesc": "No refund available for cancellations",
         "navBack": "← Back",
         "navNext": "Next →",
-        "submitActivity": "Submit Activity"
+        "submitActivity": "Submit Activity",
+        "fieldMinGuests": "Minimum guests",
+        "hintMinGuests": "Guests are charged for at least this many people. Customers can still book fewer and pay the minimum. Leave 1 for no minimum.",
+        "pricePerPersonNight": "Price per Person / Night (QAR)",
+        "previewTagDailyPerson": "PER PERSON · PER NIGHT",
+        "previewPerPersonNight": "Per person / night",
+        "pmPerPersonExampleDaily": "Desert camp 250 QAR/person × 3 guests × 1 night = 750 QAR",
+        "pmPerUnitExampleDaily": "Chalet 1,200 QAR/night (same price for any group size)"
       }
     }
   }

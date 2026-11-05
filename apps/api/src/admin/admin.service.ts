@@ -24,6 +24,7 @@ import { ReferenceDataCacheService } from '../redis/reference-data-cache.service
 import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { assertUnitConfigConsistent } from '../common/validators/unit-config';
+import { assertMinGuestsConsistent } from '../common/validators/min-guests';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage, addMonthsClamped } from '../bookings/bookings.service';
 import { assignMissingUnits } from '../bookings/assign-missing-units';
@@ -2232,6 +2233,16 @@ export class AdminService {
         data.capacity = derived;
       }
     }
+    assertMinGuestsConsistent({
+      minGuests: dto.minGuests ?? activity.minGuests,
+      pricingModel: dto.pricingModel ?? activity.pricingModel,
+      bookingType: dto.bookingType ?? activity.bookingType,
+      hasUnits: mergedHasUnits,
+      unitCount: mergedUnitCount as number,
+      unitCapacity: mergedUnitCapacity as number,
+      capacity: data.capacity !== undefined ? data.capacity : mergedCapacity,
+    });
+
     if (categoryId) data.category = { connect: { id: categoryId } };
     if (subCategoryId !== undefined) data.subCategoryId = subCategoryId || null;
     if (cityId) data.city = { connect: { id: cityId } };

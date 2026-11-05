@@ -1,0 +1,22 @@
+{
+  "_comment": "Shared price cases for the server (apps/api/src/bookings/pricing.ts) and the web booking preview (apps/web/src/lib/booking-pricing.ts). Both test suites run every case. Amounts are integer cents.",
+  "daily": [
+    { "name": "PER_PERSON, minimum 2, 1 guest, 1 night: charged as 2 guests", "nightCents": [25000], "pricingModel": "PER_PERSON", "guests": 1, "minGuests": 2, "chargedGuests": 2, "expectedCents": 50000 },
+    { "name": "PER_PERSON, minimum 2, 2 guests, 1 night", "nightCents": [25000], "pricingModel": "PER_PERSON", "guests": 2, "minGuests": 2, "chargedGuests": 2, "expectedCents": 50000 },
+    { "name": "PER_PERSON, minimum 2, 3 guests, 1 night: charged as 3 guests", "nightCents": [25000], "pricingModel": "PER_PERSON", "guests": 3, "minGuests": 2, "chargedGuests": 3, "expectedCents": 75000 },
+    { "name": "PER_PERSON, minimum 2, 1 guest, 2 nights with a special-date price", "nightCents": [25000, 30000], "pricingModel": "PER_PERSON", "guests": 1, "minGuests": 2, "chargedGuests": 2, "expectedCents": 110000 },
+    { "name": "PER_PERSON, no minimum (1), 4 guests, 1 night", "nightCents": [25000], "pricingModel": "PER_PERSON", "guests": 4, "minGuests": 1, "chargedGuests": 4, "expectedCents": 100000 },
+    { "name": "PER_UNIT (existing resort): price x nights, guests ignored (unchanged)", "nightCents": [120000, 120000], "pricingModel": "PER_UNIT", "guests": 5, "minGuests": 1, "chargedGuests": 1, "expectedCents": 240000 },
+    { "name": "PER_UNIT ignores a stored minimum (unchanged)", "nightCents": [120000], "pricingModel": "PER_UNIT", "guests": 1, "minGuests": 4, "chargedGuests": 1, "expectedCents": 120000 },
+    { "name": "PER_UNIT with special-date prices: plain sum (unchanged)", "nightCents": [35000, 50000, 35000], "pricingModel": "PER_UNIT", "guests": 2, "minGuests": 1, "chargedGuests": 1, "expectedCents": 120000 }
+  ],
+  "hourly": [
+    { "name": "PER_PERSON, no minimum, 3 guests, base duration (unchanged)", "priceCents": 15000, "hoursBooked": 2, "durationHours": 2, "pricingModel": "PER_PERSON", "guests": 3, "minGuests": 1, "chargedGuests": 3, "expectedCents": 45000 },
+    { "name": "PER_PERSON, no minimum, 2 guests, double duration (unchanged)", "priceCents": 15000, "hoursBooked": 4, "durationHours": 2, "pricingModel": "PER_PERSON", "guests": 2, "minGuests": 1, "chargedGuests": 2, "expectedCents": 60000 },
+    { "name": "PER_PERSON, no minimum, pro-rata rounding (unchanged)", "priceCents": 9999, "hoursBooked": 4, "durationHours": 3, "pricingModel": "PER_PERSON", "guests": 1, "minGuests": 1, "chargedGuests": 1, "expectedCents": 13332 },
+    { "name": "PER_PERSON, minimum 4, 2 guests: charged as 4 guests", "priceCents": 10000, "hoursBooked": 1, "durationHours": 1, "pricingModel": "PER_PERSON", "guests": 2, "minGuests": 4, "chargedGuests": 4, "expectedCents": 40000 },
+    { "name": "PER_PERSON, minimum 4, 6 guests: charged as 6 guests", "priceCents": 10000, "hoursBooked": 1, "durationHours": 1, "pricingModel": "PER_PERSON", "guests": 6, "minGuests": 4, "chargedGuests": 6, "expectedCents": 60000 },
+    { "name": "PER_UNIT (yacht): flat, guests ignored (unchanged)", "priceCents": 120000, "hoursBooked": 2, "durationHours": 2, "pricingModel": "PER_UNIT", "guests": 5, "minGuests": 1, "chargedGuests": 1, "expectedCents": 120000 },
+    { "name": "PER_UNIT (yacht), double duration, stored minimum ignored (unchanged)", "priceCents": 120000, "hoursBooked": 4, "durationHours": 2, "pricingModel": "PER_UNIT", "guests": 1, "minGuests": 3, "chargedGuests": 1, "expectedCents": 240000 }
+  ]
+}
