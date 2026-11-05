@@ -161,7 +161,10 @@
       "reviewSubmitted": "Review submitted!",
       "selectRating": "Please select a rating",
       "couponApplied": "Coupon applied: -{{amount}} discount"
-    }
+    },
+    "minGuestsNote": "Minimum {{count}} guests",
+    "perPersonNight": "/ person · night",
+    "minimumShort": "minimum"
   },
   "booking": {
     "myBookings": "My Bookings",
@@ -275,7 +278,10 @@
     "toast": {
       "cancelled": "Booking cancelled.",
       "cancelFailed": "Could not cancel this booking."
-    }
+    },
+    "guestsCount": "{{count}} guests",
+    "guestsCountMinimum": "{{count}} guests (minimum)",
+    "minChargeNote": "Minimum charge: {{count}} guests"
   },
   "likes": {
     "title": "Liked Activities",

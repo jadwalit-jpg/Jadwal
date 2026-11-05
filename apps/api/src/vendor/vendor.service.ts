@@ -13,6 +13,7 @@ import { AvailabilityCacheService } from '../redis/availability-cache.service';
 import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { assertUnitConfigConsistent } from '../common/validators/unit-config';
+import { assertMinGuestsConsistent } from '../common/validators/min-guests';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage } from '../bookings/bookings.service';
 import { assignMissingUnits } from '../bookings/assign-missing-units';
@@ -267,6 +268,24 @@ export class VendorService {
       throw new BadRequestException('Total capacity (units × capacity per unit) cannot exceed 10000');
     }
 
+    // DAILY listings were always priced per unit (price × nights) and the forms
+    // send PER_UNIT for them. Keep that default for an API call that omits the
+    // pricing model, so per-person DAILY pricing is only ever an explicit choice
+    // (the column default is PER_PERSON, which used to be ignored for DAILY).
+    if (dto.bookingType === 'DAILY' && activityData.pricingModel === undefined) {
+      activityData.pricingModel = 'PER_UNIT' as any;
+    }
+
+    assertMinGuestsConsistent({
+      minGuests: dto.minGuests,
+      pricingModel: activityData.pricingModel ?? 'PER_PERSON',
+      bookingType: dto.bookingType,
+      hasUnits,
+      unitCount,
+      unitCapacity,
+      capacity: capacity ?? null,
+    });
+
     // Strip DTO-only fields before spreading into Prisma create. `blocks` and
     // `specialPrices` are nested sub-resources (not Activity columns) — pull them
     // out here so they don't leak into activity.create, then create them below.
@@ -391,6 +410,16 @@ export class VendorService {
     if (capacityOverride != null && capacityOverride > 10000) {
       throw new BadRequestException('Total capacity (units × capacity per unit) cannot exceed 10000');
     }
+
+    assertMinGuestsConsistent({
+      minGuests: dto.minGuests ?? activity.minGuests,
+      pricingModel: dto.pricingModel ?? activity.pricingModel,
+      bookingType: dto.bookingType ?? activity.bookingType,
+      hasUnits: mergedHasUnits,
+      unitCount: unitCount ?? activity.unitCount,
+      unitCapacity: unitCapacity ?? activity.unitCapacity,
+      capacity: capacityOverride !== undefined ? capacityOverride : (dto.capacity ?? activity.capacity),
+    });
 
     // Strip DTO-only fields before spreading into Prisma update
     const { capacity: _c, categoryId, cityId, extraServices, ...restUpdateData } = activityData;
