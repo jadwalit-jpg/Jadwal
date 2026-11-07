@@ -12,6 +12,7 @@ import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
 import { Search, ChevronLeft, ChevronRight, CheckCircle, Clock, XCircle, CheckCheck, ChevronDown, Tag, CreditCard, Download, AlertTriangle, CheckCircle2, Sparkles } from 'lucide-react';
 import CustomSelect from '@/components/custom-select';
+import { CancelBookingModal, canAdminCancelBooking } from './_components/cancel-booking-modal';
 
 interface Booking {
   id: string;
@@ -77,6 +78,7 @@ export default function AdminBookingsPage() {
   const [decisionModal, setDecisionModal] = useState<{ booking: Booking; action: 'APPROVE' | 'REJECT' } | null>(null);
   const [amountInput, setAmountInput] = useState('');
   const [noteInput, setNoteInput] = useState('');
+  const [cancelTarget, setCancelTarget] = useState<Booking | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -97,6 +99,21 @@ export default function AdminBookingsPage() {
       setNoteInput('');
     },
     onError: (err) => { toast(getApiError(err, 'Failed to record decision'), 'error'); },
+  });
+
+  // Admin cancel: the existing status endpoint. The server stamps who/when,
+  // frees the slot, refunds a paid amount as Wanasa points (or fails a pending
+  // payment) and notifies the customer, exactly as it did before this button.
+  const cancelMutation = useMutation({
+    mutationFn: async (bookingId: string) => {
+      await api.patch(`/admin/bookings/${bookingId}/status`, { status: 'CANCELLED' });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+      toast('Booking cancelled');
+      setCancelTarget(null);
+    },
+    onError: (err) => { toast(getApiError(err, 'Failed to cancel booking'), 'error'); },
   });
 
   const openApprove = (b: Booking) => {
@@ -541,6 +558,32 @@ export default function AdminBookingsPage() {
                                 </div>
                               </div>
                             )}
+
+                            {/* ── Cancelled: who and when ── */}
+                            {booking.status === 'CANCELLED' && booking.cancelledAt && (
+                              <p className="mt-4 pt-4 border-t border-gray-200/60 dark:border-slate-700/40 text-xs text-gray-500 dark:text-slate-400">
+                                Cancelled by {booking.cancelledBy ?? '—'} on {new Date(booking.cancelledAt).toLocaleString()}
+                              </p>
+                            )}
+
+                            {/* ── Admin cancel (pending / confirmed only) ── */}
+                            {canAdminCancelBooking(booking) && (
+                              <div className="mt-4 pt-4 border-t border-gray-200/60 dark:border-slate-700/40 flex flex-wrap items-center justify-between gap-3">
+                                <p className="text-xs text-gray-500 dark:text-slate-400">
+                                  Cancel this booking on the customer&apos;s behalf. The customer is notified and the date is freed.
+                                </p>
+                                <div className="shrink-0" onClick={e => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setCancelTarget(booking)}
+                                    disabled={cancelMutation.isPending}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-50 border border-red-200 dark:border-red-800/50"
+                                  >
+                                    <XCircle className="h-3.5 w-3.5" aria-hidden="true" /> Cancel booking
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       )}
@@ -642,6 +685,15 @@ export default function AdminBookingsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {cancelTarget && (
+        <CancelBookingModal
+          booking={cancelTarget}
+          pending={cancelMutation.isPending}
+          onConfirm={(id) => cancelMutation.mutate(id)}
+          onClose={() => { if (!cancelMutation.isPending) setCancelTarget(null); }}
+        />
       )}
     </AdminLayout>
   );
