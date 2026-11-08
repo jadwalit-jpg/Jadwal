@@ -113,7 +113,13 @@ export default function AdminBookingsPage() {
       toast('Booking cancelled');
       setCancelTarget(null);
     },
-    onError: (err) => { toast(getApiError(err, 'Failed to cancel booking'), 'error'); },
+    onError: (err) => {
+      toast(getApiError(err, 'Failed to cancel booking'), 'error');
+      // The booking may have changed under us (e.g. a payment captured, 409):
+      // drop the dialog's snapshot and refetch so the row shows the live state.
+      queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+      setCancelTarget(null);
+    },
   });
 
   const openApprove = (b: Booking) => {

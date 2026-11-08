@@ -138,18 +138,24 @@ describe('admin cancel booking (existing status endpoint)', () => {
     const admin = await makeAdmin();
     const { admin: adminSvc, bookings } = makeServices();
     const date = futureDate(12);
-    const booking = await makePaidConfirmedBooking(seed, date);
-
-    await expect(bookings.createBooking(seed.customer.id, {
+    const booking = await makePaidConfirmedBooking(seed, date); // fills all 10 seats
+    // A different customer, so the pre-cancel rejection is the capacity check,
+    // not the "you already have a booking for this slot" guard.
+    const other = await ctx.prisma.user.create({
+      data: { fullName: 'Other Customer', email: 'other@test.com', password: '$2b$10$dummy.hash.for.tests.never.used.in.auth', role: 'CUSTOMER', emailVerified: true },
+    });
+    const attempt = () => bookings.createBooking(other.id, {
       activityId: seed.activity.id, checkInDate: date, slotTime: '10:00', guests: 1, bookingPhone: '+97455123456',
-    } as any)).rejects.toThrow();
+    } as any);
+
+    await expect(attempt()).rejects.toThrow(/fully booked/i);
 
     await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED');
 
-    const res: any = await bookings.createBooking(seed.customer.id, {
-      activityId: seed.activity.id, checkInDate: date, slotTime: '10:00', guests: 1, bookingPhone: '+97455123456',
-    } as any);
+    const res: any = await attempt();
     expect(res.booking.status).toBe('PENDING');
+    const created = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    expect(created.customerId).toBe(other.id);
   });
 
   test('a repeat cancel is a no-op: one customer notification, cancelledAt unchanged', async () => {

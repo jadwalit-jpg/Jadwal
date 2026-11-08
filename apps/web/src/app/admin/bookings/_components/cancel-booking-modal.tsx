@@ -8,8 +8,9 @@ import { XCircle } from 'lucide-react';
  * Confirms the existing admin cancel, PATCH /admin/bookings/:id/status with
  * CANCELLED. The server does everything else exactly as it always has: stamps
  * who and when, frees the slot, refunds a paid amount to the customer as
- * Wanasa points (not to the card) or marks a pending payment as failed, and
- * notifies the customer. This dialog only spells that out before the click.
+ * Wanasa points (not to the card), returns any redeemed Wanasa points, marks a
+ * pending payment as failed, and notifies the customer. This dialog only
+ * spells that out before the click.
  *
  * The admin panel is English-only, like every other admin page.
  */
@@ -21,9 +22,12 @@ export type CancelableBooking = {
   startDatetime: string;
   totalPrice: string;
   currencyCode: string;
+  /** Wanasa points the customer redeemed on this booking (0 = none). */
+  pointsRedeemed: number;
   customer: { fullName: string };
   activity: { titleEn: string; bookingType: 'HOURLY' | 'DAILY' };
-  payment: { amount: string; status: string } | null;
+  /** A points-only booking has amount 0, status SUCCESS, method WANASA_POINTS. */
+  payment: { amount: string; status: string; method?: string } | null;
 };
 
 /**
@@ -40,12 +44,33 @@ export function paidAmount(b: Pick<CancelableBooking, 'payment'>): number {
   return b.payment?.status === 'SUCCESS' ? Number(b.payment.amount) : 0;
 }
 
+/**
+ * Wanasa points the server will return on cancel. They were debited when the
+ * booking was created and come back whenever the booking has a payment row,
+ * which every points-funded booking has (points-only ones get a synthetic
+ * SUCCESS payment of 0).
+ */
+export function pointsReturned(b: Pick<CancelableBooking, 'payment' | 'pointsRedeemed'>): number {
+  return b.payment ? Number(b.pointsRedeemed) || 0 : 0;
+}
+
 /** Same date format the bookings table uses (booking times are stored as local wall-clock tagged UTC). */
 export function formatBookingDate(b: Pick<CancelableBooking, 'startDatetime' | 'activity'>): string {
   const d = new Date(b.startDatetime);
   return b.activity.bookingType === 'HOURLY'
     ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })
     : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+/** "QAR 505", "QAR 405 + 100 Wanasa points", "500 Wanasa points" or "Not paid yet". */
+export function amountPaidLabel(b: Pick<CancelableBooking, 'payment' | 'pointsRedeemed' | 'currencyCode'>): string {
+  const currency = b.currencyCode || 'QAR';
+  const cash = paidAmount(b);
+  const points = pointsReturned(b);
+  const parts: string[] = [];
+  if (cash > 0) parts.push(`${currency} ${cash.toLocaleString()}`);
+  if (points > 0) parts.push(`${points.toLocaleString()} Wanasa points`);
+  return parts.length ? parts.join(' + ') : 'Not paid yet';
 }
 
 export function CancelBookingModal({
@@ -60,7 +85,8 @@ export function CancelBookingModal({
   onClose: () => void;
 }) {
   const currency = booking.currencyCode || 'QAR';
-  const paid = paidAmount(booking);
+  const cash = paidAmount(booking);
+  const points = pointsReturned(booking);
   const paymentPending = booking.payment?.status === 'PENDING';
 
   return (
@@ -69,6 +95,7 @@ export function CancelBookingModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="admin-cancel-booking-title"
+        onKeyDown={(e) => { if (e.key === 'Escape' && !pending) onClose(); }}
         className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-slate-800 max-w-md w-full"
       >
         <div className="p-6">
@@ -100,16 +127,17 @@ export function CancelBookingModal({
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-gray-500 dark:text-slate-400">Amount paid</dt>
-              <dd className="font-semibold text-gray-900 dark:text-white text-end">
-                {paid > 0 ? `${currency} ${paid.toLocaleString()}` : 'Not paid yet'}
-              </dd>
+              <dd className="font-semibold text-gray-900 dark:text-white text-end">{amountPaidLabel(booking)}</dd>
             </div>
           </dl>
 
           <p className="text-sm text-gray-600 dark:text-slate-400 mb-5">
             The customer will be notified and the date becomes available again.
-            {paid > 0 && (
-              <> The paid amount ({currency} {paid.toLocaleString()}) is refunded to the customer as Wanasa points, not to their card.</>
+            {cash > 0 && (
+              <> The paid amount ({currency} {cash.toLocaleString()}) is refunded to the customer as Wanasa points, not to their card.</>
+            )}
+            {points > 0 && (
+              <> The {points.toLocaleString()} redeemed Wanasa points are returned to the customer.</>
             )}
             {paymentPending && <> The pending payment is marked as failed.</>}
             {' '}This cannot be undone.
@@ -118,6 +146,7 @@ export function CancelBookingModal({
           <div className="flex items-center justify-end gap-3">
             <button
               type="button"
+              autoFocus
               onClick={onClose}
               disabled={pending}
               className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 rounded-xl hover:bg-gray-200 dark:hover:bg-slate-700 disabled:opacity-50"
