@@ -8,6 +8,9 @@ import { sanitize } from '@/lib/validation';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
 import { Undo2, AlertTriangle, CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ExternalRefundChoice, type ExternalRefundPayload, type ExternalRefundSelection } from '../_components/external-refund-fields';
+
+const NO_CHOICE: ExternalRefundSelection = { choice: null, ready: false };
 
 /**
  * Admin refund queue — a focused view of every booking waiting on a refund
@@ -67,14 +70,21 @@ export default function AdminRefundQueuePage() {
     staleTime: 30_000,
   });
 
+  // Approve: how the refund is handled (Wanasa points, or already done outside
+  // the website). No default; Confirm waits for a choice.
+  const [decisionRefund, setDecisionRefund] = useState<ExternalRefundSelection>(NO_CHOICE);
+
   const decisionMutation = useMutation({
-    mutationFn: async ({ bookingId, action, amount, note }: {
+    mutationFn: async ({ bookingId, action, amount, note, externalRefund }: {
       bookingId: string;
       action: 'APPROVE' | 'REJECT';
       amount?: number;
       note?: string;
+      externalRefund?: ExternalRefundPayload;
     }) => {
-      await api.post(`/bookings/${bookingId}/refund-decision`, { action, amount, note });
+      // `externalRefund` (admin only): the refund was already made outside the
+      // website; the server marks it REFUNDED with the method and adds no points.
+      await api.post(`/bookings/${bookingId}/refund-decision`, { action, amount, note, ...(externalRefund ? { externalRefund } : {}) });
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'refunds'] });
@@ -94,6 +104,7 @@ export default function AdminRefundQueuePage() {
     setDecisionModal({ booking: b, action: 'APPROVE' });
     setAmountInput(String(suggested));
     setNoteInput('');
+    setDecisionRefund(NO_CHOICE);
   };
 
   const openReject = (b: Booking) => {
@@ -109,7 +120,14 @@ export default function AdminRefundQueuePage() {
       : Number(decisionModal.booking.totalPrice);
     // Client-side sanitize belt-and-suspenders — backend SanitizePipe also scrubs.
     const cleanNote = noteInput.trim() ? sanitize(noteInput.trim()).slice(0, 1000) : undefined;
-    if (decisionModal.action === 'APPROVE') {
+    if (decisionModal.action === 'APPROVE' && !decisionRefund.ready) {
+      toast('Choose how the refund is handled first', 'error');
+      return;
+    }
+    if (decisionModal.action === 'APPROVE' && decisionRefund.payload) {
+      // Outside refund: the amount comes from the outside-refund fields.
+      decisionMutation.mutate({ bookingId: decisionModal.booking.id, action: 'APPROVE', amount: decisionRefund.payload.amount, note: cleanNote, externalRefund: decisionRefund.payload });
+    } else if (decisionModal.action === 'APPROVE') {
       const amt = Number(amountInput);
       if (!Number.isFinite(amt) || amt < 0) { toast('Enter a valid non-negative amount', 'error'); return; }
       if (amt > paid) { toast(`Amount cannot exceed the paid amount (${paid})`, 'error'); return; }
@@ -246,6 +264,17 @@ export default function AdminRefundQueuePage() {
             </div>
 
             {decisionModal.action === 'APPROVE' && (
+              <ExternalRefundChoice
+                key={decisionModal.booking.id}
+                cashPaid={decisionModal.booking.payment ? Number(decisionModal.booking.payment.amount) : Number(decisionModal.booking.totalPrice)}
+                currency={decisionModal.booking.currencyCode || 'QAR'}
+                disabled={decisionMutation.isPending}
+                idPrefix="queue-refund"
+                pointsHint="The amount below is credited to the customer's Wanasa balance."
+                onChange={setDecisionRefund}
+              />
+            )}
+            {decisionModal.action === 'APPROVE' && decisionRefund.choice === 'POINTS' && (
               <div className="mb-4">
                 <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Refund amount ({decisionModal.booking.currencyCode})</label>
                 <input
@@ -263,14 +292,16 @@ export default function AdminRefundQueuePage() {
             )}
 
             <div className="mb-5">
-              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Note (optional)</label>
+              <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">
+                {decisionModal.action === 'APPROVE' && decisionRefund.choice === 'OUTSIDE' ? 'Internal note (optional, not shown to the customer)' : 'Note (optional)'}
+              </label>
               <textarea
                 rows={3}
                 maxLength={1000}
                 value={noteInput}
                 onChange={(e) => setNoteInput(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
-                placeholder={decisionModal.action === 'APPROVE' ? 'Reason for amount, if not full refund' : 'Reason for rejecting'}
+                placeholder={decisionModal.action !== 'APPROVE' ? 'Reason for rejecting' : decisionRefund.choice === 'OUTSIDE' ? 'e.g. who approved the transfer' : 'Reason for amount, if not full refund'}
               />
             </div>
 
@@ -285,7 +316,7 @@ export default function AdminRefundQueuePage() {
               <button
                 type="button"
                 onClick={confirmDecision}
-                disabled={decisionMutation.isPending}
+                disabled={decisionMutation.isPending || (decisionModal.action === 'APPROVE' && !decisionRefund.ready)}
                 className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${decisionModal.action === 'APPROVE' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'} disabled:opacity-60 flex items-center gap-2`}
               >
                 {decisionMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}

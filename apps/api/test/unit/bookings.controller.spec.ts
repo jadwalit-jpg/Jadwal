@@ -128,7 +128,7 @@ describe('BookingsController.recordRefundDecision', () => {
       { id: 'v1', role: 'VENDOR' } as any, 'b1',
       { action: 'APPROVE', amount: 50, note: 'ok' } as any,
     );
-    expect(svc.recordRefundDecision).toHaveBeenCalledWith('v1', 'VENDOR', 'b1', 'APPROVE', 50, 'ok');
+    expect(svc.recordRefundDecision).toHaveBeenCalledWith('v1', 'VENDOR', 'b1', 'APPROVE', 50, 'ok', undefined);
   });
 
   test('ADMIN → delegates identically', async () => {
@@ -137,7 +137,7 @@ describe('BookingsController.recordRefundDecision', () => {
       { id: 'a1', role: 'ADMIN' } as any, 'b1',
       { action: 'REJECT' } as any,
     );
-    expect(svc.recordRefundDecision).toHaveBeenCalledWith('a1', 'ADMIN', 'b1', 'REJECT', undefined, undefined);
+    expect(svc.recordRefundDecision).toHaveBeenCalledWith('a1', 'ADMIN', 'b1', 'REJECT', undefined, undefined, undefined);
   });
 });
 

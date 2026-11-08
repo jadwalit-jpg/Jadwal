@@ -24,6 +24,11 @@ import { ReferenceDataCacheService } from '../redis/reference-data-cache.service
 import { SessionDenylistService } from '../redis/session-denylist.service';
 import { assertHourlyTimesConsistent } from '../common/validators/hourly-activity';
 import { assertUnitConfigConsistent } from '../common/validators/unit-config';
+import type { ExternalRefundDto } from '../common/dto/external-refund.dto';
+import {
+  assertExternalRefundAllowed, externalRefundAuditDetails, externalRefundCancelMessage,
+  externalRefundNote, refundedOnAsDate,
+} from '../common/refunds/external-refund';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage, addMonthsClamped } from '../bookings/bookings.service';
 import { assignMissingUnits } from '../bookings/assign-missing-units';
@@ -1368,7 +1373,7 @@ export class AdminService {
           // see at a glance whether a booking is 2h or 8h.
           activity: { select: { titleEn: true, bookingType: true, durationValue: true, cancellationPolicy: true, country: { select: { currencyCode: true } } } },
           vendor: { select: { businessNameEn: true } },
-          payment: { select: { id: true, amount: true, status: true, method: true, paidAt: true, gatewayTxnId: true, refundAmount: true, refundedAt: true } },
+          payment: { select: { id: true, amount: true, status: true, method: true, paidAt: true, gatewayTxnId: true, refundAmount: true, refundedAt: true, refundMethod: true } },
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -1380,18 +1385,49 @@ export class AdminService {
     return { data: bookings, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async updateBookingStatus(adminUserId: string, bookingId: string, status: string) {
+  async updateBookingStatus(
+    adminUserId: string,
+    bookingId: string,
+    status: string,
+    /**
+     * "Refund already done outside the website" (CANCELLED only, card-paid
+     * bookings only): the payment is marked REFUNDED with the method, amount
+     * and date given, and NO Wanasa points are credited for the cash part.
+     * Redeemed points are still returned. Without it the cancel behaves as
+     * before: the cash is credited as Wanasa points.
+     */
+    externalRefund?: ExternalRefundDto,
+  ) {
     const db = this.prisma.client;
     const booking = await db.booking.findUnique({
       where: { id: bookingId },
       select: {
         id: true, ref: true, activityId: true, customerId: true, status: true, totalPrice: true,
         pointsRedeemed: true, pointsDiscount: true, pointsAwarded: true, couponCode: true,
-        activity: { select: { titleEn: true } },
+        customer: { select: { preferredLanguage: true } },
+        activity: { select: { titleEn: true, titleAr: true, country: { select: { defaultTimezone: true } } } },
         payment: { select: { id: true, status: true, amount: true } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
+
+    // Outside refund: only with a CANCELLED transition and only on a booking
+    // that was actually paid by card, checked against the live payment row
+    // before anything is written (amount ≤ cash paid, date not in the future).
+    const cashPaid = booking.payment?.status === 'SUCCESS' ? Number(booking.payment.amount) : 0;
+    const activityTz = booking.activity.country?.defaultTimezone ?? 'UTC';
+    if (externalRefund) {
+      if (status !== 'CANCELLED') {
+        throw new BadRequestException('An outside refund can only be recorded when cancelling the booking');
+      }
+      // A repeat of an already-applied cancel (double-click, retry) must stay a
+      // no-op like any other repeat: the payment is REFUNDED by then, so the
+      // cash check below would wrongly reject it. The claim inside the
+      // transaction loses and returns the current row with no side effects.
+      if (booking.status !== 'CANCELLED') {
+        assertExternalRefundAllowed(externalRefund, cashPaid, activityTz);
+      }
+    }
 
     // Reject CONFIRMED transitions when no successful payment exists.
     // Without this guard, an admin (or compromised admin JWT) could
@@ -1407,6 +1443,10 @@ export class AdminService {
     }
 
     let cancelledNow = false;
+    // Set only when the outside-refund branch actually wrote the payment, so
+    // the customer message and the audit row below never describe a refund
+    // that was not recorded.
+    let externalRefundApplied = false;
     // Captured when a cancel refunds a booking whose vendor payout was already
     // PAID — surfaced to admins after commit so the vendor's share can be
     // recovered manually (we do NOT auto-claw it back).
@@ -1433,18 +1473,38 @@ export class AdminService {
             refundDecisionAt: new Date(),
             refundDecisionBy: adminUserId,
             refundDecisionActor: 'ADMIN',
+            ...(externalRefund ? { refundDecisionNote: externalRefundNote(externalRefund) } : {}),
           },
         });
         if (claim.count === 0) {
           // Lost the race — already cancelled by a concurrent request. Do NOT
           // re-run any refund; just return the current row.
-          return tx.booking.findUniqueOrThrow({
+          const current = await tx.booking.findUniqueOrThrow({
             where: { id: bookingId },
             include: {
               customer: { select: { fullName: true } },
               activity: { select: { titleEn: true } },
+              payment: { select: { status: true, refundMethod: true } },
             },
           });
+          if (externalRefund) {
+            // A true repeat (the same outside refund is already on the payment)
+            // stays a no-op. Anything else means the booking was cancelled
+            // another way first, most likely with the cash credited as Wanasa
+            // points, and this request's method/amount/reference would be
+            // dropped silently: refuse, so the admin sees the live row and
+            // knows the customer may now hold both the points and the money.
+            const p = current.payment;
+            const sameOutsideRefundAlreadyRecorded = p?.status === 'REFUNDED' && p.refundMethod != null;
+            if (!sameOutsideRefundAlreadyRecorded) {
+              throw new ConflictException(
+                p?.status === 'REFUNDED'
+                  ? 'This booking was already cancelled and its payment was refunded as Wanasa points. The outside refund was not recorded; check the customer\'s Wanasa balance before refunding again.'
+                  : 'This booking was already cancelled. The outside refund was not recorded.',
+              );
+            }
+          }
+          return current;
         }
         cancelledNow = true;
       }
@@ -1473,10 +1533,39 @@ export class AdminService {
               },
             });
 
+      // Outside refund: re-check the rules against THIS in-tx snapshot. The
+      // pre-tx check gave a fast 400, but the payment could have changed
+      // between the two reads (a throw here rolls the claim back).
+      if (status === 'CANCELLED' && externalRefund) {
+        assertExternalRefundAllowed(
+          externalRefund,
+          result.payment?.status === 'SUCCESS' ? Number(result.payment.amount) : 0,
+          activityTz,
+        );
+      }
+
       // Handle payment state when admin cancels a paid booking.
       // Refund goes to Wanasa points (store credit), NOT back to card.
       if (status === 'CANCELLED' && result.payment) {
-        if (result.payment.status === 'SUCCESS') {
+        if (result.payment.status === 'SUCCESS' && externalRefund) {
+          // Already refunded outside the website (bank transfer, cash, card
+          // refund in PAY2M, other): record the refund with its method, amount
+          // and date, credit NO Wanasa points for the cash. Redeemed points are
+          // still returned below, like any cancel.
+          await tx.payment.update({
+            where: { id: result.payment.id },
+            data: {
+              status: 'REFUNDED',
+              refundAmount: externalRefund.amount,
+              refundedAt: refundedOnAsDate(externalRefund.refundedOn),
+              refundMethod: externalRefund.method,
+            },
+          });
+          externalRefundApplied = true;
+          if (result.payment.payoutStatus === 'PAID') {
+            clawbackNeeded = { amount: externalRefund.amount, paymentId: result.payment.id, ref: result.ref };
+          }
+        } else if (result.payment.status === 'SUCCESS') {
           const paidAmount = Number(result.payment.amount);
           await tx.payment.update({
             where: { id: result.payment.id },
@@ -1639,13 +1728,50 @@ export class AdminService {
       const refundLine = wasPaid
         ? ' Your payment has been refunded as Wanasa points to your balance.'
         : '';
+      // Outside refund: the customer is told how and when the money came back,
+      // in their language; Wanasa points are never mentioned for the cash.
+      const customerNote = externalRefund && externalRefundApplied
+        ? externalRefundCancelMessage({
+            lang: booking.customer?.preferredLanguage === 'AR' ? 'AR' : 'EN',
+            ref: booking.ref,
+            titleEn: booking.activity.titleEn,
+            titleAr: booking.activity.titleAr,
+            refund: externalRefund,
+          })
+        : {
+            title: 'Your booking was cancelled',
+            message: `Booking ${booking.ref} for "${booking.activity.titleEn}" was cancelled by AL Jadwal support.${refundLine}`,
+          };
       this.notificationService.send({
         userId: booking.customerId,
         type: 'BOOKING_CANCELLED',
-        title: 'Your booking was cancelled',
-        message: `Booking ${booking.ref} for "${booking.activity.titleEn}" was cancelled by AL Jadwal support.${refundLine}`,
+        title: customerNote.title,
+        message: customerNote.message,
         link: `/bookings/${bookingId}`,
       });
+
+      // Durable record of the outside refund (method, amount, date, reference)
+      // next to the interceptor's generic UPDATE_BOOKING_STATUS row. Must not
+      // fail the cancel: the state change is already committed.
+      if (externalRefund && externalRefundApplied) {
+        try {
+          const actor = await db.user.findUnique({ where: { id: adminUserId }, select: { fullName: true } });
+          await db.auditLog.create({
+            data: {
+              actorType: 'ADMIN',
+              actorId: adminUserId,
+              actorName: actor?.fullName || `user:${adminUserId.slice(0, 8)}`,
+              action: 'BOOKING_CANCELLED_REFUND_OUTSIDE',
+              entity: 'Booking',
+              entityId: bookingId,
+              details: externalRefundAuditDetails(externalRefund, { bookingRef: booking.ref, cashPaid }),
+              actionCategory: 'FINANCIAL',
+            },
+          });
+        } catch (err) {
+          this.logger.warn({ event: 'AUDIT_LOG_FAILED', action: 'BOOKING_CANCELLED_REFUND_OUTSIDE', bookingId, err: (err as Error)?.message });
+        }
+      }
 
       // Cancel-after-payout: the vendor was already paid for this booking, so the
       // customer refund leaves the platform out-of-pocket. Flag for MANUAL

@@ -13,6 +13,7 @@ import AdminLayout from '../_components/admin-layout';
 import { Search, ChevronLeft, ChevronRight, CheckCircle, Clock, XCircle, CheckCheck, ChevronDown, Tag, CreditCard, Download, AlertTriangle, CheckCircle2, Sparkles } from 'lucide-react';
 import CustomSelect from '@/components/custom-select';
 import { CancelBookingModal, canAdminCancelBooking, bookingHasStarted } from './_components/cancel-booking-modal';
+import { ExternalRefundChoice, REFUND_METHOD_LABEL, type ExternalRefundPayload, type ExternalRefundSelection, type RefundMethod } from '../_components/external-refund-fields';
 
 interface Booking {
   id: string;
@@ -41,7 +42,7 @@ interface Booking {
   customer: { id: string; fullName: string; email: string; phone: string | null };
   activity: { titleEn: string; bookingType: 'HOURLY' | 'DAILY'; durationValue: number | null; cancellationPolicy: string | null; country: { currencyCode: string } };
   vendor: { businessNameEn: string };
-  payment: { id: string; amount: string; status: string; method: string; paidAt: string | null; gatewayTxnId: string | null; refundAmount: string | null; refundedAt: string | null } | null;
+  payment: { id: string; amount: string; status: string; method: string; paidAt: string | null; gatewayTxnId: string | null; refundAmount: string | null; refundedAt: string | null; refundMethod: string | null } | null;
 }
 
 interface BookingsResponse {
@@ -58,6 +59,20 @@ const statusConfig: Record<BookingStatus, { bg: string; text: string; icon: Reac
   COMPLETED: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', icon: CheckCheck },
   CANCELLED: { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', icon: XCircle },
 };
+
+const NO_CHOICE: ExternalRefundSelection = { choice: null, ready: false };
+
+/** "Refunded outside the website: QAR 505 by Bank transfer on 20 Nov 2026" */
+export function outsideRefundText(
+  payment: { refundAmount: string | null; refundedAt: string | null; refundMethod: string | null },
+  currency: string,
+): string {
+  const method = REFUND_METHOD_LABEL[payment.refundMethod as RefundMethod] ?? payment.refundMethod ?? '';
+  const date = payment.refundedAt
+    ? new Date(payment.refundedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+    : '—';
+  return `Refunded outside the website: ${currency} ${Number(payment.refundAmount ?? 0).toLocaleString()} by ${method} on ${date}`;
+}
 
 function TableSkeleton() {
   return (
@@ -79,19 +94,25 @@ export default function AdminBookingsPage() {
   const [amountInput, setAmountInput] = useState('');
   const [noteInput, setNoteInput] = useState('');
   const [cancelTarget, setCancelTarget] = useState<Booking | null>(null);
+  // Approve in the refund queue: how the refund is handled (Wanasa points, or
+  // already done outside the website). No default; Confirm waits for a choice.
+  const [decisionRefund, setDecisionRefund] = useState<ExternalRefundSelection>(NO_CHOICE);
   // One "now" per render for the cancel-action rule (Qatar time, see bookingHasStarted).
   const now = new Date();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const decisionMutation = useMutation({
-    mutationFn: async ({ bookingId, action, amount, note }: {
+    mutationFn: async ({ bookingId, action, amount, note, externalRefund }: {
       bookingId: string;
       action: 'APPROVE' | 'REJECT';
       amount?: number;
       note?: string;
+      externalRefund?: ExternalRefundPayload;
     }) => {
-      await api.post(`/bookings/${bookingId}/refund-decision`, { action, amount, note });
+      // `externalRefund` (admin only): the refund was already made outside the
+      // website; the server marks it REFUNDED with the method and adds no points.
+      await api.post(`/bookings/${bookingId}/refund-decision`, { action, amount, note, ...(externalRefund ? { externalRefund } : {}) });
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
@@ -107,8 +128,10 @@ export default function AdminBookingsPage() {
   // frees the slot, refunds a paid amount as Wanasa points (or fails a pending
   // payment) and notifies the customer, exactly as it did before this button.
   const cancelMutation = useMutation({
-    mutationFn: async (bookingId: string) => {
-      await api.patch(`/admin/bookings/${bookingId}/status`, { status: 'CANCELLED' });
+    mutationFn: async ({ bookingId, externalRefund }: { bookingId: string; externalRefund?: ExternalRefundPayload }) => {
+      // `externalRefund` = the refund was already made outside the website:
+      // the server records it and credits no Wanasa points for the cash.
+      await api.patch(`/admin/bookings/${bookingId}/status`, { status: 'CANCELLED', ...(externalRefund ? { externalRefund } : {}) });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
@@ -130,6 +153,7 @@ export default function AdminBookingsPage() {
     setDecisionModal({ booking: b, action: 'APPROVE' });
     setAmountInput(String(suggested));
     setNoteInput('');
+    setDecisionRefund(NO_CHOICE);
   };
 
   const openReject = (b: Booking) => {
@@ -144,7 +168,14 @@ export default function AdminBookingsPage() {
     // Defence-in-depth: sanitize client-side before POST even though
     // the backend SanitizePipe handles the authoritative scrub.
     const cleanNote = noteInput.trim() ? sanitize(noteInput.trim()).slice(0, 1000) : undefined;
-    if (decisionModal.action === 'APPROVE') {
+    if (decisionModal.action === 'APPROVE' && !decisionRefund.ready) {
+      toast('Choose how the refund is handled first', 'error');
+      return;
+    }
+    if (decisionModal.action === 'APPROVE' && decisionRefund.payload) {
+      // Outside refund: the amount comes from the outside-refund fields.
+      decisionMutation.mutate({ bookingId: decisionModal.booking.id, action: 'APPROVE', amount: decisionRefund.payload.amount, note: cleanNote, externalRefund: decisionRefund.payload });
+    } else if (decisionModal.action === 'APPROVE') {
       const amt = Number(amountInput);
       if (!Number.isFinite(amt) || amt < 0) { toast('Enter a valid non-negative amount', 'error'); return; }
       if (amt > paid) { toast(`Amount cannot exceed the paid amount (${paid})`, 'error'); return; }
@@ -470,7 +501,7 @@ export default function AdminBookingsPage() {
                                 {booking.payment ? (
                                   <>
                                     <p className="font-medium text-gray-900 dark:text-white leading-tight">
-                                      {booking.payment.status === 'SUCCESS' ? 'Paid' : booking.payment.status === 'REFUNDED' ? 'Refund pending' : booking.payment.status}
+                                      {booking.payment.status === 'SUCCESS' ? 'Paid' : booking.payment.status === 'REFUNDED' ? 'Refunded' : booking.payment.status === 'REFUND_PENDING' ? 'Refund pending' : booking.payment.status}
                                       {booking.payment.method && booking.payment.method !== 'PENDING' ? ` · ${booking.payment.method}` : ''}
                                     </p>
                                     {booking.payment.paidAt && (
@@ -481,7 +512,9 @@ export default function AdminBookingsPage() {
                                     {booking.payment.gatewayTxnId && (
                                       <p className="text-[11px] text-gray-400 dark:text-slate-500 font-mono truncate">TXN: {booking.payment.gatewayTxnId}</p>
                                     )}
-                                    {booking.payment.refundAmount && (
+                                    {booking.payment.refundMethod ? (
+                                      <p className="text-xs text-purple-600 dark:text-purple-400">{outsideRefundText(booking.payment, currency)}</p>
+                                    ) : booking.payment.refundAmount && (
                                       <p className="text-xs text-purple-600 dark:text-purple-400">Refund: {Number(booking.payment.refundAmount).toLocaleString()} {currency}</p>
                                     )}
                                   </>
@@ -551,8 +584,10 @@ export default function AdminBookingsPage() {
                                 <div className="space-y-1 text-xs">
                                   <p className="text-gray-700 dark:text-slate-300">
                                     <span className="text-gray-500 dark:text-slate-400">Outcome:</span>{' '}
-                                    {booking.payment.status === 'REFUNDED' ? (
-                                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">Refunded {Number(booking.payment.refundAmount ?? 0).toLocaleString()} {currency}</span>
+                                    {booking.payment.status === 'REFUNDED' && booking.payment.refundMethod ? (
+                                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">{outsideRefundText(booking.payment, currency)}</span>
+                                    ) : booking.payment.status === 'REFUNDED' ? (
+                                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">Refunded {Number(booking.payment.refundAmount ?? 0).toLocaleString()} {currency} as Wanasa points</span>
                                     ) : (
                                       <span className="font-semibold text-red-600 dark:text-red-400">Rejected (no refund)</span>
                                     )}
@@ -648,6 +683,17 @@ export default function AdminBookingsPage() {
                 <span className="font-semibold">{decisionModal.booking.customer.fullName}</span>.
               </p>
               {decisionModal.action === 'APPROVE' && (
+                <ExternalRefundChoice
+                  key={decisionModal.booking.id}
+                  cashPaid={decisionModal.booking.payment ? Number(decisionModal.booking.payment.amount) : Number(decisionModal.booking.totalPrice)}
+                  currency={decisionModal.booking.currencyCode || 'QAR'}
+                  disabled={decisionMutation.isPending}
+                  idPrefix="queue-refund"
+                  pointsHint="The amount below is credited to the customer's Wanasa balance."
+                  onChange={setDecisionRefund}
+                />
+              )}
+              {decisionModal.action === 'APPROVE' && decisionRefund.choice === 'POINTS' && (
                 <div className="mb-4">
                   <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5">
                     Refund Amount ({decisionModal.booking.currencyCode || 'QAR'})
@@ -668,13 +714,13 @@ export default function AdminBookingsPage() {
               )}
               <div className="mb-5">
                 <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5">
-                  Note to customer <span className="text-gray-400 font-normal">(optional)</span>
+                  {decisionRefund.choice === 'OUTSIDE' ? 'Internal note' : 'Note to customer'} <span className="text-gray-400 font-normal">(optional{decisionRefund.choice === 'OUTSIDE' ? ', not shown to the customer' : ''})</span>
                 </label>
                 <textarea
                   value={noteInput}
                   onChange={(e) => setNoteInput(e.target.value.slice(0, 1000))}
                   rows={3}
-                  placeholder={decisionModal.action === 'APPROVE' ? 'Details about the refund...' : 'Reason for rejection...'}
+                  placeholder={decisionModal.action !== 'APPROVE' ? 'Reason for rejection...' : decisionRefund.choice === 'OUTSIDE' ? 'e.g. who approved the transfer' : 'Details about the refund...'}
                   className="w-full px-3 py-2.5 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-sm text-gray-900 dark:text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 resize-none"
                 />
                 <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">{noteInput.length}/1000</p>
@@ -691,7 +737,7 @@ export default function AdminBookingsPage() {
                 <button
                   type="button"
                   onClick={confirmDecision}
-                  disabled={decisionMutation.isPending}
+                  disabled={decisionMutation.isPending || (decisionModal.action === 'APPROVE' && !decisionRefund.ready)}
                   className={`px-4 py-2 text-sm font-medium text-white rounded-xl disabled:opacity-50 ${decisionModal.action === 'APPROVE' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'}`}
                 >
                   {decisionMutation.isPending ? 'Saving...' : decisionModal.action === 'APPROVE' ? 'Confirm Refund' : 'Confirm Rejection'}
@@ -706,7 +752,7 @@ export default function AdminBookingsPage() {
         <CancelBookingModal
           booking={cancelTarget}
           pending={cancelMutation.isPending}
-          onConfirm={(id) => cancelMutation.mutate(id)}
+          onConfirm={(id, externalRefund) => cancelMutation.mutate({ bookingId: id, externalRefund })}
           onClose={() => { if (!cancelMutation.isPending) setCancelTarget(null); }}
         />
       )}

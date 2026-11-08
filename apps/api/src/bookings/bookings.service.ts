@@ -26,6 +26,11 @@ import { envNumber } from '../common/env';
 import { nowInTimezone } from '../common/validators/timezone';
 import { ConfigService } from '@nestjs/config';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import type { ExternalRefundDto } from '../common/dto/external-refund.dto';
+import {
+  assertExternalRefundAllowed, externalRefundAuditDetails, externalRefundDecisionMessage, externalRefundNote,
+  refundMethodLabel, refundedOnAsDate,
+} from '../common/refunds/external-refund';
 
 // ─── Slot helpers ────────────────────────────────────────────────────────────
 
@@ -2738,6 +2743,12 @@ export class BookingsService {
     action: 'APPROVE' | 'REJECT',
     amount: number | undefined,
     note: string | undefined,
+    /**
+     * Admin only, APPROVE only: the refund was already made outside the
+     * website. The payment becomes REFUNDED with this amount and method and
+     * NO Wanasa points are credited; `amount` is ignored.
+     */
+    externalRefund?: ExternalRefundDto,
   ) {
     const db = this.prisma.client;
 
@@ -2745,7 +2756,8 @@ export class BookingsService {
       where: { id: bookingId },
       select: {
         id: true, ref: true, status: true, vendorId: true, customerId: true,
-        activity: { select: { titleEn: true } },
+        customer: { select: { preferredLanguage: true } },
+        activity: { select: { titleEn: true, titleAr: true, country: { select: { defaultTimezone: true } } } },
         vendor: { select: { userId: true, slug: true } },
         // payoutStatus is needed to detect a refund on a booking whose vendor
         // has ALREADY been paid — money out twice unless finance claws it back.
@@ -2770,12 +2782,27 @@ export class BookingsService {
 
     const paidAmount = Number(booking.payment.amount);
 
+    // ── "Refund already done outside the website" ──
+    // Admins only, approve only; amount ≤ cash paid; date not in the future
+    // (activity timezone). The customer gets NO Wanasa points for it.
+    if (externalRefund) {
+      if (!isAdmin) {
+        throw new ForbiddenException('Only an admin can record a refund made outside the website');
+      }
+      if (action !== 'APPROVE') {
+        throw new BadRequestException('An outside refund can only be recorded when approving the refund');
+      }
+      assertExternalRefundAllowed(externalRefund, paidAmount, booking.activity.country?.defaultTimezone ?? 'UTC');
+    }
+
     // ── Resolve final refund amount ──
     // REJECT → always 0.
     // APPROVE → must be a finite number, non-negative, ≤ original paid amount.
     let finalAmount: number;
     if (action === 'REJECT') {
       finalAmount = 0;
+    } else if (externalRefund) {
+      finalAmount = Number(externalRefund.amount.toFixed(2));
     } else {
       if (amount === undefined || amount === null || !Number.isFinite(amount)) {
         throw new BadRequestException('Amount is required when approving a refund');
@@ -2789,7 +2816,9 @@ export class BookingsService {
     }
 
     const actor: 'VENDOR' | 'ADMIN' = isAdmin ? 'ADMIN' : 'VENDOR';
-    const safeNote = note ? note.slice(0, 1000) : null;
+    const safeNote = externalRefund
+      ? `${externalRefundNote(externalRefund)}${note ? ` Note: ${note}` : ''}`.slice(0, 1000)
+      : note ? note.slice(0, 1000) : null;
 
     // ── Load loyalty config for Wanasa points conversion ──
     // Refund money is NOT returned to the customer's card. Instead, the
@@ -2805,7 +2834,8 @@ export class BookingsService {
     // Points are QAR-denominated (1 pt = 1 QAR at qarPerPoint = 1.0), so a
     // 200 QAR refund → 200.00 points; a 50.75 QAR refund → 50.75 points. Rounded
     // to 2 dp (money precision) rather than floored to whole points.
-    const refundPoints = action === 'APPROVE' && finalAmount > 0 && qarPerPoint > 0
+    // No points for a refund that was already paid outside the website.
+    const refundPoints = action === 'APPROVE' && !externalRefund && finalAmount > 0 && qarPerPoint > 0
       ? Math.round((finalAmount / qarPerPoint) * 100) / 100
       : 0;
 
@@ -2816,7 +2846,8 @@ export class BookingsService {
         data: {
           status: action === 'APPROVE' ? 'REFUNDED' : 'REJECTED',
           refundAmount: action === 'APPROVE' ? finalAmount : null,
-          refundedAt: new Date(),
+          refundedAt: externalRefund ? refundedOnAsDate(externalRefund.refundedOn) : new Date(),
+          ...(externalRefund ? { refundMethod: externalRefund.method } : {}),
         },
       });
       if (paymentResult.count === 0) {
@@ -2892,36 +2923,62 @@ export class BookingsService {
       actorType: actor,
       actorId: userId,
       actorName: decider?.fullName || `${actor} ${userId.slice(0, 8)}`,
-      action: action === 'APPROVE' ? 'REFUND_APPROVED_AS_POINTS' : 'REFUND_REJECTED',
+      action: externalRefund ? 'REFUND_APPROVED_OUTSIDE' : action === 'APPROVE' ? 'REFUND_APPROVED_AS_POINTS' : 'REFUND_REJECTED',
       entity: 'Booking',
       entityId: bookingId,
-      details: JSON.stringify({
-        activityTitle: booking.activity.titleEn,
-        action,
-        refundAmountQAR: finalAmount,
-        refundPoints,
-        qarPerPointRate: qarPerPoint,
-        paidAmount,
-        note: safeNote,
-      }),
+      // Outside refund: the structured fields (method, amount, date, reference)
+      // come first and the free-text note is capped, so the 1000-char backstop
+      // can never cut the fields a FINANCIAL audit row exists for.
+      details: externalRefund
+        ? externalRefundAuditDetails(externalRefund, {
+            activityTitle: booking.activity.titleEn.slice(0, 200),
+            action,
+            refundAmountQAR: finalAmount,
+            refundPoints,
+            qarPerPointRate: qarPerPoint,
+            paidAmount,
+            note: safeNote ? safeNote.slice(0, 300) : null,
+          })
+        : JSON.stringify({
+            activityTitle: booking.activity.titleEn,
+            action,
+            refundAmountQAR: finalAmount,
+            refundPoints,
+            qarPerPointRate: qarPerPoint,
+            paidAmount,
+            note: safeNote,
+          }).slice(0, 1000),
     });
 
     // ── Notify customer ──
     const customerMessage = action === 'APPROVE'
       ? `Your refund of ${finalAmount} QAR for booking ${booking.ref} has been added as ${refundPoints.toLocaleString()} Wanasa points to your balance.${safeNote ? ` Note: ${safeNote}` : ''}`
       : `Your refund request for booking ${booking.ref} was not approved.${safeNote ? ` Reason: ${safeNote}` : ''}`;
+    // Outside refund: tell the customer how and when the money came back, in
+    // their language; never mention Wanasa points for the cash.
+    const outsideNote = externalRefund
+      ? externalRefundDecisionMessage({
+          lang: booking.customer?.preferredLanguage === 'AR' ? 'AR' : 'EN',
+          ref: booking.ref,
+          titleEn: booking.activity.titleEn,
+          titleAr: booking.activity.titleAr,
+          refund: externalRefund,
+        })
+      : null;
     this.notificationService.send({
       userId: booking.customerId,
       type: 'REFUND_DECIDED',
-      title: action === 'APPROVE' ? 'Refund added as Wanasa points' : 'Refund request declined',
-      message: customerMessage,
-      link: action === 'APPROVE' ? '/profile' : `/bookings/${bookingId}`,
+      title: outsideNote ? outsideNote.title : action === 'APPROVE' ? 'Refund added as Wanasa points' : 'Refund request declined',
+      message: outsideNote ? outsideNote.message : customerMessage,
+      link: outsideNote ? `/bookings/${bookingId}` : action === 'APPROVE' ? '/profile' : `/bookings/${bookingId}`,
     });
 
     return {
-      message: action === 'APPROVE'
-        ? `Refund of ${finalAmount} QAR converted to ${refundPoints.toLocaleString()} Wanasa points`
-        : 'Refund request rejected',
+      message: externalRefund
+        ? `Refund of ${finalAmount} QAR recorded as made by ${refundMethodLabel(externalRefund.method, 'EN')} (no Wanasa points added)`
+        : action === 'APPROVE'
+          ? `Refund of ${finalAmount} QAR converted to ${refundPoints.toLocaleString()} Wanasa points`
+          : 'Refund request rejected',
       action,
       amount: finalAmount,
       refundPoints,
@@ -3042,7 +3099,7 @@ export class BookingsService {
             country: { select: { currencyCode: true, defaultTimezone: true } },
           },
         },
-        payment: { select: { id: true, amount: true, status: true, method: true, paidAt: true, createdAt: true, refundAmount: true, refundedAt: true } },
+        payment: { select: { id: true, amount: true, status: true, method: true, paidAt: true, createdAt: true, refundAmount: true, refundedAt: true, refundMethod: true } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');

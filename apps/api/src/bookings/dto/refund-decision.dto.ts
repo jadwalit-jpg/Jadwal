@@ -1,5 +1,6 @@
-import { IsEnum, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsEnum, IsNumber, IsObject, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ExternalRefundDto } from '../../common/dto/external-refund.dto';
 
 /**
  * Absolute upper bound for any single refund amount.
@@ -46,4 +47,15 @@ export class RefundDecisionDto {
   @IsString()
   @MaxLength(MAX_REFUND_NOTE_LENGTH, { message: `note must be ${MAX_REFUND_NOTE_LENGTH} characters or fewer` })
   note?: string;
+
+  /**
+   * Admin only, with action APPROVE: the refund was already made outside the
+   * website. The payment becomes REFUNDED with this amount and method and NO
+   * Wanasa points are credited. `amount` above is ignored in that case.
+   */
+  @IsOptional()
+  @IsObject({ message: 'externalRefund must be an object' }) // ValidateNested alone lets an array through
+  @ValidateNested()
+  @Type(() => ExternalRefundDto)
+  externalRefund?: ExternalRefundDto;
 }

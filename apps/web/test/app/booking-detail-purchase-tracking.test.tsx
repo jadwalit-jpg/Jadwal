@@ -14,7 +14,13 @@ const BOOKING_ID = 'b0a3c6ab-7c0e-4a51-9e26-3c0d6f3c1f11';
 
 jest.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, opts?: string | { defaultValue?: string }) => (typeof opts === 'string' ? opts : opts?.defaultValue ?? key),
+    // Default-value passthrough with {{var}} interpolation, like i18next.
+    t: (key: string, opts?: string | ({ defaultValue?: string } & Record<string, unknown>)) => {
+      const base = typeof opts === 'string' ? opts : opts?.defaultValue ?? key;
+      return typeof opts === 'object' && opts
+        ? base.replace(/\{\{(\w+)\}\}/g, (_m: string, k: string) => String((opts as Record<string, unknown>)[k] ?? ''))
+        : base;
+    },
     i18n: { language: 'en' },
   }),
   // @/lib/i18n registers this plugin at import time.
@@ -102,7 +108,7 @@ function renderWith(status: 'CONFIRMED' | 'CANCELLED') {
 // The page reads window.gtag / window.clarity, installed by the tag loaders.
 const tags = window as unknown as { gtag?: jest.Mock; clarity?: jest.Mock };
 
-describe('/bookings/[id] purchase tracking', () => {
+describe('/bookings/[id] purchase tracking and refund banner', () => {
   let gtag: jest.Mock;
   let clarity: jest.Mock;
 
@@ -130,6 +136,28 @@ describe('/bookings/[id] purchase tracking', () => {
     expect(sessionStorage.getItem(`ga_purchase_${BOOKING_ID}`)).toBeNull();
     expect(sessionStorage.getItem(`clarity_purchase_${BOOKING_ID}`)).toBeNull();
     expect(sessionStorage.getItem(`fb_purchase_${BOOKING_ID}`)).toBeNull();
+  });
+
+  it('a booking refunded outside the website shows how and when, and never the Wanasa points wording', () => {
+    useQueryMock.mockImplementation((opts: { queryKey?: unknown[] }) => {
+      const key = Array.isArray(opts?.queryKey) ? opts.queryKey[0] : undefined;
+      if (key === 'booking') {
+        return {
+          data: booking('CANCELLED', {
+            payment: { id: 'pay-1', amount: '505', method: 'CARD', paidAt: '2026-12-01T10:05:00.000Z', status: 'REFUNDED', refundAmount: '505', refundedAt: '2026-12-02T00:00:00.000Z', refundMethod: 'BANK_TRANSFER' },
+            refundDecisionNote: 'Refunded outside the website: QAR 505 by Bank transfer on 2 Dec 2026. Ref: TRF-1',
+          }),
+          isLoading: false, isError: false,
+        };
+      }
+      return { data: undefined, isLoading: false, isError: false };
+    });
+    render(<BookingDetailPage />);
+    expect(screen.getByText('Refunded outside the website: 505 QAR by bank transfer on 2 Dec 2026')).toBeInTheDocument();
+    expect(screen.getByText('This refund was made outside the website. No Wanasa points were added for it.')).toBeInTheDocument();
+    expect(screen.queryByText(/added as Wanasa points/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/converted to Wanasa loyalty points/)).not.toBeInTheDocument();
+    expect(gtag.mock.calls.filter(([, name]) => name === 'purchase')).toHaveLength(0);
   });
 
   it('positive control: a confirmed booking fires all three once', () => {

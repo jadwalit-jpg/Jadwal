@@ -53,6 +53,9 @@ const PENDING_BOOKING_REF = 'JDWL-E2EPND';
 const CONFIRMED_BOOKING_REF = 'JDWL-E2ECNF';
 const REFUND_BOOKING_REF = 'JDWL-E2ERFD';
 const COMPLETED_BOOKING_REF = 'JDWL-E2ECMP';
+// Confirmed AND card-paid, in the future: the admin "Cancel booking" dialog
+// shows its refund choice only for such bookings (admin-bookings-cancel e2e).
+const PAID_CONFIRMED_BOOKING_REF = 'JDWL-E2EPAID';
 
 // ─── Booking-calendar fixture ──────────────────────────────────────────
 // A DAILY activity with exactly ONE unit, so a single booking makes a night
@@ -346,6 +349,66 @@ async function main() {
   await prisma.booking.update({
     where: { id: completedBooking.id },
     data: { paymentId: completedPayment.id },
+  });
+
+  // Confirmed + card-paid booking 20 days out, for the admin cancel spec
+  // (which only opens and dismisses the "refunded outside" dialog). Its
+  // createdAt is pinned one day BEFORE the unpaid JDWL-E2ECNF so it is never
+  // the customer's newest confirmed booking: customer-booking-cancel-refund
+  // .spec.ts cancels the newest one (/bookings/my?status=CONFIRMED&limit=1)
+  // and must keep hitting an unpaid row, not this card-paid one. Anchored to
+  // the existing row rather than to "now" so a reseeded database keeps the
+  // same order.
+  const confirmedRow = await prisma.booking.findUniqueOrThrow({ where: { ref: CONFIRMED_BOOKING_REF }, select: { createdAt: true } });
+  const paidCreatedAt = new Date(confirmedRow.createdAt.getTime() - 24 * 60 * 60 * 1000);
+  const paidStart = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000);
+  paidStart.setUTCHours(10, 0, 0, 0);
+  const paidEnd = new Date(paidStart.getTime() + 2 * 60 * 60 * 1000);
+  const paidBooking = await prisma.booking.upsert({
+    where: { ref: PAID_CONFIRMED_BOOKING_REF },
+    create: {
+      ref: PAID_CONFIRMED_BOOKING_REF,
+      activityId: activity.id,
+      vendorId: vendorUser.vendorProfile.id,
+      customerId: customerUser.id,
+      startDatetime: paidStart,
+      endDatetime: paidEnd,
+      guests: 2,
+      bookingPhone: '+97455123456',
+      totalPrice: 300,
+      serviceFee: 5,
+      status: 'CONFIRMED',
+      createdAt: paidCreatedAt,
+    },
+    update: {
+      status: 'CONFIRMED',
+      startDatetime: paidStart,
+      endDatetime: paidEnd,
+      totalPrice: 300,
+      createdAt: paidCreatedAt,
+    },
+  });
+  const paidPayment = await prisma.payment.upsert({
+    where: { gatewayTxnId: `E2E-PAID-TXN-${PAID_CONFIRMED_BOOKING_REF}` },
+    create: {
+      bookingId: paidBooking.id,
+      amount: 305,
+      currency: 'QAR',
+      gatewayTxnId: `E2E-PAID-TXN-${PAID_CONFIRMED_BOOKING_REF}`,
+      status: 'SUCCESS',
+      payoutStatus: 'UNPAID',
+      method: 'CARD',
+      paidAt: new Date(),
+    },
+    update: {
+      status: 'SUCCESS',
+      payoutStatus: 'UNPAID',
+      bookingId: paidBooking.id,
+    },
+  });
+  await prisma.booking.update({
+    where: { id: paidBooking.id },
+    data: { paymentId: paidPayment.id },
   });
 
   // Set a non-zero loyalty balance directly so customer-loyalty specs see it

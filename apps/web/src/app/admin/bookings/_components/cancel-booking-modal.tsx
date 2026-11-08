@@ -1,16 +1,21 @@
 'use client';
 
 import { XCircle } from 'lucide-react';
+import { ExternalRefundFields, useExternalRefundForm, type ExternalRefundPayload } from '../../_components/external-refund-fields';
 
 /**
  * Admin "Cancel booking" confirmation.
  *
- * Confirms the existing admin cancel, PATCH /admin/bookings/:id/status with
- * CANCELLED. The server does everything else exactly as it always has: stamps
- * who and when, frees the slot, refunds a paid amount to the customer as
- * Wanasa points (not to the card), returns any redeemed Wanasa points, marks a
- * pending payment as failed, and notifies the customer. This dialog only
- * spells that out before the click.
+ * Confirms the admin cancel, PATCH /admin/bookings/:id/status with CANCELLED.
+ * The server stamps who and when, frees the slot, returns any redeemed Wanasa
+ * points, marks a pending payment as failed and notifies the customer.
+ *
+ * For a card-paid booking the admin must choose how the cash comes back:
+ *   - "Refund as Wanasa points" (the default server behaviour), or
+ *   - "Refund already done outside the website" (bank transfer, cash, card
+ *     refund in PAY2M, other), sent as `externalRefund` so the server records
+ *     the refund and credits NO points for the cash.
+ * No choice is pre-selected; "Cancel booking" stays disabled until one is made.
  *
  * The admin panel is English-only, like every other admin page.
  */
@@ -106,13 +111,18 @@ export function CancelBookingModal({
 }: {
   booking: CancelableBooking;
   pending: boolean;
-  onConfirm: (bookingId: string) => void;
+  onConfirm: (bookingId: string, externalRefund?: ExternalRefundPayload) => void;
   onClose: () => void;
 }) {
   const currency = booking.currencyCode || 'QAR';
   const cash = paidAmount(booking);
   const points = pointsReturned(booking);
   const paymentPending = booking.payment?.status === 'PENDING';
+  // Only card-paid bookings have cash to refund; unpaid and points-only
+  // bookings get no choice and behave as before.
+  const refund = useExternalRefundForm(cash);
+  const needsChoice = cash > 0;
+  const canConfirm = !pending && (!needsChoice || refund.ready);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -156,13 +166,21 @@ export function CancelBookingModal({
             </div>
           </dl>
 
+          {needsChoice && (
+            <ExternalRefundFields
+              state={refund}
+              cashPaid={cash}
+              currency={currency}
+              disabled={pending}
+              idPrefix="cancel-refund"
+              pointsHint={`The ${currency} ${cash.toLocaleString()} paid is credited to the customer's Wanasa balance, not to their card.`}
+            />
+          )}
+
           <p className="text-sm text-gray-600 dark:text-slate-400 mb-5">
             The customer will be notified and the date becomes available again.
-            {cash > 0 && (
-              <> The paid amount ({currency} {cash.toLocaleString()}) is refunded to the customer as Wanasa points, not to their card.</>
-            )}
             {points > 0 && (
-              <> The {points.toLocaleString()} redeemed Wanasa points are returned to the customer.</>
+              <> The {points.toLocaleString()} redeemed Wanasa points are returned to the customer{needsChoice ? ' with either option' : ''}.</>
             )}
             {paymentPending && <> The pending payment is marked as failed.</>}
             {' '}This cannot be undone.
@@ -180,8 +198,9 @@ export function CancelBookingModal({
             </button>
             <button
               type="button"
-              onClick={() => onConfirm(booking.id)}
-              disabled={pending}
+              onClick={() => onConfirm(booking.id, refund.payload())}
+              disabled={!canConfirm}
+              title={needsChoice && !refund.ready && !pending ? 'Choose how the refund is handled first' : undefined}
               className="px-4 py-2 text-sm font-medium text-white rounded-xl disabled:opacity-50 bg-red-600 hover:bg-red-700"
             >
               {pending ? 'Cancelling…' : 'Cancel booking'}

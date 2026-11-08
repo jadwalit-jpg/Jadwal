@@ -81,7 +81,7 @@ describe('PATCH /admin/bookings/:id/status (CANCELLED) — role enforcement', ()
     const res = await cancel();
     expect(res.status).toBe(200);
     expect(updateBookingStatus).toHaveBeenCalledTimes(1);
-    expect(updateBookingStatus).toHaveBeenCalledWith('admin-1', BOOKING_ID, 'CANCELLED');
+    expect(updateBookingStatus).toHaveBeenCalledWith('admin-1', BOOKING_ID, 'CANCELLED', undefined);
 
     await flush();
     expect(auditCreate).toHaveBeenCalledTimes(1);
@@ -108,6 +108,58 @@ describe('PATCH /admin/bookings/:id/status (CANCELLED) — role enforcement', ()
     currentUser = { id: 'cust-1', email: 'customer@test.local', role: 'CUSTOMER', fullName: 'Customer' };
     const res = await cancel();
     expect(res.status).toBe(403);
+    expect(updateBookingStatus).not.toHaveBeenCalled();
+  });
+
+  // ── "Refund already done outside the website" (externalRefund) ──
+  const OUTSIDE = { method: 'BANK_TRANSFER', amount: 105, refundedOn: '2026-11-01', reference: 'TRF-123' };
+  const cancelOutside = (body: unknown) =>
+    request(app.getHttpServer()).patch(`/admin/bookings/${BOOKING_ID}/status`).send({ status: 'CANCELLED', externalRefund: body });
+
+  it('admin with externalRefund: 200 and the service receives the refund (method, amount, date, reference)', async () => {
+    currentUser = { id: 'admin-1', email: 'admin@test.local', role: 'ADMIN', fullName: 'Admin' };
+    const res = await cancelOutside(OUTSIDE);
+    expect(res.status).toBe(200);
+    expect(updateBookingStatus).toHaveBeenCalledWith('admin-1', BOOKING_ID, 'CANCELLED', expect.objectContaining(OUTSIDE));
+    await flush();
+    // The audit row carries the outside-refund details (method, amount, date, reference).
+    expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: 'UPDATE_BOOKING_STATUS',
+        details: expect.stringMatching(/BANK_TRANSFER.*105.*2026-11-01.*TRF-123/s),
+      }),
+    }));
+  });
+
+  it('vendor with externalRefund: 403, service never called', async () => {
+    currentUser = { id: 'vendor-1', email: 'vendor@test.local', role: 'VENDOR', fullName: 'Vendor' };
+    expect((await cancelOutside(OUTSIDE)).status).toBe(403);
+    expect(updateBookingStatus).not.toHaveBeenCalled();
+  });
+
+  it('customer with externalRefund: 403, service never called', async () => {
+    currentUser = { id: 'cust-1', email: 'customer@test.local', role: 'CUSTOMER', fullName: 'Customer' };
+    expect((await cancelOutside(OUTSIDE)).status).toBe(403);
+    expect(updateBookingStatus).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['unknown method', { ...OUTSIDE, method: 'CRYPTO' }],
+    ['amount 0', { ...OUTSIDE, amount: 0 }],
+    ['negative amount', { ...OUTSIDE, amount: -5 }],
+    ['amount with 3 decimals', { ...OUTSIDE, amount: 10.123 }],
+    ['missing method', { amount: 105, refundedOn: '2026-11-01' }],
+    ['missing amount', { method: 'CASH', refundedOn: '2026-11-01' }],
+    ['date not YYYY-MM-DD', { ...OUTSIDE, refundedOn: '01/11/2026' }],
+    ['reference over 200 chars', { ...OUTSIDE, reference: 'x'.repeat(201) }],
+    ['unexpected field', { ...OUTSIDE, bankTransferRef: 'nope' }],
+    ['an array instead of an object', [OUTSIDE]],
+    ['an empty array', []],
+    ['a string instead of an object', 'BANK_TRANSFER'],
+  ])('admin, externalRefund rejected by validation: %s → 400, service never called', async (_name, body) => {
+    currentUser = { id: 'admin-1', email: 'admin@test.local', role: 'ADMIN', fullName: 'Admin' };
+    const res = await cancelOutside(body);
+    expect(res.status).toBe(400);
     expect(updateBookingStatus).not.toHaveBeenCalled();
   });
 

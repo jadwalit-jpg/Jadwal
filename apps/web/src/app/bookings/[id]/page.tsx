@@ -33,6 +33,14 @@ import { Badge, Button } from '@/components/ui';
 
 // ─── Countdown hook ───────────────────────────────────────────────────────────
 
+/** English fallback for a refund method made outside the website (the locale files carry EN/AR). */
+const REFUND_METHOD_FALLBACK: Record<string, string> = {
+  BANK_TRANSFER: 'bank transfer',
+  CASH: 'cash',
+  CARD_PAY2M: 'card refund',
+  OTHER: 'another method',
+};
+
 function useCountdown(reservedUntil: string | null) {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
 
@@ -506,7 +514,45 @@ export default function BookingDetailPage() {
               ) : null}
 
               {booking.status === 'CANCELLED' &&
-              booking.payment?.status === 'REFUNDED' ? (
+              booking.payment?.status === 'REFUNDED' &&
+              booking.payment?.refundMethod ? (
+                // Refund made outside the website (bank transfer, cash, card
+                // refund in PAY2M, other): say how and when. No Wanasa points
+                // were added for it, so never use the points wording below.
+                <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/25 p-4 flex items-start gap-3">
+                  <CheckCircle
+                    className="w-5 h-5 text-jadwal-success shrink-0 mt-0.5"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-jadwal-success">
+                      {t('booking.refundOutsideTitle', {
+                        defaultValue: 'Refunded outside the website: {{amount}} {{cur}} by {{method}} on {{date}}',
+                        amount: Number(booking.payment.refundAmount ?? 0).toLocaleString(),
+                        cur: currency,
+                        method: t(`booking.refundMethod.${booking.payment.refundMethod}`, {
+                          defaultValue: REFUND_METHOD_FALLBACK[booking.payment.refundMethod] ?? String(booking.payment.refundMethod),
+                        }),
+                        date: booking.payment.refundedAt
+                          ? new Date(booking.payment.refundedAt).toLocaleDateString(
+                              i18n.language === 'ar' ? 'ar-QA' : 'en-GB',
+                              { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC', numberingSystem: 'latn' } as Intl.DateTimeFormatOptions,
+                            )
+                          : '—',
+                      })}
+                    </p>
+                    <p className="text-xs text-jadwal-success/90 mt-0.5">
+                      {t('booking.refundOutsideDesc', {
+                        defaultValue: 'This refund was made outside the website. No Wanasa points were added for it.',
+                      })}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              {booking.status === 'CANCELLED' &&
+              booking.payment?.status === 'REFUNDED' &&
+              !booking.payment?.refundMethod ? (
                 <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/25 p-4 flex items-start gap-3">
                   <Coins
                     className="w-5 h-5 text-jadwal-success shrink-0 mt-0.5"

@@ -11,6 +11,7 @@ import {
   formatBookingDate,
   type CancelableBooking,
 } from '../../src/app/admin/bookings/_components/cancel-booking-modal';
+import { todayInQatar } from '../../src/app/admin/_components/external-refund-fields';
 
 const booking: CancelableBooking = {
   id: 'b-1',
@@ -107,7 +108,7 @@ describe('CancelBookingModal', () => {
     expect(screen.getByText('Overnight Desert Safari')).toBeInTheDocument();
     expect(screen.getByText('Dec 20, 2026')).toBeInTheDocument();
     expect(screen.getByText('QAR 505')).toBeInTheDocument();
-    expect(screen.getByText(/refunded to the customer as Wanasa points, not to their card/)).toBeInTheDocument();
+    expect(screen.getByText(/The QAR 505 paid is credited to the customer's Wanasa balance, not to their card/)).toBeInTheDocument();
     expect(screen.queryByText(/redeemed Wanasa points are returned/)).not.toBeInTheDocument();
   });
 
@@ -129,7 +130,7 @@ describe('CancelBookingModal', () => {
       />,
     );
     expect(screen.getByText('QAR 405 + 100 Wanasa points')).toBeInTheDocument();
-    expect(screen.getByText(/The paid amount \(QAR 405\) is refunded to the customer as Wanasa points/)).toBeInTheDocument();
+    expect(screen.getByText(/The QAR 405 paid is credited to the customer's Wanasa balance/)).toBeInTheDocument();
     expect(screen.getByText(/The 100 redeemed Wanasa points are returned to the customer/)).toBeInTheDocument();
   });
 
@@ -147,14 +148,84 @@ describe('CancelBookingModal', () => {
     expect(screen.queryByText(/Wanasa points/)).not.toBeInTheDocument();
   });
 
-  it('confirms with the booking id and dismisses with "Keep booking"', async () => {
+  it('paid booking: "Cancel booking" is disabled until a refund option is chosen; points → confirms without externalRefund', async () => {
     const onConfirm = jest.fn();
     const onClose = jest.fn();
     render(<CancelBookingModal booking={booking} pending={false} onConfirm={onConfirm} onClose={onClose} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
-    expect(onConfirm).toHaveBeenCalledWith('b-1');
+    const confirm = screen.getByRole('button', { name: 'Cancel booking' });
+    expect(confirm).toBeDisabled();
+    expect(screen.getByRole('radio', { name: /Refund as Wanasa points/ })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: /Refund already done outside the website/ })).not.toBeChecked();
+
+    await userEvent.click(screen.getByRole('radio', { name: /Refund as Wanasa points/ }));
+    expect(confirm).toBeEnabled();
+    await userEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledWith('b-1', undefined);
     await userEvent.click(screen.getByRole('button', { name: 'Keep booking' }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('paid booking, refunded outside: requires method/amount/date, validates them, then confirms with externalRefund', async () => {
+    const onConfirm = jest.fn();
+    render(<CancelBookingModal booking={booking} pending={false} onConfirm={onConfirm} onClose={() => {}} />);
+    const confirm = screen.getByRole('button', { name: 'Cancel booking' });
+    await userEvent.click(screen.getByRole('radio', { name: /Refund already done outside the website/ }));
+    expect(confirm).toBeDisabled(); // method missing
+    expect(screen.getByLabelText(/Amount refunded/)).toHaveValue(505); // pre-filled with the cash paid
+    expect(screen.getByLabelText(/Refund date/)).toHaveValue(todayInQatar());
+
+    await userEvent.selectOptions(screen.getByLabelText(/Method/), 'CASH');
+    expect(confirm).toBeEnabled();
+    expect(screen.getByTestId('cancel-refund-outside-summary')).toHaveTextContent('No Wanasa points will be added for the QAR 505. The customer will be told the refund was made by cash.');
+
+    // Amount above the cash paid → disabled with an error; back to valid → enabled.
+    await userEvent.clear(screen.getByLabelText(/Amount refunded/));
+    await userEvent.type(screen.getByLabelText(/Amount refunded/), '600');
+    expect(screen.getByText(/cannot exceed the cash paid \(505\)/)).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
+    await userEvent.clear(screen.getByLabelText(/Amount refunded/));
+    await userEvent.type(screen.getByLabelText(/Amount refunded/), '505');
+    // Future date → disabled; today → enabled.
+    await userEvent.clear(screen.getByLabelText(/Refund date/));
+    await userEvent.type(screen.getByLabelText(/Refund date/), '2099-01-01');
+    expect(screen.getByText(/cannot be in the future/)).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
+    await userEvent.clear(screen.getByLabelText(/Refund date/));
+    await userEvent.type(screen.getByLabelText(/Refund date/), '2026-11-01');
+    await userEvent.type(screen.getByLabelText(/Reference or note/), 'TRF-77');
+    expect(confirm).toBeEnabled();
+
+    await userEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledWith('b-1', { method: 'CASH', amount: 505, refundedOn: '2026-11-01', reference: 'TRF-77' });
+  });
+
+  it('unpaid and points-only bookings: no refund choice, confirm enabled at once', async () => {
+    const onConfirm = jest.fn();
+    const { unmount } = render(
+      <CancelBookingModal booking={{ ...booking, status: 'PENDING', payment: { amount: '505', status: 'PENDING', method: 'PENDING' } }} pending={false} onConfirm={onConfirm} onClose={() => {}} />,
+    );
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel booking' })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
+    expect(onConfirm).toHaveBeenCalledWith('b-1', undefined);
+    unmount();
+
+    render(<CancelBookingModal booking={pointsOnly} pending={false} onConfirm={() => {}} onClose={() => {}} />);
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel booking' })).toBeEnabled();
+    expect(screen.getByText(/The 500 redeemed Wanasa points are returned to the customer\./)).toBeInTheDocument();
+  });
+
+  it('card + points booking says the redeemed points come back with either option', () => {
+    render(
+      <CancelBookingModal
+        booking={{ ...booking, pointsRedeemed: 100, payment: { amount: '405', status: 'SUCCESS', method: 'CARD' } }}
+        pending={false}
+        onConfirm={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByText(/The 100 redeemed Wanasa points are returned to the customer with either option\./)).toBeInTheDocument();
   });
 
   it('focuses the safe button and closes on Escape, but not while the request is in flight', async () => {

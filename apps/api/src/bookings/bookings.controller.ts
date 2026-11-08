@@ -108,6 +108,7 @@ export class BookingsController {
       dto.action,
       dto.amount,
       dto.note,
+      dto.externalRefund,
     );
   }
 
