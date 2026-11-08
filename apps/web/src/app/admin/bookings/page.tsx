@@ -12,7 +12,7 @@ import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
 import { Search, ChevronLeft, ChevronRight, CheckCircle, Clock, XCircle, CheckCheck, ChevronDown, Tag, CreditCard, Download, AlertTriangle, CheckCircle2, Sparkles } from 'lucide-react';
 import CustomSelect from '@/components/custom-select';
-import { CancelBookingModal, canAdminCancelBooking } from './_components/cancel-booking-modal';
+import { CancelBookingModal, canAdminCancelBooking, bookingHasStarted } from './_components/cancel-booking-modal';
 
 interface Booking {
   id: string;
@@ -79,6 +79,8 @@ export default function AdminBookingsPage() {
   const [amountInput, setAmountInput] = useState('');
   const [noteInput, setNoteInput] = useState('');
   const [cancelTarget, setCancelTarget] = useState<Booking | null>(null);
+  // One "now" per render for the cancel-action rule (Qatar time, see bookingHasStarted).
+  const now = new Date();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -572,8 +574,15 @@ export default function AdminBookingsPage() {
                               </p>
                             )}
 
-                            {/* ── Admin cancel (pending / confirmed only) ── */}
-                            {canAdminCancelBooking(booking) && (
+                            {/* ── Past booking: no cancel (it would refund a trip that already happened) ── */}
+                            {(booking.status === 'PENDING' || booking.status === 'CONFIRMED') && bookingHasStarted(booking, now) && (
+                              <p className="mt-4 pt-4 border-t border-gray-200/60 dark:border-slate-700/40 text-xs text-gray-500 dark:text-slate-400">
+                                This booking&apos;s date has passed.
+                              </p>
+                            )}
+
+                            {/* ── Admin cancel (pending / confirmed, not started yet) ── */}
+                            {canAdminCancelBooking(booking, now) && (
                               <div className="mt-4 pt-4 border-t border-gray-200/60 dark:border-slate-700/40 flex flex-wrap items-center justify-between gap-3">
                                 <p className="text-xs text-gray-500 dark:text-slate-400">
                                   Cancel this booking on the customer&apos;s behalf. The customer is notified and the date is freed.

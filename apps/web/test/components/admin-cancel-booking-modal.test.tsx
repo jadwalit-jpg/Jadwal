@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import {
   CancelBookingModal,
   canAdminCancelBooking,
+  bookingHasStarted,
+  nowInQatarAsUtc,
   paidAmount,
   pointsReturned,
   amountPaidLabel,
@@ -30,11 +32,39 @@ const pointsOnly: CancelableBooking = {
 };
 
 describe('canAdminCancelBooking', () => {
-  it('offers the action for pending and confirmed bookings only', () => {
-    expect(canAdminCancelBooking({ status: 'PENDING' })).toBe(true);
-    expect(canAdminCancelBooking({ status: 'CONFIRMED' })).toBe(true);
-    expect(canAdminCancelBooking({ status: 'COMPLETED' })).toBe(false);
-    expect(canAdminCancelBooking({ status: 'CANCELLED' })).toBe(false);
+  // 09:00Z = 12:00 in Qatar (UTC+3). Booking times are Qatar wall-clock tagged UTC.
+  const now = new Date('2026-11-20T09:00:00.000Z');
+  const tomorrow14 = '2026-11-21T14:00:00.000Z';
+
+  it('converts "now" to Qatar wall-clock tagged as UTC, like the API', () => {
+    expect(nowInQatarAsUtc(now).toISOString()).toBe('2026-11-20T12:00:00.000Z');
+  });
+
+  it('future confirmed: allowed', () => {
+    expect(canAdminCancelBooking({ status: 'CONFIRMED', startDatetime: tomorrow14 }, now)).toBe(true);
+  });
+
+  it('future pending: allowed', () => {
+    expect(canAdminCancelBooking({ status: 'PENDING', startDatetime: tomorrow14 }, now)).toBe(true);
+  });
+
+  it('later today, not started yet: allowed', () => {
+    expect(canAdminCancelBooking({ status: 'CONFIRMED', startDatetime: '2026-11-20T15:00:00.000Z' }, now)).toBe(true);
+  });
+
+  it('started earlier today: not allowed (11:00 Qatar is in the past at 12:00 Qatar, even though 11:00Z is after 09:00Z)', () => {
+    const b = { status: 'CONFIRMED', startDatetime: '2026-11-20T11:00:00.000Z' };
+    expect(bookingHasStarted(b, now)).toBe(true);
+    expect(canAdminCancelBooking(b, now)).toBe(false);
+  });
+
+  it('past confirmed: not allowed', () => {
+    expect(canAdminCancelBooking({ status: 'CONFIRMED', startDatetime: '2026-11-10T14:00:00.000Z' }, now)).toBe(false);
+  });
+
+  it('completed and cancelled: never', () => {
+    expect(canAdminCancelBooking({ status: 'COMPLETED', startDatetime: tomorrow14 }, now)).toBe(false);
+    expect(canAdminCancelBooking({ status: 'CANCELLED', startDatetime: tomorrow14 }, now)).toBe(false);
   });
 });
 

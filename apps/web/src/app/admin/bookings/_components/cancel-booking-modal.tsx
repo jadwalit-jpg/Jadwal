@@ -31,12 +31,37 @@ export type CancelableBooking = {
 };
 
 /**
- * Which bookings get the "Cancel booking" action. The same two statuses the
- * vendor panel allows (PENDING, CONFIRMED): a completed booking has already
- * happened and a cancelled one has nothing left to cancel.
+ * "Now" as Qatar wall-clock time, tagged as UTC. Booking times are stored that
+ * way (a 14:00 Qatar booking is 14:00Z, see buildDatetime on the API), and the
+ * API's own guards compare them with nowInTimezone(activity timezone), which
+ * builds exactly this value. Comparing with the real UTC instant instead would
+ * treat a booking as "not started" for up to three hours after it began.
  */
-export function canAdminCancelBooking(b: { status: string }): boolean {
-  return b.status === 'PENDING' || b.status === 'CONFIRMED';
+export function nowInQatarAsUtc(now: Date = new Date()): Date {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Qatar', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+  return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}.000Z`);
+}
+
+/** True once the booking's start time (Qatar time) has passed. */
+export function bookingHasStarted(b: { startDatetime: string }, now: Date = new Date()): boolean {
+  return new Date(b.startDatetime).getTime() <= nowInQatarAsUtc(now).getTime();
+}
+
+/**
+ * Which bookings get the "Cancel booking" action: pending or confirmed (the
+ * same two statuses the vendor panel allows) AND not started yet. The server
+ * would also accept a cancel of a past booking (it is still CONFIRMED until
+ * the auto-complete cron runs after its end time), but that would refund the
+ * customer in Wanasa points for a trip that already happened, so the admin
+ * panel does not offer it.
+ */
+export function canAdminCancelBooking(b: { status: string; startDatetime: string }, now: Date = new Date()): boolean {
+  return (b.status === 'PENDING' || b.status === 'CONFIRMED') && !bookingHasStarted(b, now);
 }
 
 /** Cash the customer actually paid: the payment amount when it succeeded, else 0. */

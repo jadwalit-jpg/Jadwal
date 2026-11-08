@@ -88,6 +88,55 @@ async function makeAdmin() {
 
 const slotAt = (hourly: any, time: string) => hourly.slots.find((s: any) => s.slotStart === time);
 
+/** A date in next month (day 1 + offset), so a two-night stay never straddles a month boundary. */
+function nextMonthDate(dayOffset: number): string {
+  const d = new Date();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + 1);
+  d.setUTCDate(1 + dayOffset);
+  return d.toISOString().slice(0, 10);
+}
+const monthOf = (date: string) => date.slice(0, 7);
+const dayOf = (cal: any, date: string) => cal.days.find((d: any) => d.date === date);
+
+/** Turn the seed activity into a DAILY (per-night) listing: a resort/chalet. */
+async function makeDailyActivity(activityId: string, overrides: Record<string, unknown> = {}) {
+  await ctx.prisma.activity.update({
+    where: { id: activityId },
+    data: {
+      bookingType: 'DAILY', pricingModel: 'PER_UNIT', pricePerPerson: 400,
+      durationValue: null, checkInTime: '14:00', checkOutTime: '11:00',
+      capacity: 4, hasUnits: false, unitCount: 0, unitCapacity: 1, activeDays: [],
+      ...overrides,
+    },
+  });
+}
+
+/** A confirmed, card-paid DAILY booking: check-in 14:00 on `checkIn`, check-out 11:00 on `checkOut` (what createBooking stores). */
+async function makePaidDailyBooking(seed: any, checkIn: string, checkOut: string, guests: number, unitNumber: number | null = null) {
+  const payment = await ctx.prisma.payment.create({
+    data: { amount: 805, currency: 'QAR', status: 'SUCCESS', payoutStatus: 'UNPAID', method: 'CARD', paidAt: new Date(), gatewayTxnId: `TXN-${Math.random().toString(36).slice(2, 10)}` },
+  });
+  return ctx.prisma.booking.create({
+    data: {
+      ref: `JDWL-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
+      customerId: seed.customer.id, vendorId: seed.vendor.id, activityId: seed.activity.id,
+      guests, bookingPhone: '+97455123456', guestBreakdown: {}, unitNumber,
+      startDatetime: new Date(`${checkIn}T14:00:00.000Z`), endDatetime: new Date(`${checkOut}T11:00:00.000Z`),
+      totalPrice: 800, serviceFee: 5, currencyCode: 'QAR', commissionPct: 10, commissionAmount: 80,
+      status: 'CONFIRMED', paymentId: payment.id,
+    },
+  });
+}
+
+async function makeOtherCustomer() {
+  return ctx.prisma.user.create({
+    data: { fullName: 'Other Customer', email: 'other@test.com', password: '$2b$10$dummy.hash.for.tests.never.used.in.auth', role: 'CUSTOMER', emailVerified: true },
+  });
+}
+
+const refundLedger = (bookingId: string) => ctx.prisma.loyaltyLedger.findMany({ where: { bookingId }, orderBy: { createdAt: 'asc' } });
+
 describe('admin cancel booking (existing status endpoint)', () => {
   let fetchSpy: jest.SpyInstance;
   beforeEach(() => { fetchSpy = jest.spyOn(global, 'fetch' as any); });
@@ -141,9 +190,7 @@ describe('admin cancel booking (existing status endpoint)', () => {
     const booking = await makePaidConfirmedBooking(seed, date); // fills all 10 seats
     // A different customer, so the pre-cancel rejection is the capacity check,
     // not the "you already have a booking for this slot" guard.
-    const other = await ctx.prisma.user.create({
-      data: { fullName: 'Other Customer', email: 'other@test.com', password: '$2b$10$dummy.hash.for.tests.never.used.in.auth', role: 'CUSTOMER', emailVerified: true },
-    });
+    const other = await makeOtherCustomer();
     const attempt = () => bookings.createBooking(other.id, {
       activityId: seed.activity.id, checkInDate: date, slotTime: '10:00', guests: 1, bookingPhone: '+97455123456',
     } as any);
@@ -181,9 +228,86 @@ describe('admin cancel booking (existing status endpoint)', () => {
     // Every notification row goes out as one push; the second call added none.
     expect(webPush.sendToUser).toHaveBeenCalledTimes(await ctx.prisma.notification.count({ where: { userId: seed.customer.id } }));
 
-    // Points were credited once, not twice.
+    // Credited once, not twice: balance still 105 after the second call, one
+    // refund on the payment, one ledger credit for this booking.
     const customer = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
     expect(Number(customer.loyaltyPoints)).toBe(105);
+    const payment = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: booking.paymentId! } });
+    expect(payment.status).toBe('REFUNDED');
+    expect(Number(payment.refundAmount)).toBe(105);
+    const ledger = await refundLedger(booking.id);
+    expect(ledger).toHaveLength(1);
+    expect(Number(ledger[0].delta)).toBe(105);
+  });
+
+  test('two cancels fired at the same time: cancelled once, one notification, refunded once, credited once', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = await makeAdmin();
+    const { admin: adminSvc, availabilityCache } = makeServices();
+    const booking = await makePaidConfirmedBooking(seed, futureDate(15));
+
+    const results = await Promise.allSettled([
+      adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED'),
+      adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED'),
+    ]);
+    // Both calls resolve: the loser of the claim returns the already-cancelled row.
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+    for (const r of results) expect((r as PromiseFulfilledResult<any>).value.status).toBe('CANCELLED');
+
+    const after = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: booking.id } });
+    expect(after.status).toBe('CANCELLED');
+    expect(after.cancelledBy).toBe('ADMIN');
+
+    const notes = await ctx.prisma.notification.findMany({ where: { userId: seed.customer.id, type: 'BOOKING_CANCELLED' } });
+    expect(notes).toHaveLength(1);
+
+    const payment = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: booking.paymentId! } });
+    expect(payment.status).toBe('REFUNDED');
+    expect(Number(payment.refundAmount)).toBe(105);
+
+    const customer = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
+    expect(Number(customer.loyaltyPoints)).toBe(105);
+    expect(await refundLedger(booking.id)).toHaveLength(1);
+    expect(availabilityCache.invalidate).toHaveBeenCalledTimes(1);
+  });
+
+  test('card + Wanasa points booking: the card amount comes back as points plus the redeemed points, once', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = await makeAdmin();
+    const { admin: adminSvc } = makeServices();
+    // QAR 500 trip: 100 paid with points (already debited at booking time), 405 by card (400 + 5 fee).
+    const payment = await ctx.prisma.payment.create({
+      data: { amount: 405, currency: 'QAR', status: 'SUCCESS', payoutStatus: 'UNPAID', method: 'CARD', paidAt: new Date(), gatewayTxnId: 'TXN-MIXED-1' },
+    });
+    const date = futureDate(17);
+    const booking = await ctx.prisma.booking.create({
+      data: {
+        ref: 'JDWL-MIXED1', customerId: seed.customer.id, vendorId: seed.vendor.id, activityId: seed.activity.id,
+        guests: 5, bookingPhone: '+97455123456', guestBreakdown: {},
+        startDatetime: new Date(`${date}T10:00:00.000Z`), endDatetime: new Date(`${date}T12:00:00.000Z`),
+        totalPrice: 500, serviceFee: 5, currencyCode: 'QAR', commissionPct: 10, commissionAmount: 50,
+        pointsRedeemed: 100, pointsDiscount: 100,
+        status: 'CONFIRMED', paymentId: payment.id,
+      },
+    });
+    const before = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
+    expect(Number(before.loyaltyPoints)).toBe(0);
+
+    await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED');
+
+    const pay = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(pay.status).toBe('REFUNDED');
+    expect(Number(pay.refundAmount)).toBe(405);
+    const customer = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
+    expect(Number(customer.loyaltyPoints)).toBe(505); // 405 card refund as points + 100 redeemed points back
+    const ledger = await refundLedger(booking.id);
+    expect(ledger.map((l) => Number(l.delta)).sort((a, b) => a - b)).toEqual([100, 405]);
+
+    // Repeat: nothing moves again.
+    await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED');
+    const again = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
+    expect(Number(again.loyaltyPoints)).toBe(505);
+    expect(await refundLedger(booking.id)).toHaveLength(2);
   });
 
   test('an unpaid pending booking: cancelled, pending payment marked failed, no points', async () => {
@@ -214,5 +338,87 @@ describe('admin cancel booking (existing status endpoint)', () => {
     const customer = await ctx.prisma.user.findUniqueOrThrow({ where: { id: seed.customer.id } });
     expect(Number(customer.loyaltyPoints)).toBe(0);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('DAILY (per-night) listings', () => {
+  test('2-night chalet booking: nights booked before, free after, and another customer can book them', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = await makeAdmin();
+    const { admin: adminSvc, bookings, availabilityCache } = makeServices();
+    await makeDailyActivity(seed.activity.id); // capacity 4 guests per night, no units
+    const checkIn = nextMonthDate(5);
+    const night2 = nextMonthDate(6);
+    const checkOut = nextMonthDate(7);
+    const booking = await makePaidDailyBooking(seed, checkIn, checkOut, 4); // fills both nights
+    const other = await makeOtherCustomer();
+    const attempt = () => bookings.createBooking(other.id, {
+      activityId: seed.activity.id, checkInDate: checkIn, checkOutDate: checkOut, guests: 1, bookingPhone: '+97455123456',
+    } as any);
+
+    // Before: the calendar the booking page reads shows both nights full; the checkout day is untouched.
+    const calBefore: any = await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn));
+    for (const night of [checkIn, night2]) {
+      expect(dayOf(calBefore, night)).toMatchObject({ booked: 4, available: 0, isFullyBooked: true });
+    }
+    expect(dayOf(calBefore, checkOut).booked).toBe(0);
+    const dailyBefore: any = await bookings.getDailyAvailability(seed.activity.id, checkIn, checkOut);
+    expect(dailyBefore).toMatchObject({ booked: 4, available: 0 });
+    await expect(attempt()).rejects.toThrow(/fully booked/i);
+
+    await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED');
+    expect(availabilityCache.invalidate).toHaveBeenCalledWith(seed.activity.id);
+
+    // After: both nights free again, and the other customer gets them.
+    const calAfter: any = await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn));
+    for (const night of [checkIn, night2]) {
+      expect(dayOf(calAfter, night)).toMatchObject({ booked: 0, available: 4, isFullyBooked: false });
+    }
+    const dailyAfter: any = await bookings.getDailyAvailability(seed.activity.id, checkIn, checkOut);
+    expect(dailyAfter).toMatchObject({ booked: 0, available: 4 });
+    const res: any = await attempt();
+    expect(res.booking.status).toBe('PENDING');
+    const created = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    expect(created.customerId).toBe(other.id);
+    expect(created.startDatetime.toISOString()).toBe(`${checkIn}T14:00:00.000Z`);
+    expect(created.endDatetime.toISOString()).toBe(`${checkOut}T11:00:00.000Z`);
+  });
+
+  test('2-night booking on a listing with units: the free unit count goes back up by one', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = await makeAdmin();
+    const { admin: adminSvc, bookings } = makeServices();
+    await makeDailyActivity(seed.activity.id, { hasUnits: true, unitCount: 2, unitCapacity: 4, capacity: 8 });
+    const checkIn = nextMonthDate(10);
+    const night2 = nextMonthDate(11);
+    const checkOut = nextMonthDate(12);
+    const booking = await makePaidDailyBooking(seed, checkIn, checkOut, 2, 1); // unit 1 of 2
+
+    const freeUnits = (daily: any) => daily.units.filter((u: any) => u.available > 0).length;
+
+    // Before: 1 of 2 units free on both nights.
+    const calBefore: any = await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn));
+    for (const night of [checkIn, night2]) {
+      expect(dayOf(calBefore, night)).toMatchObject({ capacity: 2, booked: 1, available: 1 });
+    }
+    expect(freeUnits(await bookings.getDailyAvailability(seed.activity.id, checkIn, checkOut))).toBe(1);
+
+    await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED');
+
+    // After: both units free.
+    const calAfter: any = await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn));
+    for (const night of [checkIn, night2]) {
+      expect(dayOf(calAfter, night)).toMatchObject({ capacity: 2, booked: 0, available: 2 });
+    }
+    expect(freeUnits(await bookings.getDailyAvailability(seed.activity.id, checkIn, checkOut))).toBe(2);
+
+    // And the nights can be booked again (a unit is assigned).
+    const other = await makeOtherCustomer();
+    const res: any = await bookings.createBooking(other.id, {
+      activityId: seed.activity.id, checkInDate: checkIn, checkOutDate: checkOut, guests: 2, bookingPhone: '+97455123456',
+    } as any);
+    expect(res.booking.status).toBe('PENDING');
+    const created = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    expect(created.unitNumber).not.toBeNull();
   });
 });
