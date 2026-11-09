@@ -195,7 +195,7 @@ describe('AdminController — delegation', () => {
       'b1',
       { status: 'CANCELLED' } as any,
     );
-    expect(svc.updateBookingStatus).toHaveBeenCalledWith('admin-1', 'b1', 'CANCELLED');
+    expect(svc.updateBookingStatus).toHaveBeenCalledWith('admin-1', 'b1', 'CANCELLED', undefined);
   });
 
   test('DELETE /admin/users/:id → deleteUser(id)', async () => {

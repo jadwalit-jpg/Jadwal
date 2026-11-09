@@ -329,7 +329,7 @@ export class AdminController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateBookingStatusDto,
   ) {
-    return this.adminService.updateBookingStatus(user.id, id, dto.status);
+    return this.adminService.updateBookingStatus(user.id, id, dto.status, dto.externalRefund);
   }
 
   // ─── Payouts ────────────────────────────────────────────────

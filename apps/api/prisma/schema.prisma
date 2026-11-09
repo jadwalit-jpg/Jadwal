@@ -573,6 +573,10 @@ model Payment {
   method             String
   refundAmount       Decimal?      @db.Decimal(10, 2)
   refundedAt         DateTime?
+  /// How a refund was paid back when it was made OUTSIDE the website (bank
+  /// transfer, cash, a card refund in PAY2M, other). Null for refunds credited
+  /// as Wanasa points (the default path) and for non-refunded payments.
+  refundMethod       RefundMethod?
   /// Server-derived JSON copy of the booking row written ONCE at booking
   /// creation. Never sourced from request body; never updateable. The
   /// callback's B2 orphan-recovery path uses this to re-insert the booking
@@ -617,6 +621,15 @@ enum PaymentStatus {
   REFUNDED        // Decision recorded: refund given (amount in refundAmount)
   REJECTED        // Decision recorded: no refund given (vendor denied)
   FAILED          // Payment failed originally, or unpaid booking cancelled
+}
+
+/// Refund paid outside the website. Not Payment.bankTransferRef, which belongs
+/// to vendor payouts.
+enum RefundMethod {
+  BANK_TRANSFER
+  CASH
+  CARD_PAY2M
+  OTHER
 }
 
 enum PayoutStatus {
