@@ -7,6 +7,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { getApiError } from '@/lib/api-error';
+import { validateMinGuests, minGuestsPayload } from '@/lib/min-guests';
 import { sanitize, sanitizeObject } from '@/lib/validation';
 import AdminLayout from '../../_components/admin-layout';
 import { Check, Loader2, X, BookmarkIcon, AlertTriangle, ImagePlus } from 'lucide-react';
@@ -175,7 +176,7 @@ export default function AdminEditActivityPage() {
   const [form, setForm] = useState({
     titleEn: '', titleAr: '', slug: '', descriptionEn: '', descriptionAr: '',
     categoryId: '', subCategoryId: '', pricePerPerson: '', durationValue: '',
-    pricingModel: 'PER_PERSON' as 'PER_PERSON' | 'PER_UNIT',
+    pricingModel: 'PER_PERSON' as 'PER_PERSON' | 'PER_UNIT', minGuests: '',
     capacity: '', locationLat: '', locationLng: '', locationAddress: '', cityId: '',
     bookingType: 'HOURLY' as 'HOURLY' | 'DAILY', cancellationPolicy: '',
     checkInTime: '', checkOutTime: '',
@@ -224,6 +225,7 @@ export default function AdminEditActivityPage() {
         pricePerPerson: activity.pricePerPerson != null ? String(activity.pricePerPerson) : '',
         durationValue: activity.durationValue != null ? String(activity.durationValue) : '',
         pricingModel: (activity.pricingModel ?? 'PER_PERSON') as 'PER_PERSON' | 'PER_UNIT',
+        minGuests: activity.minGuests != null && activity.minGuests > 1 ? String(activity.minGuests) : '',
         capacity: activity.capacity != null ? String(activity.capacity) : '',
         locationLat: activity.locationLat != null ? String(activity.locationLat) : '',
         locationLng: activity.locationLng != null ? String(activity.locationLng) : '',
@@ -285,6 +287,14 @@ export default function AdminEditActivityPage() {
     }
     if (step === 3) {
       if (!form.pricePerPerson || Number(form.pricePerPerson) <= 0) errs.pricePerPerson = 'Valid price is required';
+      // Minimum guests (per-person only): same rule the API enforces.
+      const mg = validateMinGuests(form.minGuests, {
+        pricingModel: form.pricingModel, bookingType: form.bookingType, hasUnits,
+        unitCount: Number(unitCount) || 0, unitCapacity: Number(unitCapacity) || 1,
+        capacity: form.capacity ? Number(form.capacity) : null,
+      });
+      if (mg?.kind === 'range') errs.minGuests = 'Minimum guests must be between 1 and 500';
+      else if (mg?.kind === 'overCapacity') errs.minGuests = `Minimum guests cannot be more than one booking can hold (${mg.max})`;
     }
     if (step === 4) {
       if (!form.cityId) errs.cityId = 'City is required';
@@ -330,7 +340,9 @@ export default function AdminEditActivityPage() {
       categoryId: form.categoryId, subCategoryId: form.subCategoryId || undefined,
       pricePerPerson: Number(form.pricePerPerson),
       durationValue: form.durationValue ? Number(form.durationValue) : null,  // explicit null clears it on update (undefined would keep the old value)
-      pricingModel: form.bookingType === 'DAILY' ? 'PER_UNIT' : form.pricingModel,
+      // DAILY can now be per person too (switching to DAILY defaults to per unit).
+      pricingModel: form.pricingModel,
+      minGuests: minGuestsPayload(form.minGuests, form.pricingModel),
       capacity: totalCapacity,
       locationLat: Number(form.locationLat), locationLng: Number(form.locationLng),
       locationAddress: sanitize(form.locationAddress), cityId: form.cityId,
@@ -463,7 +475,12 @@ export default function AdminEditActivityPage() {
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">Booking Type <span className="text-red-500">*</span></label>
               <div className="grid grid-cols-2 gap-3">
                 {[{ value: 'HOURLY', label: 'Hourly', desc: 'Charge per hour' }, { value: 'DAILY', label: 'Daily', desc: 'Charge per day' }].map(opt => (
-                  <button key={opt.value} type="button" onClick={() => updateField('bookingType', opt.value)}
+                  <button key={opt.value} type="button" onClick={() => {
+                    // Switching the booking type resets the pricing model to that
+                    // type's default: DAILY → per unit, HOURLY → per person.
+                    if (opt.value !== form.bookingType) setForm(f => ({ ...f, pricingModel: opt.value === 'DAILY' ? 'PER_UNIT' : 'PER_PERSON' }));
+                    updateField('bookingType', opt.value);
+                  }}
                     className={`flex items-center gap-3 p-4 rounded-xl border-2 text-start transition-all cursor-pointer ${form.bookingType === opt.value ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-900/10' : 'border-gray-200 dark:border-slate-700 hover:border-gray-300'}`}>
                     <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${form.bookingType === opt.value ? 'border-blue-500' : 'border-gray-300'}`}>
                       {form.bookingType === opt.value && <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />}
@@ -564,7 +581,7 @@ export default function AdminEditActivityPage() {
             <div className="grid grid-cols-3 gap-8">
               <div className="col-span-2 space-y-5">
                 <div className="grid grid-cols-2 gap-5">
-                  <FieldGroup label={form.bookingType === 'DAILY' ? 'Price per Unit / Night' : form.pricingModel === 'PER_UNIT' ? 'Price per Unit' : 'Price per Person'} required error={errors.pricePerPerson}>
+                  <FieldGroup label={form.bookingType === 'DAILY' ? (form.pricingModel === 'PER_PERSON' ? 'Price per Person / Night' : 'Price per Unit / Night') : form.pricingModel === 'PER_UNIT' ? 'Price per Unit' : 'Price per Person'} required error={errors.pricePerPerson}>
                     <input type="number" min="0" value={form.pricePerPerson} onChange={e => updateField('pricePerPerson', e.target.value)} className={inputCls(!!errors.pricePerPerson)} placeholder="e.g., 150" />
                   </FieldGroup>
                   {!hasUnits && (
@@ -573,7 +590,8 @@ export default function AdminEditActivityPage() {
                     </FieldGroup>
                   )}
                 </div>
-                {form.bookingType === 'HOURLY' && (
+                {/* Pricing model — HOURLY and DAILY. DAILY per person = price × nights × guests. */}
+                {(
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">Pricing Model <span className="text-red-500">*</span></label>
                     <div className="space-y-3">
@@ -589,14 +607,26 @@ export default function AdminEditActivityPage() {
                     </div>
                   </div>
                 )}
+                {/* Minimum guests — per-person pricing only. */}
+                {form.pricingModel === 'PER_PERSON' && (
+                  <FieldGroup label="Minimum guests" error={errors.minGuests} hint="Charged for at least this many guests. Customers can still book fewer and pay the minimum. Leave 1 for no minimum.">
+                    <input type="number" min="1" max="500" value={form.minGuests} onChange={e => updateField('minGuests', e.target.value)} className={inputCls(!!errors.minGuests)} placeholder="1" />
+                  </FieldGroup>
+                )}
               </div>
               <div className="bg-gray-50 dark:bg-slate-800/60 rounded-xl p-5 border border-gray-200 dark:border-slate-700">
                 <p className="flex items-center gap-1.5 text-sm font-semibold text-gray-700 dark:text-slate-300 mb-4"><BookmarkIcon className="h-4 w-4" /> Pricing Preview</p>
                 <div className="space-y-3 text-xs">
                   <div className="flex justify-between text-gray-600 dark:text-slate-400">
-                    <span>{form.bookingType === 'DAILY' ? 'Per unit / night' : form.pricingModel === 'PER_UNIT' ? 'Per unit' : 'Per person'}</span>
+                    <span>{form.bookingType === 'DAILY' ? (form.pricingModel === 'PER_PERSON' ? 'Per person / night' : 'Per unit / night') : form.pricingModel === 'PER_UNIT' ? 'Per unit' : 'Per person'}</span>
                     <span className="font-medium text-gray-900 dark:text-white">{form.pricePerPerson ? `${activity.country?.currencyCode || 'QAR'} ${form.pricePerPerson}` : '\u2014'}</span>
                   </div>
+                  {form.pricingModel === 'PER_PERSON' && Number(form.minGuests) > 1 && (
+                    <div className="flex justify-between text-gray-600 dark:text-slate-400">
+                      <span>Minimum guests</span>
+                      <span className="font-medium text-gray-900 dark:text-white">{form.minGuests}{form.pricePerPerson ? ` · ${activity.country?.currencyCode || 'QAR'} ${Number(form.pricePerPerson) * Number(form.minGuests)}` : ''}</span>
+                    </div>
+                  )}
                   <div className="border-t border-gray-200 dark:border-slate-700 pt-3 flex justify-between text-gray-600 dark:text-slate-400">
                     <span>Capacity</span>
                     <span className="font-medium text-gray-900 dark:text-white">{hasUnits && Number(unitCount) > 0 ? `${Number(unitCount) * (Number(unitCapacity) || 1)} (${unitCount} units)` : form.capacity || '\u2014'}</span>

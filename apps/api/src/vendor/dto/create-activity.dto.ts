@@ -120,6 +120,15 @@ export class CreateActivityDto {
   @IsOptional()
   pricingModel?: PricingModel;
 
+  // Minimum guests charged on a PER_PERSON listing (price uses
+  // max(guests, minGuests)). Ignored for PER_UNIT. Default 1 = no minimum.
+  // 500 = the booking form's own guest limit (CreateBookingDto.guests).
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  @IsOptional()
+  minGuests?: number;
+
   // HOURLY: activity start/end time; DAILY: check-in/check-out time. Format only
   // here (any valid HH:MM). The 30-min-grid rule for HOURLY (:00/:30) is enforced
   // in assertHourlyTimesConsistent, so DAILY (a day boundary, not a slot grid) can

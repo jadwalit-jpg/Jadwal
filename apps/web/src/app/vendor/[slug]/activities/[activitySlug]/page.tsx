@@ -12,6 +12,7 @@ import type { TFunction } from 'i18next';
 import { ACTIVITY_WIZARD_ERR, wizardSteps, daysOfWeek } from '../../../_lib/vendor-activity-wizard-copy';
 import { getApiError } from '@/lib/api-error';
 import { sanitize, sanitizeObject } from '@/lib/validation';
+import { validateMinGuests, minGuestsPayload } from '@/lib/min-guests';
 import { VendorSidebar } from '../../../_components/vendor-sidebar';
 import { Check, Loader2, X, BookmarkIcon, AlertCircle, ImagePlus, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/components/toast';
@@ -216,12 +217,14 @@ export default function EditActivityPage() {
           label: t('vendor.activities.wizard.ui.pmPerPersonLabel'),
           desc: t('vendor.activities.wizard.ui.pmPerPersonDesc'),
           example: t('vendor.activities.wizard.ui.pmPerPersonExample'),
+          exampleDaily: t('vendor.activities.wizard.ui.pmPerPersonExampleDaily', 'Desert camp 250 QAR/person × 3 guests × 1 night = 750 QAR'),
         },
         {
           value: 'PER_UNIT' as const,
           label: t('vendor.activities.wizard.ui.pmPerUnitLabel'),
           desc: t('vendor.activities.wizard.ui.pmPerUnitDesc'),
           example: t('vendor.activities.wizard.ui.pmPerUnitExample'),
+          exampleDaily: t('vendor.activities.wizard.ui.pmPerUnitExampleDaily', 'Chalet 1,200 QAR/night (same price for any group size)'),
         },
       ] as const,
     [t],
@@ -269,6 +272,7 @@ export default function EditActivityPage() {
     pricePerPerson: '',
     durationValue: '',
     pricingModel: 'PER_PERSON' as 'PER_PERSON' | 'PER_UNIT',
+    minGuests: '',
     capacity: '',
     locationLat: '',
     locationLng: '',
@@ -329,6 +333,7 @@ export default function EditActivityPage() {
         pricePerPerson: activity.pricePerPerson != null ? String(activity.pricePerPerson) : '',
         durationValue: activity.durationValue != null ? String(activity.durationValue) : '',
         pricingModel: (activity.pricingModel ?? 'PER_PERSON') as 'PER_PERSON' | 'PER_UNIT',
+        minGuests: activity.minGuests != null && activity.minGuests > 1 ? String(activity.minGuests) : '',
         capacity: activity.capacity != null ? String(activity.capacity) : '',
         locationLat: activity.locationLat != null ? String(activity.locationLat) : '',
         locationLng: activity.locationLng != null ? String(activity.locationLng) : '',
@@ -424,6 +429,20 @@ export default function EditActivityPage() {
       if (!hasUnits && form.capacity && Number(form.capacity) > 10000) {
         errs.capacity = t(ACTIVITY_WIZARD_ERR.capacityTooHigh);
       }
+      // Minimum guests (per-person pricing only): 1–500 and no more than one
+      // booking can hold. Same rule the API enforces (lib/min-guests.ts).
+      {
+        const mg = validateMinGuests(form.minGuests, {
+          pricingModel: form.pricingModel,
+          bookingType: form.bookingType,
+          hasUnits,
+          unitCount: Number(unitCount) || 0,
+          unitCapacity: Number(unitCapacity) || 1,
+          capacity: form.capacity ? Number(form.capacity) : null,
+        });
+        if (mg?.kind === 'range') errs.minGuests = t('vendor.activities.wizard.errors.minGuestsRange', 'Minimum guests must be between 1 and 500');
+        else if (mg?.kind === 'overCapacity') errs.minGuests = t('vendor.activities.wizard.errors.minGuestsOverCapacity', { max: mg.max, defaultValue: 'Minimum guests cannot be more than one booking can hold ({{max}})' });
+      }
     }
     if (step === 4) {
       if (!form.cityId) errs.cityId = t(ACTIVITY_WIZARD_ERR.cityRequired);
@@ -496,7 +515,9 @@ export default function EditActivityPage() {
       // Send explicit null when cleared so an update RESETS it to flexible —
       // Prisma ignores `undefined` (would keep the old value, so clearing fails).
       durationValue: form.durationValue ? Number(form.durationValue) : null,
-      pricingModel: form.bookingType === 'DAILY' ? 'PER_UNIT' : form.pricingModel,
+      // DAILY can now be per person too (switching to DAILY defaults to per unit).
+      pricingModel: form.pricingModel,
+      minGuests: minGuestsPayload(form.minGuests, form.pricingModel),
       capacity: totalCapacity,
       locationLat: Number(form.locationLat),
       locationLng: Number(form.locationLng),
@@ -727,7 +748,14 @@ export default function EditActivityPage() {
                     <button
                       key={opt.value}
                       type="button"
-                      onClick={() => updateField('bookingType', opt.value)}
+                      onClick={() => {
+                        // Switching the booking type resets the pricing model to
+                        // that type's default: DAILY → per unit, HOURLY → per person.
+                        if (opt.value !== form.bookingType) {
+                          setForm(f => ({ ...f, pricingModel: opt.value === 'DAILY' ? 'PER_UNIT' : 'PER_PERSON' }));
+                        }
+                        updateField('bookingType', opt.value);
+                      }}
                       className={`flex items-center gap-3 p-4 rounded-xl border-2 text-start transition-all ${
                         form.bookingType === opt.value
                           ? 'border-[#1d4f35] bg-[#1d4f35]/5'
@@ -926,7 +954,9 @@ export default function EditActivityPage() {
                     <FieldGroup
                       label={
                         form.bookingType === 'DAILY'
-                          ? t('vendor.activities.wizard.ui.pricePerUnitNight')
+                          ? form.pricingModel === 'PER_PERSON'
+                            ? t('vendor.activities.wizard.ui.pricePerPersonNight', 'Price per Person / Night (QAR)')
+                            : t('vendor.activities.wizard.ui.pricePerUnitNight')
                           : form.pricingModel === 'PER_UNIT'
                             ? t('vendor.activities.wizard.ui.pricePerUnit')
                             : t('vendor.activities.wizard.ui.pricePerPerson')
@@ -946,7 +976,10 @@ export default function EditActivityPage() {
                     )}
                   </div>
 
-                  {form.bookingType === 'HOURLY' && (
+                  {/* Pricing model — HOURLY and (since minimum guests) DAILY. DAILY
+                      defaults to per unit (price × nights); per person multiplies
+                      by guests (price × nights × guests). */}
+                  {(
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">
                         {t('vendor.activities.wizard.ui.pricingModelLabel')} <span className="text-red-500">*</span>
@@ -963,12 +996,24 @@ export default function EditActivityPage() {
                             <div>
                               <p className="text-sm font-semibold text-gray-900 dark:text-white">{opt.label}</p>
                               <p className="text-xs text-gray-400 dark:text-slate-500">{opt.desc}</p>
-                              <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 italic">{opt.example}</p>
+                              <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 italic">{form.bookingType === 'DAILY' ? opt.exampleDaily : opt.example}</p>
                             </div>
                           </button>
                         ))}
                       </div>
                     </div>
+                  )}
+
+                  {/* Minimum guests — per-person pricing only. The customer still
+                      books the real number; the price uses max(guests, minimum). */}
+                  {form.pricingModel === 'PER_PERSON' && (
+                    <FieldGroup label={t('vendor.activities.wizard.ui.fieldMinGuests', 'Minimum guests')}
+                      hint={t('vendor.activities.wizard.ui.hintMinGuests', 'Guests are charged for at least this many people. Customers can still book fewer and pay the minimum. Leave 1 for no minimum.')}
+                      error={errors.minGuests}>
+                      <input type="number" min="1" max="500" data-testid="activity-field-minGuests" value={form.minGuests}
+                        onChange={e => updateField('minGuests', e.target.value)}
+                        className={inputCls(!!errors.minGuests)} placeholder="1" />
+                    </FieldGroup>
                   )}
 
                   {hasUnits && (
@@ -988,19 +1033,31 @@ export default function EditActivityPage() {
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
                         {form.bookingType === 'DAILY'
-                          ? t('vendor.activities.wizard.ui.previewTagDaily')
+                          ? form.pricingModel === 'PER_PERSON'
+                            ? t('vendor.activities.wizard.ui.previewTagDailyPerson', 'PER PERSON · PER NIGHT')
+                            : t('vendor.activities.wizard.ui.previewTagDaily')
                           : form.pricingModel === 'PER_UNIT' ? t('vendor.activities.wizard.ui.previewTagFlat') : t('vendor.activities.wizard.ui.previewTagPerson')}
                       </p>
                       <div className="flex justify-between text-gray-600 dark:text-slate-400">
                         <span>
                           {form.bookingType === 'DAILY'
-                            ? t('vendor.activities.wizard.ui.previewPerUnitNight')
+                            ? form.pricingModel === 'PER_PERSON'
+                              ? t('vendor.activities.wizard.ui.previewPerPersonNight', 'Per person / night')
+                              : t('vendor.activities.wizard.ui.previewPerUnitNight')
                             : form.pricingModel === 'PER_UNIT' ? t('vendor.activities.wizard.ui.previewPerUnit') : t('vendor.activities.wizard.ui.previewPerPerson')}
                         </span>
                         <span className="font-medium text-gray-900 dark:text-white">
                           {form.pricePerPerson ? `QAR ${form.pricePerPerson}` : '\u2014'}
                         </span>
                       </div>
+                      {form.pricingModel === 'PER_PERSON' && Number(form.minGuests) > 1 && (
+                        <div className="flex justify-between text-gray-600 dark:text-slate-400 mt-1">
+                          <span>{t('vendor.activities.wizard.ui.fieldMinGuests', 'Minimum guests')}</span>
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            {form.minGuests}{form.pricePerPerson ? ` · QAR ${Number(form.pricePerPerson) * Number(form.minGuests)}` : ''}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className="border-t border-stone-200 dark:border-slate-700 pt-3 space-y-1">
                       <div className="flex justify-between text-gray-600 dark:text-slate-400">

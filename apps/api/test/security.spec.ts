@@ -1170,14 +1170,20 @@ describe('REGRESSION: Hourly pro-rata pricing — flex hours × guests / duratio
     expect(svc).toMatch(/endDatetime\.getTime\(\)\s*-\s*startDatetime\.getTime\(\)/);
   });
 
-  test('total cents formula: round(effectiveCents × hours × perPersonCount / durHours)', () => {
+  // The formula itself lives in src/bookings/pricing.ts (shared, unit-tested
+  // in test/unit/booking-pricing.spec.ts); bookings.service must call it with
+  // the server-derived values.
+  const pricing = readSrc('src/bookings/pricing.ts');
+
+  test('total cents formula: round(effectiveCents × hours × chargedGuests / durHours)', () => {
     // effectiveCents = the per-date special price (if set) else priceCents; the
     // pro-rata structure is unchanged and still server-derived (not tamperable).
-    expect(svc).toMatch(/Math\.round\(\s*\(\s*effectiveCents\s*\*\s*hoursBooked\s*\*\s*perPersonCount\s*\)\s*\/\s*durHours/);
+    expect(svc).toMatch(/hourlyBaseCents\(\s*effectiveCents,\s*hoursBooked,\s*durHours,\s*activity\.pricingModel,\s*dto\.guests,\s*activity\.minGuests/);
+    expect(pricing).toMatch(/Math\.round\(\s*\(\s*priceCents\s*\*\s*hoursBooked\s*\*\s*chargedGuests\(pricingModel,\s*guests,\s*minGuests\)\s*\)\s*\/\s*durationHours/);
   });
 
-  test('PER_UNIT pricing uses perPersonCount = 1 (guests do not multiply)', () => {
-    expect(svc).toMatch(/pricingModel\s*===\s*'PER_UNIT'\s*\?\s*1\s*:\s*dto\.guests/);
+  test('PER_UNIT pricing charges 1 (guests and the minimum do not multiply)', () => {
+    expect(pricing).toMatch(/if\s*\(pricingModel\s*===\s*'PER_UNIT'\)\s*return 1;/);
   });
 });
 

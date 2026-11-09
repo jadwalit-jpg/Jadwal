@@ -161,7 +161,10 @@
       "reviewSubmitted": "تم إرسال المراجعة!",
       "selectRating": "يرجى اختيار تقييم",
       "couponApplied": "تم تطبيق القسيمة: -{{amount}} خصم"
-    }
+    },
+    "minGuestsNote": "الحد الأدنى {{count}} ضيوف",
+    "perPersonNight": "/ شخص · ليلة",
+    "minimumShort": "الحد الأدنى"
   },
   "booking": {
     "myBookings": "حجوزاتي",
@@ -283,7 +286,10 @@
       "CASH": "نقداً",
       "CARD_PAY2M": "استرداد على البطاقة",
       "OTHER": "طريقة أخرى"
-    }
+    },
+    "guestsCount": "{{count}} ضيوف",
+    "guestsCountMinimum": "{{count}} ضيوف (الحد الأدنى)",
+    "minChargeNote": "الحد الأدنى للسعر: {{count}} ضيوف"
   },
   "likes": {
     "title": "الأنشطة المفضلة",

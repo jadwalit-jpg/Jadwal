@@ -161,7 +161,10 @@
       "reviewSubmitted": "Review submitted!",
       "selectRating": "Please select a rating",
       "couponApplied": "Coupon applied: -{{amount}} discount"
-    }
+    },
+    "minGuestsNote": "Minimum {{count}} guests",
+    "perPersonNight": "/ person · night",
+    "minimumShort": "minimum"
   },
   "booking": {
     "myBookings": "My Bookings",
@@ -283,7 +286,10 @@
       "CASH": "cash",
       "CARD_PAY2M": "card refund",
       "OTHER": "another method"
-    }
+    },
+    "guestsCount": "{{count}} guests",
+    "guestsCountMinimum": "{{count}} guests (minimum)",
+    "minChargeNote": "Minimum charge: {{count}} guests"
   },
   "likes": {
     "title": "Liked Activities",

@@ -31,6 +31,7 @@ import {
   assertExternalRefundAllowed, externalRefundAuditDetails, externalRefundDecisionMessage, externalRefundNote,
   refundMethodLabel, refundedOnAsDate,
 } from '../common/refunds/external-refund';
+import { dailyBaseCents, hourlyBaseCents } from './pricing';
 
 // ─── Slot helpers ────────────────────────────────────────────────────────────
 
@@ -326,7 +327,8 @@ export function maxConcurrentInWindow(
 /**
  * Whole-unit rental? When true, ONE booking reserves an ENTIRE unit — no seat-
  * sharing, regardless of how many guests it has. This is true for:
- *   • any DAILY activity with units (rooms — DAILY is always per-unit priced), and
+ *   • any DAILY activity with units (rooms / tents — each booking takes a whole
+ *     unit, whether the listing is priced per unit or per person), and
  *   • HOURLY activities priced PER_UNIT.
  * HOURLY + PER_PERSON activities with units still sell individual seats and so
  * pack/share a unit up to its capacity. Activities without units are unaffected.
@@ -1543,7 +1545,9 @@ export class BookingsService {
 
         let totalPriceCents: number;
         if (activity.bookingType === 'DAILY') {
-          // Daily is always per-unit pricing: price × nights (guests don't affect price)
+          // Daily: sum of each night's price. PER_UNIT (the default) is that
+          // sum (guests don't affect price); PER_PERSON multiplies it by
+          // max(guests, minGuests). See ./pricing.ts.
           const checkInD = new Date(`${dto.checkInDate}T00:00:00Z`);
           const checkOutD = new Date(`${dto.checkOutDate!}T00:00:00Z`);
           const DAY_MS = 1000 * 60 * 60 * 24;
@@ -1558,15 +1562,18 @@ export class BookingsService {
           });
           const centsByDate = new Map<string, number>();
           for (const s of specials) centsByDate.set(s.date.toISOString().slice(0, 10), Math.round(Number(s.price) * 100));
-          totalPriceCents = nightDates.reduce(
-            (sum, d) => sum + (centsByDate.get(d.toISOString().slice(0, 10)) ?? priceCents),
-            0,
+          totalPriceCents = dailyBaseCents(
+            nightDates.map((d) => centsByDate.get(d.toISOString().slice(0, 10)) ?? priceCents),
+            activity.pricingModel,
+            dto.guests,
+            activity.minGuests,
           );
         } else {
           // Hourly: the stored `pricePerPerson` is the price for a baseline
           // of `durationValue` hours. Bookings longer than that are priced
           // pro-rata per hour:
-          //   totalCents = priceCents × hoursBooked / durationValue  (× guests for PER_PERSON)
+          //   totalCents = priceCents × hoursBooked / durationValue
+          //   (× max(guests, minGuests) for PER_PERSON — see ./pricing.ts)
           //
           // Hours + durationValue are integers (enforced by HH:00 validation
           // + activity config), priceCents is integer — only the final divide
@@ -1586,9 +1593,13 @@ export class BookingsService {
             Math.round(bookedMs / (60 * 60 * 1000)),
           );
           const durHours = activity.durationValue!;
-          const perPersonCount = activity.pricingModel === 'PER_UNIT' ? 1 : dto.guests;
-          totalPriceCents = Math.round(
-            (effectiveCents * hoursBooked * perPersonCount) / durHours,
+          totalPriceCents = hourlyBaseCents(
+            effectiveCents,
+            hoursBooked,
+            durHours,
+            activity.pricingModel,
+            dto.guests,
+            activity.minGuests,
           );
         }
 
