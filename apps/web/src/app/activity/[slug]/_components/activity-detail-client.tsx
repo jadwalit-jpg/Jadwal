@@ -39,6 +39,7 @@ import { displayableAddress } from '@/lib/location';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 import TermsAcceptModal from '@/components/terms-accept-modal';
+import { chargedGuests } from '@/lib/booking-pricing';
 import { ActivityDetailPageSkeleton } from '@/components/ui/skeletons';
 import {
   Badge,
@@ -75,6 +76,8 @@ export interface ActivityDetail {
   durationValue: number | null;
   bookingType: string;
   pricingModel: string;
+  /** Minimum guests charged on a PER_PERSON listing (1 = no minimum). */
+  minGuests?: number;
   checkInTime: string | null;
   checkOutTime: string | null;
   activeDays: string[];
@@ -308,7 +311,16 @@ export default function ActivityDetailClient({
       ? activity.unitCapacity
       : (activity?.capacity ?? 99);
 
-  const totalPrice = isDaily || isPerUnit ? price : price * guests;
+  // Minimum guests (PER_PERSON only): shown near the price when above 1, and
+  // the hourly preview charges max(guests, minGuests), like the server.
+  const minGuests = activity?.minGuests ?? 1;
+  const showMinGuests = !isPerUnit && minGuests > 1;
+  const pricedGuests = chargedGuests(activity?.pricingModel ?? 'PER_PERSON', guests, minGuests);
+  const dailyUnitLabel = isPerUnit
+    ? t('activity.perUnitNight', { defaultValue: '/ unit · night' })
+    : t('activity.perPersonNight', { defaultValue: '/ person · night' });
+
+  const totalPrice = isDaily || isPerUnit ? price : price * pricedGuests;
 
   if (isLoading) {
     // Shape skeleton composed with Navbar — exactly the same skeleton
@@ -1164,9 +1176,7 @@ export default function ActivityDetailClient({
                   <span className="text-sm text-jadwal-text-muted">
                     {currency}{' '}
                     {isDaily
-                      ? t('activity.perUnitNight', {
-                          defaultValue: '/ unit · night',
-                        })
+                      ? dailyUnitLabel
                       : isHourly
                         ? isPerUnit
                           ? t('activity.perUnitHours', {
@@ -1192,6 +1202,11 @@ export default function ActivityDetailClient({
                     {t('activity.scalesWithHours', {
                       defaultValue: 'price scales with hours booked',
                     })}
+                  </div>
+                ) : null}
+                {showMinGuests ? (
+                  <div className="text-xs font-medium text-jadwal-text mt-1">
+                    {t('activity.minGuestsNote', { count: minGuests, defaultValue: 'Minimum {{count}} guests' })}
                   </div>
                 ) : null}
               </div>
@@ -1232,7 +1247,10 @@ export default function ActivityDetailClient({
                   ) : null}
                   <div className="mt-4 pt-4 border-t border-jadwal-border-subtle flex items-center justify-between text-sm">
                     <span className="text-jadwal-text-muted">
-                      {price.toFixed(0)} {currency} × {guests}
+                      {price.toFixed(0)} {currency} × {pricedGuests}
+                      {pricedGuests > guests
+                        ? ` (${t('activity.minimumShort', { defaultValue: 'minimum' })})`
+                        : ''}
                     </span>
                     <span className="font-semibold text-jadwal-text tabular-nums">
                       {totalPrice.toFixed(0)} {currency}
@@ -1318,12 +1336,17 @@ export default function ActivityDetailClient({
               <span className="text-xs font-normal text-jadwal-text-muted">
                 {currency}{' '}
                 {isDaily
-                  ? t('activity.perUnitNight', { defaultValue: '/ unit · night' })
+                  ? dailyUnitLabel
                   : isPerUnit
                     ? t('activity.perUnit', { defaultValue: '/ unit' })
                     : t('activity.perPerson', { defaultValue: '/ person' })}
               </span>
             </div>
+            {showMinGuests ? (
+              <div className="text-[11px] text-jadwal-text-muted">
+                {t('activity.minGuestsNote', { count: minGuests, defaultValue: 'Minimum {{count}} guests' })}
+              </div>
+            ) : null}
           </div>
           {user?.role === 'ADMIN' || user?.role === 'VENDOR' ? (
             <span className="text-xs text-jadwal-text-muted">

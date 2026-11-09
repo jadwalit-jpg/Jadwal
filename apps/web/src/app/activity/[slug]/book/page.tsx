@@ -34,6 +34,12 @@ import { BookActivityPageSkeleton } from '@/components/ui/skeletons';
 import BookingCalendar, { type CalendarDay } from '@/components/booking-calendar';
 import { HourRangePicker } from '@/components/hour-range-picker';
 import { Button, Stepper } from '@/components/ui';
+import { chargedGuests, dailyBaseCents, hourlyBaseCents } from '@/lib/booking-pricing';
+
+/** Wraps text in Unicode first-strong isolates so mixed Arabic/Latin parts of
+ *  a price line (e.g. "QAR 250 × 2 ضيوف (الحد الأدنى) × 1 ليلة") keep their own
+ *  order instead of being reshuffled by the bidi algorithm. */
+const bidiIsolate = (s: string) => `\u2068${s}\u2069`;
 
 /* ─── Types ───────────────────────────────────────────────── */
 
@@ -51,6 +57,8 @@ interface ActivityBookingData {
   gallery: string[];
   bookingType: string;
   pricingModel: string;
+  /** Minimum guests charged on a PER_PERSON listing (1 = no minimum). */
+  minGuests?: number;
   durationValue: number | null;
   checkInTime: string | null;
   checkOutTime: string | null;
@@ -421,6 +429,13 @@ export default function BookActivityPage() {
 
   const nights = checkIn && checkOut ? countNights(checkIn, checkOut) : 0;
   const isPerUnit = activity?.pricingModel === 'PER_UNIT';
+  // Minimum guests (PER_PERSON only). The customer still picks the real number
+  // (1 stays allowed); the price uses max(guests, minGuests) — the same rule the
+  // server applies when it records the booking (lib/booking-pricing.ts).
+  const pricingModel = activity?.pricingModel ?? 'PER_PERSON';
+  const minGuests = activity?.minGuests ?? 1;
+  const pricedGuests = chargedGuests(pricingModel, guests, minGuests);
+  const minGuestsApplied = !isPerUnit && pricedGuests > guests;
 
   const paidExtras = useMemo(() =>
     activity?.extraServices?.filter(s => s.price > 0) ?? [],
@@ -468,24 +483,27 @@ export default function BookActivityPage() {
       // a discount because the server re-derives from the datetimes.
       const durHours = activity?.durationValue ?? 1;
       const hours = Math.max(durHours, slotHours);
-      const pricePerHour = durHours > 0 ? effectivePrice / durHours : effectivePrice;
-      base = isPerUnit ? pricePerHour * hours : pricePerHour * guests * hours;
+      base = durHours > 0
+        ? hourlyBaseCents(Math.round(effectivePrice * 100), hours, durHours, pricingModel, guests, minGuests) / 100
+        : effectivePrice * chargedGuests(pricingModel, guests, minGuests);
     } else {
       // DAILY: sum each night's price (special override or base) so the preview
-      // matches the server, which prices each night by its own date.
+      // matches the server, which prices each night by its own date. PER_PERSON
+      // multiplies by max(guests, minGuests); PER_UNIT (the default) does not.
       if (checkIn && checkOut && nights > 0) {
         const start = new Date(`${checkIn}T00:00:00Z`).getTime();
-        base = 0;
+        const nightCents: number[] = [];
         for (let i = 0; i < nights; i++) {
           const ds = new Date(start + i * 86400000).toISOString().slice(0, 10);
-          base += priceByDate.get(ds) ?? price;
+          nightCents.push(Math.round((priceByDate.get(ds) ?? price) * 100));
         }
+        base = dailyBaseCents(nightCents, pricingModel, guests, minGuests) / 100;
       } else {
-        base = effectivePrice * Math.max(1, nights);
+        base = effectivePrice * Math.max(1, nights) * chargedGuests(pricingModel, guests, minGuests);
       }
     }
     return base + extrasTotal;
-  }, [isHourly, isPerUnit, effectivePrice, guests, nights, slotHours, extrasTotal, activity?.durationValue, checkIn, checkOut, price, priceByDate]);
+  }, [isHourly, effectivePrice, guests, nights, slotHours, extrasTotal, activity?.durationValue, checkIn, checkOut, price, priceByDate, pricingModel, minGuests]);
 
   // DAILY booking with no check-in/check-out yet. Display-only flag: the price
   // box shows "Select your dates to see the total" instead of the 1-night
@@ -970,10 +988,10 @@ export default function BookActivityPage() {
                         price on a min-stay activity (reported bug — e.g. "QAR 2600 /
                         night" when 3 nights are required = QAR 7800 minimum). */}
                     <span className="tabular-nums font-semibold">
-                      {currency} {(effectivePrice * minNights).toFixed(0)}
+                      {currency} {(effectivePrice * minNights * (isPerUnit ? 1 : minGuests)).toFixed(0)}
                     </span>
                     <span className="text-jadwal-text-faint tabular-nums text-xs">
-                      ({currency} {effectivePrice.toFixed(0)}/{t('activity.night')})
+                      ({currency} {effectivePrice.toFixed(0)}/{isPerUnit ? '' : `${t('activity.person')}/`}{t('activity.night')})
                     </span>
                   </>
                 ) : (
@@ -985,8 +1003,14 @@ export default function BookActivityPage() {
                     <span className="text-jadwal-text-faint">·</span>
                     <span className="tabular-nums">
                       {currency} {effectivePrice.toFixed(0)} /{' '}
-                      {t('activity.night')}
+                      {isPerUnit ? '' : `${t('activity.person')} / `}{t('activity.night')}
                     </span>
+                  </>
+                )}
+                {!isPerUnit && minGuests > 1 && (
+                  <>
+                    <span className="text-jadwal-text-faint">·</span>
+                    <span>{t('activity.minGuestsNote', { count: minGuests, defaultValue: 'Minimum {{count}} guests' })}</span>
                   </>
                 )}
               </div>
@@ -1415,13 +1439,31 @@ export default function BookActivityPage() {
                       {isHourly
                         ? isPerUnit
                           ? `${effectivePrice.toFixed(0)} / ${t('activity.unit')}`
-                          : `${effectivePrice.toFixed(0)} × ${guests} ${t('activity.guests')}`
-                        : dailyMixedNightly
-                          ? (dailyNightPrices.length <= 6
-                              ? dailyNightPrices.map((p) => p.toFixed(0)).join(' + ')
-                              : `${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`)
-                          : `${effectivePrice.toFixed(0)} × ${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`
+                          : minGuestsApplied
+                            ? [`${currency} ${effectivePrice.toFixed(0)}`, t('booking.guestsCountMinimum', { count: pricedGuests, defaultValue: '{{count}} guests (minimum)' })].map(bidiIsolate).join(' × ')
+                            : `${effectivePrice.toFixed(0)} × ${guests} ${t('activity.guests')}`
+                        : !isPerUnit
+                          // DAILY per person: "QAR 250 × 2 guests (minimum) × 1 night"
+                          ? [
+                              dailyMixedNightly
+                                ? `(${dailyNightPrices.length <= 6 ? dailyNightPrices.map((p) => p.toFixed(0)).join(' + ') : `${nights} ${t('activity.nights')}`})`
+                                : `${currency} ${effectivePrice.toFixed(0)}`,
+                              minGuestsApplied
+                                ? t('booking.guestsCountMinimum', { count: pricedGuests, defaultValue: '{{count}} guests (minimum)' })
+                                : t('booking.guestsCount', { count: pricedGuests, defaultValue: '{{count}} guests' }),
+                              ...(dailyMixedNightly ? [] : [`${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`]),
+                            ].map(bidiIsolate).join(' × ')
+                          : dailyMixedNightly
+                            ? (dailyNightPrices.length <= 6
+                                ? dailyNightPrices.map((p) => p.toFixed(0)).join(' + ')
+                                : `${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`)
+                            : `${effectivePrice.toFixed(0)} × ${nights} ${nights > 1 ? t('activity.nights') : t('activity.night')}`
                       }
+                    </p>
+                  )}
+                  {minGuestsApplied && (bookingCost - extrasTotal) > 0 && (
+                    <p className="text-xs font-medium text-amber-700 dark:text-amber-400 -mt-1">
+                      {t('booking.minChargeNote', { count: minGuests, defaultValue: 'Minimum charge: {{count}} guests' })}
                     </p>
                   )}
                   {extrasTotal > 0 && (
