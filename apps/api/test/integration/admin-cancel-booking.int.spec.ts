@@ -800,3 +800,215 @@ describe('outside refund (externalRefund)', () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-person nightly pricing (PR #738) × cancel (this PR). The overnight Sealine
+// camp as the owner is about to configure it: QAR 250 per person, minimum 2
+// guests, units off, capacity 40 guests per night. Bookings go through the real
+// createBooking so the charge is the server's own (1 guest is charged for 2);
+// the card payment is then marked SUCCESS the way the gateway callback does.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Sealine overnight camp: DAILY per person (QAR 250), minimum 2 guests, no units, capacity 40', () => {
+  const PER_PERSON = 250;
+  const MIN_GUESTS = 2;
+  const CAPACITY = 40;
+  const SERVICE_FEE = 5; // seedReference country.serviceFeeFixed — part of what the customer pays
+  const OUTSIDE_CAMP = (amount: number) => ({ method: 'BANK_TRANSFER' as const, amount, refundedOn: '2026-11-01', reference: 'TRF-CAMP' });
+
+  async function makeCamp(activityId: string) {
+    await ctx.prisma.activity.update({
+      where: { id: activityId },
+      data: {
+        bookingType: 'DAILY', pricingModel: 'PER_PERSON', pricePerPerson: PER_PERSON, minGuests: MIN_GUESTS,
+        durationValue: null, checkInTime: '14:00', checkOutTime: '09:00',
+        capacity: CAPACITY, hasUnits: false, unitCount: 0, unitCapacity: 1, activeDays: [],
+      },
+    });
+  }
+
+  /** Book through the real path (per-person pricing lives there), then simulate the card payment succeeding. */
+  async function bookCampPaid(bookings: any, customerId: string, activityId: string, checkIn: string, checkOut: string, guests: number) {
+    const res: any = await bookings.createBooking(customerId, {
+      activityId, checkInDate: checkIn, checkOutDate: checkOut, guests, bookingPhone: '+97455123456',
+    } as any);
+    const created = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    await ctx.prisma.payment.update({
+      where: { id: created.paymentId! },
+      data: { status: 'SUCCESS', method: 'CARD', paidAt: new Date(), gatewayTxnId: `TXN-CAMP-${Math.random().toString(36).slice(2, 10)}` },
+    });
+    await ctx.prisma.booking.update({ where: { id: created.id }, data: { status: 'CONFIRMED', reservedUntil: null } });
+    const booking = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: created.id } });
+    const payment = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: created.paymentId! } });
+    return { booking, payment };
+  }
+
+  const points = async (userId: string) => Number((await ctx.prisma.user.findUniqueOrThrow({ where: { id: userId } })).loyaltyPoints);
+
+  test('1 guest is charged the 2-guest minimum (QAR 500 + 5 fee); admin cancel as Wanasa points returns the 505 paid once, and the night gets 1 place back', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = await makeAdmin();
+    const { admin: adminSvc, bookings, availabilityCache } = makeServices();
+    await makeCamp(seed.activity.id);
+    const checkIn = nextMonthDate(13);
+    const checkOut = nextMonthDate(14);
+
+    const { booking, payment } = await bookCampPaid(bookings, seed.customer.id, seed.activity.id, checkIn, checkOut, 1);
+    expect(booking.guests).toBe(1);                       // the real guest count is kept…
+    expect(Number(booking.totalPrice)).toBe(MIN_GUESTS * PER_PERSON); // …only the charge uses the minimum: 500
+    expect(Number(payment.amount)).toBe(500 + SERVICE_FEE);          // what the card was charged: 505
+
+    // The night counts 1 guest, not the 2 charged.
+    const calBefore: any = await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn));
+    expect(dayOf(calBefore, checkIn)).toMatchObject({ capacity: CAPACITY, booked: 1, available: CAPACITY - 1 });
+    expect(dayOf(calBefore, checkOut).booked).toBe(0); // check-out morning is not a night
+    expect(await bookings.getDailyAvailability(seed.activity.id, checkIn, checkOut)).toMatchObject({ capacity: CAPACITY, booked: 1, available: CAPACITY - 1 });
+
+    await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED');
+    expect(availabilityCache.invalidate).toHaveBeenCalledWith(seed.activity.id);
+
+    // The whole payment (minimum charge + service fee) comes back as points, once.
+    expect(await points(seed.customer.id)).toBe(505);
+    const ledger = await refundLedger(booking.id);
+    expect(ledger).toHaveLength(1);
+    expect(Number(ledger[0].delta)).toBe(505);
+    const paid = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(paid).toMatchObject({ status: 'REFUNDED', refundMethod: null });
+    expect(Number(paid.refundAmount)).toBe(505);
+
+    // A repeat changes nothing.
+    await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED');
+    expect(await points(seed.customer.id)).toBe(505);
+    expect(await refundLedger(booking.id)).toHaveLength(1);
+
+    // The night has its place back: 0 of 40 booked.
+    const calAfter: any = await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn));
+    expect(dayOf(calAfter, checkIn)).toMatchObject({ capacity: CAPACITY, booked: 0, available: CAPACITY, isFullyBooked: false });
+    expect(await bookings.getDailyAvailability(seed.activity.id, checkIn, checkOut)).toMatchObject({ capacity: CAPACITY, booked: 0, available: CAPACITY });
+  });
+
+  test('1 guest at the minimum, refunded outside the website: payment REFUNDED with the method, no points at all, and the night gets 1 place back', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = await makeAdmin();
+    const { admin: adminSvc, bookings } = makeServices();
+    await makeCamp(seed.activity.id);
+    const checkIn = nextMonthDate(15);
+    const checkOut = nextMonthDate(16);
+
+    const { booking, payment } = await bookCampPaid(bookings, seed.customer.id, seed.activity.id, checkIn, checkOut, 1);
+    expect(Number(payment.amount)).toBe(505);
+    expect(dayOf(await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn)), checkIn)).toMatchObject({ booked: 1, available: CAPACITY - 1 });
+
+    // The admin transferred the 505 back by bank; above the cash paid is still refused.
+    await expect(adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED', OUTSIDE_CAMP(505.01) as any)).rejects.toThrow(/cannot exceed the cash paid \(505\)/);
+    await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED', OUTSIDE_CAMP(505) as any);
+
+    expect(await points(seed.customer.id)).toBe(0);
+    expect(await refundLedger(booking.id)).toHaveLength(0);
+    const paid = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(paid).toMatchObject({ status: 'REFUNDED', refundMethod: 'BANK_TRANSFER' });
+    expect(Number(paid.refundAmount)).toBe(505);
+    const after = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: booking.id } });
+    expect(after.status).toBe('CANCELLED');
+    expect(after.refundDecisionNote).toBe('Refunded outside the website: QAR 505 by Bank transfer on 1 Nov 2026. Ref: TRF-CAMP');
+    const note = await ctx.prisma.notification.findFirst({ where: { userId: seed.customer.id, type: 'BOOKING_CANCELLED' } });
+    expect(note!.message).toMatch(/Your refund of QAR 505 was made by bank transfer on 1 Nov 2026\./);
+    expect(note!.message).not.toMatch(/Wanasa/i);
+
+    expect(dayOf(await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn)), checkIn)).toMatchObject({ booked: 0, available: CAPACITY });
+    expect(await bookings.getDailyAvailability(seed.activity.id, checkIn, checkOut)).toMatchObject({ booked: 0, available: CAPACITY });
+  });
+
+  test('6 guests (QAR 1,500 + fee) cancelled: 6 places freed, and another 6-guest group books the same night for QAR 1,500', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = await makeAdmin();
+    const { admin: adminSvc, bookings } = makeServices();
+    await makeCamp(seed.activity.id);
+    const checkIn = nextMonthDate(17);
+    const checkOut = nextMonthDate(18);
+
+    const { booking, payment } = await bookCampPaid(bookings, seed.customer.id, seed.activity.id, checkIn, checkOut, 6);
+    expect(booking.guests).toBe(6);
+    expect(Number(booking.totalPrice)).toBe(6 * PER_PERSON); // 1,500: above the minimum, every guest is charged
+    expect(Number(payment.amount)).toBe(1500 + SERVICE_FEE);
+
+    // 6 of 40 places taken; a group that needs more than the 34 left is refused.
+    expect(dayOf(await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn)), checkIn)).toMatchObject({ capacity: CAPACITY, booked: 6, available: 34 });
+    const other = await makeOtherCustomer();
+    const book = (guests: number) => bookings.createBooking(other.id, {
+      activityId: seed.activity.id, checkInDate: checkIn, checkOutDate: checkOut, guests, bookingPhone: '+97455123456',
+    } as any);
+    await expect(book(35)).rejects.toThrow(/fully booked|capacity|available/i);
+
+    await adminSvc.updateBookingStatus(admin.id, booking.id, 'CANCELLED');
+    expect(await points(seed.customer.id)).toBe(1505);
+
+    // All 40 places free again…
+    expect(dayOf(await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn)), checkIn)).toMatchObject({ capacity: CAPACITY, booked: 0, available: CAPACITY, isFullyBooked: false });
+    expect(await bookings.getDailyAvailability(seed.activity.id, checkIn, checkOut)).toMatchObject({ booked: 0, available: CAPACITY });
+
+    // …and another 6-guest group takes the same night at the same price.
+    const res: any = await book(6);
+    expect(res.booking.status).toBe('PENDING');
+    const created = await ctx.prisma.booking.findUniqueOrThrow({ where: { id: res.booking.id } });
+    expect(created.customerId).toBe(other.id);
+    expect(created.guests).toBe(6);
+    expect(Number(created.totalPrice)).toBe(1500);
+    expect(created.startDatetime.toISOString()).toBe(`${checkIn}T14:00:00.000Z`);
+    expect(created.endDatetime.toISOString()).toBe(`${checkOut}T09:00:00.000Z`);
+    expect(Number((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: created.paymentId! } })).amount)).toBe(1505);
+    expect(dayOf(await bookings.getCalendarAvailability(seed.activity.id, monthOf(checkIn)), checkIn)).toMatchObject({ booked: 6, available: 34 });
+  });
+
+  test('customer cancel lands in the Refund Queue with what was paid as the suggested amount (505 for the 1-guest minimum, 1,505 for 6 guests), and the admin can settle each', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const admin = await makeAdmin();
+    const { admin: adminSvc, bookings } = makeServices();
+    await makeCamp(seed.activity.id);
+
+    const solo = await bookCampPaid(bookings, seed.customer.id, seed.activity.id, nextMonthDate(19), nextMonthDate(20), 1);
+    const group = await bookCampPaid(bookings, seed.customer.id, seed.activity.id, nextMonthDate(21), nextMonthDate(22), 6);
+    expect(Number(solo.payment.amount)).toBe(505);
+    expect(Number(group.payment.amount)).toBe(1505);
+
+    // Customer cancels both (free cancellation, more than 24h ahead): full refund suggested, based on the payment, not on 1 × 250.
+    const r1: any = await bookings.cancelBooking(seed.customer.id, solo.booking.id);
+    expect(r1).toMatchObject({ status: 'REFUND_PENDING', suggestedRefundPercent: 100, suggestedRefundAmount: 505 });
+    const r2: any = await bookings.cancelBooking(seed.customer.id, group.booking.id);
+    expect(r2).toMatchObject({ status: 'REFUND_PENDING', suggestedRefundPercent: 100, suggestedRefundAmount: 1505 });
+    expect(await points(seed.customer.id)).toBe(0); // nothing credited until a decision is recorded
+
+    // Both nights are free again right away.
+    expect(await bookings.getDailyAvailability(seed.activity.id, nextMonthDate(19), nextMonthDate(20))).toMatchObject({ booked: 0, available: CAPACITY });
+    expect(await bookings.getDailyAvailability(seed.activity.id, nextMonthDate(21), nextMonthDate(22))).toMatchObject({ booked: 0, available: CAPACITY });
+
+    // The admin Refund Queue (GET /admin/bookings?paymentStatus=REFUND_PENDING) lists both with the suggested amounts.
+    const queue: any = await adminSvc.getBookings({ page: 1, limit: 20, paymentStatus: 'REFUND_PENDING' } as any);
+    const rows = new Map(queue.data.map((b: any) => [b.id, b]));
+    expect(rows.size).toBe(2);
+    const soloRow: any = rows.get(solo.booking.id);
+    const groupRow: any = rows.get(group.booking.id);
+    expect(soloRow.payment).toMatchObject({ status: 'REFUND_PENDING' });
+    expect(Number(soloRow.payment.amount)).toBe(505);
+    expect(Number(soloRow.payment.refundAmount)).toBe(505);
+    expect(Number(soloRow.totalPrice)).toBe(500);
+    expect(soloRow.guests).toBe(1);
+    expect(Number(groupRow.payment.amount)).toBe(1505);
+    expect(Number(groupRow.payment.refundAmount)).toBe(1505);
+
+    // Approve the 1-guest one as Wanasa points with the suggested amount (what the queue pre-fills) → 505 points, once.
+    await bookings.recordRefundDecision(admin.id, 'ADMIN', solo.booking.id, 'APPROVE', Number(soloRow.payment.refundAmount), undefined);
+    expect(await points(seed.customer.id)).toBe(505);
+    expect((await ctx.prisma.payment.findUniqueOrThrow({ where: { id: solo.payment.id } })).status).toBe('REFUNDED');
+
+    // Approve the 6-guest one as refunded outside → no further points, method recorded.
+    await bookings.recordRefundDecision(admin.id, 'ADMIN', group.booking.id, 'APPROVE', undefined, undefined, OUTSIDE_CAMP(1505) as any);
+    expect(await points(seed.customer.id)).toBe(505);
+    const groupPaid = await ctx.prisma.payment.findUniqueOrThrow({ where: { id: group.payment.id } });
+    expect(groupPaid).toMatchObject({ status: 'REFUNDED', refundMethod: 'BANK_TRANSFER' });
+    expect(Number(groupPaid.refundAmount)).toBe(1505);
+
+    // Queue is empty again.
+    const emptyQueue: any = await adminSvc.getBookings({ page: 1, limit: 20, paymentStatus: 'REFUND_PENDING' } as any);
+    expect(emptyQueue.total).toBe(0);
+  });
+});
