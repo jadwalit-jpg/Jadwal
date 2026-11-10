@@ -30,10 +30,25 @@ import {
   externalRefundNote, refundedOnAsDate,
 } from '../common/refunds/external-refund';
 import { assertMinGuestsConsistent } from '../common/validators/min-guests';
+import { HOMEPAGE_FEATURED_LIMIT } from './dto/featured-order.dto';
 import { nowInTimezone } from '../common/validators/timezone';
 import { refundCouponUsage, addMonthsClamped } from '../bookings/bookings.service';
 import { assignMissingUnits } from '../bookings/assign-missing-units';
 import { envNumber } from '../common/env';
+
+export type FeaturedHiddenReason = 'INACTIVE' | 'VENDOR_NOT_ACTIVE' | 'VENDOR_DELETED';
+
+/**
+ * Serialises every writer of the featured order (star toggles and "Save
+ * order") for the rest of the current transaction. Postgres-only, released
+ * automatically at commit/rollback. Without it two simultaneous stars could
+ * compute the same "max + 1", or a save could check the featured set and then
+ * write positions after a star changed that set.
+ */
+async function lockFeaturedOrder(tx: Prisma.TransactionClient): Promise<void> {
+  // The function returns void, which Prisma cannot deserialise; cast it away.
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('activities.featuredOrder'))::text AS locked`;
+}
 
 @Injectable()
 export class AdminService {
@@ -1318,17 +1333,109 @@ export class AdminService {
     return { cancelled, failed };
   }
 
+  /**
+   * Star / unstar a listing for the homepage Featured row.
+   *
+   * Featuring puts the listing at the END of the admin-chosen order
+   * (featuredOrder = current maximum + 1); unfeaturing clears its position,
+   * so featuring it again later puts it at the end again. Both happen in one
+   * transaction under the featured-order lock, so a star click and a
+   * "Save order" from the Featured order page cannot interleave.
+   */
   async toggleFeatured(activityId: string) {
-    const activity = await this.prisma.client.activity.findUnique({
+    const db = this.prisma.client;
+    const activity = await db.activity.findUnique({
       where: { id: activityId },
       select: { id: true, isFeatured: true, titleEn: true },
     });
     if (!activity) throw new NotFoundException('Activity not found');
 
-    return this.prisma.client.activity.update({
-      where: { id: activityId },
-      data: { isFeatured: !activity.isFeatured },
-      select: { id: true, titleEn: true, isFeatured: true },
+    return db.$transaction(async (tx) => {
+      await lockFeaturedOrder(tx);
+      // Re-read inside the lock: a concurrent toggle may have flipped it since.
+      const current = await tx.activity.findUniqueOrThrow({ where: { id: activityId }, select: { isFeatured: true } });
+      if (current.isFeatured) {
+        return tx.activity.update({
+          where: { id: activityId },
+          data: { isFeatured: false, featuredOrder: null },
+          select: { id: true, titleEn: true, isFeatured: true, featuredOrder: true },
+        });
+      }
+      const max = await tx.activity.aggregate({
+        where: { isFeatured: true, deletedAt: null },
+        _max: { featuredOrder: true },
+      });
+      return tx.activity.update({
+        where: { id: activityId },
+        data: { isFeatured: true, featuredOrder: (max._max.featuredOrder ?? 0) + 1 },
+        select: { id: true, titleEn: true, isFeatured: true, featuredOrder: true },
+      });
+    });
+  }
+
+  /**
+   * Every featured, non-deleted listing in homepage order (the same order the
+   * catalog uses for featured=true), with whether the homepage actually shows
+   * it: the catalog hides listings that are not ACTIVE, whose vendor is not
+   * ACTIVE, or whose vendor was deleted. The reason is computed here so the
+   * admin page never re-implements the catalog's visibility rule.
+   */
+  async getFeaturedActivities() {
+    const rows = await this.prisma.client.activity.findMany({
+      where: { isFeatured: true, deletedAt: null },
+      select: {
+        id: true, titleEn: true, titleAr: true, slug: true, coverImage: true, status: true,
+        featuredOrder: true, createdAt: true,
+        vendor: { select: { id: true, businessNameEn: true, status: true, deletedAt: true } },
+        city: { select: { nameEn: true } },
+        country: { select: { id: true, nameEn: true } },
+      },
+      orderBy: [{ featuredOrder: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }],
+    });
+    const data = rows.map((a) => {
+      const hiddenReason: FeaturedHiddenReason | null =
+        a.vendor.deletedAt ? 'VENDOR_DELETED'
+        : a.vendor.status !== 'ACTIVE' ? 'VENDOR_NOT_ACTIVE'
+        : a.status !== 'ACTIVE' ? 'INACTIVE'
+        : null;
+      return {
+        id: a.id, titleEn: a.titleEn, titleAr: a.titleAr, slug: a.slug, coverImage: a.coverImage,
+        status: a.status, featuredOrder: a.featuredOrder,
+        vendor: { id: a.vendor.id, businessNameEn: a.vendor.businessNameEn, status: a.vendor.status, deleted: !!a.vendor.deletedAt },
+        city: a.city, country: a.country,
+        showsOnHomepage: hiddenReason === null,
+        hiddenReason,
+      };
+    });
+    return { data, total: data.length, homepageLimit: HOMEPAGE_FEATURED_LIMIT };
+  }
+
+  /**
+   * Save the complete featured order in one transaction. `ids` must be
+   * exactly the listings featured right now (every one, nothing else): if
+   * someone featured or unfeatured a listing after the page loaded, the sets
+   * differ and the caller gets 409 so they reload instead of overwriting it.
+   * Positions are rewritten 1..n in the order given.
+   */
+  async setFeaturedOrder(ids: string[]) {
+    const db = this.prisma.client;
+    return db.$transaction(async (tx) => {
+      await lockFeaturedOrder(tx);
+      const current = await tx.activity.findMany({
+        where: { isFeatured: true, deletedAt: null },
+        select: { id: true },
+      });
+      const currentIds = new Set(current.map((a) => a.id));
+      const sameSet = ids.length === currentIds.size && ids.every((id) => currentIds.has(id));
+      if (!sameSet) {
+        throw new ConflictException('The featured list changed. Reload and try again.');
+      }
+      // Positions are unique per save; writes are sequential inside the
+      // transaction, so an interrupted save rolls back as a whole.
+      for (let i = 0; i < ids.length; i++) {
+        await tx.activity.update({ where: { id: ids[i] }, data: { featuredOrder: i + 1 } });
+      }
+      return { updated: ids.length };
     });
   }
 

@@ -497,6 +497,24 @@ async function main() {
     });
   }
 
+  // ─── Featured order fixtures (admin-featured-order.spec.ts) ───────────
+  // Three ACTIVE listings starred for the homepage, numbered 1..3 so the
+  // Featured order page has rows to move. Reset on every seed run: the spec
+  // moves a row and saves, then puts it back, but a failed run would leave the
+  // order swapped and the next seed must start clean. Every other seeded
+  // listing stays unfeatured, so the homepage row is exactly these three.
+  const featuredSlugs = [ACTIVITY_SLUG, HOURLY_ACTIVE_SLUG, DAILY_ACTIVE_SLUG];
+  for (let i = 0; i < featuredSlugs.length; i++) {
+    await prisma.activity.update({
+      where: { slug: featuredSlugs[i] },
+      data: { isFeatured: true, featuredOrder: i + 1 },
+    });
+  }
+  await prisma.activity.updateMany({
+    where: { slug: { notIn: featuredSlugs }, vendorId: vendorUser.vendorProfile.id },
+    data: { isFeatured: false, featuredOrder: null },
+  });
+
   // Review schema enforces @@unique([activityId, customerId]) — one review
   // per (customer, activity) pair. Upsert is idempotent across re-seeds;
   // update:{} preserves any rating/text the test suite mutated.
