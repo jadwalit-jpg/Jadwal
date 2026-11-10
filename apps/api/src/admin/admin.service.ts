@@ -38,17 +38,8 @@ import { envNumber } from '../common/env';
 
 export type FeaturedHiddenReason = 'INACTIVE' | 'VENDOR_NOT_ACTIVE' | 'VENDOR_DELETED';
 
-/**
- * Serialises every writer of the featured order (star toggles and "Save
- * order") for the rest of the current transaction. Postgres-only, released
- * automatically at commit/rollback. Without it two simultaneous stars could
- * compute the same "max + 1", or a save could check the featured set and then
- * write positions after a star changed that set.
- */
-async function lockFeaturedOrder(tx: Prisma.TransactionClient): Promise<void> {
-  // The function returns void, which Prisma cannot deserialise; cast it away.
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('activities.featuredOrder'))::text AS locked`;
-}
+/** Retries of a featured-order transaction on a Postgres serialization failure (P2034). */
+const FEATURED_ORDER_TX_ATTEMPTS = 3;
 
 @Injectable()
 export class AdminService {
@@ -1339,8 +1330,9 @@ export class AdminService {
    * Featuring puts the listing at the END of the admin-chosen order
    * (featuredOrder = current maximum + 1); unfeaturing clears its position,
    * so featuring it again later puts it at the end again. Both happen in one
-   * transaction under the featured-order lock, so a star click and a
-   * "Save order" from the Featured order page cannot interleave.
+   * Serializable transaction (see featuredOrderTransaction), so two stars
+   * cannot get the same number and a star cannot slip between a save's
+   * check of the featured set and its writes.
    */
   async toggleFeatured(activityId: string) {
     const db = this.prisma.client;
@@ -1350,9 +1342,8 @@ export class AdminService {
     });
     if (!activity) throw new NotFoundException('Activity not found');
 
-    return db.$transaction(async (tx) => {
-      await lockFeaturedOrder(tx);
-      // Re-read inside the lock: a concurrent toggle may have flipped it since.
+    return this.featuredOrderTransaction(async (tx) => {
+      // Re-read inside the transaction: a concurrent toggle may have flipped it since.
       const current = await tx.activity.findUniqueOrThrow({ where: { id: activityId }, select: { isFeatured: true } });
       if (current.isFeatured) {
         return tx.activity.update({
@@ -1371,6 +1362,29 @@ export class AdminService {
         select: { id: true, titleEn: true, isFeatured: true, featuredOrder: true },
       });
     });
+  }
+
+  /**
+   * Every writer of the featured order (star toggles, "Save order") runs here:
+   * a Serializable transaction, retried a few times on a serialization
+   * failure. Serializable makes Postgres refuse the second of two transactions
+   * that both read the featured set and write to it, so two simultaneous
+   * stars cannot compute the same "max + 1", and a save cannot check the set
+   * and then write positions after a star changed it; the retry re-reads and
+   * either succeeds or returns the proper 409. Beyond the retries the P2034
+   * surfaces through the Prisma exception filter as 409 "busy, try again".
+   * (The same pattern as createBooking; raw advisory locks are not used in
+   * this codebase.)
+   */
+  private async featuredOrderTransaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.prisma.client.$transaction(fn, { isolationLevel: 'Serializable', timeout: 10_000, maxWait: 2_000 });
+      } catch (err) {
+        const serializationFailure = err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034';
+        if (!serializationFailure || attempt >= FEATURED_ORDER_TX_ATTEMPTS) throw err;
+      }
+    }
   }
 
   /**
@@ -1418,9 +1432,7 @@ export class AdminService {
    * Positions are rewritten 1..n in the order given.
    */
   async setFeaturedOrder(ids: string[]) {
-    const db = this.prisma.client;
-    return db.$transaction(async (tx) => {
-      await lockFeaturedOrder(tx);
+    return this.featuredOrderTransaction(async (tx) => {
       const current = await tx.activity.findMany({
         where: { isFeatured: true, deletedAt: null },
         select: { id: true },
@@ -1431,11 +1443,14 @@ export class AdminService {
         throw new ConflictException('The featured list changed. Reload and try again.');
       }
       // Positions are unique per save; writes are sequential inside the
-      // transaction, so an interrupted save rolls back as a whole.
-      for (let i = 0; i < ids.length; i++) {
-        await tx.activity.update({ where: { id: ids[i] }, data: { featuredOrder: i + 1 } });
+      // transaction, so an interrupted save rolls back as a whole. The loop
+      // runs over the server's own rows (same set as `ids`, checked above),
+      // never over the request body.
+      const position = new Map(ids.map((id, i) => [id, i + 1]));
+      for (const row of current) {
+        await tx.activity.update({ where: { id: row.id }, data: { featuredOrder: position.get(row.id) } });
       }
-      return { updated: ids.length };
+      return { updated: current.length };
     });
   }
 
