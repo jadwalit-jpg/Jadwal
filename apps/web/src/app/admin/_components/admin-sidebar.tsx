@@ -28,6 +28,7 @@ import {
   Undo2,
   MailX,
   X,
+  ListOrdered,
 } from 'lucide-react';
 
 const navItems = [
@@ -35,6 +36,7 @@ const navItems = [
   { href: '/admin/users', label: 'Users', icon: Users },
   { href: '/admin/vendors', label: 'Vendors', icon: Store },
   { href: '/admin/activities', label: 'Activities', icon: CalendarRange },
+  { href: '/admin/activities/featured', label: 'Featured order', icon: ListOrdered },
   { href: '/admin/categories', label: 'Categories', icon: Tag },
   { href: '/admin/cities', label: 'Countries & Cities', icon: MapPin },
   { href: '/admin/bookings', label: 'Bookings', icon: BookOpen },
@@ -62,6 +64,9 @@ export function AdminSidebar({
   collapsed: boolean;
 }) {
   const pathname = usePathname();
+  const activeHref = navItems
+    .filter(({ href }) => pathname === href || (href !== '/admin/dashboard' && pathname?.startsWith(`${href}/`)))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
@@ -163,7 +168,9 @@ export function AdminSidebar({
                 </div>
               );
             }
-            const isActive = pathname === href || (href !== '/admin/dashboard' && pathname?.startsWith(href));
+            // The longest matching entry wins, so /admin/activities/featured
+            // lights "Featured order" and not "Activities" as well.
+            const isActive = activeHref === href;
             const badge = badgeMap[href] ?? 0;
             return (
               <Link

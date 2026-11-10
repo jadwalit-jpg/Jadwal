@@ -1,4 +1,5 @@
 import { Controller, Get, Header, Param, Query, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import * as crypto from 'crypto';
@@ -37,6 +38,20 @@ import { nowInTimezone } from '../common/validators/timezone';
 const CACHE_STATIC_LONG = 'public, s-maxage=3600, stale-while-revalidate=86400';
 const CACHE_LIVE_SHORT  = 'public, s-maxage=300,  stale-while-revalidate=3600';
 const CACHE_LISTING     = 'public, s-maxage=120,  stale-while-revalidate=600';
+
+/**
+ * Sort order of GET /catalog/activities.
+ *
+ * Only the homepage's Featured row (featured=true) follows the admin-chosen
+ * order: `featuredOrder` ascending, then listings that were featured but
+ * never ordered (null) last, newest first. Every other list (explore,
+ * category pages, search, vendor pages) keeps newest-first, exactly as before.
+ */
+export function catalogActivitiesOrderBy(featured: boolean): Prisma.ActivityOrderByWithRelationInput[] {
+  return featured
+    ? [{ featuredOrder: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }]
+    : [{ createdAt: 'desc' }];
+}
 
 /**
  * Catalog — public, unauthenticated endpoints.
@@ -345,7 +360,7 @@ export class CatalogController {
           vendor: { select: { businessNameEn: true, businessNameAr: true, slug: true } },
           _count: { select: { reviews: true } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: catalogActivitiesOrderBy(featured === 'true'),
         skip,
         take,
       }),

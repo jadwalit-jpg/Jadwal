@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useRef } from 'react';
 import NextImage from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -11,6 +12,7 @@ import {
   Search, ChevronLeft, ChevronRight, CheckCircle, Clock, Ban, Star, BookOpen,
   Pencil, Download, X, ChevronDown, MapPin, Calendar, Users, Tag, Image as ImageIcon,
   Clock3, Home, Globe, ZoomIn, PauseCircle,
+  ListOrdered,
 } from 'lucide-react';
 import type { ActivityStatus } from '@/lib/status-config';
 import CustomSelect from '@/components/custom-select';
@@ -240,6 +242,9 @@ export default function AdminActivitiesPage() {
               placeholder={`Bulk: ${selected.size} selected`}
             />
           )}
+          <Link href="/admin/activities/featured" className="flex items-center gap-1.5 px-4 py-2.5 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50 text-amber-800 dark:text-amber-300 text-sm font-medium rounded-xl transition-all">
+            <ListOrdered className="h-4 w-4" /> Arrange featured
+          </Link>
           <button type="button" onClick={handleExport} className="flex items-center gap-1.5 px-4 py-2.5 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-sm font-medium rounded-xl transition-all">
             <Download className="h-4 w-4" /> Export
           </button>

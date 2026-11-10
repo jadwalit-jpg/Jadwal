@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Put,
   Delete,
   Param,
   Body,
@@ -32,6 +33,7 @@ import { DeactivateUserDto } from './dto/deactivate-user.dto';
 import { UpdateVendorStatusDto } from './dto/update-vendor-status.dto';
 import { UpdateVendorTrustDto } from './dto/update-vendor-trust.dto';
 import { UpdateActivityStatusDto } from './dto/update-activity-status.dto';
+import { FeaturedOrderDto } from './dto/featured-order.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { CreateCountryDto, UpdateCountryDto } from './dto/country.dto';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
@@ -231,6 +233,21 @@ export class AdminController {
   @Get('activities')
   getActivities(@Query() query: PaginationDto) {
     return this.adminService.getActivities(query);
+  }
+
+  // Declared before 'activities/:id': NestJS matches routes in declaration
+  // order, and ParseUUIDPipe would otherwise reject "featured" with a 400.
+  /** Every featured listing in homepage order, for the Featured order page. */
+  @Get('activities/featured')
+  getFeaturedActivities() {
+    return this.adminService.getFeaturedActivities();
+  }
+
+  /** The complete featured order; 409 if the featured set changed meanwhile. */
+  @Put('activities/featured/order')
+  @Throttle(RATE_LIMIT_WRITE)
+  setFeaturedOrder(@Body() dto: FeaturedOrderDto) {
+    return this.adminService.setFeaturedOrder(dto.ids);
   }
 
   @Get('activities/:id')

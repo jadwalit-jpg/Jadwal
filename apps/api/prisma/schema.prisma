@@ -340,6 +340,10 @@ model Activity {
   cancellationPolicy String?
   status            ActivityStatus     @default(PENDING)
   isFeatured        Boolean            @default(false)
+  /// Position in the admin-chosen "Featured" order (1 = first on the homepage).
+  /// Null while featured means "never ordered": the catalog puts those after
+  /// the numbered ones, newest first. Cleared when the listing is unfeatured.
+  featuredOrder     Int?
   extraServices     Json?
   // For DAILY: activeDays = valid check-in days only
   // For HOURLY: activeDays = days the activity runs

@@ -152,6 +152,7 @@ export class AdminAuditInterceptor implements NestInterceptor {
       // Activities
       'PATCH:/admin/activities/:id/status': 'UPDATE_ACTIVITY_STATUS',
       'PATCH:/admin/activities/:id/feature': 'TOGGLE_ACTIVITY_FEATURED',
+      'PUT:/admin/activities/featured/order': 'REORDER_FEATURED_ACTIVITIES',
       'PATCH:/admin/activities/:id': 'UPDATE_ACTIVITY',
       // Activity availability blocks
       'POST:/admin/activities/:id/blocks': 'CREATE_ACTIVITY_BLOCK',
