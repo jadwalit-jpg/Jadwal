@@ -184,11 +184,12 @@ export default function AdminEditActivityPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [coverImage, setCoverImage] = useState<string>('');
   const [gallery, setGallery] = useState<string[]>([]);
-  const [extraServices, setExtraServices] = useState<{ name: string; nameAr?: string; price: number; perPerson: boolean }[]>([]);
+  const [extraServices, setExtraServices] = useState<{ name: string; nameAr?: string; price: number; perPerson: boolean; wholeGroup?: boolean }[]>([]);
   const [extraName, setExtraName] = useState('');
   const [extraNameAr, setExtraNameAr] = useState('');
   const [extraPrice, setExtraPrice] = useState('');
   const [extraPerPerson, setExtraPerPerson] = useState(false);
+  const [extraWholeGroup, setExtraWholeGroup] = useState(false); // per-person add-on charged for every guest
   const [activeDays, setActiveDays] = useState<string[]>([]);
   const [hasUnits, setHasUnits] = useState(false);
   const [unitCount, setUnitCount] = useState('');
@@ -236,7 +237,7 @@ export default function AdminEditActivityPage() {
       setOriginalSlug(activity.slug ?? '');
       setCoverImage(activity.coverImage ?? '');
       setGallery(Array.isArray(activity.gallery) ? activity.gallery : []);
-      setExtraServices(Array.isArray(activity.extraServices) ? activity.extraServices.map((s: any) => ({ name: s.name, ...(s.nameAr ? { nameAr: s.nameAr } : {}), price: s.price ?? 0, perPerson: !!s.perPerson })) : []);
+      setExtraServices(Array.isArray(activity.extraServices) ? activity.extraServices.map((s: any) => ({ name: s.name, ...(s.nameAr ? { nameAr: s.nameAr } : {}), price: s.price ?? 0, perPerson: !!s.perPerson, ...(s.perPerson && s.wholeGroup ? { wholeGroup: true } : {}) })) : []);
       setActiveDays(Array.isArray(activity.activeDays) ? activity.activeDays : []);
       if (activity.hasUnits) { setHasUnits(true); setUnitCount(activity.unitCount != null ? String(activity.unitCount) : ''); setUnitCapacity(activity.unitCapacity != null ? String(activity.unitCapacity) : ''); }
       setInitialized(true);
@@ -369,8 +370,8 @@ export default function AdminEditActivityPage() {
     const n = extraName.trim();
     if (!n) return;
     const nAr = extraNameAr.trim();
-    setExtraServices(prev => [...prev, { name: n, ...(nAr ? { nameAr: nAr } : {}), price: Number(extraPrice) || 0, perPerson: (Number(extraPrice) || 0) > 0 ? extraPerPerson : false }]);
-    setExtraName(''); setExtraNameAr(''); setExtraPrice(''); setExtraPerPerson(false);
+    setExtraServices(prev => [...prev, { name: n, ...(nAr ? { nameAr: nAr } : {}), price: Number(extraPrice) || 0, perPerson: (Number(extraPrice) || 0) > 0 ? extraPerPerson : false, ...((Number(extraPrice) || 0) > 0 && extraPerPerson && extraWholeGroup ? { wholeGroup: true } : {}) }]);
+    setExtraName(''); setExtraNameAr(''); setExtraPrice(''); setExtraPerPerson(false); setExtraWholeGroup(false);
   };
   const removeExtraService = (i: number) => setExtraServices(prev => prev.filter((_, idx) => idx !== i));
 
@@ -706,6 +707,9 @@ export default function AdminEditActivityPage() {
                   <div className="flex items-center gap-3 pb-0.5">
                     <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" name="extraPricing" checked={!extraPerPerson} onChange={() => setExtraPerPerson(false)} className="w-3.5 h-3.5" /><span className="text-xs text-gray-600 dark:text-slate-400">Per booking</span></label>
                     <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" name="extraPricing" checked={extraPerPerson} onChange={() => setExtraPerPerson(true)} className="w-3.5 h-3.5" /><span className="text-xs text-gray-600 dark:text-slate-400">Per person</span></label>
+                    {extraPerPerson && (
+                      <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={extraWholeGroup} onChange={e => setExtraWholeGroup(e.target.checked)} className="w-3.5 h-3.5 rounded text-blue-600 border-gray-300 dark:border-slate-600" /><span className="text-xs text-gray-600 dark:text-slate-400 whitespace-nowrap">Charge for every guest in the booking</span></label>
+                    )}
                   </div>
                 )}
                 <button type="button" onClick={addExtraService} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-colors cursor-pointer">Add</button>
@@ -722,7 +726,7 @@ export default function AdminEditActivityPage() {
                         {svc.nameAr ? <span dir="rtl" className="text-xs opacity-70 truncate">· {svc.nameAr}</span> : null}
                       </div>
                       <div className="flex items-center gap-3">
-                        {svc.price > 0 && <span className="font-semibold">+{svc.price} {activity.country?.currencyCode || 'QAR'}{svc.perPerson ? ' /person' : ''}</span>}
+                        {svc.price > 0 && <span className="font-semibold">+{svc.price} {activity.country?.currencyCode || 'QAR'}{svc.perPerson ? (svc.wholeGroup ? ' /person · whole group' : ' /person') : ''}</span>}
                         <button type="button" onClick={() => removeExtraService(i)} className="text-gray-400 hover:text-red-500 transition-colors cursor-pointer"><X className="h-4 w-4" /></button>
                       </div>
                     </div>

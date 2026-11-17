@@ -29,7 +29,7 @@ interface Booking {
   pointsRedeemed: number;
   pointsDiscount: string;
   currencyCode: string;
-  selectedExtras: { name: string; price: number; perPerson: boolean }[] | null;
+  selectedExtras: { name: string; nameAr?: string; price: number; qty?: number; perPerson: boolean; wholeGroup?: boolean }[] | null;
   startDatetime: string;
   endDatetime: string;
   status: 'PENDING' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED';
@@ -532,7 +532,7 @@ export default function AdminBookingsPage() {
                                   {booking.selectedExtras.map((svc, i) => (
                                     <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 rounded-lg text-xs font-medium">
                                       <Tag className="h-3 w-3" />
-                                      {svc.name} +{svc.price} {currency}{svc.perPerson ? '/person' : ''}
+                                      {svc.name} × {svc.qty ?? 1} = +{(Number(svc.price) * (svc.qty ?? 1)).toLocaleString()} {currency}{svc.perPerson ? (svc.wholeGroup ? ' (whole group)' : ' (per person)') : ''}
                                     </span>
                                   ))}
                                 </div>

@@ -60,6 +60,17 @@ export class ExtraServiceItem {
   @IsBoolean()
   @IsOptional()
   perPerson?: boolean; // true = price × guests, false/undefined = flat per booking
+
+  /**
+   * Per-person add-on charged for EVERY guest in the booking ("whole group"):
+   * one switch for the customer instead of a quantity picker, and the server
+   * always uses the booking's real guest count (not the minimum charged, and
+   * not whatever quantity the browser sent). Only meaningful with perPerson;
+   * ignored otherwise. Missing = false, so existing add-ons are unchanged.
+   */
+  @IsBoolean()
+  @IsOptional()
+  wholeGroup?: boolean;
 }
 
 export class CreateActivityDto {

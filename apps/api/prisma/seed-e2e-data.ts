@@ -69,6 +69,13 @@ const PAID_CONFIRMED_BOOKING_REF = 'JDWL-E2EPAID';
 // One unit also makes the assertions honest: with spare capacity the calendar
 // would never mark anything full and the specs would pass without testing
 // anything.
+// Paid add-ons on the calendar chalet for booking-addons.spec.ts: one of each
+// kind (whole group, per person, per booking). Price 0 would be an inclusion.
+const E2E_EXTRAS = [
+  { name: 'VIP cabin', nameAr: 'كابينة VIP', price: 100, perPerson: true, wholeGroup: true },
+  { name: 'Lunch box', nameAr: 'وجبة غداء', price: 50, perPerson: true },
+  { name: 'Photographer', nameAr: 'مصور', price: 200 },
+];
 const CAL_SLUG = 'e2e-calendar-daily';
 const CAL_BOOKING_REF = 'JDWL-E2ECAL';
 /** Days from today. Far enough out to be unambiguous, close enough that the
@@ -668,13 +675,14 @@ async function main() {
       locationAddress: 'Doha, Qatar',
       bookingType: 'DAILY',
       pricingModel: 'PER_UNIT',
+      extraServices: E2E_EXTRAS,
       // Real hotel semantics — the whole point of the calendar rules under test.
       checkInTime: '14:00',
       checkOutTime: '11:00',
       status: 'ACTIVE',
       activeDays: ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'],
     },
-    update: { status: 'ACTIVE', hasUnits: true, unitCount: 1, unitCapacity: 4 },
+    update: { status: 'ACTIVE', hasUnits: true, unitCount: 1, unitCapacity: 4, extraServices: E2E_EXTRAS },
   });
 
   // A guest occupies the night of calBookedDate: 14:00 that day -> 11:00 the

@@ -146,7 +146,8 @@
       "cashPaid": "Customer paid (cash)",
       "payment": "Payment",
       "status": "Status",
-      "close": "Close"
+      "close": "Close",
+      "addons": "Add-ons"
     }
   },
   "earnings": {
@@ -843,7 +844,9 @@
         "previewTagDailyPerson": "PER PERSON · PER NIGHT",
         "previewPerPersonNight": "Per person / night",
         "pmPerPersonExampleDaily": "Desert camp 250 QAR/person × 3 guests × 1 night = 750 QAR",
-        "pmPerUnitExampleDaily": "Chalet 1,200 QAR/night (same price for any group size)"
+        "pmPerUnitExampleDaily": "Chalet 1,200 QAR/night (same price for any group size)",
+        "wholeGroupCheckbox": "Charge for every guest in the booking",
+        "tagWholeGroup": "Per person · whole group"
       }
     }
   }

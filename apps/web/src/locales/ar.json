@@ -289,7 +289,14 @@
     },
     "guestsCount": "{{count}} ضيوف",
     "guestsCountMinimum": "{{count}} ضيوف (الحد الأدنى)",
-    "minChargeNote": "الحد الأدنى للسعر: {{count}} ضيوف"
+    "minChargeNote": "الحد الأدنى للسعر: {{count}} ضيوف",
+    "addons": "الإضافات",
+    "addonWholeGroup": "الترقية إلى {{name}} · +{{price}} {{currency}} للشخص",
+    "addonWholeGroupHint": "× {{count}} ضيوف · +{{total}} {{currency}}",
+    "addonPerPerson": "للشخص",
+    "addonPerBooking": "لكل حجز",
+    "addonLess": "أقل من {{name}}",
+    "addonMore": "المزيد من {{name}}"
   },
   "likes": {
     "title": "الأنشطة المفضلة",
