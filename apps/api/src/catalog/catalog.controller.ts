@@ -1,4 +1,4 @@
-import { Controller, Get, Header, Param, Query, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Header, Param, Query, NotFoundException, applyDecorators } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
@@ -38,6 +38,24 @@ import { nowInTimezone } from '../common/validators/timezone';
 const CACHE_STATIC_LONG = 'public, s-maxage=3600, stale-while-revalidate=86400';
 const CACHE_LIVE_SHORT  = 'public, s-maxage=300,  stale-while-revalidate=3600';
 const CACHE_LISTING     = 'public, s-maxage=120,  stale-while-revalidate=600';
+
+/**
+ * Cache headers for public catalog GETs: edge rules for Cloudflare, revalidation
+ * for browsers.
+ *
+ * The edge values used to travel in `Cache-Control` alone, with no `max-age`.
+ * Browsers ignore `s-maxage` but honour `stale-while-revalidate`, so a
+ * returning visitor's browser served its old copy on the first load after a
+ * price change and only then fetched the new one (seen on 10 Nov: a listing
+ * still showing its previous price). Now browsers get `no-cache` (always
+ * revalidate; Express's ETag makes that a cheap 304) and the edge rules move
+ * to `CDN-Cache-Control`, which Cloudflare honours and prefers over
+ * `Cache-Control` for its own cache. Browsers ignore `CDN-Cache-Control`.
+ */
+const BROWSER_CACHE = 'no-cache';
+export function CatalogCache(edge: string) {
+  return applyDecorators(Header('Cache-Control', BROWSER_CACHE), Header('CDN-Cache-Control', edge));
+}
 
 /**
  * Sort order of GET /catalog/activities.
@@ -117,7 +135,7 @@ export class CatalogController {
 
   @Get('countries')
   @Throttle(RATE_LIMIT_VENDOR)
-  @Header('Cache-Control', CACHE_STATIC_LONG)
+  @CatalogCache(CACHE_STATIC_LONG)
   async getCountries() {
     const cached = await this.refCache.get<unknown[]>('countries', 'active');
     if (cached) return cached;
@@ -132,7 +150,7 @@ export class CatalogController {
 
   @Get('categories')
   @Throttle(RATE_LIMIT_VENDOR)
-  @Header('Cache-Control', CACHE_STATIC_LONG)
+  @CatalogCache(CACHE_STATIC_LONG)
   async getCategories() {
     const cached = await this.refCache.get<unknown[]>('categories', 'roots');
     if (cached) return cached;
@@ -151,7 +169,7 @@ export class CatalogController {
 
   @Get('cities')
   @Throttle(RATE_LIMIT_VENDOR)
-  @Header('Cache-Control', CACHE_STATIC_LONG)
+  @CatalogCache(CACHE_STATIC_LONG)
   async getAllCities() {
     const cached = await this.refCache.get<unknown[]>('cities', 'all');
     if (cached) return cached;
@@ -165,7 +183,7 @@ export class CatalogController {
 
   @Get('cities/:countryId')
   @Throttle(RATE_LIMIT_VENDOR)
-  @Header('Cache-Control', CACHE_STATIC_LONG)
+  @CatalogCache(CACHE_STATIC_LONG)
   async getCitiesByCountry(@Param('countryId') countryId: string) {
     // UUIDs contain dashes which are allowed by KEY_PART_RE; if the param
     // shape is unsafe the cache no-ops and we just hit the DB. So this is
@@ -183,7 +201,7 @@ export class CatalogController {
 
   @Get('trending')
   @Throttle(RATE_LIMIT_VENDOR)
-  @Header('Cache-Control', CACHE_LIVE_SHORT)
+  @CatalogCache(CACHE_LIVE_SHORT)
   getTrending(@Query('countryId') countryId?: string) {
     // Return events for the given country + global events (countryId = null)
     const where: any = { isActive: true };
@@ -227,7 +245,7 @@ export class CatalogController {
    */
   @Get('sitemap-urls')
   @Throttle(RATE_LIMIT_VENDOR)
-  @Header('Cache-Control', CACHE_LIVE_SHORT)
+  @CatalogCache(CACHE_LIVE_SHORT)
   async getSitemapUrls() {
     // Google's hard limit is 50,000 URLs per sitemap file. The frontend
     // (apps/web/src/app/sitemap.ts) appends the 7 static routes + one URL per
@@ -258,7 +276,7 @@ export class CatalogController {
 
   @Get('activities')
   @Throttle(RATE_LIMIT_VENDOR)
-  @Header('Cache-Control', CACHE_LISTING)
+  @CatalogCache(CACHE_LISTING)
   async getActivities(
     @Query('page') page = '1',
     @Query('limit') limit = '20',
@@ -495,7 +513,7 @@ export class CatalogController {
   /** Related activities — "You might also like" section */
   @Get('activities/:slug/related')
   @Throttle(RATE_LIMIT_VENDOR)
-  @Header('Cache-Control', CACHE_LIVE_SHORT)
+  @CatalogCache(CACHE_LIVE_SHORT)
   async getRelatedActivities(
     @Param('slug') slug: string,
     @Query('limit') limitParam = '4',
@@ -552,7 +570,7 @@ export class CatalogController {
   /** Single activity detail page — includes reviews, units summary, vendor info */
   @Get('activities/:slug')
   @Throttle(RATE_LIMIT_VENDOR)
-  @Header('Cache-Control', CACHE_LIVE_SHORT)
+  @CatalogCache(CACHE_LIVE_SHORT)
   async getActivityBySlug(@Param('slug') slug: string) {
     // §B9 — soft-deleted activities have slugs rewritten to
     // `deleted-<id>`, so the original public slug returns 404 here.
@@ -611,7 +629,7 @@ export class CatalogController {
   // ─── Platform Info (public) ────────────────────────────────
   @Get('platform-info')
   @Throttle(RATE_LIMIT_VENDOR)
-  @Header('Cache-Control', CACHE_STATIC_LONG)
+  @CatalogCache(CACHE_STATIC_LONG)
   async getPlatformInfo() {
     const cached = await this.refCache.get<unknown>('platform-info', 'default');
     if (cached) return cached;

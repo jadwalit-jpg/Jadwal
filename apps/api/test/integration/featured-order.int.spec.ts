@@ -20,7 +20,7 @@
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { getTestContext, seedReference } from './_setup';
 import { AdminService } from '../../src/admin/admin.service';
@@ -194,6 +194,42 @@ describe('AdminService.setFeaturedOrder', () => {
     expect((await admin.getFeaturedActivities()).data.map((x) => x.id)).toEqual([a.id]);
     await expect(admin.setFeaturedOrder([a.id, gone.id])).rejects.toThrow(ConflictException);
     expect(await admin.setFeaturedOrder([a.id])).toEqual({ updated: 1 });
+  });
+});
+
+describe('AdminService.unfeatureActivity (the Featured order page\'s Remove)', () => {
+  test('featured → unfeatured with the position cleared; the others keep their order', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { admin, catalog } = makeServices();
+    const a = await makeActivity(seed, 'A', 3, { isFeatured: true, featuredOrder: 1 });
+    const b = await makeActivity(seed, 'B', 2, { isFeatured: true, featuredOrder: 2 });
+    const c = await makeActivity(seed, 'C', 1, { isFeatured: true, featuredOrder: 3 });
+
+    expect(await admin.unfeatureActivity(b.id)).toMatchObject({ id: b.id, isFeatured: false, featuredOrder: null });
+    expect(await orderOf(b.id)).toEqual({ isFeatured: false, featuredOrder: null });
+    expect((await orderOf(a.id)).featuredOrder).toBe(1);
+    expect((await orderOf(c.id)).featuredOrder).toBe(3);
+    expect(await homepageIds(catalog, seed.country.id)).toEqual([a.id, c.id]);
+  });
+
+  test('already unfeatured (removed elsewhere first): 200, stays unfeatured, never featured again', async () => {
+    const seed = await seedReference(ctx.prisma);
+    const { admin } = makeServices();
+    const a = await makeActivity(seed, 'A', 3, { isFeatured: true, featuredOrder: 1 });
+    await admin.toggleFeatured(a.id); // someone else's star click removed it
+    expect(await orderOf(a.id)).toEqual({ isFeatured: false, featuredOrder: null });
+
+    // The page is out of date and the admin presses Remove: the toggle would have featured it again.
+    expect(await admin.unfeatureActivity(a.id)).toMatchObject({ id: a.id, isFeatured: false, featuredOrder: null });
+    expect(await orderOf(a.id)).toEqual({ isFeatured: false, featuredOrder: null });
+    expect(await admin.unfeatureActivity(a.id)).toMatchObject({ isFeatured: false }); // and again
+    expect((await admin.getFeaturedActivities()).data.map((x) => x.id)).not.toContain(a.id);
+  });
+
+  test('unknown listing: 404', async () => {
+    await seedReference(ctx.prisma);
+    const { admin } = makeServices();
+    await expect(admin.unfeatureActivity('7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f')).rejects.toThrow(NotFoundException);
   });
 });
 

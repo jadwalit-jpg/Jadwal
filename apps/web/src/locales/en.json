@@ -289,7 +289,11 @@
     },
     "guestsCount": "{{count}} guests",
     "guestsCountMinimum": "{{count}} guests (minimum)",
-    "minChargeNote": "Minimum charge: {{count}} guests"
+    "minChargeNote": "Minimum charge: {{count}} guests",
+    "jumpToDates": "Jump to dates",
+    "existingBookingForSlot": "You already have an unfinished booking for this time. Open it to pay for it instead of booking again.",
+    "openExistingBooking": "Open that booking",
+    "openMyBookings": "Open my bookings"
   },
   "likes": {
     "title": "Liked Activities",

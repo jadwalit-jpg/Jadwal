@@ -18,7 +18,7 @@ jest.mock('@/components/toast', () => ({ useToast: () => ({ toast }) }));
 jest.mock('@/lib/api-error', () => ({
   getApiError: (e: unknown, fallback: string) => (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? fallback,
 }));
-const api = { get: jest.fn(), put: jest.fn(), patch: jest.fn() };
+const api = { get: jest.fn(), put: jest.fn(), delete: jest.fn() };
 jest.mock('@/lib/api', () => ({ __esModule: true, default: api }));
 // The real layout needs auth + sidebar queries; the page is what is under test.
 jest.mock('../../src/app/admin/_components/admin-layout', () => ({
@@ -56,7 +56,7 @@ const titlesOnScreen = () =>
 const saveButton = () => screen.getByRole('button', { name: /save order/i });
 
 beforeEach(() => {
-  toast.mockClear(); api.get.mockReset(); api.put.mockReset(); api.patch.mockReset();
+  toast.mockClear(); api.get.mockReset(); api.put.mockReset(); api.delete.mockReset();
   jest.spyOn(window, 'confirm').mockReturnValue(true);
 });
 afterEach(() => { (window.confirm as jest.Mock).mockRestore(); });
@@ -149,7 +149,7 @@ describe('Featured order page', () => {
     expect(screen.queryByTestId('featured-limit-line')).not.toBeInTheDocument();
   });
 
-  it('Remove asks first, unfeatures through the star endpoint, drops the row and keeps unsaved moves', async () => {
+  it('Remove asks first, calls the idempotent unfeature endpoint (never the star toggle), drops the row and keeps unsaved moves', async () => {
     renderPage([activity(1), activity(2), activity(3)]);
     await screen.findByText('Listing 1');
     fireEvent.click(screen.getByRole('button', { name: 'Move "Listing 3" up' })); // unsaved move: 1, 3, 2
@@ -157,12 +157,12 @@ describe('Featured order page', () => {
 
     (window.confirm as jest.Mock).mockReturnValueOnce(false);
     fireEvent.click(screen.getByRole('button', { name: 'Remove "Listing 1" from featured' }));
-    expect(api.patch).not.toHaveBeenCalled();
+    expect(api.delete).not.toHaveBeenCalled();
     expect(titlesOnScreen()).toEqual(['Listing 1', 'Listing 3', 'Listing 2']);
 
-    api.patch.mockResolvedValue({ data: { id: activity(1).id, titleEn: 'Listing 1', isFeatured: false } });
+    api.delete.mockResolvedValue({ data: { id: activity(1).id, titleEn: 'Listing 1', isFeatured: false, featuredOrder: null } });
     fireEvent.click(screen.getByRole('button', { name: 'Remove "Listing 1" from featured' }));
-    await waitFor(() => expect(api.patch).toHaveBeenCalledWith(`/admin/activities/${activity(1).id}/feature`));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith(`/admin/activities/featured/${activity(1).id}`));
     await waitFor(() => expect(screen.queryByText('Listing 1')).not.toBeInTheDocument());
     expect(titlesOnScreen()).toEqual(['Listing 3', 'Listing 2']); // the unsaved move survived
     expect(toast).toHaveBeenCalledWith('"Listing 1" removed from featured');

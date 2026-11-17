@@ -35,6 +35,7 @@ import BookingCalendar, { type CalendarDay } from '@/components/booking-calendar
 import { HourRangePicker } from '@/components/hour-range-picker';
 import { Button, Stepper } from '@/components/ui';
 import { chargedGuests, dailyBaseCents, hourlyBaseCents } from '@/lib/booking-pricing';
+import { existingBookingHref, findExistingBookingForSlot, isExistingBookingConflict } from '@/lib/booking-conflict';
 
 /** Wraps text in Unicode first-strong isolates so mixed Arabic/Latin parts of
  *  a price line (e.g. "QAR 250 × 2 ضيوف (الحد الأدنى) × 1 ليلة") keep their own
@@ -176,6 +177,7 @@ export default function BookActivityPage() {
   // Server error from the booking POST, shown under the phone field while the
   // pop-up stays open (item 3). Cleared on the next Save & Continue.
   const [phoneSubmitError, setPhoneSubmitError] = useState<string | null>(null);
+  const [phoneSubmitAction, setPhoneSubmitAction] = useState<{ label: string; href: string } | null>(null);
   // Per-booking phone the customer enters via the modal. Distinct from
   // `user.phone` (account-level) — customer may use a different number
   // for this specific booking. Submitted as `bookingPhone` in the
@@ -737,6 +739,13 @@ export default function BookActivityPage() {
   // hiccup). The backend returns the existing booking if this key was already used.
   const idempotencyKey = useRef(crypto.randomUUID()).current;
 
+  // The summary pill under the title scrolls to the date picker (hourly: the
+  // "Select date" step; daily: check-in / check-out).
+  const datesRef = useRef<HTMLDivElement>(null);
+  const scrollToDates = useCallback(() => {
+    datesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
   // ─── Submit booking ──────────────────────────────────────
   const bookMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>
@@ -766,6 +775,7 @@ export default function BookActivityPage() {
       // The phone pop-up stays mounted during the request (item 3); close it
       // before leaving so a back-navigation doesn't restore it open.
       setPhoneSubmitError(null);
+      setPhoneSubmitAction(null);
       setShowPhoneModal(false);
       router.push(`/bookings/${bookingId}`);
     },
@@ -793,6 +803,26 @@ export default function BookActivityPage() {
         const msg = t('booking.termsRequired', 'Please accept our Terms & Privacy to book.');
         setPhoneSubmitError(msg);
         toast(msg, 'error');
+        return;
+      }
+      // The duplicate guard: the customer already holds an active booking for
+      // this slot (usually a PENDING one from an abandoned checkout, blocked
+      // for the 15-minute hold). Say so plainly and offer to open that booking
+      // so they pay for it instead of booking again. The request, the guard
+      // and the hold are unchanged; the booking id comes from the customer's
+      // own list because the 409 carries none.
+      if (isExistingBookingConflict(status, detail)) {
+        const msg = t('booking.existingBookingForSlot', 'You already have an unfinished booking for this time. Open it to pay for it instead of booking again.');
+        setPhoneSubmitError(msg);
+        setPhoneSubmitAction({ label: t('booking.openMyBookings', 'Open my bookings'), href: existingBookingHref(null) });
+        toast(msg, 'error');
+        const chosenDate = isHourly ? selectedDate : checkIn;
+        api.get('/bookings/my', { params: { limit: 20 } })
+          .then((r) => {
+            const id = findExistingBookingForSlot(r.data?.data ?? [], activity?.id, chosenDate);
+            if (id) setPhoneSubmitAction({ label: t('booking.openExistingBooking', 'Open that booking'), href: existingBookingHref(id) });
+          })
+          .catch(() => { /* keep the My bookings link */ });
         return;
       }
       const msg = getApiError(err, 'Failed to create booking');
@@ -965,7 +995,15 @@ export default function BookActivityPage() {
           <div className="lg:col-span-3 space-y-5">
             {/* Booking Type Badge */}
             <div>
-              <div className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 px-4 py-2.5 rounded-2xl bg-jadwal-surface-raised border border-jadwal-border-subtle text-jadwal-text text-sm font-medium shadow-jadwal">
+              {/* Looks like a button, and customers tap it (Clarity): make the
+                  tap do the obvious thing and jump to the date picker. */}
+              <button
+                type="button"
+                onClick={scrollToDates}
+                data-testid="booking-summary-pill"
+                aria-label={t('booking.jumpToDates', { defaultValue: 'Jump to dates' })}
+                className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 px-4 py-2.5 rounded-2xl bg-jadwal-surface-raised border border-jadwal-border-subtle text-jadwal-text text-sm font-medium shadow-jadwal text-start cursor-pointer hover:bg-jadwal-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-jadwal-primary"
+              >
                 {isHourly ? (
                   <>
                     <Clock className="h-3.5 w-3.5 text-jadwal-primary" aria-hidden="true" />
@@ -1013,14 +1051,14 @@ export default function BookActivityPage() {
                     <span>{t('activity.minGuestsNote', { count: minGuests, defaultValue: 'Minimum {{count}} guests' })}</span>
                   </>
                 )}
-              </div>
+              </button>
             </div>
 
             {/* ─── HOURLY FLOW ──────────────────────────────── */}
             {isHourly && (
               <>
                 {/* Step 1: Select Date */}
-                <div>
+                <div ref={datesRef} data-testid="booking-dates" className="scroll-mt-24">
                   <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">
                     <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-sky-600 text-white text-xs font-bold me-2">1</span>
                     {t('booking.selectDate')}
@@ -1124,7 +1162,7 @@ export default function BookActivityPage() {
 
             {/* ─── DAILY FLOW ───────────────────────────────── */}
             {isDaily && (
-              <div>
+              <div ref={datesRef} data-testid="booking-dates" className="scroll-mt-24">
                 <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">
                   {t('booking.checkInCheckOut')}
                 </h2>
@@ -1790,6 +1828,7 @@ export default function BookActivityPage() {
         isOpen={showPhoneModal}
         onClose={() => {
           setPhoneSubmitError(null);
+          setPhoneSubmitAction(null);
           setShowPhoneModal(false);
         }}
         onSubmit={(phone) => {
@@ -1805,10 +1844,12 @@ export default function BookActivityPage() {
           // with only a toast. The POST itself is unchanged.
           setBookingPhone(phone);
           setPhoneSubmitError(null);
+          setPhoneSubmitAction(null);
           submitWithPhone(phone);
         }}
         submitting={bookMutation.isPending}
         submitError={phoneSubmitError}
+        submitErrorAction={phoneSubmitAction}
         initialPhone={user?.phone || ''}
         detectedCountryIso={geoCountry?.isoCode}
       />

@@ -250,6 +250,17 @@ export class AdminController {
     return this.adminService.setFeaturedOrder(dto.ids);
   }
 
+  /**
+   * Take a listing out of Featured. Idempotent: 200 whether or not it was
+   * featured, so the Featured order page's Remove can never feature a listing
+   * that someone else already removed (the star toggle would).
+   */
+  @Delete('activities/featured/:id')
+  @Throttle(RATE_LIMIT_WRITE)
+  unfeatureActivity(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.unfeatureActivity(id);
+  }
+
   @Get('activities/:id')
   getActivity(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.getActivity(id);

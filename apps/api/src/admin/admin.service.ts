@@ -38,8 +38,25 @@ import { envNumber } from '../common/env';
 
 export type FeaturedHiddenReason = 'INACTIVE' | 'VENDOR_NOT_ACTIVE' | 'VENDOR_DELETED';
 
-/** Retries of a featured-order transaction on a Postgres serialization failure (P2034). */
+/** Retries of a featured-order transaction on a Postgres serialization failure. */
 const FEATURED_ORDER_TX_ATTEMPTS = 3;
+
+/**
+ * Was this a Postgres serialization failure (two Serializable transactions
+ * touched the same rows)? Two shapes reach us: the known-request error P2034
+ * when the conflict is found on a query, and, with Prisma 7's pg driver
+ * adapter, the adapter's own `DriverAdapterError` with kind
+ * `TransactionWriteConflict` when it is found at COMMIT. The second one is
+ * what the pg adapter actually raises for two concurrent stars, so a check on
+ * P2034 alone never retried and the request failed with 500.
+ */
+export function isSerializationFailure(err: unknown): boolean {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) return err.code === 'P2034';
+  const e = err as { name?: string; message?: unknown; cause?: { kind?: unknown } } | null;
+  if (!e || typeof e !== 'object') return false;
+  const kind = e.cause && typeof e.cause === 'object' ? e.cause.kind : undefined;
+  return e.name === 'DriverAdapterError' && (kind === 'TransactionWriteConflict' || /TransactionWriteConflict/.test(String(e.message ?? '')));
+}
 
 @Injectable()
 export class AdminService {
@@ -1371,8 +1388,8 @@ export class AdminService {
    * that both read the featured set and write to it, so two simultaneous
    * stars cannot compute the same "max + 1", and a save cannot check the set
    * and then write positions after a star changed it; the retry re-reads and
-   * either succeeds or returns the proper 409. Beyond the retries the P2034
-   * surfaces through the Prisma exception filter as 409 "busy, try again".
+   * either succeeds or returns the proper 409. Beyond the retries the caller
+   * gets 409 "busy, try again".
    * (The same pattern as createBooking; raw advisory locks are not used in
    * this codebase.)
    */
@@ -1381,10 +1398,35 @@ export class AdminService {
       try {
         return await this.prisma.client.$transaction(fn, { isolationLevel: 'Serializable', timeout: 10_000, maxWait: 2_000 });
       } catch (err) {
-        const serializationFailure = err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034';
-        if (!serializationFailure || attempt >= FEATURED_ORDER_TX_ATTEMPTS) throw err;
+        if (!isSerializationFailure(err)) throw err;
+        if (attempt >= FEATURED_ORDER_TX_ATTEMPTS) {
+          // The adapter error would otherwise surface as a 500; the caller
+          // (an admin clicking a star or Save) just needs to try again.
+          throw new ConflictException('The featured list is busy, please try again.');
+        }
       }
     }
+  }
+
+  /**
+   * Idempotent unfeature: isFeatured false and featuredOrder null, 200 either
+   * way. Unlike toggleFeatured it can never feature a listing, which is what
+   * the Featured order page's Remove needs when the page is out of date.
+   * 404 only when the listing does not exist.
+   */
+  async unfeatureActivity(activityId: string) {
+    const exists = await this.prisma.client.activity.findUnique({ where: { id: activityId }, select: { id: true } });
+    if (!exists) throw new NotFoundException('Activity not found');
+    return this.featuredOrderTransaction(async (tx) => {
+      await tx.activity.updateMany({
+        where: { id: activityId, isFeatured: true },
+        data: { isFeatured: false, featuredOrder: null },
+      });
+      return tx.activity.findUniqueOrThrow({
+        where: { id: activityId },
+        select: { id: true, titleEn: true, isFeatured: true, featuredOrder: true },
+      });
+    });
   }
 
   /**

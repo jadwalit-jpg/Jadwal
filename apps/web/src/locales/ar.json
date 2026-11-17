@@ -289,7 +289,11 @@
     },
     "guestsCount": "{{count}} ضيوف",
     "guestsCountMinimum": "{{count}} ضيوف (الحد الأدنى)",
-    "minChargeNote": "الحد الأدنى للسعر: {{count}} ضيوف"
+    "minChargeNote": "الحد الأدنى للسعر: {{count}} ضيوف",
+    "jumpToDates": "الانتقال إلى التواريخ",
+    "existingBookingForSlot": "لديك حجز غير مكتمل لهذا الوقت بالفعل. افتحه لإتمام الدفع بدلاً من الحجز مرة أخرى.",
+    "openExistingBooking": "افتح ذلك الحجز",
+    "openMyBookings": "افتح حجوزاتي"
   },
   "likes": {
     "title": "الأنشطة المفضلة",
