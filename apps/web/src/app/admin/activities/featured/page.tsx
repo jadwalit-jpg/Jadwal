@@ -120,7 +120,11 @@ function SortableRow({
       style={style}
       data-testid={`featured-row-${activity.id}`}
       data-position={position}
-      className={`flex items-center gap-3 sm:gap-4 rounded-2xl border bg-white dark:bg-slate-900 px-3 py-3 sm:px-4 ${
+      // Phone layout: handle, number, photo and the title on one line; Up, Down
+      // and Remove on a second line (all 44px). From `sm` everything sits on
+      // one line. The fixed parts used to need ~374px, which left the title
+      // 0px wide on phones up to ~410px.
+      className={`grid grid-cols-[auto_auto_auto_minmax(0,1fr)] sm:grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 sm:gap-x-4 rounded-2xl border bg-white dark:bg-slate-900 px-3 py-3 sm:px-4 ${
         isDragging ? 'border-blue-400 shadow-lg relative z-10' : 'border-gray-200 dark:border-slate-800'
       } ${!activity.showsOnHomepage || overLimit ? 'opacity-80' : ''}`}
     >
@@ -143,7 +147,7 @@ function SortableRow({
         {position}
       </span>
 
-      <div className="shrink-0 h-14 w-20 rounded-lg overflow-hidden bg-gray-100 dark:bg-slate-800">
+      <div className="shrink-0 h-11 w-14 sm:h-14 sm:w-20 rounded-lg overflow-hidden bg-gray-100 dark:bg-slate-800">
         {activity.coverImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={activity.coverImage} alt="" width={80} height={56} loading="lazy" decoding="async" className="h-full w-full object-cover" />
@@ -152,7 +156,7 @@ function SortableRow({
         )}
       </div>
 
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0" data-testid="featured-row-title">
         <p className="font-semibold text-gray-900 dark:text-white leading-tight truncate">{activity.titleEn}</p>
         <p dir="rtl" className="text-sm text-gray-500 dark:text-slate-400 truncate text-start">{activity.titleAr}</p>
         <p className="text-xs text-gray-500 dark:text-slate-400 truncate">
@@ -166,7 +170,7 @@ function SortableRow({
         )}
       </div>
 
-      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+      <div className="col-span-full sm:col-span-1 flex items-center justify-end gap-2">
         <button type="button" onClick={() => onMove(index, index - 1)} disabled={index === 0} aria-label={`Move "${activity.titleEn}" up`} className={btnIcon}>
           <ArrowUp className="h-5 w-5" aria-hidden="true" />
         </button>
@@ -281,16 +285,14 @@ export default function AdminFeaturedOrderPage() {
   });
 
   const removeMutation = useMutation({
+    // Idempotent unfeature (never the star toggle): if the listing was already
+    // unfeatured elsewhere, the server leaves it unfeatured and still answers 200,
+    // so Remove can never feature a listing by accident.
     mutationFn: async (activity: FeaturedActivity) => {
-      const { data } = await api.patch(`/admin/activities/${activity.id}/feature`);
+      const { data } = await api.delete(`/admin/activities/featured/${activity.id}`);
       return data as { id: string; titleEn: string; isFeatured: boolean };
     },
-    onSuccess: (res, activity) => {
-      if (res.isFeatured) {
-        // The listing was already unfeatured by someone else and our toggle featured it again: undo that, then tell the admin.
-        toast(`"${activity.titleEn}" was already removed by someone else. Reload to see the current list.`, 'error');
-        return;
-      }
+    onSuccess: (_res, activity) => {
       // Drop the row on screen and from the loaded baseline, keeping every unsaved move.
       setItems((prev) => prev.filter((a) => a.id !== activity.id));
       setLoadedIds((prev) => prev.filter((id) => id !== activity.id));

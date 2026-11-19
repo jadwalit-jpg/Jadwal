@@ -85,7 +85,10 @@ export class AdminAuditInterceptor implements NestInterceptor {
     const entity = this.resolveEntity(route);
 
     // Sanitize request body — never log passwords, tokens, or secrets
-    const safeBody = this.sanitizeBody(req.body);
+    // A body-less request (DELETE, or PATCH with no payload) has req.body
+    // undefined; JSON.stringify(undefined) is undefined and the slice below
+    // threw, so those actions were never audited. Log them with `{}`.
+    const safeBody = this.sanitizeBody(req.body) ?? {};
     const details = error
       ? `FAILED: ${error} | ${JSON.stringify(safeBody)}`
       : JSON.stringify(safeBody);
@@ -153,6 +156,7 @@ export class AdminAuditInterceptor implements NestInterceptor {
       'PATCH:/admin/activities/:id/status': 'UPDATE_ACTIVITY_STATUS',
       'PATCH:/admin/activities/:id/feature': 'TOGGLE_ACTIVITY_FEATURED',
       'PUT:/admin/activities/featured/order': 'REORDER_FEATURED_ACTIVITIES',
+      'DELETE:/admin/activities/featured/:id': 'UNFEATURE_ACTIVITY',
       'PATCH:/admin/activities/:id': 'UPDATE_ACTIVITY',
       // Activity availability blocks
       'POST:/admin/activities/:id/blocks': 'CREATE_ACTIVITY_BLOCK',

@@ -46,13 +46,14 @@ describe('Featured order endpoints — roles, validation, audit', () => {
   let currentUser: FakeUser = { id: 'admin-1', email: 'admin@test.local', role: 'ADMIN', fullName: 'Admin' };
   const getFeaturedActivities = jest.fn().mockResolvedValue({ data: [{ id: ID_A }, { id: ID_B }], total: 2, homepageLimit: 20 });
   const setFeaturedOrder = jest.fn().mockResolvedValue({ updated: 2 });
+  const unfeatureActivity = jest.fn().mockResolvedValue({ id: ID_A, titleEn: 'A', isFeatured: false, featuredOrder: null });
   const auditCreate = jest.fn().mockResolvedValue({});
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [AdminController],
       providers: [
-        { provide: AdminService, useValue: { getFeaturedActivities, setFeaturedOrder } },
+        { provide: AdminService, useValue: { getFeaturedActivities, setFeaturedOrder, unfeatureActivity } },
         { provide: UploadService, useValue: {} },
         { provide: CleanupService, useValue: {} },
         { provide: EmailSuppressionService, useValue: {} },
@@ -75,12 +76,13 @@ describe('Featured order endpoints — roles, validation, audit', () => {
   afterAll(async () => { await app?.close(); });
   beforeEach(() => {
     currentUser = { id: 'admin-1', email: 'admin@test.local', role: 'ADMIN', fullName: 'Admin' };
-    getFeaturedActivities.mockClear(); setFeaturedOrder.mockClear(); auditCreate.mockClear();
+    getFeaturedActivities.mockClear(); setFeaturedOrder.mockClear(); unfeatureActivity.mockClear(); auditCreate.mockClear();
   });
   const flush = () => new Promise((r) => setImmediate(r));
 
   const list = () => request(app.getHttpServer()).get('/admin/activities/featured');
   const save = (body: unknown) => request(app.getHttpServer()).put('/admin/activities/featured/order').send(body as object);
+  const unfeature = (id: string) => request(app.getHttpServer()).delete(`/admin/activities/featured/${id}`);
 
   describe('GET /admin/activities/featured', () => {
     it('admin: 200 with the list (and the route is not swallowed by activities/:id)', async () => {
@@ -148,6 +150,32 @@ describe('Featured order endpoints — roles, validation, audit', () => {
       const res = await save({ ids: [ID_A, ID_B] });
       expect(res.status).toBe(409);
       expect(res.body.message).toBe('The featured list changed. Reload and try again.');
+    });
+  });
+
+  describe('DELETE /admin/activities/featured/:id (idempotent unfeature)', () => {
+    it('admin: 200, the service is called with the id, audited as UNFEATURE_ACTIVITY on that listing', async () => {
+      const res = await unfeature(ID_A);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ id: ID_A, isFeatured: false, featuredOrder: null });
+      expect(unfeatureActivity).toHaveBeenCalledWith(ID_A);
+      await flush();
+      expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ action: 'UNFEATURE_ACTIVITY', entity: 'Activity', entityId: ID_A, actorId: 'admin-1', actionCategory: 'OPERATIONAL' }),
+      }));
+    });
+
+    it('a non-UUID id is 400, service never called', async () => {
+      expect((await unfeature('featured-but-not-a-uuid')).status).toBe(400);
+      expect(unfeatureActivity).not.toHaveBeenCalled();
+    });
+
+    it.each(['VENDOR', 'CUSTOMER'] as const)('%s: 403, service never called, no audit row', async (role) => {
+      currentUser = { id: `${role.toLowerCase()}-1`, email: `${role.toLowerCase()}@test.local`, role, fullName: role };
+      expect((await unfeature(ID_A)).status).toBe(403);
+      expect(unfeatureActivity).not.toHaveBeenCalled();
+      await flush();
+      expect(auditCreate).not.toHaveBeenCalled();
     });
   });
 });

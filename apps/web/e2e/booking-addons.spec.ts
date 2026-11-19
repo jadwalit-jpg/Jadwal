@@ -51,7 +51,7 @@ test.describe('Booking page add-ons', () => {
     await expect(sw).toHaveAttribute('aria-checked', 'false');
     await sw.click();
     await expect(sw).toHaveAttribute('aria-checked', 'true');
-    await expect(sw).toContainText(/× 1 guests|× 1 ضيوف/);
+    await expect(sw).toContainText(/× 1 guest\b|× ضيف واحد/);
     const guestsStepper = page.getByRole('group', { name: /guests|الضيوف/i }).first();
     const increase = guestsStepper.getByRole('button', { name: 'Increase' });
     await increase.click();

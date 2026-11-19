@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, X, ChevronDown, Loader2 } from 'lucide-react';
+import Link from 'next/link';
+import { Phone, X, ChevronDown, Loader2, ArrowRight } from 'lucide-react';
 import { validatePhone } from '@/lib/validation';
 import { trackEvent } from '@/lib/track';
 
@@ -68,6 +69,13 @@ interface BookingPhoneModalProps {
    * the field. The typed number is kept so the customer can retry. Optional.
    */
   submitError?: string | null;
+  /**
+   * Optional way out shown under `submitError`: a button-styled link. Used when
+   * the booking request was refused because the customer already holds a
+   * booking for this slot, so they can open that booking and pay for it
+   * instead of tapping "Confirm & Pay" again.
+   */
+  submitErrorAction?: { label: string; href: string } | null;
 }
 
 export function BookingPhoneModal({
@@ -79,6 +87,7 @@ export function BookingPhoneModal({
   allowSkip,
   submitting = false,
   submitError = null,
+  submitErrorAction = null,
 }: BookingPhoneModalProps) {
   const { t } = useTranslation();
   const [selectedCountry, setSelectedCountry] = useState(() => getDefaultCountry(detectedCountryIso));
@@ -251,6 +260,16 @@ export function BookingPhoneModal({
                 <p role="alert" className="text-xs text-red-600 dark:text-red-400 mt-1.5">
                   {fieldError}
                 </p>
+              ) : null}
+              {submitError && submitErrorAction ? (
+                <Link
+                  href={submitErrorAction.href}
+                  data-testid="phone-submit-error-action"
+                  className="mt-2 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-900/20 px-4 text-sm font-semibold text-sky-800 dark:text-sky-200 hover:bg-sky-100 dark:hover:bg-sky-900/40 transition-colors"
+                >
+                  {submitErrorAction.label}
+                  <ArrowRight className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
+                </Link>
               ) : null}
               <p id="booking-phone-hint" className="text-xs text-gray-400 dark:text-slate-500 mt-1.5">{t('phone.withoutCountryCode')}</p>
               <button
