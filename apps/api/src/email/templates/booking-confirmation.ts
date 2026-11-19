@@ -19,6 +19,11 @@ export interface BookingConfirmationData {
    * line (e.g. a booking fully paid with points earns nothing).
    */
   pointsToEarn?: number;
+  /**
+   * Paid add-ons chosen at booking time, already priced by the server
+   * (quantity × unit price, charged once per booking). Omit / empty = no row.
+   */
+  addons?: { name: string; nameAr?: string; qty: number; total: string }[];
 }
 
 const STRINGS: Record<
@@ -28,7 +33,7 @@ const STRINGS: Record<
     heading: string;
     greeting: (name: string) => string;
     preview: (activity: string) => string;
-    labels: { reference: string; activity: string; date: string; time: string; guests: string; total: string; location: string };
+    labels: { reference: string; activity: string; date: string; time: string; guests: string; addons: string; total: string; location: string };
     mapsButton: string;
     viewButton: string;
     questions: string;
@@ -40,7 +45,7 @@ const STRINGS: Record<
     heading: 'Booking Confirmed &#10003;',
     greeting: (name) => `Hi ${name}, your booking has been confirmed! Here are your details:`,
     preview: (activity) => `Your booking for ${activity} is confirmed!`,
-    labels: { reference: 'Reference', activity: 'Activity', date: 'Date', time: 'Time', guests: 'Guests', total: 'Total', location: 'Location' },
+    labels: { reference: 'Reference', activity: 'Activity', date: 'Date', time: 'Time', guests: 'Guests', addons: 'Add-ons', total: 'Total', location: 'Location' },
     mapsButton: 'Open in Google Maps',
     viewButton: 'View Booking',
     questions: 'If you have any questions, reply to this email and our team will help.',
@@ -55,7 +60,7 @@ const STRINGS: Record<
     heading: 'تم تأكيد الحجز &#10003;',
     greeting: (name) => `مرحبًا ${name}، تم تأكيد حجزك! إليك التفاصيل:`,
     preview: (activity) => `تم تأكيد حجزك للنشاط ${activity}!`,
-    labels: { reference: 'المرجع', activity: 'النشاط', date: 'التاريخ', time: 'الوقت', guests: 'الضيوف', total: 'الإجمالي', location: 'الموقع' },
+    labels: { reference: 'المرجع', activity: 'النشاط', date: 'التاريخ', time: 'الوقت', guests: 'الضيوف', addons: 'الإضافات', total: 'الإجمالي', location: 'الموقع' },
     mapsButton: 'افتح في خرائط Google',
     viewButton: 'عرض الحجز',
     questions: 'إذا كان لديك أي استفسار، يمكنك الرد على هذا البريد وسيساعدك فريقنا.',
@@ -85,6 +90,14 @@ export function bookingConfirmationTemplate(
   const address = data.locationAddress ? escapeHtml(data.locationAddress) : null;
   const mapsLink = data.mapsLink || null;
   const viewUrl = `{{APP_URL}}/bookings/${bookingId}`;
+
+  const addonsText = (data.addons ?? []).map((a) => `${locale === 'AR' && a.nameAr ? a.nameAr : a.name} × ${a.qty} — ${data.currency} ${a.total}`);
+  const addonsRow = addonsText.length
+    ? `<tr>
+        <td style="padding: 10px 16px; font-family: Arial, sans-serif; font-size: 14px; color: #6b7280; border-bottom: 1px solid #f3f4f6; vertical-align: top;">${t.labels.addons}</td>
+        <td style="padding: 10px 16px; font-family: Arial, sans-serif; font-size: 14px; color: #111827; font-weight: 600; border-bottom: 1px solid #f3f4f6; text-align: ${endAlign};">${addonsText.map(escapeHtml).join('<br>')}</td>
+      </tr>`
+    : '';
 
   const timeRow = time
     ? `<tr>
@@ -173,6 +186,7 @@ export function bookingConfirmationTemplate(
         <td style="padding: 10px 16px; font-family: Arial, sans-serif; font-size: 14px; color: #6b7280; border-bottom: 1px solid #f3f4f6;">${t.labels.guests}</td>
         <td style="padding: 10px 16px; font-family: Arial, sans-serif; font-size: 14px; color: #111827; font-weight: 600; border-bottom: 1px solid #f3f4f6; text-align: ${endAlign};">${guests}</td>
       </tr>
+      ${addonsRow}
       <tr style="background-color: #f0f9ff;">
         <td style="padding: 12px 16px; font-family: Arial, sans-serif; font-size: 15px; color: #0284c7; font-weight: bold;">${t.labels.total}</td>
         <td style="padding: 12px 16px; font-family: Arial, sans-serif; font-size: 15px; color: #0284c7; font-weight: bold; text-align: ${endAlign};">${currency} ${total}</td>
@@ -202,6 +216,7 @@ export function bookingConfirmationTemplate(
     `${L.date}: ${data.date}`,
     ...(data.time ? [`${L.time}: ${data.time}`] : []),
     `${L.guests}: ${data.guests}`,
+    ...(addonsText.length ? [`${L.addons}: ${addonsText.join('; ')}`] : []),
     `${L.total}: ${data.currency} ${data.totalAmount}`,
     ...(data.pointsToEarn && data.pointsToEarn > 0
       ? ['', `${t.points.title}: +${data.pointsToEarn.toFixed(2)} ${t.points.unit} — ${t.points.caption}`]

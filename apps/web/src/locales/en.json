@@ -288,12 +288,23 @@
       "OTHER": "another method"
     },
     "guestsCount": "{{count}} guests",
+    "guestsCount_one": "{{count}} guest",
+    "guestsCount_other": "{{count}} guests",
     "guestsCountMinimum": "{{count}} guests (minimum)",
     "minChargeNote": "Minimum charge: {{count}} guests",
     "jumpToDates": "Jump to dates",
     "existingBookingForSlot": "You already have an unfinished booking for this time. Open it to pay for it instead of booking again.",
     "openExistingBooking": "Open that booking",
-    "openMyBookings": "Open my bookings"
+    "openMyBookings": "Open my bookings",
+    "addons": "Add-ons",
+    "addonWholeGroup": "Upgrade to {{name}} · +{{currency}} {{price}} per person",
+    "addonWholeGroupHint": "× {{count}} guests · +{{currency}} {{total}}",
+    "addonWholeGroupHint_one": "× {{count}} guest · +{{currency}} {{total}}",
+    "addonWholeGroupHint_other": "× {{count}} guests · +{{currency}} {{total}}",
+    "addonPerPerson": "per person",
+    "addonPerBooking": "per booking",
+    "addonLess": "Fewer {{name}}",
+    "addonMore": "More {{name}}"
   },
   "likes": {
     "title": "Liked Activities",

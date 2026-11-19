@@ -36,6 +36,8 @@ import { HourRangePicker } from '@/components/hour-range-picker';
 import { Button, Stepper } from '@/components/ui';
 import { chargedGuests, dailyBaseCents, hourlyBaseCents } from '@/lib/booking-pricing';
 import { existingBookingHref, findExistingBookingForSlot, isExistingBookingConflict } from '@/lib/booking-conflict';
+import { extrasBreakdown, normalizeSelection, selectionToPayload } from '@/lib/booking-extras';
+import { AddonsPicker } from '@/components/addons-picker';
 
 /** Wraps text in Unicode first-strong isolates so mixed Arabic/Latin parts of
  *  a price line (e.g. "QAR 250 × 2 ضيوف (الحد الأدنى) × 1 ليلة") keep their own
@@ -64,7 +66,7 @@ interface ActivityBookingData {
   checkInTime: string | null;
   checkOutTime: string | null;
   activeDays: string[];
-  extraServices: { name: string; nameAr?: string; price: number; perPerson?: boolean }[] | null;
+  extraServices: { name: string; nameAr?: string; price: number; perPerson?: boolean; wholeGroup?: boolean }[] | null;
   cancellationPolicy: string | null;
   category: { nameEn: string } | null;
   country: { nameEn: string; currencyCode: string; serviceFeeFixed?: number } | null;
@@ -444,16 +446,11 @@ export default function BookActivityPage() {
     [activity?.extraServices],
   );
 
-  const extrasTotal = useMemo(() => {
-    let sum = 0;
-    for (const svc of paidExtras) {
-      const qty = selectedExtras.get(svc.name);
-      if (qty && qty > 0) {
-        sum += svc.price * qty;
-      }
-    }
-    return sum;
-  }, [paidExtras, selectedExtras]);
+  // One line per chosen add-on and their sum. A whole-group add-on follows the
+  // REAL guest count (not the minimum charged for the base price); the server
+  // prices it the same way and ignores any other quantity.
+  const extras = useMemo(() => extrasBreakdown(paidExtras, selectedExtras, guests), [paidExtras, selectedExtras, guests]);
+  const extrasTotal = extras.total;
 
   // Total hours the customer is booking. Defaults to the activity's baseline
   // `durationValue` when no end time has been picked (single-slot booking).
@@ -666,21 +663,16 @@ export default function BookActivityPage() {
     setGuests(g => Math.min(g, maxGuests) || 1);
   }, [maxGuests]);
 
-  // Clamp per-person extra quantities when guests decrease
+  // Keep the add-ons in step with the guest count: a whole-group add-on is
+  // always `guests`, a per-person one never exceeds it. normalizeSelection
+  // returns the same map when nothing changes, so this does not loop.
   useEffect(() => {
-    setSelectedExtras(prev => {
-      let changed = false;
-      const next = new Map(prev);
-      for (const [name, qty] of next) {
-        const svc = paidExtras.find(s => s.name === name);
-        if (svc?.perPerson && qty > guests) {
-          next.set(name, guests);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [guests, paidExtras]);
+    // Not before the listing has loaded: with no add-ons known yet, every
+    // restored choice (from the listing page or a login round-trip) would be
+    // dropped as "unknown".
+    if (!activity) return;
+    setSelectedExtras(prev => normalizeSelection(paidExtras, prev, guests));
+  }, [activity, guests, paidExtras]);
 
   // ─── Can submit ──────────────────────────────────────────
   const canSubmit = useMemo(() => {
@@ -882,17 +874,10 @@ export default function BookActivityPage() {
   const submitWithPhone = (phone: string) => {
     if (!activity || !canSubmit) return;
 
-    // Build extras array: repeat name by quantity for per-person, or send once for per-booking
-    const extrasArr: string[] = [];
-    for (const [name, qty] of selectedExtras) {
-      if (qty > 0) extrasArr.push(name);
-    }
-    const extras = extrasArr.length > 0 ? extrasArr : undefined;
-    // Send quantities separately so backend knows how many of each
-    const extrasQty: Record<string, number> = {};
-    for (const [name, qty] of selectedExtras) {
-      if (qty > 0) extrasQty[name] = qty;
-    }
+    // Add-ons as names + quantities, normalised to the rules (whole group =
+    // every guest). The server re-derives the quantities itself.
+    const { selectedExtras: extrasPayload, selectedExtrasQty: extrasQtyPayload } =
+      selectionToPayload(normalizeSelection(paidExtras, selectedExtras, guests));
 
     if (isHourly) {
       bookMutation.mutate(sanitizeObject({
@@ -907,8 +892,8 @@ export default function BookActivityPage() {
           : {}),
         guests,
         bookingPhone: phone,
-        selectedExtras: extras,
-        selectedExtrasQty: Object.keys(extrasQty).length > 0 ? extrasQty : undefined,
+        selectedExtras: extrasPayload,
+        selectedExtrasQty: extrasQtyPayload,
         couponCode: appliedCoupon?.code || undefined,
         voucherId: selectedVoucher?.claimId || undefined,
         redeemPoints: usePoints && redeemPoints > 0 ? redeemPoints : undefined,
@@ -921,8 +906,8 @@ export default function BookActivityPage() {
         checkOutDate: checkOut,
         guests,
         bookingPhone: phone,
-        selectedExtras: extras,
-        selectedExtrasQty: Object.keys(extrasQty).length > 0 ? extrasQty : undefined,
+        selectedExtras: extrasPayload,
+        selectedExtrasQty: extrasQtyPayload,
         couponCode: appliedCoupon?.code || undefined,
         voucherId: selectedVoucher?.claimId || undefined,
         redeemPoints: usePoints && redeemPoints > 0 ? redeemPoints : undefined,
@@ -1253,6 +1238,20 @@ export default function BookActivityPage() {
                 </p>
               ) : null}
             </div>
+
+            {/* ─── Optional add-ons: right under the guests, so on a phone they
+                come before the price breakdown instead of inside it. ─── */}
+            {paidExtras.length > 0 && (
+              <div data-testid="booking-addons">
+                <AddonsPicker
+                  extras={paidExtras}
+                  selected={selectedExtras}
+                  guests={guests}
+                  currency={currency}
+                  onChange={setSelectedExtras}
+                />
+              </div>
+            )}
           </div>
 
           {/* ─── Right Column — Summary Card (Sticky) ────── */}
@@ -1353,105 +1352,6 @@ export default function BookActivityPage() {
                   </div>
                 )}
 
-                {/* Optional Add-ons */}
-                {paidExtras.length > 0 && (
-                  <div className="mb-5 pb-4 border-b border-gray-100 dark:border-slate-800/60">
-                    <h3 className="font-semibold text-gray-900 dark:text-white mb-3">{t('activity.optionalAddons')}</h3>
-                    <div className="space-y-2">
-                      {paidExtras.map((svc) => {
-                        const qty = selectedExtras.get(svc.name) ?? 0;
-                        const isActive = qty > 0;
-
-                        if (svc.perPerson) {
-                          // Per-person extra: quantity selector (0 to guests)
-                          return (
-                            <div
-                              key={svc.name}
-                              className={`flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all ${
-                                isActive
-                                  ? 'border-sky-400 bg-sky-50 dark:bg-sky-900/10 dark:border-sky-700'
-                                  : 'border-gray-200 dark:border-slate-800'
-                              }`}
-                            >
-                              <div className="flex flex-col">
-                                <span className="text-sm text-gray-700 dark:text-slate-300">{localized(svc, 'name')}</span>
-                                <span className="text-[10px] text-gray-400 dark:text-slate-500">{t('activity.each')} · {svc.price} {currency}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                {isActive && (
-                                  <span className="text-xs font-medium text-gray-500 dark:text-slate-400">
-                                    +{(svc.price * qty).toFixed(0)} {currency}
-                                  </span>
-                                )}
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => setSelectedExtras(prev => {
-                                      const next = new Map(prev);
-                                      if (qty <= 1) next.delete(svc.name);
-                                      else next.set(svc.name, qty - 1);
-                                      return next;
-                                    })}
-                                    disabled={qty === 0}
-                                    className="w-7 h-7 rounded-lg border border-gray-200 dark:border-slate-700 flex items-center justify-center text-gray-500 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-30 cursor-pointer text-sm"
-                                  >
-                                    -
-                                  </button>
-                                  <span className="w-6 text-center text-sm font-semibold text-gray-900 dark:text-white">{qty}</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSelectedExtras(prev => {
-                                      const next = new Map(prev);
-                                      next.set(svc.name, Math.min(guests, qty + 1));
-                                      return next;
-                                    })}
-                                    disabled={qty >= guests}
-                                    className="w-7 h-7 rounded-lg border border-gray-200 dark:border-slate-700 flex items-center justify-center text-gray-500 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-30 cursor-pointer text-sm"
-                                  >
-                                    +
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        // Per-booking extra: simple checkbox
-                        return (
-                          <label
-                            key={svc.name}
-                            className={`flex items-center justify-between px-3 py-2.5 rounded-xl border cursor-pointer transition-all ${
-                              isActive
-                                ? 'border-sky-400 bg-sky-50 dark:bg-sky-900/10 dark:border-sky-700'
-                                : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2.5">
-                              <input
-                                type="checkbox"
-                                checked={isActive}
-                                onChange={() => {
-                                  setSelectedExtras(prev => {
-                                    const next = new Map(prev);
-                                    if (isActive) next.delete(svc.name);
-                                    else next.set(svc.name, 1);
-                                    return next;
-                                  });
-                                }}
-                                className="w-4 h-4 rounded border-gray-300 dark:border-slate-600 text-sky-600 focus:ring-sky-500"
-                              />
-                              <span className="text-sm text-gray-700 dark:text-slate-300">{svc.name}</span>
-                            </div>
-                            <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                              +{svc.price} {currency}
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
                 {/* Price Breakdown */}
                 <h3 className="font-semibold text-gray-900 dark:text-white mb-3">{t('booking.priceBreakdown')}</h3>
                 {/* DAILY with no dates yet: `bookingCost` still holds the 1-night
@@ -1505,10 +1405,23 @@ export default function BookActivityPage() {
                     </p>
                   )}
                   {extrasTotal > 0 && (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-500 dark:text-slate-400">{t('booking.extras')}</span>
-                      <span className="text-gray-900 dark:text-white font-medium">+{currency} {extrasTotal.toFixed(0)}</span>
-                    </div>
+                    <>
+                      {/* One line per add-on: "Vip cabin · 100 × 3 guests · +QAR 300" */}
+                      {extras.lines.map((line) => (
+                        <div key={line.svc.name} data-testid="breakdown-addon" className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-gray-500 dark:text-slate-400 min-w-0 truncate">
+                            {localized(line.svc, 'name')} · {line.mode === 'perBooking'
+                              ? t('booking.addonPerBooking', { defaultValue: 'per booking' })
+                              : `${line.unitPrice.toFixed(0)} × ${t('booking.guestsCount', { count: line.qty, defaultValue: '{{count}} guests' })}`}
+                          </span>
+                          <span className="text-gray-700 dark:text-slate-200 font-medium whitespace-nowrap">+{currency} {line.total.toFixed(0)}</span>
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-500 dark:text-slate-400">{t('booking.extras')}</span>
+                        <span className="text-gray-900 dark:text-white font-medium">+{currency} {extrasTotal.toFixed(0)}</span>
+                      </div>
+                    </>
                   )}
                   {/* Coupon discount */}
                   {appliedCoupon && (

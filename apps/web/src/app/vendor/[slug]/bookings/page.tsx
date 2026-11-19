@@ -514,6 +514,24 @@ export default function VendorBookingsPage() {
                 <span className="text-sm text-gray-500 dark:text-slate-400">{t('vendor.bookings.details.guests')}</span>
                 <span className="text-sm font-medium text-gray-900 dark:text-white">{viewBooking.guests}</span>
               </div>
+              {/* Paid add-ons the customer chose (name, quantity, cost) */}
+              {Array.isArray(viewBooking.selectedExtras) && viewBooking.selectedExtras.length > 0 && (
+                <div className="py-2 border-b border-gray-50 dark:border-slate-800/50" data-testid="vendor-booking-addons">
+                  <span className="text-sm text-gray-500 dark:text-slate-400">{t('vendor.bookings.details.addons')}</span>
+                  <ul className="mt-1 space-y-0.5">
+                    {(viewBooking.selectedExtras as { name: string; price: number | string; qty?: number }[]).map((e) => {
+                      const qty = Math.max(1, Number(e.qty) || 1);
+                      const currency = viewBooking.currencyCode || viewBooking.activity?.country?.currencyCode || 'QAR';
+                      return (
+                        <li key={e.name} className="flex justify-between text-sm">
+                          <span className="text-gray-900 dark:text-white">{e.name} × {qty}</span>
+                          <span className="font-medium text-gray-900 dark:text-white tabular-nums">{currency} {(Number(e.price) * qty).toFixed(2)}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
               {/* Pricing breakdown — shows nominal event value, any points/
                   coupon discounts, and what the customer actually paid in cash.
                   Essential for vendors to see bookings paid entirely via
