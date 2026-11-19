@@ -286,11 +286,12 @@ export default function EditActivityPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [coverImage, setCoverImage] = useState<string>('');
   const [gallery, setGallery] = useState<string[]>([]);
-  const [extraServices, setExtraServices] = useState<{ name: string; nameAr?: string; price: number; perPerson: boolean }[]>([]);
+  const [extraServices, setExtraServices] = useState<{ name: string; nameAr?: string; price: number; perPerson: boolean; wholeGroup?: boolean }[]>([]);
   const [extraName, setExtraName] = useState('');
   const [extraNameAr, setExtraNameAr] = useState('');
   const [extraPrice, setExtraPrice] = useState('');
   const [extraPerPerson, setExtraPerPerson] = useState(false);
+  const [extraWholeGroup, setExtraWholeGroup] = useState(false); // per-person add-on charged for every guest
   const [activeDays, setActiveDays] = useState<string[]>([]);
 
   // Units
@@ -352,6 +353,7 @@ export default function EditActivityPage() {
             ...(s.nameAr ? { nameAr: s.nameAr } : {}),
             price: s.price ?? 0,
             perPerson: !!s.perPerson,
+            ...(s.perPerson && s.wholeGroup ? { wholeGroup: true } : {}),
           }))
         : []);
       setActiveDays(Array.isArray(activity.activeDays) ? activity.activeDays : []);
@@ -559,11 +561,13 @@ export default function EditActivityPage() {
       ...(nameAr ? { nameAr } : {}),
       price,
       perPerson: price > 0 ? extraPerPerson : false,
+      ...(price > 0 && extraPerPerson && extraWholeGroup ? { wholeGroup: true } : {}),
     }]);
     setExtraName('');
     setExtraNameAr('');
     setExtraPrice('');
     setExtraPerPerson(false);
+    setExtraWholeGroup(false);
   };
   const removeExtraService = (i: number) => setExtraServices(prev => prev.filter((_, idx) => idx !== i));
   const toggleDay = (value: string) =>
@@ -1226,6 +1230,12 @@ export default function EditActivityPage() {
                         <input type="radio" name="extraPricing" checked={extraPerPerson} onChange={() => setExtraPerPerson(true)} className="w-3.5 h-3.5 text-blue-600 border-gray-300 dark:border-slate-600 focus:ring-blue-500" />
                         <span className="text-xs text-gray-600 dark:text-slate-400 whitespace-nowrap">{t('vendor.activities.wizard.ui.perPersonRadio')}</span>
                       </label>
+                      {extraPerPerson && (
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input type="checkbox" checked={extraWholeGroup} onChange={e => setExtraWholeGroup(e.target.checked)} className="w-3.5 h-3.5 rounded text-blue-600 border-gray-300 dark:border-slate-600" />
+                          <span className="text-xs text-gray-600 dark:text-slate-400 whitespace-nowrap">{t('vendor.activities.wizard.ui.wholeGroupCheckbox')}</span>
+                        </label>
+                      )}
                     </div>
                   )}
                   <button
@@ -1251,7 +1261,7 @@ export default function EditActivityPage() {
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${svc.price === 0 ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-blue-500/20 text-blue-600 dark:text-blue-400'}`}>
-                            {svc.price === 0 ? t('vendor.activities.wizard.ui.tagIncluded') : svc.perPerson ? t('vendor.activities.wizard.ui.tagAddonPerPerson') : t('vendor.activities.wizard.ui.tagAddonPerBooking')}
+                            {svc.price === 0 ? t('vendor.activities.wizard.ui.tagIncluded') : svc.perPerson ? (svc.wholeGroup ? t('vendor.activities.wizard.ui.tagWholeGroup') : t('vendor.activities.wizard.ui.tagAddonPerPerson')) : t('vendor.activities.wizard.ui.tagAddonPerBooking')}
                           </span>
                           <span className="font-medium truncate">{svc.name}</span>
                           {svc.nameAr ? (

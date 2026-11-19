@@ -781,6 +781,23 @@ export default function BookingDetailPage() {
                       {currency} {nominalSubtotal.toFixed(2)}
                     </span>
                   </div>
+                  {/* Paid add-ons as frozen on the booking: name, quantity and cost. */}
+                  {Array.isArray(booking.selectedExtras) && booking.selectedExtras.length > 0 ? (
+                    <div data-testid="booking-addons-summary" className="space-y-1">
+                      <p className="text-xs font-semibold text-jadwal-text-muted uppercase tracking-wider">{t('booking.addons', { defaultValue: 'Add-ons' })}</p>
+                      {(booking.selectedExtras as { name: string; nameAr?: string; price: number | string; qty?: number; perPerson?: boolean }[]).map((e) => {
+                        const qty = Math.max(1, Number(e.qty) || 1);
+                        return (
+                          <div key={e.name} className="flex justify-between text-sm gap-2">
+                            <span className="text-jadwal-text-muted min-w-0 truncate">
+                              {localized(e, 'name')}{qty > 1 || e.perPerson ? ` · ${Number(e.price).toFixed(0)} × ${t('booking.guestsCount', { count: qty, defaultValue: '{{count}} guests' })}` : ''}
+                            </span>
+                            <span className="text-jadwal-text font-medium tabular-nums whitespace-nowrap">{currency} {(Number(e.price) * qty).toFixed(2)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   {couponValue > 0 ? (
                     <div className="flex justify-between text-sm">
                       <span className="text-jadwal-text-muted inline-flex items-center gap-1.5">

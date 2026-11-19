@@ -1354,6 +1354,7 @@ export class PaymentService {
         ref: true,
         vendorId: true,
         guests: true,
+        selectedExtras: true,
         totalPrice: true,
         serviceFee: true,
         couponDiscount: true,
@@ -1376,11 +1377,20 @@ export class PaymentService {
       },
     });
     if (bookingForNotify) {
+      // Paid add-ons as frozen on the booking ({ name, price, qty }); named in
+      // the confirmation so the customer sees what the total includes.
+      const addons = (Array.isArray(bookingForNotify.selectedExtras) ? bookingForNotify.selectedExtras as Array<{ name?: unknown; nameAr?: unknown; price?: unknown; qty?: unknown }> : [])
+        .filter((e) => typeof e?.name === 'string' && Number(e.price) > 0)
+        .map((e) => {
+          const qty = Math.max(1, Math.floor(Number(e.qty) || 1));
+          return { name: String(e.name), ...(typeof e.nameAr === 'string' && e.nameAr ? { nameAr: e.nameAr } : {}), qty, total: (Number(e.price) * qty).toFixed(2) };
+        });
+      const addonsSuffix = addons.length ? ` (incl. ${addons.map((a) => `${a.name} × ${a.qty}`).join(', ')})` : '';
       this.notificationService.send({
         userId: bookingForNotify.customerId,
         type: 'PAYMENT_SUCCESS',
         title: 'Payment Successful',
-        message: `Your payment for booking ${bookingForNotify.ref} has been confirmed`,
+        message: `Your payment for booking ${bookingForNotify.ref} has been confirmed${addonsSuffix}`,
         link: `/bookings/${payment.bookingId}`,
       });
 
@@ -1481,6 +1491,7 @@ export class PaymentService {
                 ...(bookingForNotify.activity?.locationAddress ? { locationAddress: bookingForNotify.activity.locationAddress } : {}),
                 ...(mapsLink ? { mapsLink } : {}),
                 ...(pointsToEarn > 0 ? { pointsToEarn } : {}),
+                ...(addons.length ? { addons } : {}),
               },
             },
           });

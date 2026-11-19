@@ -289,7 +289,14 @@
     },
     "guestsCount": "{{count}} guests",
     "guestsCountMinimum": "{{count}} guests (minimum)",
-    "minChargeNote": "Minimum charge: {{count}} guests"
+    "minChargeNote": "Minimum charge: {{count}} guests",
+    "addons": "Add-ons",
+    "addonWholeGroup": "Upgrade to {{name}} · +{{currency}} {{price}} per person",
+    "addonWholeGroupHint": "× {{count}} guests · +{{currency}} {{total}}",
+    "addonPerPerson": "per person",
+    "addonPerBooking": "per booking",
+    "addonLess": "Fewer {{name}}",
+    "addonMore": "More {{name}}"
   },
   "likes": {
     "title": "Liked Activities",

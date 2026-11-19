@@ -40,6 +40,8 @@ import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 import TermsAcceptModal from '@/components/terms-accept-modal';
 import { chargedGuests } from '@/lib/booking-pricing';
+import { normalizeSelection, saveBookingPrefill } from '@/lib/booking-extras';
+import { AddonsPicker } from '@/components/addons-picker';
 import { ActivityDetailPageSkeleton } from '@/components/ui/skeletons';
 import {
   Badge,
@@ -81,7 +83,7 @@ export interface ActivityDetail {
   checkInTime: string | null;
   checkOutTime: string | null;
   activeDays: string[];
-  extraServices: { name: string; nameAr?: string; price: number; perPerson?: boolean }[] | null;
+  extraServices: { name: string; nameAr?: string; price: number; perPerson?: boolean; wholeGroup?: boolean }[] | null;
   cancellationPolicy: string | null;
   createdAt: string;
   category: { nameEn: string; nameAr: string } | null;
@@ -163,12 +165,18 @@ export default function ActivityDetailClient({
   const [selectedImage, setSelectedImage] = useState(0);
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
   const [guests, setGuests] = useState(1);
+  // Add-ons chosen here travel to the booking page with the guest count (see handleBookNow).
+  const [selectedExtras, setSelectedExtras] = useState<Map<string, number>>(new Map());
   // Action-time Terms gate: a no-consent user who clicks "Book now" gets a
   // popup BEFORE reaching the booking page. Accept → proceed to the captured
   // URL; cancel → stay put. The server guard is still the hard boundary.
   const [termsModalOpen, setTermsModalOpen] = useState(false);
   const [pendingBookUrl, setPendingBookUrl] = useState<string | null>(null);
   const handleBookNow = useCallback(() => {
+    // Hand the guest count and the chosen add-ons to the booking page through
+    // the sessionStorage key it already restores on mount (tab-scoped, survives
+    // the login round-trip, keeps add-on names out of the URL).
+    saveBookingPrefill(slug, { guests, selectedExtras });
     const url = `/activity/${slug}/book${guests > 1 ? `?guests=${guests}` : ''}`;
     if (user?.needsTermsAcceptance) {
       setPendingBookUrl(url);
@@ -176,7 +184,7 @@ export default function ActivityDetailClient({
       return;
     }
     router.push(url);
-  }, [slug, guests, user?.needsTermsAcceptance, router]);
+  }, [slug, guests, user?.needsTermsAcceptance, router, selectedExtras]);
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewHover, setReviewHover] = useState(0);
 
@@ -759,28 +767,18 @@ export default function ActivityDetailClient({
                     ) : null}
                     {paidExtras.length > 0 ? (
                       <Section title={t('activity.optionalAddons')}>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                          {paidExtras.map((svc, i) => (
-                            <div
-                              key={i}
-                              className="flex items-center justify-between px-3 py-2.5 rounded-xl border border-jadwal-border-subtle bg-jadwal-surface-muted"
-                            >
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-sm text-jadwal-text truncate">
-                                  {localized(svc, 'name')}
-                                </span>
-                                {svc.perPerson ? (
-                                  <span className="text-[10px] text-jadwal-text-faint">
-                                    {t('activity.perPersonLabel')}
-                                  </span>
-                                ) : null}
-                              </div>
-                              <span className="text-sm font-semibold text-jadwal-text whitespace-nowrap">
-                                +{svc.price} {currency}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
+                        {/* The same controls as the booking page; the choice goes with
+                            the customer when they tap Book. The whole-group switch
+                            prices from this page's guest count. */}
+                        <AddonsPicker
+                          heading={false}
+                          idPrefix="listing-addon"
+                          extras={paidExtras}
+                          selected={normalizeSelection(paidExtras, selectedExtras, guests)}
+                          guests={guests}
+                          currency={currency}
+                          onChange={setSelectedExtras}
+                        />
                       </Section>
                     ) : null}
                   </>

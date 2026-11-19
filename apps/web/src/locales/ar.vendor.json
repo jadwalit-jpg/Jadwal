@@ -146,7 +146,8 @@
       "cashPaid": "دفع العميل (نقداً)",
       "payment": "الدفع",
       "status": "الحالة",
-      "close": "إغلاق"
+      "close": "إغلاق",
+      "addons": "الإضافات"
     }
   },
   "earnings": {
@@ -843,7 +844,9 @@
         "previewTagDailyPerson": "لكل شخص · لكل ليلة",
         "previewPerPersonNight": "لكل شخص / ليلة",
         "pmPerPersonExampleDaily": "مخيم صحراوي 250 ر.ق/شخص × 3 ضيوف × ليلة واحدة = 750 ر.ق",
-        "pmPerUnitExampleDaily": "شاليه 1,200 ر.ق/ليلة (نفس السعر لأي عدد من الضيوف)"
+        "pmPerUnitExampleDaily": "شاليه 1,200 ر.ق/ليلة (نفس السعر لأي عدد من الضيوف)",
+        "wholeGroupCheckbox": "احتساب الإضافة لكل ضيف في الحجز",
+        "tagWholeGroup": "لكل شخص · للمجموعة كاملة"
       }
     }
   }

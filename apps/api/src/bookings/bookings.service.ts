@@ -1605,12 +1605,12 @@ export class BookingsService {
 
         // 6b. Calculate selected extras cost
         let extrasCents = 0;
-        const selectedExtras: { name: string; price: number; qty: number; perPerson: boolean }[] = [];
+        const selectedExtras: { name: string; nameAr?: string; price: number; qty: number; perPerson: boolean; wholeGroup?: boolean }[] = [];
         if (dto.selectedExtras?.length && Array.isArray(activity.extraServices)) {
           // Build lookup map (case-insensitive keys)
-          const extrasMap = new Map<string, { name: string; price: number; perPerson: boolean }>();
-          for (const svc of activity.extraServices as { name: string; price: number; perPerson?: boolean }[]) {
-            if (svc.price > 0) extrasMap.set(svc.name.toLowerCase(), { name: svc.name, price: svc.price, perPerson: !!svc.perPerson });
+          const extrasMap = new Map<string, { name: string; nameAr?: string; price: number; perPerson: boolean; wholeGroup: boolean }>();
+          for (const svc of activity.extraServices as { name: string; nameAr?: string; price: number; perPerson?: boolean; wholeGroup?: boolean }[]) {
+            if (svc.price > 0) extrasMap.set(svc.name.toLowerCase(), { name: svc.name, ...(typeof svc.nameAr === 'string' && svc.nameAr ? { nameAr: svc.nameAr } : {}), price: svc.price, perPerson: !!svc.perPerson, wholeGroup: !!svc.perPerson && !!svc.wholeGroup });
           }
           // Deduplicate customer selections
           const seen = new Set<string>();
@@ -1624,7 +1624,12 @@ export class BookingsService {
             }
             // Determine quantity: from selectedExtrasQty if provided, otherwise default
             let qty = dto.selectedExtrasQty?.[name] ?? dto.selectedExtrasQty?.[svc.name];
-            if (svc.perPerson) {
+            if (svc.wholeGroup) {
+              // Whole group: every guest in the booking, whatever the browser
+              // sent. The REAL guest count, not the minimum charged for the base
+              // price (a solo guest on a min-2 listing pays the add-on once).
+              qty = dto.guests;
+            } else if (svc.perPerson) {
               // Per-person: customer picks 1..guests, default to guests if not specified
               qty = qty != null ? Math.min(Math.max(1, Math.floor(qty)), dto.guests) : dto.guests;
             } else {
@@ -1633,7 +1638,7 @@ export class BookingsService {
             }
             const cost = svc.price * qty;
             extrasCents += Math.round(cost * 100);
-            selectedExtras.push({ name: svc.name, price: svc.price, qty, perPerson: svc.perPerson });
+            selectedExtras.push({ name: svc.name, ...(svc.nameAr ? { nameAr: svc.nameAr } : {}), price: svc.price, qty, perPerson: svc.perPerson, ...(svc.wholeGroup ? { wholeGroup: true } : {}) });
           }
         }
 

@@ -57,6 +57,11 @@ class ExtraServiceItem {
 
   @IsBoolean()
   perPerson!: boolean;
+
+  /** Charge a per-person add-on for every guest in the booking (see vendor ExtraServiceItem.wholeGroup). */
+  @IsBoolean()
+  @IsOptional()
+  wholeGroup?: boolean;
 }
 
 export class UpdateActivityDto {
