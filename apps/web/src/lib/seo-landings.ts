@@ -115,7 +115,7 @@ export const SEO_LANDINGS: SeoLanding[] = [
       en: [
         {
           q: 'How much does a desert safari in Qatar cost?',
-          a: 'The full-day camp trip is QAR 150 per person and the overnight camp is QAR 250 per person. Private camping at Al Rehlah Camp is QAR 1,500 for your group.',
+          a: 'The full-day camp trip is QAR 150 per person and the overnight camp is QAR 250 per person, with a minimum of QAR 500 per tent. Private camping at Al Rehlah Camp is QAR 1,500 for your group.',
         },
         {
           q: 'How long does it take?',
@@ -135,7 +135,7 @@ export const SEO_LANDINGS: SeoLanding[] = [
         },
         {
           q: 'Can we stay overnight?',
-          a: 'Yes. The overnight camp at Sealine is QAR 250 per person, from 2pm to 9am the next morning. It includes everything in the full-day trip plus breakfast and dome tents for sleeping, 2 to 3 people per tent. For a private group camp, Al Rehlah Camp in Rawdet Rashid has indoor and outdoor seating and a bonfire area.',
+          a: 'Yes. The overnight camp at Sealine is QAR 250 per person, from 2pm to 9am the next morning. It includes everything in the full-day trip plus breakfast and dome tents for sleeping, 2 to 3 people per tent. Each tent is a minimum of QAR 500 a night, so a guest on their own pays QAR 500. For a private group camp, Al Rehlah Camp in Rawdet Rashid has indoor and outdoor seating and a bonfire area.',
         },
         {
           q: 'How do I book?',
@@ -145,7 +145,7 @@ export const SEO_LANDINGS: SeoLanding[] = [
       ar: [
         {
           q: 'كم تكلفة سفاري الصحراء في قطر؟',
-          a: 'سعر سفاري اليوم الكامل 150 ريال للشخص، وسعر مبيت مخيم سيلين 250 ريال للشخص. أما التخييم الخاص في مخيم الرحلة فسعره 1,500 ريال لمجموعتك.',
+          a: 'سعر سفاري اليوم الكامل 150 ريال للشخص، وسعر مبيت مخيم سيلين 250 ريال للشخص، بحد أدنى 500 ريال للخيمة. أما التخييم الخاص في مخيم الرحلة فسعره 1,500 ريال لمجموعتك.',
         },
         {
           q: 'كم تستغرق الرحلة؟',
@@ -165,7 +165,7 @@ export const SEO_LANDINGS: SeoLanding[] = [
         },
         {
           q: 'هل يمكننا المبيت؟',
-          a: 'نعم. سعر مبيت مخيم سيلين 250 ريال للشخص، من الساعة 2 ظهراً حتى 9 صباح اليوم التالي. ويشمل كل ما في سفاري اليوم الكامل، بالإضافة إلى الفطور وخيام قبّة للنوم تتسع الواحدة منها لشخصين إلى 3 أشخاص. وللتخييم الخاص بمجموعتك، يضم مخيم الرحلة في روضة راشد جلسات داخلية وخارجية ومنطقة للنار.',
+          a: 'نعم. سعر مبيت مخيم سيلين 250 ريال للشخص، من الساعة 2 ظهراً حتى 9 صباح اليوم التالي. ويشمل كل ما في سفاري اليوم الكامل، بالإضافة إلى الفطور وخيام قبّة للنوم تتسع الواحدة منها لشخصين إلى 3 أشخاص. والحد الأدنى لكل خيمة 500 ريال لليلة، لذا يدفع الضيف بمفرده 500 ريال. وللتخييم الخاص بمجموعتك، يضم مخيم الرحلة في روضة راشد جلسات داخلية وخارجية ومنطقة للنار.',
         },
         {
           q: 'كيف أحجز؟',
