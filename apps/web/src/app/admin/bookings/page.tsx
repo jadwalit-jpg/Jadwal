@@ -10,9 +10,11 @@ import { sanitize } from '@/lib/validation';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useToast } from '@/components/toast';
 import AdminLayout from '../_components/admin-layout';
-import { Search, ChevronLeft, ChevronRight, CheckCircle, Clock, XCircle, CheckCheck, ChevronDown, Tag, CreditCard, Download, AlertTriangle, CheckCircle2, Sparkles } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, CheckCircle, Clock, XCircle, CheckCheck, ChevronDown, Tag, CreditCard, Download, AlertTriangle, CheckCircle2, Sparkles, CalendarClock } from 'lucide-react';
 import CustomSelect from '@/components/custom-select';
 import { CancelBookingModal, canAdminCancelBooking, bookingHasStarted } from './_components/cancel-booking-modal';
+import { RescheduleBookingModal, canAdminRescheduleBooking } from './_components/reschedule-booking-modal';
+import { dateChangeSummary, rescheduleCsvColumns, type BookingRescheduleRecord } from '@/lib/booking-reschedule';
 import { ExternalRefundChoice, REFUND_METHOD_LABEL, type ExternalRefundPayload, type ExternalRefundSelection, type RefundMethod } from '../_components/external-refund-fields';
 
 interface Booking {
@@ -39,8 +41,11 @@ interface Booking {
   refundDecisionAt: string | null;
   refundDecisionActor: 'CUSTOMER' | 'VENDOR' | 'ADMIN' | 'SYSTEM' | null;
   refundDecisionNote: string | null;
+  /** Admin date change: the stamp and the latest change record (API returns the newest one). */
+  rescheduledAt: string | null;
+  reschedules: BookingRescheduleRecord[];
   customer: { id: string; fullName: string; email: string; phone: string | null };
-  activity: { titleEn: string; bookingType: 'HOURLY' | 'DAILY'; durationValue: number | null; cancellationPolicy: string | null; country: { currencyCode: string } };
+  activity: { id: string; titleEn: string; bookingType: 'HOURLY' | 'DAILY'; durationValue: number | null; cancellationPolicy: string | null; country: { currencyCode: string } };
   vendor: { businessNameEn: string };
   payment: { id: string; amount: string; status: string; method: string; paidAt: string | null; gatewayTxnId: string | null; refundAmount: string | null; refundedAt: string | null; refundMethod: string | null } | null;
 }
@@ -94,6 +99,7 @@ export default function AdminBookingsPage() {
   const [amountInput, setAmountInput] = useState('');
   const [noteInput, setNoteInput] = useState('');
   const [cancelTarget, setCancelTarget] = useState<Booking | null>(null);
+  const [rescheduleTarget, setRescheduleTarget] = useState<Booking | null>(null);
   // Approve in the refund queue: how the refund is handled (Wanasa points, or
   // already done outside the website). No default; Confirm waits for a choice.
   const [decisionRefund, setDecisionRefund] = useState<ExternalRefundSelection>(NO_CHOICE);
@@ -232,6 +238,9 @@ export default function AdminBookingsPage() {
         PaymentStatus: b.payment?.status ?? 'NONE',
         PaymentMethod: b.payment?.method ?? '',
         PaidAt: b.payment?.paidAt ? new Date(b.payment.paidAt).toISOString().slice(0, 10) : '',
+        // Admin date changes: when, the dates first booked, the summed price
+        // difference and how each one was settled (empty when never moved).
+        ...rescheduleCsvColumns(b.reschedules, b.activity?.bookingType ?? 'HOURLY', b.currencyCode ?? b.activity?.country?.currencyCode ?? 'QAR'),
       }));
       if (rows.length === 0) {
         toast('No bookings match the current filter', 'error');
@@ -357,6 +366,15 @@ export default function AdminBookingsPage() {
                               </p>
                             );
                           })()}
+                          {booking.rescheduledAt && (
+                            <span
+                              className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                              title={booking.reschedules[0] ? dateChangeSummary(booking.reschedules[0], booking.activity.bookingType, currency) : 'Date changed by admin'}
+                              data-testid="date-changed-badge"
+                            >
+                              <CalendarClock className="h-3 w-3" aria-hidden="true" /> Date changed
+                            </span>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           {(() => {
@@ -602,6 +620,17 @@ export default function AdminBookingsPage() {
                               </div>
                             )}
 
+                            {/* ── Admin date change: latest record ── */}
+                            {booking.reschedules?.[0] && (
+                              <div className="mt-4 pt-4 border-t border-gray-200/60 dark:border-slate-700/40" data-testid="date-change-record">
+                                <p className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-2">Date change</p>
+                                <p className="text-xs text-gray-700 dark:text-slate-300">{dateChangeSummary(booking.reschedules[0], booking.activity.bookingType, currency)}</p>
+                                {booking.reschedules[0].reason && (
+                                  <p className="text-xs text-gray-600 dark:text-slate-300 mt-1 italic">&ldquo;{booking.reschedules[0].reason}&rdquo;</p>
+                                )}
+                              </div>
+                            )}
+
                             {/* ── Cancelled: who and when ── */}
                             {booking.status === 'CANCELLED' && booking.cancelledAt && (
                               <p className="mt-4 pt-4 border-t border-gray-200/60 dark:border-slate-700/40 text-xs text-gray-500 dark:text-slate-400">
@@ -620,9 +649,21 @@ export default function AdminBookingsPage() {
                             {canAdminCancelBooking(booking, now) && (
                               <div className="mt-4 pt-4 border-t border-gray-200/60 dark:border-slate-700/40 flex flex-wrap items-center justify-between gap-3">
                                 <p className="text-xs text-gray-500 dark:text-slate-400">
-                                  Cancel this booking on the customer&apos;s behalf. The customer is notified and the date is freed.
+                                  {canAdminRescheduleBooking(booking, now)
+                                    ? 'Change the dates or cancel this booking on the customer\'s behalf. The customer is notified either way.'
+                                    : 'Cancel this booking on the customer\'s behalf. The customer is notified and the date is freed.'}
                                 </p>
-                                <div className="shrink-0" onClick={e => e.stopPropagation()}>
+                                <div className="shrink-0 flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                                  {canAdminRescheduleBooking(booking, now) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setRescheduleTarget(booking)}
+                                      disabled={cancelMutation.isPending}
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 disabled:opacity-50 border border-blue-200 dark:border-blue-800/50"
+                                    >
+                                      <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" /> Change date
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={() => setCancelTarget(booking)}
@@ -746,6 +787,18 @@ export default function AdminBookingsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {rescheduleTarget && (
+        <RescheduleBookingModal
+          booking={rescheduleTarget}
+          onClose={() => setRescheduleTarget(null)}
+          onDone={(message) => {
+            queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+            toast(message);
+            setRescheduleTarget(null);
+          }}
+        />
       )}
 
       {cancelTarget && (

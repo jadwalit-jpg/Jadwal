@@ -130,10 +130,54 @@ export class OutboxDrainService {
         );
         return ok ? 'sent' : 'send_failed';
       }
+      case 'BOOKING_RESCHEDULED': {
+        if (!OutboxDrainService.isRescheduledPayload(row.payload, ['customerName'])) {
+          this.logger.error({ event: 'EMAIL_OUTBOX_INVALID_PAYLOAD', emailType: row.emailType });
+          return 'unknown_type';
+        }
+        const ok = await this.emailService.sendBookingRescheduled(
+          row.recipient,
+          row.payload as Parameters<EmailService['sendBookingRescheduled']>[1],
+        );
+        return ok ? 'sent' : 'send_failed';
+      }
+      case 'VENDOR_BOOKING_RESCHEDULED': {
+        if (
+          !OutboxDrainService.isRescheduledPayload(row.payload, ['vendorName', 'vendorSlug', 'customerName', 'customerPhone']) ||
+          typeof (row.payload as Record<string, unknown>).guests !== 'number'
+        ) {
+          this.logger.error({ event: 'EMAIL_OUTBOX_INVALID_PAYLOAD', emailType: row.emailType });
+          return 'unknown_type';
+        }
+        const ok = await this.emailService.sendVendorBookingRescheduled(
+          row.recipient,
+          row.payload as Parameters<EmailService['sendVendorBookingRescheduled']>[1],
+        );
+        return ok ? 'sent' : 'send_failed';
+      }
       default:
         this.logger.error({ event: 'EMAIL_OUTBOX_UNKNOWN_TYPE', emailType: row.emailType });
         return 'unknown_type';
     }
+  }
+
+  /**
+   * Shape guard for the two date-change emails: the shared fields (reference,
+   * ids, activity title, the "was"/"now" texts) plus the caller's extra
+   * required strings must be non-empty strings.
+   */
+  private static isRescheduledPayload(payload: unknown, extraRequired: ReadonlyArray<string>): boolean {
+    if (!payload || typeof payload !== 'object') return false;
+    const p = payload as Record<string, unknown>;
+    const required = ['bookingRef', 'bookingId', 'activityTitle', 'fromText', 'toText', ...extraRequired];
+    for (const k of required) {
+      const v = p[k];
+      if (typeof v !== 'string' || v.trim().length === 0) return false;
+    }
+    for (const k of ['activityTitleAr', 'fromTextAr', 'toTextAr']) {
+      if (p[k] !== undefined && p[k] !== null && typeof p[k] !== 'string') return false;
+    }
+    return true;
   }
 
   /**

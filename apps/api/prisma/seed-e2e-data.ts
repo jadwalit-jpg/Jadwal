@@ -56,6 +56,10 @@ const COMPLETED_BOOKING_REF = 'JDWL-E2ECMP';
 // Confirmed AND card-paid, in the future: the admin "Cancel booking" dialog
 // shows its refund choice only for such bookings (admin-bookings-cancel e2e).
 const PAID_CONFIRMED_BOOKING_REF = 'JDWL-E2EPAID';
+// Confirmed + card-paid, 15 days out, for the admin "Change date" spec
+// (admin-bookings-reschedule.spec.ts), which really moves it. Its own
+// booking so the specs that read JDWL-E2EPAID's dates never see them change.
+const RESCHEDULE_BOOKING_REF = 'JDWL-E2ERSCH';
 
 // ─── Booking-calendar fixture ──────────────────────────────────────────
 // A DAILY activity with exactly ONE unit, so a single booking makes a night
@@ -417,6 +421,58 @@ async function main() {
     where: { id: paidBooking.id },
     data: { paymentId: paidPayment.id },
   });
+
+  // Confirmed + card-paid hourly booking the admin reschedule spec moves to
+  // another date. Reseeding puts it back on +15 days 10:00–12:00. createdAt is
+  // pinned two days before JDWL-E2ECNF so it is never the customer's newest
+  // confirmed booking (see the note on JDWL-E2EPAID above).
+  const rschCreatedAt = new Date(confirmedRow.createdAt.getTime() - 2 * 24 * 60 * 60 * 1000);
+  const rschStart = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
+  rschStart.setUTCHours(10, 0, 0, 0);
+  const rschEnd = new Date(rschStart.getTime() + 2 * 60 * 60 * 1000);
+  const rschBooking = await prisma.booking.upsert({
+    where: { ref: RESCHEDULE_BOOKING_REF },
+    create: {
+      ref: RESCHEDULE_BOOKING_REF,
+      activityId: activity.id,
+      vendorId: vendorUser.vendorProfile.id,
+      customerId: customerUser.id,
+      startDatetime: rschStart,
+      endDatetime: rschEnd,
+      guests: 2,
+      bookingPhone: '+97455123456',
+      totalPrice: 200,
+      serviceFee: 5,
+      status: 'CONFIRMED',
+      createdAt: rschCreatedAt,
+    },
+    update: {
+      status: 'CONFIRMED',
+      startDatetime: rschStart,
+      endDatetime: rschEnd,
+      unitNumber: null,
+      rescheduledAt: null,
+      totalPrice: 200,
+      createdAt: rschCreatedAt,
+    },
+  });
+  // Reseed: forget earlier runs' changes so the spec starts from a never-moved booking.
+  await prisma.bookingReschedule.deleteMany({ where: { bookingId: rschBooking.id } });
+  const rschPayment = await prisma.payment.upsert({
+    where: { gatewayTxnId: `E2E-PAID-TXN-${RESCHEDULE_BOOKING_REF}` },
+    create: {
+      bookingId: rschBooking.id,
+      amount: 205,
+      currency: 'QAR',
+      gatewayTxnId: `E2E-PAID-TXN-${RESCHEDULE_BOOKING_REF}`,
+      status: 'SUCCESS',
+      payoutStatus: 'UNPAID',
+      method: 'CARD',
+      paidAt: new Date(),
+    },
+    update: { status: 'SUCCESS', payoutStatus: 'UNPAID', bookingId: rschBooking.id },
+  });
+  await prisma.booking.update({ where: { id: rschBooking.id }, data: { paymentId: rschPayment.id } });
 
   // Set a non-zero loyalty balance directly so customer-loyalty specs see it
   // immediately (don't depend on the COMPLETED-cron to sweep ledger entries).

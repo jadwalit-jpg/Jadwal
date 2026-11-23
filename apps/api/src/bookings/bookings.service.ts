@@ -36,7 +36,7 @@ import { dailyBaseCents, hourlyBaseCents } from './pricing';
 // ─── Slot helpers ────────────────────────────────────────────────────────────
 
 /** Parse "HH:MM" → total minutes from midnight */
-function toMinutes(time: string): number {
+export function toMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number);
   return h * 60 + m;
 }
@@ -210,7 +210,7 @@ export function buildBookingSnapshot(booking: {
 }
 
 /** Minutes → "HH:MM" */
-function fromMinutes(mins: number): string {
+export function fromMinutes(mins: number): string {
   return `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
 }
 
@@ -408,7 +408,7 @@ export function addMonthsClamped(date: Date, months: number): Date {
 
 /** Get ISO weekday name for a YYYY-MM-DD string (MON, TUE, …) */
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-function weekdayOf(dateStr: string): string {
+export function weekdayOf(dateStr: string): string {
   return DAYS[new Date(dateStr + 'T00:00:00Z').getUTCDay()];
 }
 
@@ -428,7 +428,7 @@ export function isValidDate(dateStr: string): boolean {
  * Get "today" in the activity's country timezone as YYYY-MM-DD.
  * FIX #4 & #20: Use the activity's timezone, not the server's.
  */
-function todayInTimezone(tz: string): string {
+export function todayInTimezone(tz: string): string {
   try {
     const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
     return parts; // en-CA format is YYYY-MM-DD
@@ -3116,6 +3116,8 @@ export class BookingsService {
           },
         },
         payment: { select: { id: true, amount: true, status: true, method: true, paidAt: true, createdAt: true, refundAmount: true, refundedAt: true, refundMethod: true } },
+        // Latest admin date change, so the page can say "was … now …".
+        reschedules: { orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true, fromStartDatetime: true, fromEndDatetime: true, toStartDatetime: true, toEndDatetime: true } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');

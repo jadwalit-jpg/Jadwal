@@ -218,6 +218,8 @@
     "refundQueuedDesc": "The spot became unavailable before your payment could be confirmed. Your payment of {{amount}} {{cur}} is safe — a refund has been queued and will be added to your balance as Wanasa points once processed. No action needed.",
     "cancel": "Cancel",
     "bookAgain": "Book again",
+    "dateChangedTitle": "Your booking date was changed",
+    "dateChangedDesc": "AL Jadwal support moved this booking on {{date}}. It was {{from}}. Everything else stays the same.",
     "date": "Date",
     "time": "Time",
     "checkIn": "Check-in",

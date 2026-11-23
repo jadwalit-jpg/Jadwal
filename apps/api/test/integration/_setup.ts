@@ -42,6 +42,7 @@ const TRUNCATE_TABLES_ORDER = [
   'refresh_tokens',
   'payout_requests',
   'payments',
+  'booking_reschedules', // FK → bookings (cascade); listed so the order is explicit
   'bookings',
   'coupons',
   'trending_events',

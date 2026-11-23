@@ -408,6 +408,31 @@ export default function BookingDetailPage() {
                 </div>
               ) : null}
 
+              {/* An admin moved this booking: say so, with the dates it had before. */}
+              {booking.reschedules?.[0] ? (
+                <div className="rounded-2xl bg-amber-500/10 border border-amber-500/25 p-4 flex items-start gap-3" data-testid="booking-date-changed">
+                  <Calendar className="w-5 h-5 text-jadwal-warning shrink-0 mt-0.5" aria-hidden="true" />
+                  <div>
+                    <p className="text-sm font-semibold text-jadwal-warning">
+                      {t('booking.dateChangedTitle', { defaultValue: 'Your booking date was changed' })}
+                    </p>
+                    <p className="text-xs text-jadwal-text-muted mt-0.5" suppressHydrationWarning>
+                      {t('booking.dateChangedDesc', {
+                        defaultValue: 'AL Jadwal support moved this booking on {{date}}. It was {{from}}. Everything else stays the same.',
+                        date: new Date(booking.reschedules[0].createdAt).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' }),
+                        from: (() => {
+                          const from = new Date(booking.reschedules[0].fromStartDatetime);
+                          const dateText = from.toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+                          if (booking.activity?.bookingType !== 'HOURLY') return dateText;
+                          const opts = { hour: '2-digit' as const, minute: '2-digit' as const, hour12: false, timeZone: 'UTC' };
+                          return `${dateText}, ${from.toLocaleTimeString(locale, opts)}–${new Date(booking.reschedules[0].fromEndDatetime).toLocaleTimeString(locale, opts)}`;
+                        })(),
+                      })}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
               {booking.status === 'CONFIRMED' ? (
                 <div className="rounded-2xl p-5 md:p-6 text-white relative overflow-hidden shadow-jadwal-lg bg-[linear-gradient(135deg,var(--color-emerald-500,#10b981)_0%,var(--jadwal-primary)_100%)] dark:bg-[linear-gradient(135deg,#059669_0%,#0284c7_100%)]">
                   <div

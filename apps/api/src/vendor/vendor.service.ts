@@ -555,6 +555,8 @@ export class VendorService {
           // 2h or 8h at a glance.
           activity: { select: { titleEn: true, bookingType: true, durationValue: true, country: { select: { currencyCode: true } } } },
           payment: { select: { status: true, method: true, paidAt: true, amount: true } },
+          // Latest admin date change (the vendor sees the dates, not the money or the reason).
+          reschedules: { orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true, fromStartDatetime: true, fromEndDatetime: true, toStartDatetime: true, toEndDatetime: true } },
         },
         orderBy: { createdAt: 'desc' },
         skip,

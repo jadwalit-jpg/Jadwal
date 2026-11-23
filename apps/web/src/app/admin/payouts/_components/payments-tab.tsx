@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useMemo } from 'react';
+import { rescheduleCsvColumns, type BookingRescheduleRecord } from '@/lib/booking-reschedule';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -37,7 +38,9 @@ interface Payment {
     currencyCode: string;
     vendor: { id: string; businessNameEn: string } | null;
     customer: { fullName: string } | null;
-    activity: { titleEn: string } | null;
+    activity: { titleEn: string; bookingType?: 'HOURLY' | 'DAILY' } | null;
+    /** Admin date changes (newest first), from GET /admin/export/payouts. */
+    reschedules?: BookingRescheduleRecord[] | null;
   } | null;
 }
 
@@ -95,6 +98,13 @@ function toCsv(data: any[]): string {
       'Method': p.method,
       'Payout Status': p.payoutStatus ?? 'UNPAID',
       'Date': new Date(p.createdAt).toISOString().slice(0, 10),
+      // Admin date changes: the dates the customer paid for, the summed price
+      // difference and how each difference was settled outside the website.
+      // Vendor Share / Total Charged above are NOT adjusted (safe option).
+      ...(() => {
+        const c = rescheduleCsvColumns(p.booking?.reschedules, p.booking?.activity?.bookingType ?? 'HOURLY', p.booking?.currencyCode ?? 'QAR');
+        return { 'Date Changed': c.DateChanged, 'Original Dates': c.OriginalDates, 'Price Difference': c.PriceDifference, 'Difference Settled': c.DifferenceSettled };
+      })(),
     };
   });
   const headers = Object.keys(rows[0]);

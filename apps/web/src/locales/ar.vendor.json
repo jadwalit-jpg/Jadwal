@@ -147,7 +147,9 @@
       "payment": "الدفع",
       "status": "الحالة",
       "close": "إغلاق",
-      "addons": "الإضافات"
+      "addons": "الإضافات",
+      "dateChanged": "غيّر فريق AL Jadwal التاريخ",
+      "dateChangedWas": "كان {{from}} · تم التغيير في {{date}}"
     }
   },
   "earnings": {
