@@ -3115,7 +3115,14 @@ export class BookingsService {
             country: { select: { currencyCode: true, defaultTimezone: true } },
           },
         },
-        payment: { select: { id: true, amount: true, status: true, method: true, paidAt: true, createdAt: true, refundAmount: true, refundedAt: true, refundMethod: true } },
+        // The three gateway fields tell the page the gateway reported this
+        // payment but the site has not confirmed it ("being confirmed with your
+        // bank", Pay hidden). Always a select, never the whole payment row.
+        payment: { select: {
+          id: true, amount: true, status: true, method: true, paidAt: true, createdAt: true,
+          refundAmount: true, refundedAt: true, refundMethod: true,
+          napsHeldAt: true, unverifiedCallbackAt: true, unverifiedCallbackErrCode: true,
+        } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');

@@ -56,6 +56,12 @@ const COMPLETED_BOOKING_REF = 'JDWL-E2ECMP';
 // Confirmed AND card-paid, in the future: the admin "Cancel booking" dialog
 // shows its refund choice only for such bookings (admin-bookings-cancel e2e).
 const PAID_CONFIRMED_BOOKING_REF = 'JDWL-E2EPAID';
+// Gateway rescue (PR "Payments: confirm or rescue held debit card payments"):
+// a PENDING booking whose PAY2M callback reported success but did not verify.
+// GWAY is confirmed by the admin spec; GWBN is only looked at by the customer
+// banner spec (never confirmed), so the two specs cannot race each other.
+const GATEWAY_MARK_PAID_REF = 'JDWL-E2EGWAY';
+const GATEWAY_BANNER_REF = 'JDWL-E2EGWBN';
 
 // ─── Booking-calendar fixture ──────────────────────────────────────────
 // A DAILY activity with exactly ONE unit, so a single booking makes a night
@@ -417,6 +423,73 @@ async function main() {
     where: { id: paidBooking.id },
     data: { paymentId: paidPayment.id },
   });
+
+  // ─── Gateway rescue: unverified PAY2M success callbacks ────────────────
+  // What a lost debit-card payment looks like: PENDING booking, PAY2M payment
+  // with a basket, a success-looking callback (code 000) that failed the hash
+  // check. The admin spec marks GWAY as paid; the customer spec reads GWBN.
+  for (const [ref, basket] of [
+    [GATEWAY_MARK_PAID_REF, 'JDWL-e2e-gateway-mark'],
+    [GATEWAY_BANNER_REF, 'JDWL-e2e-gateway-banner'],
+  ] as const) {
+    const gwStart = new Date(Date.now() + 25 * 24 * 60 * 60 * 1000);
+    gwStart.setUTCHours(10, 0, 0, 0);
+    const gwEnd = new Date(gwStart.getTime() + 2 * 60 * 60 * 1000);
+    const gwBooking = await prisma.booking.upsert({
+      where: { ref },
+      create: {
+        ref,
+        activityId: activity.id,
+        vendorId: vendorUser.vendorProfile.id,
+        customerId: customerUser.id,
+        startDatetime: gwStart,
+        endDatetime: gwEnd,
+        guests: 2,
+        bookingPhone: '+97455123456',
+        totalPrice: 200,
+        serviceFee: 5,
+        status: 'PENDING',
+        emailOtpVerifiedAt: new Date(),
+        reservedUntil: new Date(Date.now() + 30 * 60 * 1000),
+      },
+      update: {
+        status: 'PENDING',
+        cancelledAt: null,
+        cancelledBy: null,
+        startDatetime: gwStart,
+        endDatetime: gwEnd,
+        emailOtpVerifiedAt: new Date(),
+        reservedUntil: new Date(Date.now() + 30 * 60 * 1000),
+      },
+    });
+    const gwPayment = await prisma.payment.upsert({
+      where: { gatewayBasketId: basket },
+      create: {
+        bookingId: gwBooking.id,
+        amount: 205,
+        currency: 'QAR',
+        gatewayBasketId: basket,
+        status: 'PENDING',
+        method: 'PAY2M',
+        paymentFirstInitiatedAt: new Date(),
+        paymentInitiatedAt: new Date(),
+        unverifiedCallbackAt: new Date(),
+        unverifiedCallbackErrCode: '000',
+        gatewayAlertedAt: new Date(),
+      },
+      update: {
+        bookingId: gwBooking.id,
+        status: 'PENDING',
+        gatewayTxnId: null,
+        paidAt: null,
+        manualConfirmedAt: null,
+        manualConfirmedBy: null,
+        unverifiedCallbackAt: new Date(),
+        unverifiedCallbackErrCode: '000',
+      },
+    });
+    await prisma.booking.update({ where: { id: gwBooking.id }, data: { paymentId: gwPayment.id } });
+  }
 
   // Set a non-zero loyalty balance directly so customer-loyalty specs see it
   // immediately (don't depend on the COMPLETED-cron to sweep ledger entries).
