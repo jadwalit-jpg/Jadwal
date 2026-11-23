@@ -56,6 +56,12 @@ const COMPLETED_BOOKING_REF = 'JDWL-E2ECMP';
 // Confirmed AND card-paid, in the future: the admin "Cancel booking" dialog
 // shows its refund choice only for such bookings (admin-bookings-cancel e2e).
 const PAID_CONFIRMED_BOOKING_REF = 'JDWL-E2EPAID';
+// Review asks (PR "Reviews: ask customers after their activity"): two COMPLETED
+// bookings on activities the customer has NOT reviewed, each with an open ask.
+// A feeds the pop-up spec (it taps "Later"), B the /review/<ref> page spec
+// (it submits), so the two specs cannot consume each other's fixture.
+const REVIEW_ASK_POPUP_REF = 'JDWL-E2ERVWA';
+const REVIEW_ASK_PAGE_REF = 'JDWL-E2ERVWB';
 
 // ─── Booking-calendar fixture ──────────────────────────────────────────
 // A DAILY activity with exactly ONE unit, so a single booking makes a night
@@ -748,6 +754,45 @@ async function main() {
     });
   }
 
+  // ─── Review asks: completed bookings with an open ask ─────────────────
+  // The customer already reviewed e2e-activity (above), so these sit on the
+  // calendar chalet and the second hourly listing. Any review the customer
+  // left there in an earlier run is removed so the fixtures reset.
+  const hourlyTwo = await prisma.activity.findUniqueOrThrow({ where: { slug: HOURLY_ACTIVE_SLUG }, select: { id: true } });
+  for (const [ref, actId, hoursAgoEnd] of [
+    [REVIEW_ASK_POPUP_REF, calActivity.id, 30],
+    [REVIEW_ASK_PAGE_REF, hourlyTwo.id, 28],
+  ] as const) {
+    await prisma.review.deleteMany({ where: { activityId: actId, customerId: customerUser.id } });
+    const rvEnd = new Date(Date.now() - hoursAgoEnd * 60 * 60 * 1000);
+    const rvStart = new Date(rvEnd.getTime() - 2 * 60 * 60 * 1000);
+    const rvBooking = await prisma.booking.upsert({
+      where: { ref },
+      create: {
+        ref,
+        activityId: actId,
+        vendorId: vendorUser.vendorProfile.id,
+        customerId: customerUser.id,
+        startDatetime: rvStart,
+        endDatetime: rvEnd,
+        guests: 2,
+        bookingPhone: '+97455123456',
+        totalPrice: 150,
+        serviceFee: 0,
+        status: 'COMPLETED',
+        pointsAwarded: true,
+      },
+      update: { status: 'COMPLETED', startDatetime: rvStart, endDatetime: rvEnd },
+    });
+    // Asked once "yesterday"; no snooze, no opt-out, so the pop-up shows it.
+    const askedAt = new Date(Date.now() - 20 * 60 * 60 * 1000);
+    await prisma.reviewRequest.upsert({
+      where: { bookingId: rvBooking.id },
+      create: { bookingId: rvBooking.id, customerId: customerUser.id, activityId: actId, firstAskedAt: askedAt },
+      update: { firstAskedAt: askedAt, secondAskedAt: null, snoozedAt: null, optedOutAt: null, reviewedAt: null },
+    });
+  }
+
   console.log('E2E data seeded:');
   console.log('  activities (5):    1 ACTIVE-HOURLY (e2e-activity) + 1 ACTIVE-HOURLY +');
   console.log('                     1 ACTIVE-DAILY + 1 PENDING-DAILY + 1 INACTIVE-HOURLY');
@@ -755,6 +800,7 @@ async function main() {
   console.log('  coupons (2):       ' + COUPON_CODE + ' + ' + COUPON_CLAIMED_CODE + ' (claimed)');
   console.log('  bookings (4):      pending / confirmed / refund-pending / completed');
   console.log('  reviews (2):       on e2e-activity (5★ + 4★)');
+  console.log('  review asks (2):   JDWL-E2ERVWA (pop-up) + JDWL-E2ERVWB (/review page)');
   console.log('  payout-request:    1 PENDING for 450 QAR');
   console.log('  audit-logs (3):    1 FINANCIAL (4y old) + 2 OPERATIONAL');
   console.log('  loyalty points:    50 (customer)');
