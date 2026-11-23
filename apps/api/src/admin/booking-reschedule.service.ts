@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
+import { isSerializationFailure } from './admin.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationService } from '../common/services/notification.service';
 import { AvailabilityCacheService } from '../redis/availability-cache.service';
@@ -266,8 +267,12 @@ export class BookingRescheduleService {
         return created;
       }, { isolationLevel: 'Serializable', timeout: 10_000, maxWait: 2_000 });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034') {
-        throw new ConflictException('These dates are busy right now. Please try again in a moment.');
+      // Two Serializable transactions touched the same rows: P2034 when the
+      // conflict is found on a query, or the pg adapter's DriverAdapterError
+      // (TransactionWriteConflict) when it is found at COMMIT. Both mean the
+      // other side won; the admin checks again.
+      if (isSerializationFailure(err)) {
+        throw new ConflictException('These dates were booked by someone else just now. Check the new dates again.');
       }
       throw err;
     } finally {
