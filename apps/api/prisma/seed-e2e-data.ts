@@ -435,10 +435,20 @@ async function main() {
     const gwStart = new Date(Date.now() + 25 * 24 * 60 * 60 * 1000);
     gwStart.setUTCHours(10, 0, 0, 0);
     const gwEnd = new Date(gwStart.getTime() + 2 * 60 * 60 * 1000);
+    // Created one minute BEFORE the seeded pending booking so these two never
+    // come first in the customer's PENDING list (ordered by createdAt desc):
+    // customer-activity-book-mock-pay takes the first PENDING booking and
+    // expects a Pay button, which the bank-confirming banner hides here.
+    // Relative to that row (not to "now") so a re-seed keeps the order; only a
+    // minute, not days, because the cleanup cron hard-deletes PENDING bookings
+    // older than four hours and a row backdated by days would vanish first.
+    const pendingRow = await prisma.booking.findUniqueOrThrow({ where: { ref: PENDING_BOOKING_REF }, select: { createdAt: true } });
+    const gwCreatedAt = new Date(pendingRow.createdAt.getTime() - 60 * 1000);
     const gwBooking = await prisma.booking.upsert({
       where: { ref },
       create: {
         ref,
+        createdAt: gwCreatedAt,
         activityId: activity.id,
         vendorId: vendorUser.vendorProfile.id,
         customerId: customerUser.id,
@@ -456,6 +466,7 @@ async function main() {
         status: 'PENDING',
         cancelledAt: null,
         cancelledBy: null,
+        createdAt: gwCreatedAt,
         startDatetime: gwStart,
         endDatetime: gwEnd,
         emailOtpVerifiedAt: new Date(),

@@ -15,6 +15,11 @@ const REF = 'JDWL-E2EGWAY';
 async function openGatewayView(page: Page) {
   await page.goto('/admin/bookings?gateway=unconfirmed', { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('gateway-payments')).toBeVisible({ timeout: 30_000 });
+  // The list loads after the view renders: wait for rows or the empty state
+  // before deciding anything, or an early count reads 0 and skips the test.
+  await expect(
+    page.getByTestId('gateway-payment-row').first().or(page.getByText(/Nothing to check/)),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe('Admin gateway rescue — Mark as paid', () => {
@@ -57,19 +62,27 @@ test.describe('Admin gateway rescue — Mark as paid', () => {
   });
 
   test('a second confirmation of the same payment is refused', async ({ page }) => {
+    // Independent of the test above: confirm (201, or 409 if already done),
+    // then confirm again — the second call must always be 409.
     await page.goto('/admin/bookings', { waitUntil: 'domcontentloaded' });
     const res = await page.evaluate(async (ref) => {
       const list = await fetch(`/api/admin/bookings?search=${encodeURIComponent(ref)}&limit=5`, { credentials: 'include' });
       const data = await list.json();
       const booking = (data?.data ?? []).find((b: { ref: string }) => b.ref === ref);
-      if (!booking?.payment?.id) return { status: -1, body: null };
-      const r = await fetch(`/api/admin/payments/${booking.payment.id}/mark-paid`, {
-        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ transactionId: 'E2E-TXN-GWAY-2', note: 'second click (E2E)' }),
-      });
-      return { status: r.status, body: await r.json().catch(() => null) };
+      if (!booking?.payment?.id) return { first: -1, second: -1 };
+      const post = async (txn: string) => {
+        const r = await fetch(`/api/admin/payments/${booking.payment.id}/mark-paid`, {
+          method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ transactionId: txn, note: 'second click (E2E)' }),
+        });
+        return r.status;
+      };
+      const first = await post('E2E-TXN-GWAY-2');
+      const second = await post('E2E-TXN-GWAY-3');
+      return { first, second };
     }, REF);
-    test.skip(res.status === -1, 'the seeded gateway booking is missing');
-    expect(res.status).toBe(409);
+    test.skip(res.first === -1, 'the seeded gateway booking is missing');
+    expect([201, 409]).toContain(res.first);
+    expect(res.second).toBe(409);
   });
 });
