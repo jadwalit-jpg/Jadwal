@@ -133,6 +133,7 @@ export class AdminAuditInterceptor implements NestInterceptor {
       'UPDATE_LOYALTY_CONFIG',
       'ADJUST_USER_POINTS',
       'UPDATE_BOOKING_STATUS', // can flip a paid booking to CANCELLED → refund
+      'MARK_PAYMENT_PAID',     // admin confirms a gateway payment by hand
       'DELETE_VENDOR',         // affects payouts of past bookings
       'DELETE_USER',           // affects past payments / financial records
       'BULK_DELETE_USERS',
@@ -168,6 +169,8 @@ export class AdminAuditInterceptor implements NestInterceptor {
       'DELETE:/admin/users/:id': 'DELETE_USER',
       // Bookings
       'PATCH:/admin/bookings/:id/status': 'UPDATE_BOOKING_STATUS',
+      // Gateway payments (debit-card rescue)
+      'POST:/admin/payments/:id/mark-paid': 'MARK_PAYMENT_PAID',
       // Countries, Cities, Categories
       'POST:/admin/settings/countries': 'CREATE_COUNTRY',
       'PATCH:/admin/settings/countries/:id': 'UPDATE_COUNTRY',
@@ -226,6 +229,7 @@ export class AdminAuditInterceptor implements NestInterceptor {
     if (route.includes('/activities')) return 'Activity';
     if (route.includes('/users')) return 'User';
     if (route.includes('/bookings')) return 'Booking';
+    if (route.includes('/payments')) return 'Payment';
     if (route.includes('/countries')) return 'Country';
     if (route.includes('/cities')) return 'City';
     if (route.includes('/categories')) return 'Category';
