@@ -34,6 +34,7 @@ const TYPE_COLORS: Record<string, string> = {
   PAYMENT_SUCCESS: 'bg-emerald-500',
   PAYMENT_FAILED: 'bg-red-500',
   REVIEW_RECEIVED: 'bg-amber-500',
+  REVIEW_REQUEST: 'bg-amber-500',
   PAYOUT_PROCESSED: 'bg-green-500',
   COUPON_APPROVED: 'bg-emerald-500',
   COUPON_REJECTED: 'bg-red-500',

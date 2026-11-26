@@ -24,6 +24,18 @@ const PushPrompt = dynamic(
   { ssr: false },
 );
 
+// Review ask pop-up (stars for a completed activity). Same deferral as the
+// push prompt: it renders nothing until the API says there is an open ask.
+const ReviewPrompt = dynamic(
+  () => import('@/components/review-prompt').then((m) => m.ReviewPrompt),
+  { ssr: false },
+);
+
 export function LazyPrompts() {
-  return <PushPrompt />;
+  return (
+    <>
+      <PushPrompt />
+      <ReviewPrompt />
+    </>
+  );
 }

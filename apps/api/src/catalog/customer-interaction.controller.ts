@@ -1,5 +1,5 @@
 import {
-  Controller, Post, Get, Param, Body, Query,
+  Controller, Post, Get, Param, Body, Query, ParseUUIDPipe,
   UseGuards, ForbiddenException, BadRequestException, NotFoundException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
@@ -12,6 +12,8 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/interfaces/request-user.interface';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { ToggleLikeDto } from './dto/toggle-like.dto';
+import { DismissReviewPromptDto } from './dto/dismiss-review-prompt.dto';
+import { BOOKING_REF_PATTERN, ReviewRequestService } from './review-request.service';
 
 /**
  * Customer interactions — authenticated endpoints for likes, reviews.
@@ -23,6 +25,7 @@ export class CustomerInteractionController {
   constructor(
     private prisma: PrismaService,
     private notificationService: NotificationService,
+    private reviewRequests: ReviewRequestService,
   ) {}
 
   // ─── Likes ─────────────────────────────────────────────────
@@ -168,6 +171,9 @@ export class CustomerInteractionController {
       throw err;
     }
 
+    // Close every open review ask for this customer and activity.
+    await this.reviewRequests.markReviewed(user.id, dto.activityId);
+
     // Notify vendor: new review received
     if (review.activity?.vendor) {
       this.notificationService.send({
@@ -179,5 +185,36 @@ export class CustomerInteractionController {
     }
 
     return review;
+  }
+
+  // ─── Review asks (pop-up + /review/<ref> page) ───────────────────
+
+  /** The next review ask to show the signed-in customer, or null. */
+  @Get('review-prompts/next')
+  @Throttle(RATE_LIMIT_INTERACTION)
+  async nextReviewPrompt(@CurrentUser() user: RequestUser) {
+    if (user.role !== 'CUSTOMER') return { prompt: null };
+    return { prompt: await this.reviewRequests.nextPromptFor(user.id) };
+  }
+
+  /** The review page: the customer's own booking by reference (404 otherwise). */
+  @Get('review-prompts/by-ref/:ref')
+  @Throttle(RATE_LIMIT_INTERACTION)
+  async reviewPromptByRef(@CurrentUser() user: RequestUser, @Param('ref') ref: string) {
+    if (user.role !== 'CUSTOMER') throw new ForbiddenException('Only customers can review');
+    if (!BOOKING_REF_PATTERN.test(ref)) throw new NotFoundException('Booking not found');
+    return this.reviewRequests.promptByRef(user.id, ref);
+  }
+
+  /** "Later" (hidden until the next ask) or "Don't ask again for this booking". */
+  @Post('review-prompts/:bookingId/dismiss')
+  @Throttle(RATE_LIMIT_INTERACTION)
+  async dismissReviewPrompt(
+    @CurrentUser() user: RequestUser,
+    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Body() dto: DismissReviewPromptDto,
+  ) {
+    if (user.role !== 'CUSTOMER') throw new ForbiddenException('Only customers can review');
+    return this.reviewRequests.dismiss(user.id, bookingId, dto.mode);
   }
 }

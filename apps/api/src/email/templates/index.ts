@@ -17,4 +17,6 @@ export type { BookingOtpData } from './booking-otp';
 export { vendorBookingNotificationTemplate } from './vendor-booking-notification';
 export type { VendorBookingNotificationData } from './vendor-booking-notification';
 export { adminAlertTemplate, ADMIN_ALERT_SUBJECTS } from './admin-alert';
+export { reviewRequestTemplate } from './review-request';
+export type { ReviewRequestData } from './review-request';
 export type { AdminAlertData, AdminAlertType } from './admin-alert';
