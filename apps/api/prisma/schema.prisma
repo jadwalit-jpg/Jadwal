@@ -610,6 +610,24 @@ model Payment {
   /// collides with a different booking/owner is rejected (the @unique below is
   /// the race safety-net → P2002 → 409). Nullable for backwards-compat.
   idempotencyKey     String?       @unique @db.VarChar(64)
+  /// Gateway-rescue markers (all nullable, additive). Stamped by the callback
+  /// handler so admins can see a debit-card payment that PAY2M reported as
+  /// successful but that the site could not confirm on its own.
+  /// When a verified NAPS-rail success was HELD (holdNapsSuccess). Set once.
+  napsHeldAt         DateTime?
+  /// Latest browser callback whose code looked like a success (00/000/0000/001)
+  /// but whose Response_Key did not verify — the money may have been taken.
+  unverifiedCallbackAt      DateTime?
+  unverifiedCallbackErrCode String?  @db.VarChar(10)
+  /// Admins were alerted about this payment (one alert per payment, whichever
+  /// trigger fires first: unverified success callback, or a hold older than
+  /// 10 minutes).
+  gatewayAlertedAt   DateTime?
+  /// "Mark as paid" by an admin (PaymentService.confirmPaymentManually): when
+  /// and by which admin user id. The transaction id and note are in the
+  /// FINANCIAL audit row (PAYMENT_MARKED_PAID_BY_ADMIN).
+  manualConfirmedAt  DateTime?
+  manualConfirmedBy  String?       @db.VarChar(64)
   createdAt          DateTime      @default(now())
 
   @@index([status])
@@ -617,6 +635,7 @@ model Payment {
   @@index([status, createdAt])
   @@index([status, paymentInitiatedAt])
   @@index([status, paymentFirstInitiatedAt])
+  @@index([status, napsHeldAt])
   @@map("payments")
 }
 
