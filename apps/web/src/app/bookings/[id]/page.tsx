@@ -28,6 +28,8 @@ import { isAllowedPay2mFormAction } from '@/lib/pay2m';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
 import { BookingEmailOtpModal } from '@/components/booking-email-otp-modal';
+import { BankConfirmingBanner } from '@/components/bank-confirming-banner';
+import { isAwaitingBankConfirmation } from '@/lib/booking-gateway';
 import { useToast } from '@/components/toast';
 import { Badge, Button } from '@/components/ui';
 
@@ -139,6 +141,9 @@ export default function BookingDetailPage() {
 
   const secondsLeft = useCountdown(booking?.reservedUntil ?? null);
   const isExpired = secondsLeft === 0 && booking?.status === 'PENDING';
+  // The gateway reported the payment but the site has not confirmed it yet:
+  // show "being confirmed with your bank", hide Pay / Cancel / the countdown.
+  const awaitingBank = isAwaitingBankConfirmation(booking);
 
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -149,7 +154,7 @@ export default function BookingDetailPage() {
   // the booking is PENDING + not yet verified, so the customer never
   // sees a "Pay" button that mysteriously fails.
   const needsEmailOtp =
-    booking?.status === 'PENDING' && !booking?.emailOtpVerifiedAt;
+    booking?.status === 'PENDING' && !booking?.emailOtpVerifiedAt && !awaitingBank;
   const [showEmailOtpModal, setShowEmailOtpModal] = useState(false);
   useEffect(() => {
     if (needsEmailOtp) setShowEmailOtpModal(true);
@@ -360,6 +365,7 @@ export default function BookingDetailPage() {
 
               {/* Countdown for PENDING bookings */}
               {booking.status === 'PENDING' &&
+              !awaitingBank &&
               booking.reservedUntil &&
               secondsLeft != null &&
               !isExpired ? (
@@ -390,7 +396,10 @@ export default function BookingDetailPage() {
 
               {/* ── Status banners ───────────────────────────────── */}
 
+              {awaitingBank ? <BankConfirmingBanner bookingRef={booking.ref} /> : null}
+
               {booking.status === 'PENDING' &&
+              !awaitingBank &&
               booking.payment?.status !== 'FAILED' ? (
                 <div className="rounded-2xl p-4 bg-sky-500/10 border border-sky-500/25 flex items-center gap-3">
                   <AlertCircle
@@ -471,6 +480,7 @@ export default function BookingDetailPage() {
               ) : null}
 
               {booking.status === 'PENDING' &&
+              !awaitingBank &&
               booking.payment?.status === 'FAILED' ? (
                 <div className="rounded-2xl bg-red-500/10 border border-red-500/25 p-4 flex items-start gap-3">
                   <XCircle
@@ -909,11 +919,11 @@ export default function BookingDetailPage() {
                   </Button>
                 </div>
               ) : null}
-              {booking.status === 'PENDING' && !needsEmailOtp ? (
+              {booking.status === 'PENDING' && !needsEmailOtp && !awaitingBank ? (
                 <PaymentButton bookingId={booking.id} />
               ) : null}
 
-              {booking.status === 'PENDING' ? (
+              {booking.status === 'PENDING' && !awaitingBank ? (
                 <Button
                   full
                   variant="ghost"

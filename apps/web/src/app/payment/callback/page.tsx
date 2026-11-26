@@ -5,9 +5,10 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
-import { CheckCircle, XCircle, Loader2, Clock } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Clock, MessageCircle } from 'lucide-react';
 import Link from 'next/link';
 import api from '@/lib/api';
+import { whatsappHref } from '@/lib/whatsapp';
 
 function CallbackContent() {
   const { t } = useTranslation();
@@ -23,6 +24,11 @@ function CallbackContent() {
   // 'pending' = the gateway verified the payment message but the capture is
   // still being confirmed (NAPS rail) — not a success yet, NOT a failure.
   const initialPending = status === 'pending';
+  // 'checking' = the gateway sent the customer back without a usable
+  // callback (a field missing or malformed), so the API could not even look
+  // the payment up. Nothing is known yet: point them to My Bookings and
+  // WhatsApp instead of a failure they may not have had.
+  const isChecking = status === 'checking';
 
   // A NAPS browser redirect can land on "pending" a beat before the trusted
   // server-to-server IPN confirms the booking. Per the standard return-page
@@ -115,6 +121,34 @@ function CallbackContent() {
               </Link>
             )}
           </>
+        ) : isChecking ? (
+          <div data-testid="payment-checking">
+            <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+              <Clock className="h-10 w-10 text-amber-600 dark:text-amber-400" />
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('payment.checkingTitle')}</h1>
+            <p className="text-sm text-gray-500 dark:text-slate-400 mb-6">
+              {t('payment.checkingDesc')}
+            </p>
+            <div className="flex flex-col gap-3">
+              <Link
+                href="/bookings"
+                className="inline-block px-6 py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-xl transition-colors text-sm"
+              >
+                {t('payment.backToBookings')}
+              </Link>
+              <a
+                href={whatsappHref(t('payment.checkingWhatsapp'))}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="payment-checking-whatsapp"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-gray-200 dark:border-slate-700 text-sm font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+              >
+                <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                {t('payment.whatsappCta')}
+              </a>
+            </div>
+          </div>
         ) : isPending ? (
           <>
             <motion.div

@@ -28,6 +28,33 @@ import { InitiatePaymentDto } from './dto/initiate-payment.dto';
 import { Pay2mCallbackDto, Pay2mIpnDto } from './dto/pay2m-callback.dto';
 import { buildIpnDiagnostics } from './ipn-diagnostics';
 
+/**
+ * Query fields PAY2M is known to send on the browser return. Anything else is
+ * dropped by the lenient validator and logged BY NAME so a gateway-side change
+ * is visible without ever logging a value (Response_Key is a secret-derived hash).
+ */
+const KNOWN_CALLBACK_FIELDS = new Set([
+  'err_code', 'err_msg', 'basket_id', 'order_date', 'transaction_id',
+  'Response_Key', 'PaymentName', 'Rdv_Message_Key',
+]);
+
+/** Same shape Pay2mCallbackDto enforces; used to decide whether a failed callback can still be looked up. */
+const BASKET_ID_RE = /^JDWL-[a-f0-9-]{12}$/i;
+
+/** A field NAME fit for a log line: ASCII identifier characters only, capped. */
+function safeFieldName(name: string): string {
+  const clean = name.replace(/[^A-Za-z0-9_.\-[\]]/g, '');
+  return (clean || 'unnamed').slice(0, 40);
+}
+
+/** Thrown by the browser-callback validator: carries the failing field names only. */
+class CallbackValidationError extends Error {
+  constructor(readonly fields: string[]) {
+    super('callback validation failed');
+    this.name = 'CallbackValidationError';
+  }
+}
+
 @Controller('payment')
 export class PaymentController {
   private readonly logger = new Logger(PaymentController.name);
@@ -43,6 +70,18 @@ export class PaymentController {
     whitelist: true,
     forbidNonWhitelisted: false,
     transform: true,
+  });
+
+  // Same leniency for PAY2M's browser return (GET /payment/callback): unknown
+  // fields are stripped, the used fields keep their bounds, and a failure is
+  // reported as field NAMES so the handler can log what changed without
+  // echoing any value. The handler never lets this become an HTTP 400.
+  private readonly callbackValidator = new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: false,
+    transform: true,
+    exceptionFactory: (errors) =>
+      new CallbackValidationError(errors.map((e) => safeFieldName(String(e.property)))),
   });
 
   constructor(
@@ -68,12 +107,23 @@ export class PaymentController {
    * PAY2M redirects the customer's browser here after payment.
    * No auth — customer may have lost session during redirect.
    * Verifies response, updates DB, then redirects to frontend.
+   *
+   * This route never answers with JSON. A customer landed on
+   * `{"statusCode":400,"message":"Bad Request"}` on 24 Nov 2026 because the
+   * global ValidationPipe (`forbidNonWhitelisted`) rejected PAY2M's return
+   * query before the handler ran. So the query is taken untyped (the global
+   * pipe skips a plain object) and validated here leniently, like the IPN:
+   * unknown fields are stripped and logged BY NAME, the used fields keep their
+   * type/length/format bounds. An incomplete or malformed callback is never
+   * handed to handleCallback and confirms or fails nothing: the customer is
+   * sent to the state the payment is really in (or to a neutral "checking"
+   * page), and the trusted IPN remains the source of truth.
    */
   @Public()
   @Get('callback')
   @Throttle(RATE_LIMIT_CALLBACK)
   async handleCallback(
-    @Query() query: Pay2mCallbackDto,
+    @Query() rawQuery: Record<string, unknown>,
     @Res() res: Response,
   ) {
     const frontendUrl = this.config.getOrThrow<string>('FRONTEND_URL');
@@ -87,12 +137,56 @@ export class PaymentController {
       }
       return url.toString();
     };
+    const safeBookingIdOf = (id: string | null | undefined) => (id && UUID_RE.test(id) ? id : '');
 
+    // ── 1. Lenient validation (names only in logs, never values) ──────────
+    let query: Pay2mCallbackDto | null = null;
+    try {
+      const raw = rawQuery && typeof rawQuery === 'object' ? rawQuery : {};
+      const unknown = Object.keys(raw)
+        .filter((k) => !KNOWN_CALLBACK_FIELDS.has(k))
+        .map(safeFieldName)
+        .slice(0, 20);
+      if (unknown.length > 0) {
+        this.logger.warn({ event: 'PAY2M_CALLBACK_UNKNOWN_FIELDS', fields: unknown });
+      }
+      try {
+        query = (await this.callbackValidator.transform(raw, {
+          type: 'query',
+          metatype: Pay2mCallbackDto,
+        })) as Pay2mCallbackDto;
+      } catch (err) {
+        const fields = err instanceof CallbackValidationError ? err.fields : ['unknown'];
+        this.logger.warn({ event: 'PAY2M_CALLBACK_INVALID', fields });
+      }
+
+      if (!query) {
+        // ── 2. Incomplete callback: redirect by the STORED state, change nothing ──
+        // handleCallback is not called, so nothing is confirmed or failed here;
+        // the IPN (or a later valid callback) still decides. With a well-formed
+        // basket id the customer sees the payment's real state; without one, a
+        // neutral "we are checking your payment" page.
+        const basketRaw = raw.basket_id;
+        const basket = typeof basketRaw === 'string' && BASKET_ID_RE.test(basketRaw) ? basketRaw : null;
+        if (!basket) return res.redirect(buildRedirect({ status: 'checking' }));
+        const p = await this.paymentService.paymentStatusByBasket(basket);
+        const bid = safeBookingIdOf(p?.bookingId);
+        if (p?.status === 'SUCCESS') return res.redirect(buildRedirect({ status: 'success', bookingId: bid }));
+        if (p?.status === 'PENDING') return res.redirect(buildRedirect({ status: 'pending', bookingId: bid }));
+        return res.redirect(buildRedirect({ status: 'failed', bookingId: bid, error: 'Payment could not be verified' }));
+      }
+    } catch (err) {
+      // Lookup or validation plumbing failed: still a page, never an error body.
+      this.logger.error({ event: 'PAY2M_CALLBACK_PREFLIGHT_FAILED', kind: err instanceof Error ? err.name : 'UnknownError' });
+      return res.redirect(buildRedirect({ status: 'checking' }));
+    }
+
+    // ── 3. Complete callback: the existing verified path, unchanged ───────
     try {
       const result = await this.paymentService.handleCallback(query);
       // nosemgrep: ajinabraham.njsscan.dos.regex_dos.regex_dos
       // UUID_RE is a fixed-format hex/dash pattern with no nested quantifiers.
-      const safeBookingId = result.bookingId && UUID_RE.test(result.bookingId) ? result.bookingId : '';
+      const safeBookingId = safeBookingIdOf(result.bookingId);
 
       if (result.status === 'success') {
         return res.redirect(buildRedirect({ status: 'success', bookingId: safeBookingId }));
@@ -129,7 +223,7 @@ export class PaymentController {
         const code = (query.err_code ?? '').trim();
         const p = query.basket_id ? await this.paymentService.paymentStatusByBasket(query.basket_id) : null;
         if (p?.status === 'PENDING' && PENDING_OR_PAID.has(code)) {
-          const bid = p.bookingId && UUID_RE.test(p.bookingId) ? p.bookingId : '';
+          const bid = safeBookingIdOf(p.bookingId);
           return res.redirect(buildRedirect({ status: 'pending', bookingId: bid }));
         }
       } catch {

@@ -2,7 +2,7 @@
 
 import type { BookingStatus } from '@/lib/status-config';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useSyncExternalStore } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { getApiError } from '@/lib/api-error';
@@ -16,6 +16,9 @@ import { CancelBookingModal, canAdminCancelBooking, bookingHasStarted } from './
 import { RescheduleBookingModal, canAdminRescheduleBooking } from './_components/reschedule-booking-modal';
 import { dateChangeSummary, rescheduleCsvColumns, type BookingRescheduleRecord } from '@/lib/booking-reschedule';
 import { ExternalRefundChoice, REFUND_METHOD_LABEL, type ExternalRefundPayload, type ExternalRefundSelection, type RefundMethod } from '../_components/external-refund-fields';
+import { MarkPaidModal, type MarkPaidTarget } from './_components/mark-paid-modal';
+import { GatewayPaymentsTable, type GatewayPaymentRow } from './_components/gateway-payments-table';
+import { canMarkPaymentPaid, gatewayReportLabel } from '@/lib/booking-gateway';
 
 interface Booking {
   id: string;
@@ -47,7 +50,13 @@ interface Booking {
   customer: { id: string; fullName: string; email: string; phone: string | null };
   activity: { id: string; titleEn: string; bookingType: 'HOURLY' | 'DAILY'; durationValue: number | null; cancellationPolicy: string | null; country: { currencyCode: string } };
   vendor: { businessNameEn: string };
-  payment: { id: string; amount: string; status: string; method: string; paidAt: string | null; gatewayTxnId: string | null; refundAmount: string | null; refundedAt: string | null; refundMethod: string | null } | null;
+  payment: {
+    id: string; amount: string; status: string; method: string; paidAt: string | null; gatewayTxnId: string | null;
+    refundAmount: string | null; refundedAt: string | null; refundMethod: string | null;
+    // Gateway rescue (see lib/booking-gateway.ts)
+    gatewayBasketId?: string | null; napsHeldAt?: string | null; unverifiedCallbackAt?: string | null;
+    unverifiedCallbackErrCode?: string | null; manualConfirmedAt?: string | null; manualConfirmedBy?: string | null;
+  } | null;
 }
 
 interface BookingsResponse {
@@ -100,6 +109,21 @@ export default function AdminBookingsPage() {
   const [noteInput, setNoteInput] = useState('');
   const [cancelTarget, setCancelTarget] = useState<Booking | null>(null);
   const [rescheduleTarget, setRescheduleTarget] = useState<Booking | null>(null);
+  // Gateway rescue: the "payments to check" view (opened by the admin alert
+  // link ?gateway=unconfirmed) and the Mark as paid dialog.
+  // The URL flag is read as an external store (server snapshot: false) so the
+  // first client render needs no effect and no hydration mismatch.
+  const gatewayFromUrl = useSyncExternalStore(
+    () => () => {},
+    () => new URLSearchParams(window.location.search).get('gateway') === 'unconfirmed',
+    () => false,
+  );
+  const [gatewayChoice, setGatewayChoice] = useState<boolean | null>(null);
+  const gatewayView = gatewayChoice ?? gatewayFromUrl;
+  const setGatewayView = (next: boolean | ((prev: boolean) => boolean)) =>
+    setGatewayChoice(typeof next === 'function' ? next(gatewayView) : next);
+  const [markPaidTarget, setMarkPaidTarget] = useState<MarkPaidTarget | null>(null);
+  const [markPaidError, setMarkPaidError] = useState<string | null>(null);
   // Approve in the refund queue: how the refund is handled (Wanasa points, or
   // already done outside the website). No default; Confirm waits for a choice.
   const [decisionRefund, setDecisionRefund] = useState<ExternalRefundSelection>(NO_CHOICE);
@@ -129,6 +153,27 @@ export default function AdminBookingsPage() {
     },
     onError: (err) => { toast(getApiError(err, 'Failed to record decision'), 'error'); },
   });
+
+  const { data: gatewayRows } = useQuery<GatewayPaymentRow[]>({
+    queryKey: ['admin', 'payments', 'unconfirmed'],
+    queryFn: async () => (await api.get('/admin/payments/unconfirmed')).data,
+    staleTime: 30_000,
+  });
+  const gatewayCount = gatewayRows?.length ?? 0;
+
+  const markPaidMutation = useMutation({
+    mutationFn: async ({ paymentId, input }: { paymentId: string; input: { transactionId: string; note: string } }) =>
+      (await api.post(`/admin/payments/${paymentId}/mark-paid`, input)).data as { bookingId: string; ref: string; path: string },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'payments', 'unconfirmed'] });
+      toast(`Booking ${data.ref} confirmed`);
+      setMarkPaidTarget(null);
+      setMarkPaidError(null);
+    },
+    onError: (err) => { setMarkPaidError(getApiError(err, 'Could not mark the payment as paid')); },
+  });
+  const openMarkPaid = (target: MarkPaidTarget) => { setMarkPaidError(null); setMarkPaidTarget(target); };
 
   // Admin cancel: the existing status endpoint. The server stamps who/when,
   // frees the slot, refunds a paid amount as Wanasa points (or fails a pending
@@ -295,6 +340,19 @@ export default function AdminBookingsPage() {
         </div>
         <button
           type="button"
+          onClick={() => setGatewayView((v) => !v)}
+          aria-pressed={gatewayView}
+          data-testid="gateway-toggle"
+          className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-xl transition-all whitespace-nowrap border ${
+            gatewayView || gatewayCount > 0
+              ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800/50 hover:bg-amber-100'
+              : 'bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-300 border-transparent hover:bg-gray-200 dark:hover:bg-slate-700'
+          }`}
+        >
+          <AlertTriangle className="h-4 w-4" aria-hidden="true" /> {gatewayView ? 'Back to bookings' : `Gateway payments to check (${gatewayCount})`}
+        </button>
+        <button
+          type="button"
           onClick={handleExport}
           title={statusFilter ? `Export ${statusFilter.toLowerCase()} bookings` : 'Export all bookings'}
           className="flex items-center gap-1.5 px-4 py-2.5 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 text-sm font-medium rounded-xl transition-all whitespace-nowrap"
@@ -303,7 +361,17 @@ export default function AdminBookingsPage() {
         </button>
       </div>
 
-      {isLoading ? (
+      {gatewayView ? (
+        <GatewayPaymentsTable
+          rows={gatewayRows ?? []}
+          pending={markPaidMutation.isPending}
+          onMarkPaid={(row) => openMarkPaid({
+            paymentId: row.id, ref: row.booking?.ref ?? null, amount: row.amount, currency: row.currency,
+            customerName: row.customer?.fullName ?? null, basketId: row.basketId,
+            bookingState: row.booking ? (row.booking.exists ? row.booking.status : 'EXPIRED') : 'EXPIRED',
+          })}
+        />
+      ) : isLoading ? (
         <TableSkeleton />
       ) : (
         <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 overflow-hidden">
@@ -418,6 +486,12 @@ export default function AdminBookingsPage() {
                                  booking.payment.status === 'REFUNDED' ? 'Refund' :
                                  booking.payment.status === 'FAILED' ? 'Failed' : 'Pending'}
                               </span>
+                              {gatewayReportLabel(booking.payment) && (
+                                <span data-testid="gateway-badge" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400 w-fit">
+                                  <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                                  {gatewayReportLabel(booking.payment)}
+                                </span>
+                              )}
                             </div>
                           ) : (
                             <span className="text-xs text-gray-400 dark:text-slate-500">—</span>
@@ -529,6 +603,33 @@ export default function AdminBookingsPage() {
                                     )}
                                     {booking.payment.gatewayTxnId && (
                                       <p className="text-[11px] text-gray-400 dark:text-slate-500 font-mono truncate">TXN: {booking.payment.gatewayTxnId}</p>
+                                    )}
+                                    {booking.payment.gatewayBasketId && (
+                                      <p className="text-[11px] text-gray-400 dark:text-slate-500 font-mono truncate" data-testid="payment-basket">Basket: {booking.payment.gatewayBasketId}</p>
+                                    )}
+                                    {booking.payment.manualConfirmedAt && (
+                                      <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                                        Marked as paid by an admin on {new Date(booking.payment.manualConfirmedAt).toLocaleString()}
+                                      </p>
+                                    )}
+                                    {gatewayReportLabel(booking.payment) && (
+                                      <p className="text-xs text-amber-700 dark:text-amber-400">{gatewayReportLabel(booking.payment)}</p>
+                                    )}
+                                    {canMarkPaymentPaid(booking) && (
+                                      <div onClick={e => e.stopPropagation()}>
+                                        <button
+                                          type="button"
+                                          onClick={() => openMarkPaid({
+                                            paymentId: booking.payment!.id, ref: booking.ref, amount: booking.payment!.amount, currency,
+                                            customerName: booking.customer.fullName, basketId: booking.payment!.gatewayBasketId ?? null,
+                                            bookingState: booking.status,
+                                          })}
+                                          disabled={markPaidMutation.isPending}
+                                          className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 shadow-sm"
+                                        >
+                                          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> Mark as paid
+                                        </button>
+                                      </div>
                                     )}
                                     {booking.payment.refundMethod ? (
                                       <p className="text-xs text-purple-600 dark:text-purple-400">{outsideRefundText(booking.payment, currency)}</p>
@@ -798,6 +899,16 @@ export default function AdminBookingsPage() {
             toast(message);
             setRescheduleTarget(null);
           }}
+        />
+      )}
+
+      {markPaidTarget && (
+        <MarkPaidModal
+          target={markPaidTarget}
+          pending={markPaidMutation.isPending}
+          error={markPaidError}
+          onConfirm={(paymentId, input) => markPaidMutation.mutate({ paymentId, input })}
+          onClose={() => { if (!markPaidMutation.isPending) { setMarkPaidTarget(null); setMarkPaidError(null); } }}
         />
       )}
 

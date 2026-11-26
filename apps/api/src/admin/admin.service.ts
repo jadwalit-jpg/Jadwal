@@ -1542,7 +1542,17 @@ export class AdminService {
           // `id` lets the Change-date dialog load the activity's open slots for a new date.
           activity: { select: { id: true, titleEn: true, bookingType: true, durationValue: true, cancellationPolicy: true, country: { select: { currencyCode: true } } } },
           vendor: { select: { businessNameEn: true } },
-          payment: { select: { id: true, amount: true, status: true, method: true, paidAt: true, gatewayTxnId: true, refundAmount: true, refundedAt: true, refundMethod: true } },
+          payment: {
+            select: {
+              id: true, amount: true, status: true, method: true, paidAt: true, gatewayTxnId: true,
+              refundAmount: true, refundedAt: true, refundMethod: true,
+              // Gateway rescue: the PAY2M basket (what the PAY2M dashboard shows)
+              // and the markers behind the "paid at gateway, awaiting
+              // confirmation" badge and the "Mark as paid" button.
+              gatewayBasketId: true, napsHeldAt: true, unverifiedCallbackAt: true, unverifiedCallbackErrCode: true,
+              manualConfirmedAt: true, manualConfirmedBy: true,
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -1552,6 +1562,86 @@ export class AdminService {
     ]);
 
     return { data: bookings, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  /**
+   * Gateway payments to check: PAY2M baskets of the last 60 days that the
+   * gateway reported (a held NAPS success, or a success-looking callback that
+   * did not verify) but that the site never confirmed. The booking row may be
+   * PENDING, CANCELLED (the customer gave up), or already deleted by the
+   * cleanup cron — then its reference, dates and customer come from the
+   * payment's frozen snapshot. Each row is a candidate for "Mark as paid".
+   */
+  async getUnconfirmedGatewayPayments() {
+    const db = this.prisma.client;
+    const since = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+    const rows = await db.payment.findMany({
+      where: {
+        method: 'PAY2M',
+        gatewayBasketId: { not: null },
+        status: { in: ['PENDING', 'FAILED'] },
+        createdAt: { gte: since },
+        OR: [{ napsHeldAt: { not: null } }, { unverifiedCallbackAt: { not: null } }],
+      },
+      select: {
+        id: true, amount: true, currency: true, status: true, gatewayBasketId: true, createdAt: true,
+        napsHeldAt: true, unverifiedCallbackAt: true, unverifiedCallbackErrCode: true, gatewayAlertedAt: true,
+        bookingSnapshot: true,
+        booking: {
+          select: {
+            id: true, ref: true, status: true, startDatetime: true, endDatetime: true, cancelledBy: true,
+            customer: { select: { fullName: true, email: true, phone: true } },
+            activity: { select: { titleEn: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+
+    type Snap = { ref?: string; customerId?: string; activityId?: string; startDatetime?: string; endDatetime?: string } | null;
+    const snapOf = (r: (typeof rows)[number]): Snap => (r.booking ? null : (r.bookingSnapshot as Snap));
+    const customerIds = Array.from(new Set(rows.map((r) => snapOf(r)?.customerId).filter((x): x is string => !!x)));
+    const activityIds = Array.from(new Set(rows.map((r) => snapOf(r)?.activityId).filter((x): x is string => !!x)));
+    const [users, activities] = await Promise.all([
+      customerIds.length
+        ? db.user.findMany({ where: { id: { in: customerIds } }, select: { id: true, fullName: true, email: true, phone: true } })
+        : Promise.resolve([]),
+      activityIds.length
+        ? db.activity.findMany({ where: { id: { in: activityIds } }, select: { id: true, titleEn: true } })
+        : Promise.resolve([]),
+    ]);
+    const userById = new Map(users.map((u) => [u.id, { fullName: u.fullName, email: u.email, phone: u.phone }]));
+    const titleById = new Map(activities.map((a) => [a.id, a.titleEn]));
+
+    return rows.map((r) => {
+      const snap = snapOf(r);
+      return {
+        id: r.id,
+        amount: r.amount,
+        currency: r.currency,
+        status: r.status,
+        basketId: r.gatewayBasketId,
+        createdAt: r.createdAt,
+        napsHeldAt: r.napsHeldAt,
+        unverifiedCallbackAt: r.unverifiedCallbackAt,
+        unverifiedCallbackErrCode: r.unverifiedCallbackErrCode,
+        alertedAt: r.gatewayAlertedAt,
+        booking: r.booking
+          ? {
+              id: r.booking.id, ref: r.booking.ref, status: r.booking.status, exists: true,
+              startDatetime: r.booking.startDatetime, endDatetime: r.booking.endDatetime, cancelledBy: r.booking.cancelledBy,
+            }
+          : snap
+            ? {
+                id: null, ref: snap.ref ?? null, status: 'EXPIRED' as const, exists: false,
+                startDatetime: snap.startDatetime ?? null, endDatetime: snap.endDatetime ?? null, cancelledBy: null,
+              }
+            : null,
+        customer: r.booking?.customer ?? (snap?.customerId ? userById.get(snap.customerId) ?? null : null),
+        activityTitle: r.booking?.activity.titleEn ?? (snap?.activityId ? titleById.get(snap.activityId) ?? null : null),
+      };
+    });
   }
 
   async updateBookingStatus(
