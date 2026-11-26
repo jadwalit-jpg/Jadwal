@@ -312,6 +312,26 @@
     "addonLess": "Fewer {{name}}",
     "addonMore": "More {{name}}"
   },
+  "reviewAsk": {
+    "pageTitle": "Rate your experience",
+    "promptTitle": "How was {{activity}}?",
+    "promptSubtitle": "Tap a star to rate it. It takes a few seconds.",
+    "ratingLabel": "Your rating",
+    "stars_one": "{{count}} star",
+    "stars_other": "{{count}} stars",
+    "submit": "Submit rating",
+    "submitFailed": "Could not submit your rating",
+    "later": "Later",
+    "never": "Don't ask again for this booking",
+    "neverDone": "We will not ask again for this booking.",
+    "thanksTitle": "Thank you!",
+    "thanksBody": "Your rating helps other customers and the organiser.",
+    "alreadyReviewed": "You already rated this activity. Thank you!",
+    "notAvailable": "This booking cannot be rated.",
+    "notFound": "We could not find this booking in your account.",
+    "customersOnly": "Only customers can rate an activity.",
+    "viewListing": "View the activity"
+  },
   "likes": {
     "title": "Liked Activities",
     "subtitle": "Activities you've saved for later",

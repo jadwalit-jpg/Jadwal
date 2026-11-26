@@ -8,6 +8,7 @@ import { passwordChangedTemplate } from './templates/password-changed';
 import { emailVerificationTemplate } from './templates/email-verification';
 import { accountExistsTemplate } from './templates/account-exists';
 import { bookingOtpTemplate } from './templates/booking-otp';
+import { reviewRequestTemplate, type ReviewRequestData } from './templates/review-request';
 import {
   vendorBookingNotificationTemplate,
   type VendorBookingNotificationData,
@@ -201,6 +202,16 @@ export class EmailService {
   }
 
   /**
+   * Review ask ("How was <activity>? Rate your experience"), the morning after
+   * a completed activity and once more three days later. Enqueued via the
+   * outbox by ReviewRequestService; suppression, quota, the recipient's
+   * language and the unsubscribe header flow through the shared `send()`.
+   */
+  async sendReviewRequest(to: string, data: ReviewRequestData, locale?: EmailLanguage) {
+    return this.send(to, 'review-request', data, locale);
+  }
+
+  /**
    * Booking email-OTP. Sent on booking creation; customer must enter the
    * code on /bookings/[id] before /payment/initiate will issue a PAY2M
    * token. Direct send (not queued in EmailOutbox) — the code is time-
@@ -388,6 +399,9 @@ export class EmailService {
         break;
       case 'vendor-booking-rescheduled':
         rendered = vendorBookingRescheduledTemplate(data as any, locale);
+        break;
+      case 'review-request':
+        rendered = reviewRequestTemplate(data as any, locale);
         break;
       case 'admin-alert':
         rendered = adminAlertTemplate(data as any);

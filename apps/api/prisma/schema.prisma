@@ -477,6 +477,8 @@ model Booking {
   reservedUntil     DateTime?     // Soft reservation expiry — PENDING bookings past this are treated as free
   paymentId         String?       @unique
   payment           Payment?      @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  /// The review ask ledger for this booking (one row per booking, see ReviewRequest).
+  reviewRequest     ReviewRequest?
 
   // ─── Email-OTP verification gate (between booking create + PAY2M) ─────
   // Customer must verify a 6-digit code emailed at booking-create time
@@ -725,6 +727,34 @@ model Review {
   @@map("reviews")
 }
 
+/// Review-ask ledger: one row per completed booking the customer is asked to
+/// review. The daily cron (09:00 Asia/Qatar) claims the row, then claims each
+/// ask with a conditional update before sending, so an ask goes out once even
+/// if the job runs twice. The pop-up and the review page read the same row.
+model ReviewRequest {
+  id            String    @id @default(uuid())
+  bookingId     String    @unique
+  booking       Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  customerId    String
+  activityId    String
+  /// First ask: email + in-app notification, the morning after the activity ends.
+  firstAskedAt  DateTime?
+  /// Second ask: email only, three days after the first, if still no review.
+  secondAskedAt DateTime?
+  /// "Later" on the pop-up: hidden until the next ask (for good after the second).
+  snoozedAt     DateTime?
+  /// "Don't ask again for this booking".
+  optedOutAt    DateTime?
+  /// A review by this customer for this activity exists (set on review creation).
+  reviewedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([customerId, optedOutAt, reviewedAt])
+  @@index([firstAskedAt, secondAskedAt])
+  @@map("review_requests")
+}
+
 model Like {
   id         String   @id @default(uuid())
   activityId String
@@ -801,6 +831,11 @@ model PlatformSettings {
   supportEmail          String?
   supportPhone          String?
   aboutText             String?
+  /// Review asks: the earliest activity END that may be asked for a review.
+  /// Set ONCE by the first review-request cron run after deploy, to
+  /// (that run − 30 days), and never moved again — so the launch backlog is
+  /// fixed and cannot widen later. Null = not initialised yet.
+  reviewAskFloor        DateTime?
   updatedAt             DateTime @updatedAt
 
   @@map("platform_settings")
@@ -917,6 +952,7 @@ model Notification {
 
 enum NotificationType {
   BOOKING_NEW
+  REVIEW_REQUEST    // Customer: please rate the activity you went on
   BOOKING_CANCELLED
   BOOKING_CONFIRMED
   BOOKING_COMPLETED
@@ -1096,6 +1132,7 @@ model EmailOutbox {
 enum EmailOutboxType {
   BOOKING_CONFIRMATION
   VENDOR_BOOKING_NOTIFICATION
+  REVIEW_REQUEST
   BOOKING_RESCHEDULED
   VENDOR_BOOKING_RESCHEDULED
 }

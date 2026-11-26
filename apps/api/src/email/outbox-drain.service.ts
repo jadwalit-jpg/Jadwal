@@ -155,6 +155,14 @@ export class OutboxDrainService {
         );
         return ok ? 'sent' : 'send_failed';
       }
+      case 'REVIEW_REQUEST': {
+        if (!OutboxDrainService.isReviewRequestPayload(row.payload)) {
+          this.logger.error({ event: 'EMAIL_OUTBOX_INVALID_PAYLOAD', emailType: row.emailType });
+          return 'unknown_type';
+        }
+        const ok = await this.emailService.sendReviewRequest(row.recipient, row.payload);
+        return ok ? 'sent' : 'send_failed';
+      }
       default:
         this.logger.error({ event: 'EMAIL_OUTBOX_UNKNOWN_TYPE', emailType: row.emailType });
         return 'unknown_type';
@@ -187,6 +195,16 @@ export class OutboxDrainService {
    * `guests` must be a number; optional fields (`time`, `locationAddress`)
    * pass if absent or string-typed.
    */
+  /** Review ask payload: the strings the template needs, non-empty. */
+  private static isReviewRequestPayload(
+    payload: unknown,
+  ): payload is Parameters<EmailService['sendReviewRequest']>[1] {
+    if (!payload || typeof payload !== 'object') return false;
+    const p = payload as Record<string, unknown>;
+    const str = (k: string) => typeof p[k] === 'string' && (p[k] as string).trim().length > 0;
+    return str('customerName') && str('activityTitle') && str('endDate') && str('bookingRef');
+  }
+
   private static isVendorBookingNotificationPayload(
     payload: unknown,
   ): payload is Parameters<EmailService['sendVendorBookingNotification']>[1] {
