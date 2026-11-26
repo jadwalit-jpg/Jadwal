@@ -286,6 +286,12 @@ export default function VendorBookingsPage() {
                             </p>
                           );
                         })()}
+                        {/* An admin moved this booking: flag it so the vendor re-checks their schedule. */}
+                        {b.rescheduledAt && (
+                          <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5" data-testid="vendor-date-changed">
+                            {t('vendor.bookings.details.dateChanged')}
+                          </p>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600 dark:text-slate-300">{b.guests}</td>
                       <td className="px-6 py-4">
@@ -509,6 +515,18 @@ export default function VendorBookingsPage() {
                   {new Date(viewBooking.startDatetime).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })}
                 </span>
               </div>
+              {/* Admin date change: the dates it had before (vendor sees dates only, not money or reason) */}
+              {viewBooking.reschedules?.[0] && (
+                <div className="py-2 border-b border-gray-50 dark:border-slate-800/50" data-testid="vendor-booking-date-change">
+                  <span className="text-sm text-amber-600 dark:text-amber-400 font-medium">{t('vendor.bookings.details.dateChanged')}</span>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                    {t('vendor.bookings.details.dateChangedWas', {
+                      from: new Date(viewBooking.reschedules[0].fromStartDatetime).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }),
+                      date: new Date(viewBooking.reschedules[0].createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+                    })}
+                  </p>
+                </div>
+              )}
               {/* Guests */}
               <div className="flex items-center justify-between py-2 border-b border-gray-50 dark:border-slate-800/50">
                 <span className="text-sm text-gray-500 dark:text-slate-400">{t('vendor.bookings.details.guests')}</span>

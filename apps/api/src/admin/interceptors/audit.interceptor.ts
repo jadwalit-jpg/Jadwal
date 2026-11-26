@@ -134,6 +134,7 @@ export class AdminAuditInterceptor implements NestInterceptor {
       'ADJUST_USER_POINTS',
       'UPDATE_BOOKING_STATUS', // can flip a paid booking to CANCELLED → refund
       'MARK_PAYMENT_PAID',     // admin confirms a gateway payment by hand
+      'RESCHEDULE_BOOKING',    // moves a paid booking; records a price difference settled outside
       'DELETE_VENDOR',         // affects payouts of past bookings
       'DELETE_USER',           // affects past payments / financial records
       'BULK_DELETE_USERS',
@@ -171,6 +172,7 @@ export class AdminAuditInterceptor implements NestInterceptor {
       'PATCH:/admin/bookings/:id/status': 'UPDATE_BOOKING_STATUS',
       // Gateway payments (debit-card rescue)
       'POST:/admin/payments/:id/mark-paid': 'MARK_PAYMENT_PAID',
+      'POST:/admin/bookings/:id/reschedule': 'RESCHEDULE_BOOKING',
       // Countries, Cities, Categories
       'POST:/admin/settings/countries': 'CREATE_COUNTRY',
       'PATCH:/admin/settings/countries/:id': 'UPDATE_COUNTRY',

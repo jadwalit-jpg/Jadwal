@@ -1532,11 +1532,15 @@ export class AdminService {
           // Cancellation + refund audit fields (null for non-cancelled bookings)
           cancelledAt: true, cancelledBy: true,
           refundDecisionAt: true, refundDecisionBy: true, refundDecisionActor: true, refundDecisionNote: true,
+          // Admin date change: the stamp plus the latest ledger row (dates, difference, settlement, reason).
+          rescheduledAt: true,
+          reschedules: { orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true, fromStartDatetime: true, fromEndDatetime: true, toStartDatetime: true, toEndDatetime: true, fromUnitNumber: true, toUnitNumber: true, priceBefore: true, priceAfter: true, priceDifference: true, settlement: true, settlementRef: true, reason: true, adminName: true } },
           customer: { select: { id: true, fullName: true, email: true, phone: true } },
           // bookingType + durationValue surface the actual booked time range
           // (now flex-length for HOURLY) in the admin table, so support can
           // see at a glance whether a booking is 2h or 8h.
-          activity: { select: { titleEn: true, bookingType: true, durationValue: true, cancellationPolicy: true, country: { select: { currencyCode: true } } } },
+          // `id` lets the Change-date dialog load the activity's open slots for a new date.
+          activity: { select: { id: true, titleEn: true, bookingType: true, durationValue: true, cancellationPolicy: true, country: { select: { currencyCode: true } } } },
           vendor: { select: { businessNameEn: true } },
           payment: {
             select: {
@@ -3063,6 +3067,9 @@ export class AdminService {
             vendor: { select: { businessNameEn: true } },
             customer: { select: { fullName: true } },
             activity: { select: { titleEn: true } },
+            // Every admin date change of the booking, newest first, so the
+            // payout CSV can show the price difference and how it was settled.
+            reschedules: { orderBy: { createdAt: 'desc' }, select: { createdAt: true, fromStartDatetime: true, fromEndDatetime: true, toStartDatetime: true, toEndDatetime: true, fromUnitNumber: true, toUnitNumber: true, priceBefore: true, priceAfter: true, priceDifference: true, settlement: true, settlementRef: true, reason: true, adminName: true } },
           },
         },
       },
@@ -3969,6 +3976,7 @@ export class AdminService {
         activity: { select: { titleEn: true } },
         vendor: { select: { businessNameEn: true } },
         payment: { select: { status: true, method: true, paidAt: true, amount: true, gatewayTxnId: true } },
+        reschedules: { orderBy: { createdAt: 'desc' }, select: { createdAt: true, fromStartDatetime: true, fromEndDatetime: true, toStartDatetime: true, toEndDatetime: true, fromUnitNumber: true, toUnitNumber: true, priceBefore: true, priceAfter: true, priceDifference: true, settlement: true, settlementRef: true, reason: true, adminName: true } },
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit,

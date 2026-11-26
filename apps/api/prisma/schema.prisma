@@ -508,6 +508,13 @@ model Booking {
   // SanitizePipe on ingress.
   refundDecisionNote  String?       @db.VarChar(1000)
 
+  // ─── Admin date change ───────────────────────────────────────────────
+  // Stamped when an admin moves the booking to other dates (latest change).
+  // Each change is a BookingReschedule row with the dates before and after,
+  // the price difference and how it was settled outside the website.
+  rescheduledAt       DateTime?
+  reschedules         BookingReschedule[]
+
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
@@ -537,6 +544,46 @@ model Booking {
   // recent bookings (e.g. "show me PENDING bookings expiring in next 2 min").
   @@index([customerId, emailOtpExpiry])
   @@map("bookings")
+}
+
+// One row per admin date change of a booking. The booking's money columns
+// (totalPrice, commissionAmount, serviceFee, payment.amount) are never edited:
+// the difference between the old and the new price is recorded here with how
+// it was settled outside the website, so finance and the payout export can
+// reconcile what was paid against what was delivered.
+model BookingReschedule {
+  id                 String                    @id @default(uuid())
+  bookingId          String
+  booking            Booking                   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  fromStartDatetime  DateTime
+  fromEndDatetime    DateTime
+  toStartDatetime    DateTime
+  toEndDatetime      DateTime
+  fromUnitNumber     Int?
+  toUnitNumber       Int?
+  // Base price (nights/hours × guests, with special prices) before and after,
+  // excluding add-ons, coupon and service fee. difference = after − before.
+  priceBefore        Decimal                   @db.Decimal(10, 2)
+  priceAfter         Decimal                   @db.Decimal(10, 2)
+  priceDifference    Decimal                   @db.Decimal(10, 2)
+  // null when the difference is 0
+  settlement         PriceDifferenceSettlement?
+  settlementRef      String?                   @db.VarChar(200)
+  reason             String                    @db.VarChar(500)
+  // user.id of the admin, kept as a string (not FK) so the record survives user deletion.
+  adminId            String
+  adminName          String                    @db.VarChar(200)
+  createdAt          DateTime                  @default(now())
+
+  @@index([bookingId, createdAt])
+  @@map("booking_reschedules")
+}
+
+// How a price difference from a date change was settled, always outside the website.
+enum PriceDifferenceSettlement {
+  PAID_OUTSIDE      // customer paid the extra (bank transfer, cash, card link, ...)
+  REFUNDED_OUTSIDE  // customer was refunded the difference
+  WAIVED            // nobody paid or refunded anything
 }
 
 enum CancelActor {
@@ -922,6 +969,7 @@ enum NotificationType {
   PAYOUT_REQUESTED
   REFUND_REQUESTED  // Vendor: customer cancelled a paid booking, awaiting decision
   REFUND_DECIDED    // Customer: vendor/admin recorded the refund decision
+  BOOKING_RESCHEDULED // Customer + vendor: an admin moved the booking to other dates
   SYSTEM
 }
 
@@ -1085,6 +1133,8 @@ enum EmailOutboxType {
   BOOKING_CONFIRMATION
   VENDOR_BOOKING_NOTIFICATION
   REVIEW_REQUEST
+  BOOKING_RESCHEDULED
+  VENDOR_BOOKING_RESCHEDULED
 }
 
 enum EmailOutboxStatus {

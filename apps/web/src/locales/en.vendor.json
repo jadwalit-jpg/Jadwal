@@ -147,7 +147,9 @@
       "payment": "Payment",
       "status": "Status",
       "close": "Close",
-      "addons": "Add-ons"
+      "addons": "Add-ons",
+      "dateChanged": "Date changed by AL Jadwal",
+      "dateChangedWas": "Was {{from}} · changed on {{date}}"
     }
   },
   "earnings": {

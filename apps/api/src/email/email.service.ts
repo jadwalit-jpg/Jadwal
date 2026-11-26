@@ -13,6 +13,8 @@ import {
   vendorBookingNotificationTemplate,
   type VendorBookingNotificationData,
 } from './templates/vendor-booking-notification';
+import { bookingRescheduledTemplate, type BookingRescheduledData } from './templates/booking-rescheduled';
+import { vendorBookingRescheduledTemplate, type VendorBookingRescheduledData } from './templates/vendor-booking-rescheduled';
 import {
   adminAlertTemplate,
   ADMIN_ALERT_SUBJECTS,
@@ -183,6 +185,20 @@ export class EmailService {
     locale?: EmailLanguage,
   ) {
     return this.send(to, 'vendor-booking-notification', data, locale);
+  }
+
+  /**
+   * Customer email when an admin moves their booking to other dates. Enqueued
+   * through the outbox by BookingRescheduleService; the recipient's language
+   * and suppression come from the shared `send()` path.
+   */
+  async sendBookingRescheduled(to: string, data: BookingRescheduledData, locale?: EmailLanguage) {
+    return this.send(to, 'booking-rescheduled', data, locale);
+  }
+
+  /** Vendor email for the same change (customer name + booking phone only, never the email). */
+  async sendVendorBookingRescheduled(to: string, data: VendorBookingRescheduledData, locale?: EmailLanguage) {
+    return this.send(to, 'vendor-booking-rescheduled', data, locale);
   }
 
   /**
@@ -377,6 +393,12 @@ export class EmailService {
         break;
       case 'vendor-booking-notification':
         rendered = vendorBookingNotificationTemplate(data as any, locale);
+        break;
+      case 'booking-rescheduled':
+        rendered = bookingRescheduledTemplate(data as any, locale);
+        break;
+      case 'vendor-booking-rescheduled':
+        rendered = vendorBookingRescheduledTemplate(data as any, locale);
         break;
       case 'review-request':
         rendered = reviewRequestTemplate(data as any, locale);

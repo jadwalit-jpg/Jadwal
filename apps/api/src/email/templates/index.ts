@@ -20,3 +20,7 @@ export { adminAlertTemplate, ADMIN_ALERT_SUBJECTS } from './admin-alert';
 export { reviewRequestTemplate } from './review-request';
 export type { ReviewRequestData } from './review-request';
 export type { AdminAlertData, AdminAlertType } from './admin-alert';
+export { bookingRescheduledTemplate } from './booking-rescheduled';
+export type { BookingRescheduledData } from './booking-rescheduled';
+export { vendorBookingRescheduledTemplate } from './vendor-booking-rescheduled';
+export type { VendorBookingRescheduledData } from './vendor-booking-rescheduled';
